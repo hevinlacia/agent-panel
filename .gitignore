@@ -1,0 +1,20 @@
+node_modules/
+dist/
+build/
+*.log
+*.tmp
+.DS_Store
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Never commit secrets.
+.env
+.env.*
+*.env
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+credentials.json
+secrets.json

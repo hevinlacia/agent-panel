@@ -1,0 +1,20 @@
+{
+  "name": "opencode-dashboard",
+  "version": "0.1.0",
+  "description": "Web control panel for OpenCode — review experience reports, confirm candidates, and more.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.tsx",
+    "start": "tsx src/server.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.5",
+    "hono": "^4.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.20",
+    "tsx": "^4.22.3",
+    "typescript": "^5.9.3"
+  }
+}
