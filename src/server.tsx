@@ -1,5 +1,6 @@
 /** @jsxImportSource hono/jsx */
-import { Hono } from "hono"
+import { Hono, type Context } from "hono"
+import { sessionsDaysPath, SESSIONS_PATH } from "./navigation.ts"
 import { type FC } from "hono/jsx"
 import { serve } from "@hono/node-server"
 import { upgradeWebSocket } from "@hono/node-server"
@@ -14,6 +15,8 @@ import {
   scanSessions,
   getSession,
   summarizeSessions,
+  groupSessionsByParent,
+  isValidSessionId,
   type SessionInfo,
 } from "./sessions.ts"
 import {
@@ -25,6 +28,21 @@ import {
   type TerminalSession,
 } from "./terminal.ts"
 import { resolveHandoffPath } from "./paths.ts"
+import { shouldAutoInjectRequirementContext } from "./terminalUrl.ts"
+import {
+  REQ_STATUSES,
+  type ReqStatus,
+  type Requirement,
+  listRequirementsByProject,
+  getRequirement,
+  associateSession,
+  getRequirementForSession,
+  getAllAssociatedSessionIds,
+  generateSessionId,
+  buildInjectionContext,
+  DEFAULT_REQ_ID,
+  DEFAULT_PROJECT_NAME,
+} from "./requirements.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -36,7 +54,7 @@ const NODE_MODULES_DIR = join(PROJECT_ROOT, "node_modules")
 // Layout
 // ---------------------------------------------------------------------------
 
-type Tab = "sessions" | "reports"
+type Tab = "sessions" | "reports" | "requirements"
 
 /**
  * Operator-style topbar: thin console header with a logo block, optional
@@ -68,15 +86,14 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
         </div>
         <div class="op-topbar-row op-topbar-routes">
           <nav class="op-routes">
-            <a href="/" class={active === "sessions" ? "op-route op-route-active" : "op-route"}>/sessions</a>
+            <a href="/" class={active === "requirements" ? "op-route op-route-active" : "op-route"}>/projects</a>
+            <a href="/sessions" class={active === "sessions" ? "op-route op-route-active" : "op-route"}>/sessions</a>
             <a href="/reports" class={active === "reports" ? "op-route op-route-active" : "op-route"}>/reports</a>
-            <a href="/api/sessions" class="op-route">/api/sessions</a>
-            <a href="/api/reports" class="op-route">/api/reports</a>
           </nav>
           <span class="op-embedded">embedded web terminal · {title}</span>
         </div>
       </header>
-      <main class={active === "sessions" ? "op-main op-main-sessions" : "op-main"}>{children}</main>
+      <main class={(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}>{children}</main>
       <script src="/static/app.js" defer></script>
     </body>
   </html>
@@ -145,7 +162,42 @@ const sourceLabel = (source: SessionInfo["source"]): string => {
   return "FS"
 }
 
-const SessionLane: FC<{ session: SessionInfo; index: number; total: number }> = ({ session, index, total }) => {
+const AGENT_BADGE_COLOR_CLASS: Record<string, string> = {
+  orchestrator: "op-lane-child-agent-agent-orchestrator",
+  "code-writer": "op-lane-child-agent-agent-code-writer",
+  "code-reviewer": "op-lane-child-agent-agent-code-reviewer",
+  "test-runner": "op-lane-child-agent-agent-test-runner",
+  "code-explorer": "op-lane-child-agent-agent-code-explorer",
+  debugger: "op-lane-child-agent-agent-debugger",
+  general: "op-lane-child-agent-agent-general",
+}
+
+function childAgentBadgeClass(agent?: string): string {
+  if (agent && Object.prototype.hasOwnProperty.call(AGENT_BADGE_COLOR_CLASS, agent)) {
+    return AGENT_BADGE_COLOR_CLASS[agent]
+  }
+  return AGENT_BADGE_COLOR_CLASS.general
+}
+
+function childAgentDisplay(agent?: string): string {
+  if (!agent) return "general"
+  return agent
+}
+
+const ChildSessionCard: FC<{ child: SessionInfo }> = ({ child }) => {
+  const badge = childAgentBadgeClass(child.agent)
+  const label = childAgentDisplay(child.agent)
+  return (
+    <a class="op-lane-child" href={`/session?id=${encodeURIComponent(child.id)}`}>
+      <StatusDot status={child.status} />
+      <span class={`op-lane-child-agent ${badge}`}>{label}</span>
+      <span class="op-lane-child-title" title={child.title}>{child.title}</span>
+      <span class="op-lane-child-time">{formatRelAgo(child.updated || child.created)}</span>
+    </a>
+  )
+}
+
+const SessionLane: FC<{ session: SessionInfo; index: number; total: number; childSessions?: SessionInfo[] }> = ({ session, index, total, childSessions }) => {
   const updatedText = formatUpdated(session.updated || session.created)
   const relText = formatRelAgo(session.updated || session.created)
   const runTag = "RUN-LANE-" + String(total - index).padStart(3, "0")
@@ -160,89 +212,107 @@ const SessionLane: FC<{ session: SessionInfo; index: number; total: number }> = 
   const worktree = session.worktree || "none"
   const branch = session.directory ? session.directory.split("/").filter(Boolean).pop() || worktree : worktree
   const totalTokens = (session.tokensInput || 0) + (session.tokensOutput || 0) + (session.tokensCacheRead || 0)
+  const childList = childSessions && childSessions.length > 0 ? childSessions : null
   return (
-    <a class="op-lane" href={`/session?id=${encodeURIComponent(session.id)}`}>
-      <div class="op-lane-rail" aria-hidden="true" />
-      <div class="op-lane-body">
-        <div class="op-lane-head">
-          <span class="op-lane-issue">ISSUE / {runTag}</span>
-          <span class={`op-lane-status op-lane-status-${session.status}`}>
-            <StatusDot status={session.status} /> {statusLabel(session.status)}
-          </span>
+    <div class="op-lane">
+      <a class="op-lane-main" href={`/session?id=${encodeURIComponent(session.id)}`}>
+        <div class="op-lane-rail" aria-hidden="true" />
+        <div class="op-lane-body">
+          <div class="op-lane-head">
+            <span class="op-lane-issue">ISSUE / {runTag}</span>
+            <span class={`op-lane-status op-lane-status-${session.status}`}>
+              <StatusDot status={session.status} /> {statusLabel(session.status)}
+            </span>
+          </div>
+          <h2 class="op-lane-title">{titleLine} <span class="op-lane-title-sep">·</span> <span class="op-lane-title-name">{session.title}</span></h2>
+          <p class="op-lane-subtitle">{subtitle}</p>
+          <p class="op-lane-phrase">{statusPhrase}</p>
+          <div class="op-lane-stats">
+            <span class="op-stat"><span class="op-stat-k">INPUT</span><span class="op-stat-v">{formatTokens(session.tokensInput)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">OUTPUT</span><span class="op-stat-v">{formatTokens(session.tokensOutput)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">CACHE&nbsp;R</span><span class="op-stat-v">{formatTokens(session.tokensCacheRead)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">REASON</span><span class="op-stat-v">{formatTokens(session.tokensReasoning)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">TOTAL</span><span class="op-stat-v">{formatTokens(totalTokens)}</span></span>
+          </div>
+          <div class="op-lane-grid">
+            <div class="op-grid-cell">
+              <span class="op-grid-k">CODEX THREAD</span>
+              <span class="op-grid-v mono">{shortSessionId(session.id)}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">THREAD FLAGS</span>
+              <span class="op-grid-v mono">{statusLabel(session.status)} · {sourceLabel(session.source)}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">PROTOCOL EVENT</span>
+              <span class="op-grid-v mono">opencode.pty.start</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">BRANCH</span>
+              <span class="op-grid-v mono" title={session.directory}>{branch}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">WORKTREE</span>
+              <span class="op-grid-v mono" title={session.directory || ""}>{worktree}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">BACKLOG OWNERSHIP</span>
+              <span class="op-grid-v mono">{session.projectId || "global"}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">MODEL</span>
+              <span class="op-grid-v mono" title={session.modelProvider ? `${session.modelProvider}` : ""}>{modelDisplay(session)}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">NEXT RETRY</span>
+              <span class="op-grid-v mono">{updatedText} · {relText}</span>
+            </div>
+          </div>
         </div>
-        <h2 class="op-lane-title">{titleLine}</h2>
-        <p class="op-lane-subtitle">{subtitle}</p>
-        <p class="op-lane-phrase">{statusPhrase}</p>
-        <div class="op-lane-stats">
-          <span class="op-stat"><span class="op-stat-k">INPUT</span><span class="op-stat-v">{formatTokens(session.tokensInput)}</span></span>
-          <span class="op-stat"><span class="op-stat-k">OUTPUT</span><span class="op-stat-v">{formatTokens(session.tokensOutput)}</span></span>
-          <span class="op-stat"><span class="op-stat-k">CACHE&nbsp;R</span><span class="op-stat-v">{formatTokens(session.tokensCacheRead)}</span></span>
-          <span class="op-stat"><span class="op-stat-k">REASON</span><span class="op-stat-v">{formatTokens(session.tokensReasoning)}</span></span>
-          <span class="op-stat"><span class="op-stat-k">TOTAL</span><span class="op-stat-v">{formatTokens(totalTokens)}</span></span>
-        </div>
-        <div class="op-lane-grid">
-          <div class="op-grid-cell">
-            <span class="op-grid-k">CODEX THREAD</span>
-            <span class="op-grid-v mono">{shortSessionId(session.id)}</span>
+      </a>
+      {childList && (
+        <details class="op-lane-children">
+          <summary class="op-lane-children-toggle">
+            <span class="op-lane-children-count">{childList.length}</span>
+            <span>子 Session</span>
+            <span class="op-lane-children-arrow" aria-hidden="true">{"▾"}</span>
+          </summary>
+          <div class="op-lane-children-list">
+            {childList.map((c) => <ChildSessionCard child={c} />)}
           </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">THREAD FLAGS</span>
-            <span class="op-grid-v mono">{statusLabel(session.status)} · {sourceLabel(session.source)}</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">PROTOCOL EVENT</span>
-            <span class="op-grid-v mono">opencode.pty.start</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">BRANCH</span>
-            <span class="op-grid-v mono" title={session.directory}>{branch}</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">WORKTREE</span>
-            <span class="op-grid-v mono" title={session.directory || ""}>{worktree}</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">BACKLOG OWNERSHIP</span>
-            <span class="op-grid-v mono">{session.projectId || "global"}</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">MODEL</span>
-            <span class="op-grid-v mono" title={session.modelProvider ? `${session.modelProvider}` : ""}>{modelDisplay(session)}</span>
-          </div>
-          <div class="op-grid-cell">
-            <span class="op-grid-k">NEXT RETRY</span>
-            <span class="op-grid-v mono">{updatedText} · {relText}</span>
-          </div>
-        </div>
-      </div>
-    </a>
+        </details>
+      )}
+    </div>
   )
 }
 
-const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof summarizeSessions> }> = ({ sessions, summary }) => {
-  const source = sessions[0]?.source ?? "db"
+const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof summarizeSessions>; days: number }> = ({ sessions, summary, days }) => {
+  const { top, childrenByParent } = groupSessionsByParent(sessions)
+  // Flow strip and totals count only top-level sessions, not subagent children.
+  const topSummary = summarizeSessions(top)
+  const source = top[0]?.source ?? sessions[0]?.source ?? "db"
   const sourceText = source === "db" ? "sqlite store" : source === "cli" ? "opencode CLI" : "fs fallback"
   return (
     <Layout title="Sessions" active="sessions">
       <section class="op-flow" aria-label="operator flow">
         <div class="op-flow-cell op-flow-backlog">
           <span class="op-flow-k">BACKLOG</span>
-          <span class="op-flow-v">{summary.stale}</span>
+          <span class="op-flow-v">{topSummary.stale}</span>
           <span class="op-flow-hint">stale &gt; 24h</span>
         </div>
         <div class="op-flow-cell op-flow-running">
           <span class="op-flow-k">RUNNING</span>
-          <span class="op-flow-v">{summary.running}</span>
+          <span class="op-flow-v">{topSummary.running}</span>
           <span class="op-flow-hint">&lt; 5m touched</span>
         </div>
         <div class="op-flow-cell op-flow-repair">
           <span class="op-flow-k">REPAIR</span>
-          <span class="op-flow-v">{summary.idle}</span>
+          <span class="op-flow-v">{topSummary.idle}</span>
           <span class="op-flow-hint">idle 5m–24h</span>
         </div>
         <div class="op-flow-cell op-flow-ready">
           <span class="op-flow-k">READY</span>
-          <span class="op-flow-v">{summary.total}</span>
+          <span class="op-flow-v">{topSummary.total}</span>
           <span class="op-flow-hint">total leased</span>
         </div>
       </section>
@@ -250,14 +320,29 @@ const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof sum
       <header class="op-section-head">
         <h1 class="op-section-title">RUNNING LANES</h1>
         <div class="op-section-meta">
-          <span class="op-section-meta-item">{summary.running} RUNNING · {summary.total} LEASED</span>
+          <details class="op-time-filter">
+            <summary class="op-time-filter-toggle">
+              <span class="op-time-filter-icon">◷</span>
+              <span class="op-time-filter-label">{days === 0 ? "全部时间" : `近 ${days} 天`}</span>
+            </summary>
+            <div class="op-time-filter-menu">
+              <a href={sessionsDaysPath(1)} class={days === 1 ? "op-time-filter-option active" : "op-time-filter-option"}>近 1 天</a>
+              <a href={sessionsDaysPath(3)} class={days === 3 ? "op-time-filter-option active" : "op-time-filter-option"}>近 3 天</a>
+              <a href={sessionsDaysPath(7)} class={days === 7 ? "op-time-filter-option active" : "op-time-filter-option"}>近 7 天</a>
+              <a href={sessionsDaysPath(14)} class={days === 14 ? "op-time-filter-option active" : "op-time-filter-option"}>近 14 天</a>
+              <a href={sessionsDaysPath(30)} class={days === 30 ? "op-time-filter-option active" : "op-time-filter-option"}>近 30 天</a>
+              <a href={sessionsDaysPath(0)} class={days === 0 ? "op-time-filter-option active" : "op-time-filter-option"}>全部时间</a>
+            </div>
+          </details>
+          <span class="op-section-meta-item">{topSummary.running} RUNNING · {topSummary.total} LEASED</span>
           <span class="op-section-meta-item muted">via {sourceText}</span>
         </div>
       </header>
 
-      {sessions.length === 0 ? (
+      {top.length === 0 ? (
         <div class="op-empty">
           <p>No OpenCode sessions found.</p>
+          <p class="muted small">No sessions in the selected time range. Try a wider range or <a href={sessionsDaysPath(0)}>view all</a>.</p>
           <p class="muted small">
             Start one with <code>opencode</code> in any project, or ensure{" "}
             <code>~/.local/share/opencode/opencode.db</code> is readable.
@@ -269,7 +354,7 @@ const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof sum
         </div>
       ) : (
         <div class="op-lanes">
-          {sessions.map((s, i) => <SessionLane session={s} index={i} total={sessions.length} />)}
+          {top.map((s, i) => <SessionLane session={s} index={i} total={top.length} childSessions={childrenByParent.get(s.id)} />)}
         </div>
       )}
 
@@ -417,14 +502,18 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
 // Session detail (embedded terminal) page
 // ---------------------------------------------------------------------------
 
-const SessionTerminalPage: FC<{ session: SessionInfo }> = ({ session }) => {
+const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; reqContext?: string }> = ({ session, req, reqContext }) => {
   const updatedText = formatUpdated(session.updated || session.created)
   const worktree = session.worktree || "none"
   const model = modelDisplay(session)
+  const reqId = req ? req.id : ""
+  const ctx = reqContext ?? ""
+  const descSnippet = req && req.description ? req.description.slice(0, 200) : ""
+  const initJs = `window.__REQ_ID__ = ${JSON.stringify(reqId)}; window.__REQ_CONTEXT__ = ${JSON.stringify(ctx)};`
   return (
     <Layout title={`Session ${session.id}`} active="sessions">
       <div class="page-header session-detail-header">
-        <a href="/" class="back-link">← All sessions</a>
+        <a href={SESSIONS_PATH} class="back-link">← All sessions</a>
         <h1 class="mono">{session.title || session.id}</h1>
         <div class="meta-grid">
           <div><span class="field-label">Session</span> <code>{session.id}</code></div>
@@ -436,8 +525,19 @@ const SessionTerminalPage: FC<{ session: SessionInfo }> = ({ session }) => {
           <div><span class="field-label">Updated</span> {updatedText}</div>
           {session.directory ? <div><span class="field-label">Cwd</span> <code>{session.directory}</code></div> : null}
           <div><span class="field-label">Source</span> {sourceLabel(session.source)}</div>
+          {req ? <div><span class="field-label">Requirement</span> <a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></div> : null}
         </div>
       </div>
+
+      {req ? (
+        <details class="req-context-panel" open>
+          <summary>需求上下文 — {req.title} <span class={`req-status-badge req-status-${req.status}`}>{req.status}</span></summary>
+          <div class="req-context-panel-body">
+            {descSnippet ? <div><strong>描述：</strong><pre>{descSnippet}</pre></div> : null}
+            <button id="inject-req-btn" type="button" class="btn btn-secondary">注入需求上下文</button>
+          </div>
+        </details>
+      ) : null}
 
       <div class="terminal-wrap">
         <div class="terminal-header">
@@ -452,7 +552,7 @@ const SessionTerminalPage: FC<{ session: SessionInfo }> = ({ session }) => {
           </div>
         </div>
         <div class="terminal-host-shell">
-          <div id="terminal" class="terminal-host" data-session-id={session.id} />
+          <div id="terminal" class="terminal-host" data-session-id={session.id} data-req-id={reqId} />
         </div>
         <div id="terminal-status" class="terminal-status muted small">connecting…</div>
       </div>
@@ -470,10 +570,12 @@ const SessionTerminalPage: FC<{ session: SessionInfo }> = ({ session }) => {
         </p>
       </section>
 
+      <script dangerouslySetInnerHTML={{ __html: initJs }} />
       <script
         type="module"
         src="/static/terminal.js"
         data-session-id={session.id}
+        data-req-id={reqId}
         dangerouslySetInnerHTML={undefined}
       />
     </Layout>
@@ -483,7 +585,7 @@ const SessionTerminalPage: FC<{ session: SessionInfo }> = ({ session }) => {
 const SessionMissingPage: FC<{ id: string }> = ({ id }) => (
   <Layout title={`Session ${id} not found`} active="sessions">
     <div class="page-header">
-      <a href="/" class="back-link">← All sessions</a>
+      <a href={SESSIONS_PATH} class="back-link">← All sessions</a>
       <h1>Session not available</h1>
       <p class="muted">
         <code>{id}</code> was not found in the OpenCode session list. It may have been archived.
@@ -493,8 +595,239 @@ const SessionMissingPage: FC<{ id: string }> = ({ id }) => (
 )
 
 // ---------------------------------------------------------------------------
+// Requirement pages
+// ---------------------------------------------------------------------------
+
+const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
+  "待设计": "design",
+  "待开发": "pending",
+  "开发中": "dev",
+  "自测中": "selftest",
+  "测试中": "testing",
+  "待上线": "deploy",
+  "已完成": "done",
+}
+
+function reqStatusBadgeClass(status: ReqStatus): string {
+  return `req-status-badge req-status-${REQ_STATUS_SLUG[status]}`
+}
+
+const ProjectsPage: FC<{
+  groups: { project: string; requirements: Requirement[] }[]
+  counts: Record<ReqStatus, number>
+}> = ({ groups, counts }) => {
+  const totalReqs = groups.reduce((acc, g) => acc + g.requirements.length, 0)
+  return (
+    <Layout title="Projects" active="requirements">
+      <section class="req-flow" aria-label="requirement flow">
+        {REQ_STATUSES.map((s) => (
+          <div class={`op-flow-cell req-flow-cell-${REQ_STATUS_SLUG[s]}`}>
+            <span class="op-flow-k">{s}</span>
+            <span class="op-flow-v">{counts[s]}</span>
+          </div>
+        ))}
+      </section>
+
+      <header class="op-section-head">
+        <h1 class="op-section-title">REQUIREMENT BACKLOG</h1>
+        <div class="op-section-meta">
+          <span class="op-section-meta-item">{totalReqs} TRACKED</span>
+          <span class="op-section-meta-item muted">via hermes req-tracker</span>
+        </div>
+      </header>
+
+      {groups.length === 0 ? (
+        <div class="op-empty"><p>No projects yet.</p></div>
+      ) : (
+        <div class="proj-list">
+          {groups.map(({ project, requirements }, i) => {
+            const isOpen = project === DEFAULT_PROJECT_NAME || i === 0
+            const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
+            return (
+              <details class="proj-card" open={isOpen}>
+                <summary class="proj-card-header">
+                  <span class="proj-card-name">{project}</span>
+                  <span class="proj-card-meta">
+                    <span class="proj-card-count">{requirements.length} 需求</span>
+                    {latest > 0 ? <span>更新于 {formatRelAgo(latest)}</span> : null}
+                  </span>
+                </summary>
+                <div class="proj-card-body">
+                  {requirements.length === 0 ? (
+                    <p class="muted small" style="padding: 8px 0">暂无需求</p>
+                  ) : (
+                    <div class="req-list">
+                      {requirements.map((r) => {
+                        const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
+                        return (
+                          <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
+                            <div class="req-card-header">
+                              <span class="req-card-title">{r.title}</span>
+                              <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+                            </div>
+                            <div class="req-card-body">{snippet}</div>
+                            <div class="req-card-footer">
+                              <span>{r.sessionIds.length} session(s)</span>
+                              <span>更新于 {formatRelAgo(r.updatedAt)}</span>
+                            </div>
+                          </a>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </details>
+            )
+          })}
+        </div>
+      )}
+    </Layout>
+  )
+}
+
+const HermesFileSection: FC<{ title: string; content?: string }> = ({ title, content }) => {
+  if (!content) return null
+  return (
+    <section class="req-hermes-section">
+      <h2 class="op-section-title">{title}</h2>
+      <pre style="white-space: pre-wrap; max-height: 320px; overflow: auto; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{content}</pre>
+    </section>
+  )
+}
+
+const ACTIVE_STATUSES: ReqStatus[] = ["开发中", "自测中", "测试中"]
+
+function pickMostRecentSession(sessions: SessionInfo[]): SessionInfo | null {
+  if (sessions.length === 0) return null
+  return [...sessions].sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0))[0]
+}
+
+const RequirementDetailPage: FC<{
+  req: Requirement
+  associated: SessionInfo[]
+  unassociated: SessionInfo[]
+  branchContent?: string
+  notesContent?: string
+  testContent?: string
+  configContent?: string
+}> = ({ req, associated, unassociated, branchContent, notesContent, testContent, configContent }) => {
+  const currentIdx = REQ_STATUSES.indexOf(req.status)
+  const description = (req.description || "").trim()
+  return (
+    <Layout title={`Requirement ${req.title}`} active="requirements">
+      <div class="req-detail">
+      <div class="page-header">
+        <a href="/projects" class="back-link">← All requirements</a>
+        <h1>{req.title} <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span></h1>
+        <div class="meta-grid">
+          <div><span class="field-label">项目</span> {req.project}</div>
+          <div><span class="field-label">Req ID</span> <code>{req.id}</code></div>
+          <div><span class="field-label">更新于</span> {formatRelAgo(req.updatedAt)}</div>
+        </div>
+      </div>
+
+      {ACTIVE_STATUSES.includes(req.status) ? (
+        (() => {
+          const recent = pickMostRecentSession(associated)
+          if (recent) {
+            return (
+              <div class="req-continue-task">
+                <a class="btn btn-primary" href={`/session?id=${encodeURIComponent(recent.id)}&req=${encodeURIComponent(req.id)}`}>
+                  继续任务 →
+                </a>
+                <span class="muted small" style="margin-left: 8px;">
+                  复用 session {recent.id.slice(0, 16)}… · {formatRelAgo(recent.updated || recent.created)}
+                </span>
+              </div>
+            )
+          } else {
+            return (
+              <form method="post" action="/api/requirement/new-session" class="req-continue-task">
+                <input type="hidden" name="reqId" value={req.id} />
+                <button type="submit" class="btn btn-primary">继续任务 →</button>
+                <span class="muted small" style="margin-left: 8px;">将创建新 session 并关联此需求</span>
+              </form>
+            )
+          }
+        })()
+      ) : null}
+
+      <div class="req-status-flow">
+        {REQ_STATUSES.map((s, i) => {
+          const cls = i === currentIdx ? "req-flow-step active" : i < currentIdx ? "req-flow-step done" : "req-flow-step"
+          return <span class={cls}>{s}</span>
+        })}
+      </div>
+
+      {description ? (
+        <section class="req-hermes-section">
+          <h2 class="op-section-title">描述</h2>
+          <pre style="white-space: pre-wrap; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{description}</pre>
+        </section>
+      ) : null}
+
+      <HermesFileSection title="分支信息" content={branchContent} />
+      <HermesFileSection title="开发笔记" content={notesContent} />
+      <HermesFileSection title="测试范围" content={testContent} />
+      <HermesFileSection title="配置变更" content={configContent} />
+
+      <section class="req-sessions">
+        <h2 class="op-section-title">关联 Sessions ({associated.length})</h2>
+        {associated.length === 0 ? (
+          <p class="muted small">暂无关联的 session。</p>
+        ) : (
+          <ul class="req-session-list">
+            {associated.map((s) => (
+              <li>
+                <a href={`/session?id=${encodeURIComponent(s.id)}&req=${encodeURIComponent(req.id)}`}>
+                  <code>{s.id}</code>
+                </a>
+                <span class="muted small">{s.title || ""}</span>
+                <span class="muted small">{formatRelAgo(s.updated || s.created)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form method="post" action="/api/requirement/new-session" class="req-form-actions" style="margin-top: 12px;">
+          <input type="hidden" name="reqId" value={req.id} />
+          <button type="submit" class="btn btn-primary">新建 Session</button>
+        </form>
+
+        {unassociated.length > 0 ? (
+          <form method="post" action="/api/requirement/associate" class="req-form-actions" style="margin-top: 12px;">
+            <input type="hidden" name="reqId" value={req.id} />
+            <select name="sessionId" required>
+              <option value="">— 选择已有 session —</option>
+              {unassociated.map((s) => (
+                <option value={s.id}>{s.id} — {(s.title || "(untitled)").slice(0, 60)}</option>
+              ))}
+            </select>
+            <button type="submit" class="btn btn-secondary">关联已有 Session</button>
+          </form>
+        ) : null}
+      </section>
+      </div>
+    </Layout>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Hono app
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse the `days` query parameter for the sessions page time filter.
+ * - missing / invalid / negative -> default 7 days
+ * - 0 -> "all time" (no filter)
+ * - positive integer -> that many days
+ */
+function parseDaysParam(raw: string | undefined): number {
+  if (!raw) return 7
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return 7
+  return Math.floor(n)
+}
 
 const app = new Hono()
 
@@ -543,18 +876,42 @@ app.get("/vendor/xterm/xterm.css", vendorFile("@xterm/xterm", "css/xterm.css", "
 app.get("/vendor/xterm/xterm.js", vendorFile("@xterm/xterm", "lib/xterm.js", "application/javascript"))
 app.get("/vendor/xterm-addon-fit/addon-fit.js", vendorFile("@xterm/addon-fit", "lib/addon-fit.js", "application/javascript"))
 
-// Sessions landing page
-app.get("/", async (c) => {
-  const sessions = await scanSessions()
+// Projects (requirements) landing page — the site homepage.
+async function renderProjectsPage(c: Context) {
+  const groups = await listRequirementsByProject()
+  const counts: Record<ReqStatus, number> = {
+    "待设计": 0,
+    "待开发": 0,
+    "开发中": 0,
+    "自测中": 0,
+    "测试中": 0,
+    "待上线": 0,
+    "已完成": 0,
+  }
+  for (const g of groups) {
+    for (const r of g.requirements) counts[r.status] += 1
+  }
+  return c.html(<ProjectsPage groups={groups} counts={counts} />)
+}
+
+app.get("/", async (c) => renderProjectsPage(c))
+
+// Sessions landing page (was previously at "/")
+app.get("/sessions", async (c) => {
+  const days = parseDaysParam(c.req.query("days"))
+  const maxAgeMs = days > 0 ? days * 24 * 60 * 60 * 1000 : undefined
+  const sessions = await scanSessions(false, maxAgeMs)
   const summary = summarizeSessions(sessions)
-  return c.html(<SessionsPage sessions={sessions} summary={summary} />)
+  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} />)
 })
 
 // Refresh cache: re-scan sessions.
 app.get("/sessions/refresh", async (c) => {
-  const sessions = await scanSessions(true)
+  const days = parseDaysParam(c.req.query("days"))
+  const maxAgeMs = days > 0 ? days * 24 * 60 * 60 * 1000 : undefined
+  const sessions = await scanSessions(true, maxAgeMs)
   const summary = summarizeSessions(sessions)
-  return c.html(<SessionsPage sessions={sessions} summary={summary} />)
+  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} />)
 })
 
 // Reports list (the original / path moved here)
@@ -584,11 +941,128 @@ app.get("/session", async (c) => {
   if (!id) {
     return c.text("Missing session id", 400)
   }
-  const session = await getSession(id)
+  if (!isValidSessionId(id)) {
+    return c.text("Invalid session id", 400)
+  }
+  const reqIdParam = c.req.query("req")
+  let session = await getSession(id)
+  let req: Requirement | null = null
+  if (reqIdParam) {
+    req = await getRequirement(reqIdParam)
+  }
+  if (!session && req) {
+    // Synthesize a minimal SessionInfo so the terminal page can render
+    // for a freshly-generated session id that opencode has not yet
+    // persisted. The PTY layer will spawn `opencode --session <id>`
+    // and let opencode itself create the session row.
+    const now = Date.now()
+    session = {
+      id,
+      title: "New session",
+      status: "running",
+      source: "fs",
+      created: now,
+      updated: now,
+      projectId: "",
+      directory: "",
+    }
+  }
   if (!session) {
     return c.html(<SessionMissingPage id={id} />, 404)
   }
-  return c.html(<SessionTerminalPage session={session} />)
+  // If req param wasn't supplied, fall back to the requirement that
+  // already owns this session (so the panel renders even without a
+  // ?req= query string).
+  if (!req) {
+    req = await getRequirementForSession(id)
+  }
+  const reqContext = req ? await buildInjectionContext(req.id) : ""
+  return c.html(<SessionTerminalPage session={session} req={req} reqContext={reqContext} />)
+})
+
+// ---------------------------------------------------------------------------
+// Requirement routes
+// ---------------------------------------------------------------------------
+
+app.get("/projects", async (c) => renderProjectsPage(c))
+
+app.get("/requirements", (c) => c.redirect("/projects", 302))
+
+app.get("/requirement", async (c) => {
+  const id = c.req.query("id")
+  if (!id) return c.text("Missing requirement id", 400)
+  const req = await getRequirement(id)
+  if (!req) return c.text("Requirement not found", 404)
+
+  // Auto-create a session for active requirements that have none.
+  if (ACTIVE_STATUSES.includes(req.status) && req.sessionIds.length === 0) {
+    const newId = generateSessionId()
+    await associateSession(req.id, newId)
+    return c.redirect(`/session?id=${encodeURIComponent(newId)}&req=${encodeURIComponent(req.id)}&inject=1`, 302)
+  }
+
+  const readFileSafe = async (path?: string): Promise<string | undefined> => {
+    if (!path || !existsSync(path)) return undefined
+    try {
+      const raw = await readFile(path, "utf-8")
+      return raw
+    } catch {
+      return undefined
+    }
+  }
+  const [branchContent, notesContent, testContent, configContent] = await Promise.all([
+    readFileSafe(req.branchPath),
+    readFileSafe(req.notesPath),
+    readFileSafe(req.testPath),
+    readFileSafe(req.configPath),
+  ])
+
+  const sessions = await scanSessions()
+  const associatedAll = await getAllAssociatedSessionIds()
+  const associated = sessions.filter((s) => req.sessionIds.includes(s.id))
+  const unassociated = sessions.filter(
+    (s) => !s.parentId && !associatedAll.has(s.id) && !req.sessionIds.includes(s.id)
+  )
+  return c.html(
+    <RequirementDetailPage
+      req={req}
+      associated={associated}
+      unassociated={unassociated}
+      branchContent={branchContent}
+      notesContent={notesContent}
+      testContent={testContent}
+      configContent={configContent}
+    />
+  )
+})
+
+app.post("/api/requirement/new-session", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  if (!reqId) return c.text("Missing reqId", 400)
+  const exists = await getRequirement(reqId)
+  if (!exists) return c.text("Requirement not found", 404)
+  const newId = generateSessionId()
+  await associateSession(reqId, newId)
+  return c.redirect(`/session?id=${encodeURIComponent(newId)}&req=${encodeURIComponent(reqId)}&inject=1`, 303)
+})
+
+app.post("/api/requirement/associate", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  if (!reqId || !sessionId) return c.text("Missing reqId or sessionId", 400)
+  if (!isValidSessionId(sessionId)) return c.text("Invalid session id", 400)
+  const exists = await getRequirement(reqId)
+  if (!exists) return c.text("Requirement not found", 404)
+  await associateSession(reqId, sessionId)
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+app.get("/api/requirements", async (c) => {
+  const groups = await listRequirementsByProject()
+  const requirements = groups.flatMap((g) => g.requirements)
+  return c.json({ requirements })
 })
 
 // API: confirm or reject candidates (unchanged)
@@ -699,6 +1173,27 @@ app.get(
           try {
             ws.send(JSON.stringify({ type: "ready", id: result.id, cols: result.cols, rows: result.rows }))
           } catch { /* noop */ }
+
+          // If a requirement is associated, inject the context after a
+          // short delay so opencode's TUI has time to settle into its
+          // input prompt before we feed it text + Enter.
+          const reqId = url?.searchParams.get("req") ?? ""
+          const autoInject = shouldAutoInjectRequirementContext(url)
+          if (reqId && autoInject) {
+            try {
+              const req = await getRequirement(reqId)
+              if (req) {
+                const ctx = await buildInjectionContext(req.id)
+                setTimeout(() => {
+                  if (exited || !session) return
+                  try {
+                    writeToSession(session, ctx + "\r")
+                    ws.send(JSON.stringify({ type: "injected" }))
+                  } catch { /* noop */ }
+                }, 3000)
+              }
+            } catch { /* noop */ }
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
           try {

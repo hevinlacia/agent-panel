@@ -17,6 +17,8 @@
     setStatus("error: missing session id")
     return
   }
+  const reqId = params.get("req") || host.dataset.reqId || (typeof window.__REQ_ID__ === "string" ? window.__REQ_ID__ : "")
+  const autoInject = params.get("inject") === "1"
 
   // Style helpers -----------------------------------------------------------
   const THEME = {
@@ -92,7 +94,8 @@
 
     setStatus("connecting…")
     const proto = window.location.protocol === "https:" ? "wss" : "ws"
-    const ws = new WebSocket(`${proto}://${window.location.host}/ws/session-terminal?id=${encodeURIComponent(id)}`)
+    const wsUrl = `${proto}://${window.location.host}/ws/session-terminal?id=${encodeURIComponent(id)}` + (reqId ? `&req=${encodeURIComponent(reqId)}` : "") + (autoInject ? "&inject=1" : "")
+    const ws = new WebSocket(wsUrl)
     ws.binaryType = "arraybuffer"
 
     let ready = false
@@ -156,6 +159,17 @@
             term.write("\r\n\x1b[31m[error] " + String(parsed.message).replace(/\x1b/g, "") + "\x1b[0m\r\n")
             return
           }
+          if (parsed.type === "injected") {
+            setStatus("已注入需求上下文")
+            try {
+              const u = new URL(window.location.href)
+              if (u.searchParams.has("inject")) {
+                u.searchParams.delete("inject")
+                window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "") + u.hash)
+              }
+            } catch { /* noop */ }
+            return
+          }
         }
       }
       term.write(raw)
@@ -185,6 +199,28 @@
       try { fit.fit() } catch { /* noop */ }
       pushResize()
     })
+
+    // Manual "注入需求上下文" button: send the prepared context blob + Enter.
+    const injectBtn = document.getElementById("inject-req-btn")
+    if (injectBtn) {
+      injectBtn.addEventListener("click", () => {
+        const ctx = typeof window.__REQ_CONTEXT__ === "string" ? window.__REQ_CONTEXT__ : ""
+        if (!ctx) {
+          setStatus("error: 没有可注入的需求上下文")
+          return
+        }
+        if (ws.readyState !== 1) {
+          setStatus("error: WebSocket 未连接")
+          return
+        }
+        try {
+          ws.send(ctx + "\r")
+          setStatus("已手动注入需求上下文")
+        } catch (err) {
+          setStatus("error: 注入失败 " + (err && err.message ? err.message : String(err)))
+        }
+      })
+    }
   }
 
   function loadCss(href) {

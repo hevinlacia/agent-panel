@@ -40,6 +40,8 @@ npm run typecheck
 | --- | --- |
 | `/` | **Sessions** 仪表盘（默认落地页）。状态条 + session 列表 + 嵌入终端入口。 |
 | `/session?id=<ses_...>` | 选中单个 session 的详情页，内嵌 xterm 终端直连 `opencode --session <id>`。 |
+| `/projects` | 需求管理页面（从 Hermes `~/.agents/req/` 读取需求数据，按项目分组展示）。 |
+| `/requirement?id=<req_...>` | 需求详情页（只读展示 Hermes 管理的需求元数据 + 关联 session）。 |
 | `/reports` | Experience report 列表（原 `/` 路径平移到这里）。 |
 | `/report?path=...` | 单个 report 详情与 candidate 勾选/确认。 |
 | `/sessions/refresh` | 强制刷新 session 缓存后重新渲染列表。 |
@@ -85,7 +87,7 @@ npm run typecheck
 
 `/` 重新设计为 Operator 风格：
 
-- 顶部 thin console 顶栏：`OpenCode Operator | SNAPSHOT READY` + `SYSTEM LIGHT DARK REFRESH` 状态行；下接 `/sessions /reports /api/sessions` 路由行。
+- 顶部 thin console 顶栏：`OpenCode Operator | SNAPSHOT READY` + `SYSTEM LIGHT DARK REFRESH` 状态行；下接 `/sessions /requirements /reports` 路由行。
 - 顶部 flow 条：4 列 `BACKLOG / RUNNING / REPAIR / READY`（实际取 `stale / running / idle / total`），来自 `summarizeSessions`。
 - `RUNNING LANES` 段：每条 session 是一个 Operator lane，依次展示
   `ISSUE / RUN-LANE-NNN` → `Agent Run` → `OpenCode {agent} thread is active.` → 状态短语 → token 统计条 →

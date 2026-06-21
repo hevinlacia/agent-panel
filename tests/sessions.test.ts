@@ -12,7 +12,7 @@ import { test } from "node:test"
 import { strict as assert } from "node:assert"
 import { homedir } from "node:os"
 
-import { parseModelString, deriveWorktree } from "../src/sessions.ts"
+import { parseModelString, deriveWorktree, groupSessionsByParent, applyAgeFilter, type SessionInfo } from "../src/sessions.ts"
 
 test("parseModelString: parses the canonical OpenCode model JSON", () => {
   const raw = JSON.stringify({
@@ -102,4 +102,148 @@ test("deriveWorktree: strips leading slashes from `path`", () => {
   // an artifact of broken rows and should not leak into the UI.
   const out = deriveWorktree({ directory: "", path: "/GitHub/opencode-dashboard" })
   assert.equal(out, "~/GitHub/opencode-dashboard")
+})
+
+
+// ---------------------------------------------------------------------------
+// groupSessionsByParent
+// ---------------------------------------------------------------------------
+
+function mkSession(over: Partial<SessionInfo> & { id: string }): SessionInfo {
+  return {
+    id: over.id,
+    title: over.title ?? `title-${over.id}`,
+    created: over.created ?? 1_000_000,
+    updated: over.updated ?? 1_000_000,
+    projectId: over.projectId ?? "global",
+    directory: over.directory ?? "",
+    status: over.status ?? "idle",
+    source: over.source ?? "db",
+    parentId: over.parentId,
+  }
+}
+
+test("groupSessionsByParent: top-level sessions (no parentId) appear in top", () => {
+  const sessions = [
+    mkSession({ id: "ses_aaa" }),
+    mkSession({ id: "ses_bbb" }),
+  ]
+  const { top, childrenByParent } = groupSessionsByParent(sessions)
+  assert.equal(top.length, 2)
+  assert.deepEqual(top.map((s) => s.id).sort(), ["ses_aaa", "ses_bbb"])
+  assert.equal(childrenByParent.size, 0)
+})
+
+test("groupSessionsByParent: children are bucketed under the correct parent", () => {
+  const sessions = [
+    mkSession({ id: "ses_parent" }),
+    mkSession({ id: "ses_child1", parentId: "ses_parent" }),
+    mkSession({ id: "ses_child2", parentId: "ses_parent" }),
+    mkSession({ id: "ses_other" }),
+  ]
+  const { top, childrenByParent } = groupSessionsByParent(sessions)
+  assert.equal(top.length, 2)
+  assert.ok(top.some((s) => s.id === "ses_parent"))
+  assert.ok(top.some((s) => s.id === "ses_other"))
+  const kids = childrenByParent.get("ses_parent")
+  assert.ok(kids, "expected childrenByParent entry for ses_parent")
+  assert.equal(kids!.length, 2)
+  assert.deepEqual(
+    kids!.map((s) => s.id).sort(),
+    ["ses_child1", "ses_child2"],
+  )
+  assert.equal(childrenByParent.has("ses_other"), false)
+})
+
+test("groupSessionsByParent: orphan children (parentId not in id set) fall back to top", () => {
+  const sessions = [
+    mkSession({ id: "ses_orphan1", parentId: "ses_missing1" }),
+    mkSession({ id: "ses_orphan2", parentId: "ses_missing2" }),
+    mkSession({ id: "ses_real" }),
+  ]
+  const { top, childrenByParent } = groupSessionsByParent(sessions)
+  assert.equal(top.length, 3)
+  assert.equal(childrenByParent.size, 0)
+})
+
+test("groupSessionsByParent: children are sorted by updated desc within each parent", () => {
+  const sessions = [
+    mkSession({ id: "ses_parent" }),
+    mkSession({ id: "ses_oldest", parentId: "ses_parent", updated: 1000 }),
+    mkSession({ id: "ses_newest", parentId: "ses_parent", updated: 5000 }),
+    mkSession({ id: "ses_middle", parentId: "ses_parent", updated: 3000 }),
+  ]
+  const { childrenByParent } = groupSessionsByParent(sessions)
+  const kids = childrenByParent.get("ses_parent")!
+  assert.deepEqual(
+    kids.map((s) => s.id),
+    ["ses_newest", "ses_middle", "ses_oldest"],
+  )
+})
+
+test("groupSessionsByParent: empty input returns empty top and empty map", () => {
+  const { top, childrenByParent } = groupSessionsByParent([])
+  assert.deepEqual(top, [])
+  assert.equal(childrenByParent.size, 0)
+})
+
+
+// ---------------------------------------------------------------------------
+// applyAgeFilter
+// ---------------------------------------------------------------------------
+
+test("applyAgeFilter: undefined maxAgeMs returns the input untouched", () => {
+  const now = Date.now()
+  const sessions = [
+    mkSession({ id: "ses_a", updated: now }),
+    mkSession({ id: "ses_b", updated: now - 60_000 }),
+  ]
+  const out = applyAgeFilter(sessions, undefined)
+  assert.equal(out, sessions)
+  assert.equal(out.length, 2)
+})
+
+test("applyAgeFilter: filters out sessions older than maxAgeMs", () => {
+  const now = Date.now()
+  const sessions = [
+    mkSession({ id: "ses_fresh", updated: now - 10_000 }),       // 10s ago
+    mkSession({ id: "ses_recent", updated: now - 30_000 }),      // 30s ago
+    mkSession({ id: "ses_old", updated: now - 5 * 60_000 }),     // 5m ago
+    mkSession({ id: "ses_ancient", updated: now - 24 * 3600_000 }), // 1d ago
+  ]
+  // 1 minute window: only the two newer sessions survive.
+  const out = applyAgeFilter(sessions, 60_000)
+  assert.deepEqual(out.map((s) => s.id), ["ses_fresh", "ses_recent"])
+})
+
+test("applyAgeFilter: zero or negative maxAgeMs disables the filter", () => {
+  const now = Date.now()
+  const sessions = [
+    mkSession({ id: "ses_a", updated: now - 10 * 365 * 24 * 3600_000 }),
+    mkSession({ id: "ses_b", updated: now }),
+  ]
+  assert.equal(applyAgeFilter(sessions, 0).length, 2)
+  assert.equal(applyAgeFilter(sessions, -1).length, 2)
+})
+
+test("applyAgeFilter: non-finite maxAgeMs disables the filter", () => {
+  const now = Date.now()
+  const sessions = [mkSession({ id: "ses_a", updated: now - 1_000_000 })]
+  assert.equal(applyAgeFilter(sessions, Number.NaN).length, 1)
+  assert.equal(applyAgeFilter(sessions, Number.POSITIVE_INFINITY).length, 1)
+})
+
+test("applyAgeFilter: empty input returns empty array", () => {
+  const out = applyAgeFilter([], 60_000)
+  assert.deepEqual(out, [])
+})
+
+test("applyAgeFilter: falls back to `created` when `updated` is 0", () => {
+  const now = Date.now()
+  const sessions = [
+    mkSession({ id: "ses_a", updated: 0, created: now - 10_000 }),  // recent via created
+    mkSession({ id: "ses_b", updated: 0, created: now - 5 * 60_000 }), // 5m old via created
+  ]
+  const out = applyAgeFilter(sessions, 60_000)
+  assert.deepEqual(out.map((s) => s.id), ["ses_a"])
 })

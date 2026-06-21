@@ -14,7 +14,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
-export const MAX_SESSIONS = 50
+export const MAX_SESSIONS = 200
 export const SESSION_ID_RE = /^ses_[A-Za-z0-9]+$/
 export const SESSION_STORAGE_DIR = join(homedir(), ".local", "share", "opencode", "storage", "session_diff")
 export const DEFAULT_DB_PATH = join(homedir(), ".local", "share", "opencode", "opencode.db")
@@ -49,6 +49,8 @@ export type SessionInfo = {
   tokensCacheRead?: number
   tokensCacheWrite?: number
   cost?: number
+  /** SQLite parent_id column; null/undefined for top-level sessions. */
+  parentId?: string | null
 }
 
 type RawSession = {
@@ -67,6 +69,7 @@ type RawSession = {
   tokensReasoning?: unknown
   tokensCacheRead?: unknown
   tokensCacheWrite?: unknown
+  parentId?: unknown
 }
 
 function toNumber(v: unknown): number {
@@ -161,6 +164,7 @@ function normalizeSession(raw: RawSession, source: "db" | "cli" | "fs"): Session
   const directory = typeof raw.directory === "string" ? raw.directory : ""
   const path = typeof raw.path === "string" ? raw.path : undefined
   const agent = typeof raw.agent === "string" && raw.agent.length > 0 ? raw.agent : undefined
+  const parentId = typeof raw.parentId === "string" && raw.parentId.length > 0 ? raw.parentId : null
   const tokens = {
     input: toNumber(raw.tokensInput),
     output: toNumber(raw.tokensOutput),
@@ -184,6 +188,7 @@ function normalizeSession(raw: RawSession, source: "db" | "cli" | "fs"): Session
   }
   if (path) out.path = path
   if (agent) out.agent = agent
+  if (parentId) out.parentId = parentId
   if (worktree) out.worktree = worktree
   if (model.modelId) out.modelId = model.modelId
   if (model.modelProvider) out.modelProvider = model.modelProvider
@@ -211,6 +216,7 @@ select
   time_created  as created,
   time_updated  as updated,
   agent         as agent,
+  parent_id     as parentId,
   model         as model,
   cost          as cost,
   tokens_input        as tokensInput,
@@ -386,9 +392,23 @@ async function readSessionDiffFallback(): Promise<SessionInfo[]> {
 let cache: { at: number; data: SessionInfo[] } | null = null
 const CACHE_TTL_MS = 4_000
 
-export async function scanSessions(force = false): Promise<SessionInfo[]> {
+/**
+ * Filter sessions whose `updated` (or `created` as fallback) timestamp
+ * is older than `Date.now() - maxAgeMs`. A non-positive or non-finite
+ * `maxAgeMs` disables the filter and returns the input as-is.
+ *
+ * Exported for unit testing — kept side-effect-free so different time
+ * windows can reuse the same cached unfiltered list in `scanSessions`.
+ */
+export function applyAgeFilter(sessions: SessionInfo[], maxAgeMs?: number): SessionInfo[] {
+  if (!maxAgeMs || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0) return sessions
+  const cutoff = Date.now() - maxAgeMs
+  return sessions.filter((s) => (s.updated || s.created || 0) >= cutoff)
+}
+
+export async function scanSessions(force = false, maxAgeMs?: number): Promise<SessionInfo[]> {
   if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS) {
-    return cache.data
+    return applyAgeFilter(cache.data, maxAgeMs)
   }
   // 1) SQLite is the cheapest and richest source.
   let list = await runSqliteScan(DEFAULT_DB_PATH)
@@ -397,8 +417,10 @@ export async function scanSessions(force = false): Promise<SessionInfo[]> {
   // 3) Last resort: filesystem mtime scan.
   if (!list) list = await readSessionDiffFallback()
   list.sort((a, b) => b.updated - a.updated)
+  // Cache the *unfiltered* list so different `maxAgeMs` windows can
+  // reuse it within CACHE_TTL_MS without re-scanning the DB.
   cache = { at: Date.now(), data: list }
-  return list
+  return applyAgeFilter(list, maxAgeMs)
 }
 
 export function clearSessionCache(): void {
@@ -427,6 +449,43 @@ export function summarizeSessions(sessions: SessionInfo[]): {
     else stale++
   }
   return { total: sessions.length, running, idle, stale }
+}
+
+/**
+ * Group sessions into top-level and a children map keyed by parent id.
+ *
+ * - Top-level: sessions with no parentId, OR whose parentId does not
+ *   match any session id in the input (orphan children whose parent
+ *   was archived or otherwise missing from the scan).
+ * - childrenByParent: parentId -> list of child sessions, sorted by
+ *   `updated` descending so the freshest child is first.
+ */
+export function groupSessionsByParent(sessions: SessionInfo[]): {
+  top: SessionInfo[]
+  childrenByParent: Map<string, SessionInfo[]>
+} {
+  const idSet = new Set<string>()
+  for (const s of sessions) idSet.add(s.id)
+
+  const childrenByParent = new Map<string, SessionInfo[]>()
+  const top: SessionInfo[] = []
+
+  for (const s of sessions) {
+    const pid = s.parentId
+    if (typeof pid === "string" && pid.length > 0 && idSet.has(pid)) {
+      const list = childrenByParent.get(pid)
+      if (list) list.push(s)
+      else childrenByParent.set(pid, [s])
+    } else {
+      top.push(s)
+    }
+  }
+
+  for (const list of childrenByParent.values()) {
+    list.sort((a, b) => b.updated - a.updated)
+  }
+
+  return { top, childrenByParent }
 }
 
 /**
