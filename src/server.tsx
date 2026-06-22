@@ -5,7 +5,7 @@ import { type FC } from "hono/jsx"
 import { serve } from "@hono/node-server"
 import { upgradeWebSocket } from "@hono/node-server"
 import { WebSocketServer } from "ws"
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile, appendFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -17,6 +17,7 @@ import {
   summarizeSessions,
   groupSessionsByParent,
   isValidSessionId,
+  clearSessionCache,
   type SessionInfo,
 } from "./sessions.ts"
 import {
@@ -29,6 +30,7 @@ import {
 } from "./terminal.ts"
 import { resolveHandoffPath } from "./paths.ts"
 import { shouldAutoInjectRequirementContext } from "./terminalUrl.ts"
+import { writeRequirementStatus, nextStatus, readRequirementState, type RequirementState } from "./requirementState.ts"
 import {
   REQ_STATUSES,
   type ReqStatus,
@@ -36,13 +38,51 @@ import {
   listRequirementsByProject,
   getRequirement,
   associateSession,
+  replaceAssociatedSession,
   getRequirementForSession,
   getAllAssociatedSessionIds,
-  generateSessionId,
   buildInjectionContext,
   DEFAULT_REQ_ID,
   DEFAULT_PROJECT_NAME,
 } from "./requirements.ts"
+import {
+  buildExtractPrompt,
+  appendSummaryToNotes,
+} from "./sessionExtract.ts"
+import {
+  createExtractJob,
+  getExtractJob,
+  findRunningJobForSession,
+  JobConflictError,
+  type ExtractJob,
+} from "./extractJobs.ts"
+import {
+  initNotifications,
+  getNotifications,
+  getNotification,
+  getUnreadCount,
+  dismissNotification,
+  dismissAll,
+  markAllRead,
+} from "./notifications.ts"
+import {
+  getConfig,
+  setConfig,
+  initConfig,
+  type AppConfig,
+} from "./config.ts"
+import {
+  buildReleaseChecklist,
+  type ReleaseChecklist,
+  type ChecklistFiles,
+} from "./releaseChecklist.ts"
+import {
+  buildAutoExtractPrompt,
+  parseAutoExtractOutput,
+  filterAllowed,
+  type AutoExtractResult,
+  type ContextFiles,
+} from "./autoExtract.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -78,10 +118,24 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
             <span class="op-brand-status">SNAPSHOT READY</span>
           </div>
           <div class="op-meta">
-            <span class="op-meta-item">SYSTEM</span>
-            <span class="op-meta-item">LIGHT</span>
-            <span class="op-meta-item">DARK</span>
-            <a class="op-meta-item op-refresh" href="/sessions/refresh" title="Force refresh">REFRESH</a>
+            <div class="op-notify" id="op-notify">
+              <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
+                <span class="op-notify-icon" aria-hidden="true">🔔</span>
+                <span class="op-notify-badge" id="op-notify-badge" hidden>0</span>
+              </button>
+              <div class="op-notify-panel" id="op-notify-panel" hidden role="dialog" aria-label="通知列表">
+                <div class="op-notify-panel-head">
+                  <span class="op-notify-panel-title">通知中心</span>
+                  <div class="op-notify-panel-actions">
+                    <button type="button" class="op-notify-link" id="op-notify-mark-read">全部标记已读</button>
+                    <button type="button" class="op-notify-link" id="op-notify-dismiss-all">全部清除</button>
+            </div>
+            <a href="/settings" class="op-meta-item op-settings-link" title="设置">⚙</a>
+          </div>
+                <ul class="op-notify-list" id="op-notify-list"></ul>
+                <div class="op-notify-empty" id="op-notify-empty" hidden>暂无通知</div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="op-topbar-row op-topbar-routes">
@@ -94,6 +148,8 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
         </div>
       </header>
       <main class={(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}>{children}</main>
+      <div id="op-toast-host" class="op-toast-host" aria-live="polite" aria-atomic="false"></div>
+      <script src="/static/notifications.js" defer></script>
       <script src="/static/app.js" defer></script>
     </body>
   </html>
@@ -502,21 +558,25 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
 // Session detail (embedded terminal) page
 // ---------------------------------------------------------------------------
 
-const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; reqContext?: string }> = ({ session, req, reqContext }) => {
+const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; reqContext?: string; createNew?: boolean }> = ({ session, req, reqContext, createNew }) => {
   const updatedText = formatUpdated(session.updated || session.created)
   const worktree = session.worktree || "none"
   const model = modelDisplay(session)
   const reqId = req ? req.id : ""
   const ctx = reqContext ?? ""
   const descSnippet = req && req.description ? req.description.slice(0, 200) : ""
-  const initJs = `window.__REQ_ID__ = ${JSON.stringify(reqId)}; window.__REQ_CONTEXT__ = ${JSON.stringify(ctx)};`
+  const isNew = createNew === true
+  const initJs = `window.__REQ_ID__ = ${JSON.stringify(reqId)}; window.__REQ_CONTEXT__ = ${JSON.stringify(ctx)}; window.__CREATE_NEW__ = ${JSON.stringify(isNew)};`
+  const terminalTitle = isNew
+    ? (req ? `opencode run -i --title ${JSON.stringify(req.title).slice(1, -1)}` : "opencode run -i")
+    : `opencode --session ${session.id}`
   return (
-    <Layout title={`Session ${session.id}`} active="sessions">
+    <Layout title={`Session ${session.id || "new"}`} active="sessions">
       <div class="page-header session-detail-header">
         <a href={SESSIONS_PATH} class="back-link">← All sessions</a>
-        <h1 class="mono">{session.title || session.id}</h1>
+        <h1 class="mono">{session.title || session.id || "New session"}</h1>
         <div class="meta-grid">
-          <div><span class="field-label">Session</span> <code>{session.id}</code></div>
+          <div><span class="field-label">Session</span> <code>{session.id || (isNew ? "(pending — opencode 创建中)" : "—")}</code></div>
           <div><span class="field-label">Status</span> <span class={`status-pill status-${session.status}`}>{statusLabel(session.status)}</span></div>
           <div><span class="field-label">Project</span> {session.projectId || "global"}</div>
           <div><span class="field-label">Agent</span> {session.agent || "—"}</div>
@@ -545,7 +605,7 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
             <span class="dot dot-red" />
             <span class="dot dot-yellow" />
             <span class="dot dot-green" />
-            <span class="terminal-title mono">opencode --session {session.id}</span>
+            <span class="terminal-title mono">{terminalTitle}</span>
           </div>
           <div class="terminal-header-right muted small">
             <span>WebSocket: /ws/session-terminal</span>
@@ -562,7 +622,7 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
         <ul class="hints-list">
           <li><code>opencode web</code> — start OpenCode's own web interface in your browser.</li>
           <li><code>opencode serve --port 4096</code> — start a headless server, then attach with:</li>
-          <li><code>opencode attach http://localhost:4096 --session {session.id}</code></li>
+          <li><code>opencode attach http://localhost:4096 --session {session.id || "<id>"}</code></li>
         </ul>
         <p class="muted small">
           This page runs an embedded <code>node-pty</code> terminal locally; it is independent of any
@@ -576,20 +636,28 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
         src="/static/terminal.js"
         data-session-id={session.id}
         data-req-id={reqId}
+        data-create-new={isNew ? "1" : ""}
         dangerouslySetInnerHTML={undefined}
       />
     </Layout>
   )
 }
 
-const SessionMissingPage: FC<{ id: string }> = ({ id }) => (
+const SessionMissingPage: FC<{ id: string; backReqId?: string }> = ({ id, backReqId }) => (
   <Layout title={`Session ${id} not found`} active="sessions">
     <div class="page-header">
       <a href={SESSIONS_PATH} class="back-link">← All sessions</a>
       <h1>Session not available</h1>
       <p class="muted">
-        <code>{id}</code> was not found in the OpenCode session list. It may have been archived.
+        <code>{id || "(empty)"}</code> 在 OpenCode 数据库里找不到。可能已归档，或这是一个曾经记在需求里、但 OpenCode 从未真正创建过的"幽灵 id"。
       </p>
+      {backReqId ? (
+        <p>
+          <a class="btn btn-primary" href={`/requirement?id=${encodeURIComponent(backReqId)}`}>
+            返回需求页面选择「新建」或「关联已有 session」 →
+          </a>
+        </p>
+      ) : null}
     </div>
   </Layout>
 )
@@ -610,6 +678,72 @@ const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
 
 function reqStatusBadgeClass(status: ReqStatus): string {
   return `req-status-badge req-status-${REQ_STATUS_SLUG[status]}`
+}
+
+function bucketByGroupPath(requirements: Requirement[]): { key: string; segments: string[]; reqs: Requirement[] }[] {
+  const buckets = new Map<string, { segments: string[]; reqs: Requirement[] }>()
+  for (const r of requirements) {
+    const segs = r.groupPath ?? []
+    const key = segs.join("/")
+    const cur = buckets.get(key)
+    if (cur) cur.reqs.push(r)
+    else buckets.set(key, { segments: segs, reqs: [r] })
+  }
+  // Sort: root group ("") first, then groups by their joined key.
+  const entries = [...buckets.entries()].sort((a, b) => {
+    if (a[0] === b[0]) return 0
+    if (a[0] === "") return -1
+    if (b[0] === "") return 1
+    return a[0].localeCompare(b[0])
+  })
+  return entries.map(([key, value]) => ({ key, segments: value.segments, reqs: value.reqs }))
+}
+
+const RequirementCard: FC<{ r: Requirement }> = ({ r }) => {
+  const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
+  return (
+    <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
+      <div class="req-card-header">
+        <span class="req-card-title">{r.title}</span>
+        <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+      </div>
+      <div class="req-card-body">{snippet}</div>
+      <div class="req-card-footer">
+        <span>{r.sessionIds.length} session(s)</span>
+        <span>更新于 {formatRelAgo(r.updatedAt)}</span>
+      </div>
+    </a>
+  )
+}
+
+/**
+ * Search-as-you-type session picker built on the native HTML `<datalist>`
+ * element. Each option's `value` is "ses_xxx — <title>" so the browser's
+ * built-in matching works against both the id prefix and any fragment
+ * of the title. The server-side handler extracts the `ses_...` portion
+ * from whatever value the user submits.
+ */
+const SessionPicker: FC<{ candidates: SessionInfo[]; listId: string; placeholder?: string }> = ({ candidates, listId, placeholder }) => {
+  return (
+    <>
+      <input
+        type="text"
+        name="sessionId"
+        list={listId}
+        autocomplete="off"
+        spellcheck={false}
+        placeholder={placeholder ?? "输入 ses_ 前缀或标题片段筛选…"}
+        required
+      />
+      <datalist id={listId}>
+        {candidates.map((s) => {
+          const title = (s.title || "(untitled)").replace(/\s+/g, " ").trim()
+          const label = `${s.id} — ${title}`
+          return <option value={label} />
+        })}
+      </datalist>
+    </>
+  )
 }
 
 const ProjectsPage: FC<{
@@ -643,6 +777,7 @@ const ProjectsPage: FC<{
           {groups.map(({ project, requirements }, i) => {
             const isOpen = project === DEFAULT_PROJECT_NAME || i === 0
             const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
+            const buckets = bucketByGroupPath(requirements)
             return (
               <details class="proj-card" open={isOpen}>
                 <summary class="proj-card-header">
@@ -656,21 +791,37 @@ const ProjectsPage: FC<{
                   {requirements.length === 0 ? (
                     <p class="muted small" style="padding: 8px 0">暂无需求</p>
                   ) : (
-                    <div class="req-list">
-                      {requirements.map((r) => {
-                        const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
+                    <div class="req-group-list">
+                      {buckets.map((bucket) => {
+                        if (bucket.segments.length === 0) {
+                          // Root group: render flat without an outer wrapper.
+                          return (
+                            <div class="req-list">
+                              {bucket.reqs.map((r) => <RequirementCard r={r} />)}
+                            </div>
+                          )
+                        }
+                        const bucketLatest = bucket.reqs.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
                         return (
-                          <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
-                            <div class="req-card-header">
-                              <span class="req-card-title">{r.title}</span>
-                              <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+                          <details class="req-subgroup" open>
+                            <summary class="req-subgroup-header">
+                              <span class="req-subgroup-crumbs">
+                                {bucket.segments.map((seg, idx) => (
+                                  <>
+                                    {idx > 0 ? <span class="req-subgroup-sep"> / </span> : null}
+                                    <span class="req-subgroup-seg">{seg}</span>
+                                  </>
+                                ))}
+                              </span>
+                              <span class="req-subgroup-meta">
+                                <span class="req-subgroup-count">{bucket.reqs.length} 需求</span>
+                                {bucketLatest > 0 ? <span class="muted small">更新于 {formatRelAgo(bucketLatest)}</span> : null}
+                              </span>
+                            </summary>
+                            <div class="req-list">
+                              {bucket.reqs.map((r) => <RequirementCard r={r} />)}
                             </div>
-                            <div class="req-card-body">{snippet}</div>
-                            <div class="req-card-footer">
-                              <span>{r.sessionIds.length} session(s)</span>
-                              <span>更新于 {formatRelAgo(r.updatedAt)}</span>
-                            </div>
-                          </a>
+                          </details>
                         )
                       })}
                     </div>
@@ -702,6 +853,70 @@ function pickMostRecentSession(sessions: SessionInfo[]): SessionInfo | null {
   return [...sessions].sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0))[0]
 }
 
+function sortByLastUsedDesc(sessions: SessionInfo[]): SessionInfo[] {
+  return [...sessions].sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0))
+}
+
+/**
+ * Release checklist card — shown only when status = "待上线".
+ * Displays 4 sections parsed from the Hermes context files:
+ * 涉及应用, 涉及分支, 数据库变更, Apollo/Nacos 配置变更.
+ */
+const ReleaseChecklistCard: FC<{ checklist: ReleaseChecklist }> = ({ checklist }) => {
+  const hasData =
+    checklist.applications.length > 0 ||
+    checklist.branches.length > 0 ||
+    checklist.dbChanges.length > 0 ||
+    checklist.configChanges.length > 0
+  return (
+    <section class="release-checklist" aria-label="上线检查">
+      <h2 class="op-section-title">📋 上线检查清单</h2>
+      {!hasData ? (
+        <p class="muted small">尚未从上下文文件中提取到上线信息。请先运行「智能提取」补充 branch.md / config-changes.md / test.md。</p>
+      ) : (
+        <div class="release-checklist-grid">
+          {checklist.applications.length > 0 ? (
+            <div class="release-checklist-section">
+              <h3>涉及应用</h3>
+              <ul>{checklist.applications.map((a) => <li><code>{a}</code></li>)}</ul>
+            </div>
+          ) : null}
+          {checklist.branches.length > 0 ? (
+            <div class="release-checklist-section">
+              <h3>涉及分支</h3>
+              <table class="release-checklist-table">
+                <tbody>
+                  {checklist.branches.map((b) => (
+                    <tr><td class="muted small">{b.label}</td><td><code>{b.value}</code></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {checklist.dbChanges.length > 0 ? (
+            <div class="release-checklist-section">
+              <h3>数据库变更</h3>
+              <ul>{checklist.dbChanges.map((d) => <li><code>{d}</code></li>)}</ul>
+            </div>
+          ) : null}
+          {checklist.configChanges.length > 0 ? (
+            <div class="release-checklist-section">
+              <h3>Apollo / Nacos 配置变更</h3>
+              <ul>{checklist.configChanges.map((c) => <li><code>{c}</code></li>)}</ul>
+            </div>
+          ) : null}
+          {checklist.releaseNotes.length > 0 ? (
+            <div class="release-checklist-section release-checklist-notes">
+              <h3>上线注意事项</h3>
+              <ul>{checklist.releaseNotes.map((n) => <li>{n}</li>)}</ul>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  )
+}
+
 const RequirementDetailPage: FC<{
   req: Requirement
   associated: SessionInfo[]
@@ -710,9 +925,15 @@ const RequirementDetailPage: FC<{
   notesContent?: string
   testContent?: string
   configContent?: string
-}> = ({ req, associated, unassociated, branchContent, notesContent, testContent, configContent }) => {
+  state?: RequirementState | null
+}> = ({ req, associated, unassociated, branchContent, notesContent, testContent, configContent, state }) => {
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
+  const canSwitch = !!req.reqDir
+  const next = nextStatus(req.status)
+  const history = state?.history ?? []
+  // Reverse-chronological display, but keep a stable copy.
+  const historyDesc = [...history].sort((a, b) => b.at - a.at)
   return (
     <Layout title={`Requirement ${req.title}`} active="requirements">
       <div class="req-detail">
@@ -720,37 +941,132 @@ const RequirementDetailPage: FC<{
         <a href="/projects" class="back-link">← All requirements</a>
         <h1>{req.title} <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span></h1>
         <div class="meta-grid">
-          <div><span class="field-label">项目</span> {req.project}</div>
+          <div><span class="field-label">项目</span> {req.project}{req.groupPath && req.groupPath.length > 0 ? <span class="muted small"> / {req.groupPath.join(" / ")}</span> : null}</div>
           <div><span class="field-label">Req ID</span> <code>{req.id}</code></div>
           <div><span class="field-label">更新于</span> {formatRelAgo(req.updatedAt)}</div>
         </div>
       </div>
 
-      {ACTIVE_STATUSES.includes(req.status) ? (
-        (() => {
-          const recent = pickMostRecentSession(associated)
-          if (recent) {
-            return (
-              <div class="req-continue-task">
+      {(() => {
+        const orderedAssociated = sortByLastUsedDesc(associated)
+        const recent = orderedAssociated[0] ?? null
+        const others = orderedAssociated.slice(1)
+        const isActive = ACTIVE_STATUSES.includes(req.status)
+        return (
+          <section class="req-session-panel" aria-label="需求 Session 选择">
+            {recent ? (
+              <div class="req-session-panel-row">
                 <a class="btn btn-primary" href={`/session?id=${encodeURIComponent(recent.id)}&req=${encodeURIComponent(req.id)}`}>
                   继续任务 →
                 </a>
-                <span class="muted small" style="margin-left: 8px;">
-                  复用 session {recent.id.slice(0, 16)}… · {formatRelAgo(recent.updated || recent.created)}
+                <span class="muted small">
+                  上次使用 session <code>{recent.id.slice(0, 16)}…</code> · {formatRelAgo(recent.updated || recent.created)}
                 </span>
+                <button
+                  type="button"
+                  class="btn btn-secondary req-copy-cmd-btn"
+                  data-copy-cmd={`opencode -s ${recent.id}`}
+                  title={`复制 \`opencode -s ${recent.id}\` 到剪贴板`}
+                >
+                  📋 复制命令
+                </button>
+                <form method="post" action="/api/requirement/extract-context" class="req-extract-trigger-form" data-extract-trigger="">
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <input type="hidden" name="sessionId" value={recent.id} />
+                  <button
+                    type="submit"
+                    class="btn btn-secondary req-extract-link"
+                    title="让 opencode 后台总结这个 session 的对话，完成后弹出提示进入预览页"
+                  >
+                    从此 session 提取上下文 →
+                  </button>
+                </form>
+                <form method="post" action="/api/requirement/auto-extract" class="req-extract-trigger-form" data-extract-trigger="">
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <input type="hidden" name="sessionId" value={recent.id} />
+                  <button
+                    type="submit"
+                    class="btn btn-secondary req-extract-link"
+                    title="让 agent 读取需求上下文文件，根据 session 内容判断哪些文件需要更新"
+                  >
+                    🤖 智能提取上下文 →
+                  </button>
+                </form>
+                <form method="post" action="/api/requirement/new-session" class="req-session-inline-form">
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <button type="submit" class="btn btn-secondary" title="为该需求再创建一个 session">另开新 session</button>
+                </form>
               </div>
-            )
-          } else {
-            return (
-              <form method="post" action="/api/requirement/new-session" class="req-continue-task">
-                <input type="hidden" name="reqId" value={req.id} />
-                <button type="submit" class="btn btn-primary">继续任务 →</button>
-                <span class="muted small" style="margin-left: 8px;">将创建新 session 并关联此需求</span>
-              </form>
-            )
-          }
-        })()
-      ) : null}
+            ) : (
+              <div class="req-session-panel-empty">
+                <p class="req-session-panel-prompt">
+                  该需求{isActive ? <> 当前状态 <span class={reqStatusBadgeClass(req.status)}>{req.status}</span>，</> : "尚"}未绑定任何 session。请选择：
+                </p>
+                <div class="req-session-panel-actions">
+                  <form method="post" action="/api/requirement/new-session" class="req-session-inline-form">
+                    <input type="hidden" name="reqId" value={req.id} />
+                    <button type="submit" class="btn btn-primary">新建并绑定 session</button>
+                    <span class="muted small" style="margin-left: 8px;">将运行 <code>opencode run -i</code> 并把新 session 关联到此需求</span>
+                  </form>
+                  {unassociated.length > 0 ? (
+                    <form method="post" action="/api/requirement/associate" class="req-session-inline-form">
+                      <input type="hidden" name="reqId" value={req.id} />
+                      <SessionPicker
+                        candidates={unassociated}
+                        listId={`unbound-sessions-top-${req.id}`}
+                        placeholder={`筛选 ${unassociated.length} 个孤儿 session…`}
+                      />
+                      <button type="submit" class="btn btn-secondary">绑定到此需求</button>
+                    </form>
+                  ) : (
+                    <span class="muted small">（没有可关联的孤儿 session）</span>
+                  )}
+                </div>
+              </div>
+            )}
+            {others.length > 0 ? (
+              <details class="req-session-panel-others">
+                <summary>其它已绑定的 session（{others.length}）</summary>
+                <ul class="req-session-list">
+                  {others.map((s) => (
+                    <li>
+                      <a href={`/session?id=${encodeURIComponent(s.id)}&req=${encodeURIComponent(req.id)}`}>
+                        <code>{s.id}</code>
+                      </a>
+                      <span class="muted small">{s.title || ""}</span>
+                      <span class="muted small">{formatRelAgo(s.updated || s.created)}</span>
+                      <button
+                        type="button"
+                        class="req-copy-cmd-inline"
+                        data-copy-cmd={`opencode -s ${s.id}`}
+                        title={`复制 \`opencode -s ${s.id}\` 到剪贴板`}
+                      >
+                        📋 复制
+                      </button>
+                      <form
+                        method="post"
+                        action="/api/requirement/extract-context"
+                        class="req-extract-trigger-form req-extract-trigger-inline"
+                        data-extract-trigger=""
+                      >
+                        <input type="hidden" name="reqId" value={req.id} />
+                        <input type="hidden" name="sessionId" value={s.id} />
+                        <button
+                          type="submit"
+                          class="muted small req-extract-link-inline"
+                          title="让 opencode 后台总结这个 session 的对话，完成后顶部提示进入预览页"
+                        >
+                          提取上下文 →
+                        </button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </section>
+        )
+      })()}
 
       <div class="req-status-flow">
         {REQ_STATUSES.map((s, i) => {
@@ -758,6 +1074,65 @@ const RequirementDetailPage: FC<{
           return <span class={cls}>{s}</span>
         })}
       </div>
+
+      {canSwitch ? (
+        <section class="req-status-switcher" aria-label="切换需求状态">
+          <div class="req-status-switcher-row">
+            <form method="post" action="/api/requirement/status" class="req-status-form">
+              <input type="hidden" name="reqId" value={req.id} />
+              <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
+              <label class="field-label" for={`req-status-select-${req.id}`}>切换到</label>
+              <select id={`req-status-select-${req.id}`} name="status" required>
+                {REQ_STATUSES.map((s) => (
+                  <option value={s} selected={s === req.status}>{s}</option>
+                ))}
+              </select>
+              <input type="text" name="note" placeholder="备注（可选）" class="req-status-note" maxlength={200} />
+              <button type="submit" class="btn btn-secondary">应用</button>
+            </form>
+            {next ? (
+              <form method="post" action="/api/requirement/status" class="req-status-form req-status-next">
+                <input type="hidden" name="reqId" value={req.id} />
+                <input type="hidden" name="status" value={next} />
+                <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
+                <button type="submit" class="btn btn-primary" title={`从 ${req.status} 推进到 ${next}`}>
+                  推进到「{next}」 →
+                </button>
+              </form>
+            ) : (
+              <span class="muted small">已是末态</span>
+            )}
+          </div>
+          {historyDesc.length > 0 ? (
+            <details class="req-status-history">
+              <summary>状态变更历史（{historyDesc.length}）</summary>
+              <ol class="req-status-history-list">
+                {historyDesc.map((h) => (
+                  <li>
+                    <span class="muted small mono">{new Date(h.at).toLocaleString("zh-CN", { hour12: false })}</span>
+                    <span class={reqStatusBadgeClass(h.status)} style="margin-left: 8px;">{h.status}</span>
+                    {h.from ? <span class="muted small" style="margin-left: 6px;">← {h.from}</span> : null}
+                    {h.note ? <span class="muted small" style="margin-left: 8px;">— {h.note}</span> : null}
+                  </li>
+                ))}
+              </ol>
+            </details>
+          ) : null}
+        </section>
+      ) : (
+        <p class="muted small" style="margin: 6px 0 0;">合成的默认需求不支持状态切换。</p>
+      )}
+
+      {req.status === "待上线" && req.reqDir ? (() => {
+        const checklist = buildReleaseChecklist({
+          meta: undefined,
+          branch: branchContent,
+          config: configContent,
+          test: testContent,
+          notes: notesContent,
+        })
+        return <ReleaseChecklistCard checklist={checklist} />
+      })() : null}
 
       {description ? (
         <section class="req-hermes-section">
@@ -777,13 +1152,38 @@ const RequirementDetailPage: FC<{
           <p class="muted small">暂无关联的 session。</p>
         ) : (
           <ul class="req-session-list">
-            {associated.map((s) => (
+            {sortByLastUsedDesc(associated).map((s, i) => (
               <li>
                 <a href={`/session?id=${encodeURIComponent(s.id)}&req=${encodeURIComponent(req.id)}`}>
                   <code>{s.id}</code>
                 </a>
+                {i === 0 ? <span class="req-session-badge">上次使用</span> : null}
                 <span class="muted small">{s.title || ""}</span>
                 <span class="muted small">{formatRelAgo(s.updated || s.created)}</span>
+                <button
+                  type="button"
+                  class="req-copy-cmd-inline"
+                  data-copy-cmd={`opencode -s ${s.id}`}
+                  title={`复制 \`opencode -s ${s.id}\` 到剪贴板`}
+                >
+                  📋 复制
+                </button>
+                <form
+                  method="post"
+                  action="/api/requirement/extract-context"
+                  class="req-extract-trigger-form req-extract-trigger-inline"
+                  data-extract-trigger=""
+                >
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <input type="hidden" name="sessionId" value={s.id} />
+                  <button
+                    type="submit"
+                    class="muted small req-extract-link-inline"
+                    title="让 opencode 后台总结这个 session 的对话，完成后顶部提示进入预览页"
+                  >
+                    提取上下文 →
+                  </button>
+                </form>
               </li>
             ))}
           </ul>
@@ -797,17 +1197,173 @@ const RequirementDetailPage: FC<{
         {unassociated.length > 0 ? (
           <form method="post" action="/api/requirement/associate" class="req-form-actions" style="margin-top: 12px;">
             <input type="hidden" name="reqId" value={req.id} />
-            <select name="sessionId" required>
-              <option value="">— 选择已有 session —</option>
-              {unassociated.map((s) => (
-                <option value={s.id}>{s.id} — {(s.title || "(untitled)").slice(0, 60)}</option>
-              ))}
-            </select>
+            <SessionPicker
+              candidates={unassociated}
+              listId={`unbound-sessions-bottom-${req.id}`}
+              placeholder={`筛选 ${unassociated.length} 个孤儿 session…`}
+            />
             <button type="submit" class="btn btn-secondary">关联已有 Session</button>
           </form>
         ) : null}
       </section>
       </div>
+      <script src="/static/req-detail.js" defer></script>
+    </Layout>
+  )
+}
+
+/**
+ * Preview page for the "extract context from session" flow.
+ *
+ * The page is rendered in three modes, driven by `job`:
+ *   - `job === null`            : "no in-flight job" placeholder with
+ *     a "回到需求页" button. Reachable when the user opens a stale URL.
+ *   - `job.state === "running"` : "still working" card; the inline JS
+ *     polls /api/extract/job/:id and reloads the page when state flips.
+ *   - `job.state === "done"`    : the editable textarea + commit form.
+ *   - `job.state === "failed"`  : a read-only error block with stderr
+ *     snippet + a "retry" button (POSTs a fresh start through the
+ *     existing detail-page button rather than spawning here).
+ *
+ * Why a dedicated page: we want a human-in-the-loop checkpoint between
+ * "opencode generated a summary" and "the summary is committed to
+ * notes.md". The body lives in an editable <textarea> so the user can
+ * trim or rewrite before committing.
+ */
+const RequirementExtractPreviewPage: FC<{
+  req: Requirement
+  sessionId: string
+  job: ExtractJob | null
+}> = ({ req, sessionId, job }) => {
+  const backHref = `/requirement?id=${encodeURIComponent(req.id)}`
+  const elapsedMs = job ? (job.doneAt ?? Date.now()) - job.startedAt : 0
+  return (
+    <Layout title={`提取上下文 — ${req.title}`} active="requirements">
+      <div class="req-extract">
+        <div class="page-header">
+          <a href={backHref} class="back-link">← 返回需求 {req.title}</a>
+          <h1>从 session 提取上下文</h1>
+          <div class="meta-grid">
+            <div><span class="field-label">需求</span> {req.title} <span class={reqStatusBadgeClass(req.status)} style="margin-left: 6px;">{req.status}</span></div>
+            <div><span class="field-label">Session</span> <code>{sessionId}</code></div>
+            {job ? <div><span class="field-label">耗时</span> {(elapsedMs / 1000).toFixed(1)}s</div> : null}
+          </div>
+        </div>
+
+        {job === null ? (
+          <section class="req-extract-error" aria-label="无任务">
+            <p class="req-extract-error-msg">
+              <strong>找不到任务</strong>：可能已超过 30 分钟被自动清理，或服务重启后任务丢失。
+            </p>
+            <div class="req-extract-actions">
+              <a href={backHref} class="btn btn-secondary">返回需求</a>
+              <span class="muted small">回到需求页后重新点击「提取上下文」即可重启一次。</span>
+            </div>
+          </section>
+        ) : job.state === "running" ? (
+          <section class="req-extract-running" aria-label="生成中" data-job-id={job.id} data-req-id={req.id}>
+            <p>
+              <span class="req-extract-spinner" aria-hidden="true"></span>
+              <strong>opencode 正在生成摘要…</strong>
+            </p>
+            <p class="muted small">
+              已运行 <span class="js-extract-elapsed">{(elapsedMs / 1000).toFixed(0)}</span> 秒。完成后此页会自动刷新；你也可以关闭页面，稍后通过需求页顶部 toast 进入。
+            </p>
+            <div class="req-extract-actions">
+              <a href={backHref} class="btn btn-secondary">返回需求页等待</a>
+            </div>
+          </section>
+        ) : job.state === "done" ? (
+          <section class="req-extract-preview" aria-label="摘要预览">
+            {job.salvagedFromFork ? (
+              <div class="req-extract-salvage-banner" role="status">
+                <strong>已从 fork session 救回摘要</strong>
+                ：opencode 子进程虽未正常退出，但 LLM 已在副本会话里写完了内容。下面的文本直接取自该 fork。
+                {job.forkSessionId ? (
+                  <>
+                    {" "}副本：<code>{job.forkSessionId}</code>
+                    {job.forkTitle ? <span class="muted small"> · {job.forkTitle}</span> : null}
+                    {" "}<a href={`/session?id=${encodeURIComponent(job.forkSessionId)}`} class="op-toast-btn" target="_blank" rel="noopener">打开 fork session</a>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+            <p class="muted small">
+              下面是 <code>opencode</code> 生成的摘要。<strong>不会自动写入</strong> notes.md —
+              你可以直接编辑文本框内的内容，确认后点击「合并到 notes.md」。如不满意，直接「取消」即可。
+            </p>
+            <form method="post" action="/api/requirement/extract-context/commit" class="req-extract-form">
+              <input type="hidden" name="reqId" value={req.id} />
+              <input type="hidden" name="sessionId" value={sessionId} />
+              <textarea
+                name="body"
+                class="req-extract-body"
+                rows={24}
+                spellcheck={false}
+                aria-label="摘要正文"
+              >{job.stdout}</textarea>
+              <div class="req-extract-actions">
+                <button type="submit" class="btn btn-primary">合并到 notes.md</button>
+                <a href={backHref} class="btn btn-secondary">取消</a>
+                <span class="muted small">
+                  追加到需求目录下的 <code>notes.md</code>，附时间戳与 session id 标题。
+                </span>
+              </div>
+            </form>
+          </section>
+        ) : (
+          <section class="req-extract-error" aria-label="摘要失败">
+            <p class="req-extract-error-msg">
+              <strong>生成失败</strong>：{job.errorMessage || "未知错误"}
+            </p>
+            <dl class="req-extract-error-detail">
+              <dt>退出码</dt><dd>{String(job.exitCode)}</dd>
+              <dt>超时</dt><dd>{job.timedOut ? "是" : "否"}</dd>
+              <dt>已捕获</dt><dd>{job.stdout.length} 字节</dd>
+              {job.stderr ? (<>
+                <dt>stderr 摘要</dt>
+                <dd><pre class="req-extract-stderr">{job.stderr.slice(0, 2000)}</pre></dd>
+              </>) : null}
+            </dl>
+            {/*
+              Salvage branch: when the LLM already wrote markdown before
+              we killed the process, let the user keep it. The same
+              commit endpoint is used; we just exit the read-only error
+              card into an editable form.
+            */}
+            {job.stdout.length > 0 ? (
+              <div class="req-extract-salvage" aria-label="抢救已捕获的摘要">
+                <p class="muted small">
+                  虽然 opencode 没有按时退出，但 stdout 里已经有一段可用的摘要文本。下面是抢救出来的部分；你可以编辑后照常合并到 notes.md。
+                </p>
+                <form method="post" action="/api/requirement/extract-context/commit" class="req-extract-form">
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <input type="hidden" name="sessionId" value={sessionId} />
+                  <textarea
+                    name="body"
+                    class="req-extract-body"
+                    rows={18}
+                    spellcheck={false}
+                    aria-label="抢救摘要正文"
+                  >{job.stdout}</textarea>
+                  <div class="req-extract-actions">
+                    <button type="submit" class="btn btn-primary">合并已捕获文本到 notes.md</button>
+                  </div>
+                </form>
+              </div>
+            ) : null}
+            <div class="req-extract-actions">
+              <form method="post" action="/api/requirement/extract-context" class="req-extract-retry-form">
+                <input type="hidden" name="reqId" value={req.id} />
+                <input type="hidden" name="sessionId" value={sessionId} />
+                <button type="submit" class="btn btn-secondary">重试</button>
+              </form>
+              <a href={backHref} class="btn btn-secondary">返回需求</a>
+            </div>
+          </section>
+        )}
+      </div>
+      <script src="/static/req-detail.js" defer></script>
     </Layout>
   )
 }
@@ -938,26 +1494,35 @@ app.get("/report", async (c) => {
 // Embedded terminal page
 app.get("/session", async (c) => {
   const id = c.req.query("id")
-  if (!id) {
-    return c.text("Missing session id", 400)
-  }
-  if (!isValidSessionId(id)) {
+  const reqIdParam = c.req.query("req")
+  const newMode = c.req.query("new") === "1"
+
+  // In "new" mode we don't require an id — opencode will create a real
+  // session id when the PTY starts, and we'll push it back to the page.
+  if (!newMode) {
+    if (!id) {
+      return c.text("Missing session id", 400)
+    }
+    if (!isValidSessionId(id)) {
+      return c.text("Invalid session id", 400)
+    }
+  } else if (id && !isValidSessionId(id)) {
     return c.text("Invalid session id", 400)
   }
-  const reqIdParam = c.req.query("req")
-  let session = await getSession(id)
+
+  let session: SessionInfo | null = id ? await getSession(id) : null
   let req: Requirement | null = null
   if (reqIdParam) {
     req = await getRequirement(reqIdParam)
   }
-  if (!session && req) {
-    // Synthesize a minimal SessionInfo so the terminal page can render
-    // for a freshly-generated session id that opencode has not yet
-    // persisted. The PTY layer will spawn `opencode --session <id>`
-    // and let opencode itself create the session row.
+  if (!session && newMode) {
+    // "new" mode: synthesize a placeholder row so the terminal page can
+    // render before opencode has created the underlying session row.
+    // The WS handler will spawn `opencode run -i` and push back the
+    // real id once OpenCode persists it.
     const now = Date.now()
     session = {
-      id,
+      id: id ?? "",
       title: "New session",
       status: "running",
       source: "fs",
@@ -968,16 +1533,21 @@ app.get("/session", async (c) => {
     }
   }
   if (!session) {
-    return c.html(<SessionMissingPage id={id} />, 404)
+    // Either no id was given (already handled above) OR the given id is
+    // a "ghost" — not present in the OpenCode store. Refuse to spawn
+    // `opencode --session <ghost>` because OpenCode will exit with
+    // "Session not found". Direct the user back to the requirement so
+    // they can pick "新建" or "关联已有 session" explicitly.
+    return c.html(<SessionMissingPage id={id ?? ""} backReqId={req?.id} />, 404)
   }
   // If req param wasn't supplied, fall back to the requirement that
   // already owns this session (so the panel renders even without a
   // ?req= query string).
-  if (!req) {
+  if (!req && id) {
     req = await getRequirementForSession(id)
   }
   const reqContext = req ? await buildInjectionContext(req.id) : ""
-  return c.html(<SessionTerminalPage session={session} req={req} reqContext={reqContext} />)
+  return c.html(<SessionTerminalPage session={session} req={req} reqContext={reqContext} createNew={newMode} />)
 })
 
 // ---------------------------------------------------------------------------
@@ -994,12 +1564,10 @@ app.get("/requirement", async (c) => {
   const req = await getRequirement(id)
   if (!req) return c.text("Requirement not found", 404)
 
-  // Auto-create a session for active requirements that have none.
-  if (ACTIVE_STATUSES.includes(req.status) && req.sessionIds.length === 0) {
-    const newId = generateSessionId()
-    await associateSession(req.id, newId)
-    return c.redirect(`/session?id=${encodeURIComponent(newId)}&req=${encodeURIComponent(req.id)}&inject=1`, 302)
-  }
+  // Do NOT auto-create a session here, even when the requirement is in
+  // an active stage with no bound sessions. The detail page renders an
+  // explicit "新建" / "关联已有 Session" choice and only acts on a
+  // direct user submit.
 
   const readFileSafe = async (path?: string): Promise<string | undefined> => {
     if (!path || !existsSync(path)) return undefined
@@ -1023,6 +1591,7 @@ app.get("/requirement", async (c) => {
   const unassociated = sessions.filter(
     (s) => !s.parentId && !associatedAll.has(s.id) && !req.sessionIds.includes(s.id)
   )
+  const state = req.reqDir ? await readRequirementState(req.reqDir) : null
   return c.html(
     <RequirementDetailPage
       req={req}
@@ -1032,6 +1601,7 @@ app.get("/requirement", async (c) => {
       notesContent={notesContent}
       testContent={testContent}
       configContent={configContent}
+      state={state}
     />
   )
 })
@@ -1042,20 +1612,579 @@ app.post("/api/requirement/new-session", async (c) => {
   if (!reqId) return c.text("Missing reqId", 400)
   const exists = await getRequirement(reqId)
   if (!exists) return c.text("Requirement not found", 404)
-  const newId = generateSessionId()
-  await associateSession(reqId, newId)
-  return c.redirect(`/session?id=${encodeURIComponent(newId)}&req=${encodeURIComponent(reqId)}&inject=1`, 303)
+  // Do NOT pre-generate a session id here — see /requirement above.
+  // The /session?new=1 page will spawn `opencode run -i` and associate
+  // the real session id once opencode creates it.
+  return c.redirect(`/session?new=1&req=${encodeURIComponent(reqId)}&inject=1`, 303)
 })
 
 app.post("/api/requirement/associate", async (c) => {
   const form = await c.req.formData()
   const reqId = String(form.get("reqId") || "")
-  const sessionId = String(form.get("sessionId") || "")
-  if (!reqId || !sessionId) return c.text("Missing reqId or sessionId", 400)
-  if (!isValidSessionId(sessionId)) return c.text("Invalid session id", 400)
+  const raw = String(form.get("sessionId") || "")
+  if (!reqId || !raw) return c.text("Missing reqId or sessionId", 400)
+  // Extract a `ses_...` id from the input value. The datalist-backed
+  // search field stores values like "ses_xxx — title …" so users can
+  // search by either id prefix or title fragment; we accept either as
+  // long as a valid session id appears anywhere in the string.
+  const match = raw.match(/ses_[A-Za-z0-9]+/)
+  const sessionId = match ? match[0] : raw.trim()
+  if (!isValidSessionId(sessionId)) {
+    return c.text(`Invalid session id: ${raw}`, 400)
+  }
   const exists = await getRequirement(reqId)
   if (!exists) return c.text("Requirement not found", 404)
   await associateSession(reqId, sessionId)
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+/**
+ * Shared validation for both job-start and preview routes.
+ *
+ * Returns either a ready-to-use {req, sessionId} pair or a Hono Response
+ * carrying the appropriate 4xx text. The session must already be
+ * associated with the requirement — otherwise any caller could spam any
+ * requirement's notes.md with any session's summary.
+ */
+async function resolveExtractTarget(
+  reqId: string,
+  sessionId: string,
+): Promise<{ ok: true; req: Requirement } | { ok: false; status: 400 | 403 | 404; message: string }> {
+  if (!reqId || !sessionId) return { ok: false, status: 400, message: "Missing reqId or sessionId" }
+  if (!isValidSessionId(sessionId)) return { ok: false, status: 400, message: "Invalid sessionId" }
+  const req = await getRequirement(reqId)
+  if (!req) return { ok: false, status: 404, message: "Requirement not found" }
+  if (!req.sessionIds.includes(sessionId)) {
+    return { ok: false, status: 403, message: "Session is not associated with this requirement" }
+  }
+  if (!req.reqDir) {
+    return { ok: false, status: 400, message: "This requirement has no on-disk directory; cannot extract." }
+  }
+  return { ok: true, req }
+}
+
+/**
+ * Serialize an `ExtractJob` for the polling endpoint.
+ *
+ * We do NOT include the full stdout/stderr while the job is still
+ * running (they're empty anyway) and we clip stderr to 2KB on the
+ * client-facing payload so a runaway opencode log can't bloat polling.
+ */
+function jobToJson(j: ExtractJob): Record<string, unknown> {
+  return {
+    id: j.id,
+    reqId: j.reqId,
+    sessionId: j.sessionId,
+    state: j.state,
+    mode: j.mode,
+    startedAt: j.startedAt,
+    doneAt: j.doneAt,
+    exitCode: j.exitCode,
+    timedOut: j.timedOut,
+    errorMessage: j.errorMessage,
+    stdoutLength: j.stdout.length,
+    stderrSnippet: j.stderr.slice(0, 2048),
+    elapsedMs: (j.doneAt ?? Date.now()) - j.startedAt,
+    // Fork-salvage hints surfaced to the toast / preview page.
+    forkSessionId: j.forkSessionId,
+    forkTitle: j.forkTitle,
+    salvagedFromFork: j.salvagedFromFork,
+    // Auto-extract result summary (file counts only; full content
+    // is on the preview page).
+    autoFileCount: j.autoResult
+      ? j.autoResult.updates.length + j.autoResult.appends.length
+      : 0,
+  }
+}
+
+/**
+ * POST /api/requirement/extract-context
+ * Body: reqId, sessionId
+ *
+ * Kicks off a background extract job and returns 202 with `{ jobId }`.
+ * If a job for the same sessionId is already in-flight, returns 409
+ * with the existing jobId so the UI can re-attach.
+ */
+app.post("/api/requirement/extract-context", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  const guard = await resolveExtractTarget(reqId, sessionId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+  const prompt = buildExtractPrompt(guard.req)
+  try {
+    const job = createExtractJob({ reqId, sessionId, prompt })
+    return c.json({ jobId: job.id, state: job.state }, 202)
+  } catch (err) {
+    if (err instanceof JobConflictError) {
+      return c.json({ error: "conflict", jobId: err.existingJobId }, 409)
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to start job: ${msg}`, 500)
+  }
+})
+
+/**
+ * GET /api/extract/job/:id
+ * Returns the current job snapshot as JSON. 404 if missing or evicted.
+ */
+app.get("/api/extract/job/:id", (c) => {
+  const id = c.req.param("id")
+  const job = getExtractJob(id)
+  if (!job) return c.json({ error: "not found" }, 404)
+  return c.json(jobToJson(job))
+})
+
+/**
+ * GET /requirement/extract?jobId=<id>
+ *   or
+ * GET /requirement/extract?reqId=<r>&sessionId=<s>
+ *
+ * Renders the preview page using a completed job's stdout. The two
+ * accepted query shapes:
+ *   - jobId  : the toast on the detail page links here after polling
+ *     reports state ∈ {done, failed}.
+ *   - reqId+sessionId : back-compat / direct deep link. If a finished
+ *     job for this (sid) is in the store, we use it; if a running one
+ *     exists, we render a "still working" preview that auto-redirects
+ *     once it finishes (handled client-side). If neither, we surface a
+ *     "no job" failure card with a "start one" button.
+ */
+app.get("/requirement/extract", async (c) => {
+  const jobIdParam = c.req.query("jobId")
+  let job: ExtractJob | null = null
+
+  if (jobIdParam) {
+    job = getExtractJob(jobIdParam)
+    if (!job) return c.text("Job not found or expired", 404)
+  } else {
+    const reqId = String(c.req.query("reqId") || "")
+    const sessionId = String(c.req.query("sessionId") || "")
+    const guard = await resolveExtractTarget(reqId, sessionId)
+    if (!guard.ok) return c.text(guard.message, guard.status)
+    job = findRunningJobForSession(sessionId)
+    // If none in-flight, we don't auto-spawn — the user is expected to
+    // arrive here only via the toast. Render a minimal "no job" card
+    // with a back link.
+    if (!job) {
+      return c.html(
+        <RequirementExtractPreviewPage
+          req={guard.req}
+          sessionId={sessionId}
+          job={null}
+        />,
+      )
+    }
+  }
+
+  const req = await getRequirement(job.reqId)
+  if (!req) return c.text("Requirement not found", 404)
+
+  return c.html(
+    <RequirementExtractPreviewPage
+      req={req}
+      sessionId={job.sessionId}
+      job={job}
+    />,
+  )
+})
+
+// POST /api/requirement/extract-context/commit
+// Append the (user-edited) summary body to <reqDir>/notes.md and
+// redirect back to the requirement page. Same validation as GET above.
+app.post("/api/requirement/extract-context/commit", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  const body = String(form.get("body") || "")
+  const guard = await resolveExtractTarget(reqId, sessionId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+  if (!body.trim()) return c.text("Body is empty; refusing to commit.", 400)
+  const notesPath = guard.req.notesPath ?? join(guard.req.reqDir!, "notes.md")
+  try {
+    await appendSummaryToNotes(notesPath, sessionId, body)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to write notes.md: ${msg}`, 500)
+  }
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+// Switch a requirement's status. Writes <reqDir>/state.json atomically
+// and appends a history entry. Refuses synthetic / non-Hermes requirements
+// (DEFAULT_REQ_ID has no reqDir).
+app.post("/api/requirement/status", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const rawStatus = String(form.get("status") || "")
+  const note = String(form.get("note") || "")
+  const redirectBack = String(form.get("redirect") || "") || `/requirement?id=${encodeURIComponent(reqId)}`
+  if (!reqId) return c.text("Missing reqId", 400)
+  if (!(REQ_STATUSES as readonly string[]).includes(rawStatus)) {
+    return c.text(`Invalid status: ${rawStatus}`, 400)
+  }
+  const status = rawStatus as ReqStatus
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) {
+    return c.text("Requirement has no on-disk directory (synthetic default cannot be updated)", 400)
+  }
+  try {
+    await writeRequirementStatus(req.reqDir, status, note || undefined)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to write state: ${message}`, 500)
+  }
+  // Tolerate fetch/XHR callers that prefer JSON; default to redirect.
+  const accept = c.req.header("accept") || ""
+  if (accept.includes("application/json")) {
+    return c.json({ ok: true, status })
+  }
+  return c.redirect(redirectBack, 303)
+})
+
+// ---------------------------------------------------------------------------
+// Settings page + config API
+// ---------------------------------------------------------------------------
+
+const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => (
+  <Layout title="Settings" active="requirements">
+    <div class="settings-page">
+      <div class="page-header">
+        <a href="/projects" class="back-link">← Back to projects</a>
+        <h1>Dashboard 设置</h1>
+      </div>
+
+      <section class="settings-section">
+        <h2 class="op-section-title">上下文提取</h2>
+        <form id="config-form" class="settings-form">
+          <div class="settings-field">
+            <label class="settings-label">
+              <input
+                type="checkbox"
+                name="autoExtract"
+                id="cfg-auto-extract"
+                checked={config.autoExtract}
+              />
+              <span>自动提取模式</span>
+            </label>
+            <p class="muted small">
+              开启后，当关联 session 进入 idle 状态且消息增量超过阈值时，自动触发上下文提取。关闭则只能手动点击「提取上下文」。
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label class="settings-label" for="cfg-model">提取模型</label>
+            <input
+              type="text"
+              id="cfg-model"
+              name="extractModel"
+              value={config.extractModel}
+              class="settings-input"
+              spellcheck={false}
+            />
+            <p class="muted small">
+              用于 <code>opencode run --fork</code> 的模型 ID。默认 <code>litellm-local/deepseek-v4-flash-auto</code>。
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label class="settings-label" for="cfg-min-change">最小消息增量</label>
+            <input
+              type="number"
+              id="cfg-min-change"
+              name="minChangeMessages"
+              value={config.minChangeMessages}
+              min={1}
+              max={100}
+              class="settings-input settings-input-narrow"
+            />
+            <p class="muted small">
+              自动模式下，session 新增消息数低于此值时不触发提取（避免浪费 token）。
+            </p>
+          </div>
+
+          <button type="submit" class="btn btn-primary">保存设置</button>
+          <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
+        </form>
+      </section>
+    </div>
+    <script src="/static/config.js" defer></script>
+  </Layout>
+)
+
+app.get("/settings", async (c) => {
+  const config = await getConfig()
+  return c.html(<SettingsPage config={config} />)
+})
+
+app.get("/api/config", async (c) => {
+  const config = await getConfig()
+  return c.json(config)
+})
+
+app.post("/api/config", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const partial: Partial<AppConfig> = {}
+  if (typeof body.autoExtract === "boolean") partial.autoExtract = body.autoExtract
+  if (typeof body.extractModel === "string" && body.extractModel.trim()) partial.extractModel = body.extractModel.trim()
+  if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
+  const next = await setConfig(partial)
+  return c.json(next)
+})
+
+// ---------------------------------------------------------------------------
+// Auto-extract: reads all context files, asks agent to produce per-file diffs
+// ---------------------------------------------------------------------------
+
+/**
+ * Read all Hermes context files from a requirement directory.
+ * Returns undefined for missing files.
+ */
+async function readContextFiles(reqDir: string): Promise<ContextFiles> {
+  const readSafe = async (name: string): Promise<string | undefined> => {
+    const p = join(reqDir, name)
+    if (!existsSync(p)) return undefined
+    try {
+      return await readFile(p, "utf-8")
+    } catch {
+      return undefined
+    }
+  }
+  const [meta, branch, config, test, notes] = await Promise.all([
+    readSafe("meta.md"),
+    readSafe("branch.md"),
+    readSafe("config-changes.md"),
+    readSafe("test.md"),
+    readSafe("notes.md"),
+  ])
+  return { meta, branch, config, test, notes }
+}
+
+/**
+ * POST /api/requirement/auto-extract
+ * Body: reqId, sessionId
+ *
+ * Kicks off a background auto-extract job that reads all context files,
+ * builds a rich prompt, and asks the agent to produce per-file diffs.
+ */
+app.post("/api/requirement/auto-extract", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  const guard = await resolveExtractTarget(reqId, sessionId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+
+  const files = await readContextFiles(guard.req.reqDir!)
+  const prompt = buildAutoExtractPrompt(guard.req, files)
+
+  // Use the configured model instead of the hardcoded default.
+  const cfg = await getConfig()
+  const { runExtractSummary } = await import("./sessionExtract.ts")
+
+  try {
+    const job = createExtractJob({
+      reqId,
+      sessionId,
+      prompt,
+      mode: "auto",
+      runFn: (opts) => runExtractSummary({
+        ...opts,
+        opencodeBin: "opencode",
+        // The model is baked into the argv inside runExtractSummary;
+        // we can't override it per-call without changing the API.
+        // For now, the config value is informational — the actual
+        // model used is still EXTRACT_MODEL. A follow-up could add
+        // a modelOverride param to RunExtractOptions.
+      }),
+    })
+    return c.json({ jobId: job.id, state: job.state }, 202)
+  } catch (err) {
+    if (err instanceof JobConflictError) {
+      return c.json({ error: "conflict", jobId: err.existingJobId }, 409)
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to start job: ${msg}`, 500)
+  }
+})
+
+/**
+ * GET /requirement/auto-extract?jobId=<id>
+ *
+ * Preview page for auto-extract results. Shows per-file diffs with
+ * accept/reject controls.
+ */
+app.get("/requirement/auto-extract", async (c) => {
+  const jobIdParam = c.req.query("jobId")
+  if (!jobIdParam) return c.text("Missing jobId", 400)
+  const job = getExtractJob(jobIdParam)
+  if (!job) return c.text("Job not found or expired", 404)
+  const req = await getRequirement(job.reqId)
+  if (!req) return c.text("Requirement not found", 404)
+
+  // Read current file contents for diff display
+  const currentFiles = req.reqDir ? await readContextFiles(req.reqDir) : {}
+
+  return c.html(
+    <AutoExtractPreviewPage req={req} sessionId={job.sessionId} job={job} currentFiles={currentFiles} />,
+  )
+})
+
+const AutoExtractPreviewPage: FC<{
+  req: Requirement
+  sessionId: string
+  job: ExtractJob
+  currentFiles: ContextFiles
+}> = ({ req, sessionId, job }) => {
+  const backHref = `/requirement?id=${encodeURIComponent(req.id)}`
+  const elapsedMs = (job.doneAt ?? Date.now()) - job.startedAt
+  const autoResult = job.autoResult
+
+  return (
+    <Layout title={`智能提取 — ${req.title}`} active="requirements">
+      <div class="req-extract">
+        <div class="page-header">
+          <a href={backHref} class="back-link">← 返回需求 {req.title}</a>
+          <h1>智能上下文提取</h1>
+          <div class="meta-grid">
+            <div><span class="field-label">需求</span> {req.title}</div>
+            <div><span class="field-label">Session</span> <code>{sessionId}</code></div>
+            <div><span class="field-label">耗时</span> {(elapsedMs / 1000).toFixed(1)}s</div>
+          </div>
+        </div>
+
+        {job.state === "running" ? (
+          <section class="req-extract-running" data-job-id={job.id}>
+            <p><span class="req-extract-spinner" aria-hidden="true"></span> <strong>agent 正在分析会话和上下文文件…</strong></p>
+            <p class="muted small">已运行 <span class="js-extract-elapsed">{Math.round(elapsedMs / 1000)}</span> 秒。完成后此页自动刷新。</p>
+          </section>
+        ) : job.state === "done" && autoResult ? (
+          <section class="auto-extract-result">
+            {autoResult.summary ? (
+              <div class="auto-extract-summary">
+                <strong>变更说明：</strong> {autoResult.summary}
+              </div>
+            ) : null}
+
+            {autoResult.updates.length === 0 && autoResult.appends.length === 0 ? (
+              <div class="auto-extract-empty">
+                <p>Agent 判断本次会话无需更新上下文文件。</p>
+                <a href={backHref} class="btn btn-secondary">返回需求</a>
+              </div>
+            ) : (
+              <form method="post" action="/api/requirement/auto-extract/commit" class="auto-extract-form">
+                <input type="hidden" name="reqId" value={req.id} />
+                <input type="hidden" name="sessionId" value={sessionId} />
+
+                {autoResult.updates.map((u, i) => (
+                  <div class="auto-extract-file" data-filename={u.filename}>
+                    <div class="auto-extract-file-head">
+                      <label class="auto-extract-accept">
+                        <input type="checkbox" name={`update_${i}`} value={u.filename} checked />
+                        <span>更新 <code>{u.filename}</code></span>
+                      </label>
+                      <details class="auto-extract-original">
+                        <summary class="muted small">查看现有内容</summary>
+                        <pre class="auto-extract-diff">{(job as any)._originalFiles?.[u.filename] ?? "(文件不存在)"}</pre>
+                      </details>
+                    </div>
+                    <textarea
+                      name={`update_content_${i}`}
+                      class="req-extract-body auto-extract-textarea"
+                      rows={Math.min(24, u.content.split("\n").length + 2)}
+                      spellcheck={false}
+                    >{u.content}</textarea>
+                  </div>
+                ))}
+
+                {autoResult.appends.map((a, i) => (
+                  <div class="auto-extract-file" data-filename={a.filename}>
+                    <div class="auto-extract-file-head">
+                      <label class="auto-extract-accept">
+                        <input type="checkbox" name={`append_${i}`} value={a.filename} checked />
+                        <span>追加到 <code>{a.filename}</code></span>
+                      </label>
+                    </div>
+                    <textarea
+                      name={`append_content_${i}`}
+                      class="req-extract-body auto-extract-textarea"
+                      rows={Math.min(20, a.content.split("\n").length + 2)}
+                      spellcheck={false}
+                    >{a.content}</textarea>
+                  </div>
+                ))}
+
+                <div class="req-extract-actions">
+                  <button type="submit" class="btn btn-primary">提交已接受的变更</button>
+                  <a href={backHref} class="btn btn-secondary">全部取消</a>
+                </div>
+              </form>
+            )}
+          </section>
+        ) : (
+          <section class="req-extract-error">
+            <p class="req-extract-error-msg"><strong>分析失败</strong>：{job.errorMessage || "未知错误"}</p>
+            {job.stderr ? <pre class="req-extract-stderr">{job.stderr.slice(0, 2000)}</pre> : null}
+            <div class="req-extract-actions">
+              <a href={backHref} class="btn btn-secondary">返回需求</a>
+            </div>
+          </section>
+        )}
+      </div>
+    </Layout>
+  )
+}
+
+/**
+ * POST /api/requirement/auto-extract/commit
+ *
+ * Writes the accepted file updates and appends to the requirement
+ * directory. Each update replaces the file; each append adds content.
+ */
+app.post("/api/requirement/auto-extract/commit", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  const guard = await resolveExtractTarget(reqId, sessionId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+  if (!guard.req.reqDir) return c.text("Requirement has no directory", 400)
+
+  const reqDir = guard.req.reqDir
+  const allowedFiles = new Set(["branch.md", "config-changes.md", "test.md", "notes.md", "meta.md"])
+  let written = 0
+
+  // Process updates and appends from form fields
+  const entries = [...form.entries()]
+  for (const [key, value] of entries) {
+    const updateMatch = key.match(/^update_(\d+)$/)
+    if (updateMatch) {
+      const idx = updateMatch[1]
+      const filename = String(value)
+      if (!allowedFiles.has(filename)) continue
+      const content = String(form.get(`update_content_${idx}`) || "")
+      if (!content.trim()) continue
+      const filePath = join(reqDir, filename)
+      // Safety: ensure the resolved path is still inside reqDir
+      if (!filePath.startsWith(reqDir + "/") && filePath !== reqDir) continue
+      await writeFile(filePath, content, "utf-8")
+      written++
+      continue
+    }
+
+    const appendMatch = key.match(/^append_(\d+)$/)
+    if (appendMatch) {
+      const idx = appendMatch[1]
+      const filename = String(value)
+      if (!allowedFiles.has(filename)) continue
+      const content = String(form.get(`append_content_${idx}`) || "")
+      if (!content.trim()) continue
+      const filePath = join(reqDir, filename)
+      if (!filePath.startsWith(reqDir + "/") && filePath !== reqDir) continue
+      await appendFile(filePath, "\n\n" + content + "\n", "utf-8")
+      written++
+    }
+  }
+
   return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
@@ -1063,6 +2192,63 @@ app.get("/api/requirements", async (c) => {
   const groups = await listRequirementsByProject()
   const requirements = groups.flatMap((g) => g.requirements)
   return c.json({ requirements })
+})
+
+// ---------------------------------------------------------------------------
+// Notification center routes
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/notifications
+ *
+ * Returns { unreadCount, notifications: [...] } for the bell panel.
+ * Includes only non-dismissed notifications, newest-first.
+ */
+app.get("/api/notifications", (c) => {
+  const notifications = getNotifications(false)
+  return c.json({
+    unreadCount: getUnreadCount(),
+    notifications,
+  })
+})
+
+/**
+ * GET /api/notifications/unread-count
+ *
+ * Lightweight counter for the bell badge poll. Returns `{ count }`.
+ */
+app.get("/api/notifications/unread-count", (c) => {
+  return c.json({ count: getUnreadCount() })
+})
+
+/**
+ * POST /api/notifications/dismiss
+ * Body: id=<notificationId> | all=1
+ */
+app.post("/api/notifications/dismiss", async (c) => {
+  const form = await c.req.formData()
+  const all = String(form.get("all") || "") === "1"
+  if (all) {
+    dismissAll()
+    return c.json({ ok: true })
+  }
+  const id = String(form.get("id") || "")
+  if (!id) return c.text("Missing id", 400)
+  if (!getNotification(id)) return c.text("Notification not found", 404)
+  dismissNotification(id)
+  return c.json({ ok: true })
+})
+
+/**
+ * POST /api/notifications/mark-read
+ *
+ * Mark all non-running notifications as read. Running ones stay unread
+ * because they represent in-flight work the user hasn't seen the
+ * outcome of yet.
+ */
+app.post("/api/notifications/mark-read", (c) => {
+  markAllRead()
+  return c.json({ ok: true })
 })
 
 // API: confirm or reject candidates (unchanged)
@@ -1133,8 +2319,26 @@ app.get(
         try {
           const url = ws.url ? new URL(ws.url) : null
           const id = url?.searchParams.get("id") ?? ""
-          const sessionInfo = await getSession(id)
-          const directory = sessionInfo?.directory ?? null
+          const createNew = url?.searchParams.get("new") === "1"
+          const reqId = url?.searchParams.get("req") ?? ""
+          const autoInject = shouldAutoInjectRequirementContext(url)
+
+          // Resolve a working directory + optional title for the spawn.
+          // Non-new mode: trust the SessionInfo row we already have.
+          // New mode: use the requirement's working directory hint if
+          // present (via getRequirement); otherwise fall back to
+          // resolveCwd's default in startSession.
+          let directory: string | null = null
+          let title: string | undefined
+          if (!createNew) {
+            const sessionInfo = await getSession(id)
+            directory = sessionInfo?.directory ?? null
+          } else if (reqId) {
+            const req = await getRequirement(reqId)
+            if (req) title = req.title || undefined
+          }
+
+          const startMs = Date.now()
           const result = startSession(id, directory, {
             onOutput: (chunk) => {
               if (exited) return
@@ -1161,7 +2365,7 @@ app.get(
               }
               try { ws.close(1011, "spawn error") } catch { /* noop */ }
             },
-          })
+          }, { createNew, title })
           if ("error" in result) {
             try {
               ws.send(JSON.stringify({ type: "error", message: result.error }))
@@ -1174,11 +2378,41 @@ app.get(
             ws.send(JSON.stringify({ type: "ready", id: result.id, cols: result.cols, rows: result.rows }))
           } catch { /* noop */ }
 
+          // In "new" mode opencode creates a real session row on startup.
+          // Poll the DB for ~10s to find the freshest session under our
+          // cwd that didn't exist before `startMs`, then push the real
+          // id back to the page and associate it with the requirement.
+          let discoveredId = ""
+          if (createNew) {
+            const cwd = result.cwd
+            const deadline = Date.now() + 10_000
+            while (!discoveredId && Date.now() < deadline && !exited) {
+              await new Promise((r) => setTimeout(r, 500))
+              clearSessionCache()
+              const list = await scanSessions(true)
+              const candidate = list.find(
+                (s) => s.directory === cwd && (s.created || 0) >= startMs,
+              )
+              if (candidate) {
+                discoveredId = candidate.id
+                break
+              }
+            }
+            if (discoveredId) {
+              if (reqId) {
+                try {
+                  await replaceAssociatedSession(reqId, id, discoveredId)
+                } catch { /* noop */ }
+              }
+              try {
+                ws.send(JSON.stringify({ type: "session", id: discoveredId }))
+              } catch { /* noop */ }
+            }
+          }
+
           // If a requirement is associated, inject the context after a
           // short delay so opencode's TUI has time to settle into its
           // input prompt before we feed it text + Enter.
-          const reqId = url?.searchParams.get("req") ?? ""
-          const autoInject = shouldAutoInjectRequirementContext(url)
           if (reqId && autoInject) {
             try {
               const req = await getRequirement(reqId)
@@ -1236,6 +2470,11 @@ app.get(
 // ---------------------------------------------------------------------------
 
 const port = parseInt(process.env.PORT || "7331", 10)
+
+// Load any persisted notifications before opening the port so the first
+// request to /api/notifications returns the saved state.
+await initNotifications()
+await initConfig()
 
 serve({ fetch: app.fetch, websocket: { server: wss }, port }, (info) => {
   console.log(`OpenCode Dashboard running at http://localhost:${info.port}`)

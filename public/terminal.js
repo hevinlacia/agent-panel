@@ -12,8 +12,9 @@
 
   const params = new URLSearchParams(window.location.search)
   // Fall back to data-session-id in case a future route strips the query.
-  const id = params.get("id") || host.dataset.sessionId || ""
-  if (!id) {
+  let id = params.get("id") || host.dataset.sessionId || ""
+  const createNew = params.get("new") === "1" || host.dataset.createNew === "1" || window.__CREATE_NEW__ === true
+  if (!id && !createNew) {
     setStatus("error: missing session id")
     return
   }
@@ -94,7 +95,12 @@
 
     setStatus("connecting…")
     const proto = window.location.protocol === "https:" ? "wss" : "ws"
-    const wsUrl = `${proto}://${window.location.host}/ws/session-terminal?id=${encodeURIComponent(id)}` + (reqId ? `&req=${encodeURIComponent(reqId)}` : "") + (autoInject ? "&inject=1" : "")
+    const qsParts = []
+    if (id) qsParts.push(`id=${encodeURIComponent(id)}`)
+    if (reqId) qsParts.push(`req=${encodeURIComponent(reqId)}`)
+    if (autoInject) qsParts.push("inject=1")
+    if (createNew) qsParts.push("new=1")
+    const wsUrl = `${proto}://${window.location.host}/ws/session-terminal` + (qsParts.length ? "?" + qsParts.join("&") : "")
     const ws = new WebSocket(wsUrl)
     ws.binaryType = "arraybuffer"
 
@@ -167,6 +173,21 @@
                 u.searchParams.delete("inject")
                 window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "") + u.hash)
               }
+            } catch { /* noop */ }
+            return
+          }
+          if (parsed.type === "session" && typeof parsed.id === "string" && parsed.id) {
+            // Server discovered the real opencode session id (created
+            // via `opencode run -i`). Replace the page's pending id and
+            // drop the `new=1` flag so a refresh resumes the same
+            // session via `opencode --session <id>`.
+            id = parsed.id
+            setStatus("session ready: " + parsed.id)
+            try {
+              const u = new URL(window.location.href)
+              u.searchParams.set("id", parsed.id)
+              u.searchParams.delete("new")
+              window.history.replaceState(null, "", u.pathname + (u.search ? u.search : "") + u.hash)
             } catch { /* noop */ }
             return
           }

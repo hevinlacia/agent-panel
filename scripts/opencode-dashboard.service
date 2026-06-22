@@ -1,0 +1,18 @@
+[Unit]
+Description=OpenCode Dashboard (Hono SSR)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=__WORKDIR__
+Environment=PATH=__NODE_BIN_DIR__:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=PORT=__PORT__
+ExecStart=__NODE_BIN__ node_modules/tsx/dist/cli.mjs src/server.tsx
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:__LOG_FILE__
+StandardError=append:__LOG_FILE__
+
+[Install]
+WantedBy=default.target

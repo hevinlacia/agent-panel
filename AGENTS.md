@@ -117,6 +117,64 @@ Default port: `7331` (overridable via `PORT`).
 - **No business logic in JSX** beyond formatting. Heavy lifting
   (scanning, parsing, PTY management, path resolution) belongs in
   `src/*.ts` modules that can be unit-tested.
+- **AI-readable doc comments are required.** Every new or substantially
+  changed file under `src/` and every page-scoped script under `public/`
+  (e.g. `public/terminal.js`, `public/app.js`) must let the next AI
+  agent (and the next human) understand its role without reading the
+  implementation. Apply the following three layers; do not write more
+  than this.
+
+  1. **File header (mandatory)** — top of file, JSDoc block (`/** … */`),
+     **3–10 lines**:
+     - **Role**: one sentence — what this module is responsible for, in
+       project vocabulary (e.g. "PTY wrapper for the embedded terminal",
+       not "spawns a child process").
+     - **Public surface**: list the exported symbols other modules import.
+     - **Constraints / safety**: any rule from §3 that this file enforces
+       or relies on (e.g. "must not import `node-pty`", "all paths go
+       through `resolveHandoffPath`").
+     - **Read-this-with**: 1–3 sibling files a reader will need next
+       (e.g. `src/terminal.ts → see src/terminalProtocol.ts for the wire
+       contract`).
+
+     See `src/terminalProtocol.ts`, `src/paths.ts`, and
+     `src/requirementState.ts` for the established style.
+
+  2. **Exported symbol comment (mandatory for exports)** — JSDoc block
+     directly above every `export function`, `export class`,
+     `export const` (when it's a public API, not a string literal), and
+     every exported `type` / `interface`. Cover **why** the symbol
+     exists and any non-obvious **edge cases / preconditions**, not its
+     restated signature. Keep it ≤6 lines. Skip for local helpers that
+     aren't exported.
+
+  3. **Inline "why" comment (only when warranted)** — single-line or
+     short block comment immediately above a tricky branch when one of:
+     - it encodes a project rule from §3 Safety (e.g. "refuses `..`"),
+     - it works around an OpenCode CLI quirk (e.g. "opencode --session
+       <unknown> exits with `Session not found`"),
+     - it is intentionally lossy / non-obvious (timeouts, polling,
+       fall-through, off-by-one, idempotency window).
+
+     Do **not** comment "what" — leave that to the code. Aim for at
+     most one such comment per ~50 lines, not every line.
+
+  - **Language**: Chinese or English are both acceptable for these
+    comments. Pick whichever is clearer for the rule you're encoding;
+    do not mix the two within a single JSDoc block.
+
+  - **Forbidden anti-patterns**:
+    - Tagline-only headers like `// server.tsx`, `// utils`. They add
+      noise and never tell you why a file exists.
+    - Restating the signature in JSDoc (`@param id the session id`).
+    - Marketing / changelog comments inside the file
+      (`// fix(2026-06-22): ...`). Use git history for that.
+
+  - **When you change a module substantively** (new exports, changed
+    invariants, new safety rule, new fallback), update the file header
+    and the affected exported-symbol JSDoc in the **same commit**. A
+    diff that adds a new `export` without a JSDoc above it is
+    incomplete.
 
 ## 5. Verification checklist (run before declaring done)
 

@@ -34,6 +34,16 @@ npm run dev
 npm run typecheck
 ```
 
+后台常驻（Linux + systemd user service）：
+
+```bash
+./scripts/install-systemd.sh
+# → 安装并启动 opencode-dashboard.service
+# → 默认端口 7331；PORT=8080 ./scripts/install-systemd.sh 可改
+```
+
+详细部署 / 升级 / 卸载 / 排障流程见 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)。
+
 ## 页面
 
 | 路径 | 说明 |

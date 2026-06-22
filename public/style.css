@@ -1270,6 +1270,949 @@ code {
 .req-create-form-inline { margin: 10px 0; }
 .btn-sm { padding: 2px 10px; font-size: 0.72rem; }
 
+/* Nested requirement sub-groups (e.g. WMS / disaster-recovery / mq-migration). */
+.req-group-list { display: flex; flex-direction: column; gap: 12px; padding-top: 10px; }
+.req-subgroup {
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.req-subgroup[open] { border-color: var(--border-strong); }
+.req-subgroup-header {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.78rem;
+}
+.req-subgroup-header::-webkit-details-marker { display: none; }
+.req-subgroup-crumbs {
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+.req-subgroup-seg {
+  color: var(--text-strong, var(--text));
+}
+.req-subgroup-sep { color: var(--text-muted); }
+.req-subgroup-meta {
+  display: flex;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.req-subgroup-count { color: var(--cyan); }
+.req-subgroup .req-list { padding: 0 12px 12px 12px; }
+
+/* Session decision panel at the top of requirement detail page. */
+.req-session-panel {
+  margin: 10px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.req-session-panel-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.req-session-panel-empty { }
+.req-session-panel-prompt {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+}
+.req-session-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.req-session-inline-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.req-session-inline-form select {
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--op-bg-soft, #181818);
+  color: var(--text);
+  border-radius: 3px;
+}
+.req-session-inline-form input[type="text"] {
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--op-bg-soft, #181818);
+  color: var(--text);
+  border-radius: 3px;
+  min-width: 320px;
+}
+.req-form-actions input[type="text"] {
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--op-bg-soft, #181818);
+  color: var(--text);
+  border-radius: 3px;
+  min-width: 320px;
+}
+.req-session-panel-others {
+  margin-top: 10px;
+}
+.req-session-panel-others > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.req-session-panel-others .req-session-list {
+  margin: 6px 0 0;
+  padding: 0 0 0 4px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.req-session-panel-others .req-session-list li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.78rem;
+}
+.req-session-badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--cyan);
+  color: #000;
+  font-family: var(--mono);
+}
+
+/* Status switcher on requirement detail page. */
+.req-status-switcher {
+  margin: 10px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.req-status-switcher-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.req-status-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.req-status-form select,
+.req-status-form input[type="text"] {
+  font-family: inherit;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--op-bg-soft, #181818);
+  color: var(--text);
+  border-radius: 3px;
+}
+.req-status-note { min-width: 180px; }
+.req-status-next { margin-left: auto; }
+.req-status-history { margin-top: 10px; }
+.req-status-history > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.req-status-history-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 0 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+}
+.req-status-history-list li { line-height: 1.4; }
+
+/* ------------------------------------------------------------------------- */
+/* Requirement → Session context extractor (preview page)                    */
+/*   .req-extract-link        : prominent button in the "继续任务" row       */
+/*   .req-extract-link-inline : low-emphasis inline link in session lists    */
+/*   .req-extract-*           : preview page sections                        */
+/* ------------------------------------------------------------------------- */
+
+.req-extract-link {
+  margin-left: 4px;
+}
+.req-extract-link-inline {
+  margin-left: 8px;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+.req-extract-link-inline:hover {
+  color: var(--text);
+}
+
+.req-extract { display: flex; flex-direction: column; gap: 16px; }
+.req-extract-preview,
+.req-extract-error {
+  border: 1px solid var(--op-border, #2a2a2a);
+  border-radius: 6px;
+  background: var(--op-bg-soft, #181818);
+  padding: 14px 16px;
+}
+.req-extract-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.req-extract-body {
+  width: 100%;
+  min-height: 360px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "Cascadia Mono", "Roboto Mono", monospace);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text);
+  background: #0e0e0e;
+  border: 1px solid var(--op-border, #2a2a2a);
+  border-radius: 4px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.req-extract-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.req-extract-error {
+  border-color: #5a2a2a;
+  background: #1c1010;
+}
+.req-extract-error-msg {
+  margin: 0 0 8px;
+  color: #f0a8a8;
+}
+.req-extract-error-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  font-size: 0.82rem;
+  margin: 8px 0 12px;
+}
+.req-extract-error-detail dt {
+  color: var(--text-muted);
+}
+.req-extract-error-detail dd {
+  margin: 0;
+}
+.req-extract-stderr {
+  white-space: pre-wrap;
+  font-size: 0.78rem;
+  color: #d8b0b0;
+  background: #0e0e0e;
+  border: 1px solid #3a1f1f;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+}
+
+/* Salvage form inside the failed-state card: separated by a softer
+   rule so it doesn't look like part of the error metadata block. */
+.req-extract-salvage {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #443;
+}
+
+/* Banner shown on the success preview when the text was rescued from
+   a fork session rather than the spawn's stdout. */
+.req-extract-salvage-banner {
+  background: #1a241a;
+  border: 1px solid #3a5a3a;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: #b8d8b8;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.req-extract-salvage-banner code {
+  font-size: 0.78rem;
+  background: #0e1a0e;
+  padding: 0px 4px;
+  border-radius: 3px;
+}
+
+/* "Running" state on the preview page: spinner + status card. */
+.req-extract-running {
+  border: 1px solid var(--op-border, #2a2a2a);
+  border-radius: 6px;
+  background: var(--op-bg-soft, #181818);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.req-extract-spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 6px;
+  border: 2px solid #555;
+  border-top-color: var(--accent, #6cf);
+  border-radius: 50%;
+  animation: op-spin 0.9s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes op-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Page-pinned toast host (extract-context async progress)                   */
+/*   .op-toast-host  : fixed top-center container holding one or more cards  */
+/*   .op-toast       : a single sticky card; clicking buttons inside it      */
+/*                     does NOT auto-dismiss — the user closes it explicitly.*/
+/* ------------------------------------------------------------------------- */
+
+.op-toast-host {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(640px, calc(100vw - 32px));
+}
+.op-toast {
+  pointer-events: auto;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 10px 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 0.86rem;
+  line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: op-toast-in 180ms ease-out;
+}
+@keyframes op-toast-in {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+.op-toast-title {
+  font-weight: 500;
+}
+.op-toast-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  /* session ids are 28 chars; allow break-all so the full id renders
+     even when the user shrinks the window or zooms in. */
+  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+}
+.op-toast-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.op-toast-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid #444;
+  color: var(--text);
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+.op-toast-btn:hover {
+  background: #2a2a2a;
+}
+.op-toast-running { border-left: 3px solid var(--accent, #6cf); }
+.op-toast-done    { border-left: 3px solid #5fb85f; }
+.op-toast-failed  { border-left: 3px solid #d36a6a; }
+
+/* Inline trigger form should not break inline list flow. */
+.req-extract-trigger-form {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+.req-extract-trigger-inline {
+  margin-left: 8px;
+}
+.req-extract-trigger-inline button {
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+}
+
 @media (max-width: 720px) {
   .proj-card-header { flex-wrap: wrap; }
+  .req-subgroup-header { flex-wrap: wrap; }
+  .req-status-form { flex-wrap: wrap; }
+  .req-status-next { margin-left: 0; }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Notification center — bell + badge + dropdown panel                       */
+/* ------------------------------------------------------------------------- */
+
+.op-notify {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.op-notify-bell {
+  appearance: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  padding: 2px 4px;
+  font-size: 15px;
+  line-height: 1;
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  transition: color 0.1s;
+}
+
+.op-notify-bell:hover { color: var(--text-strong); }
+
+.op-notify-badge {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  background: var(--red);
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 7px;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.op-notify-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  min-width: 360px;
+  max-width: min(480px, calc(100vw - 32px));
+  max-height: 70vh;
+  background: #14181f;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* `display: flex` overrides the browser's `[hidden] { display: none }`.
+   Restore it so the JS togglePanel() works. */
+.op-notify-panel[hidden] {
+  display: none !important;
+}
+
+.op-notify-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.op-notify-panel-title {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.op-notify-panel-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.op-notify-link {
+  appearance: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0;
+}
+
+.op-notify-link:hover { color: var(--primary-hover); }
+
+.op-notify-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.op-notify-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 0.82rem;
+  transition: background 0.1s;
+}
+
+.op-notify-item:last-child { border-bottom: 0; }
+
+.op-notify-item:hover { background: rgba(255, 255, 255, 0.025); }
+
+.op-notify-item-unread {
+  background: rgba(34, 211, 238, 0.04);
+  border-left: 2px solid var(--cyan);
+}
+
+.op-notify-item-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 60px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.op-notify-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.op-notify-dot-running { background: var(--cyan); box-shadow: 0 0 5px var(--cyan); }
+.op-notify-dot-done { background: var(--green); }
+.op-notify-dot-failed { background: var(--red); }
+
+.op-notify-item-state {
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.op-notify-item-mid {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.op-notify-item-title {
+  font-weight: 500;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-notify-item-sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-notify-item-time {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+}
+
+.op-notify-item-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.op-notify-item-link {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  padding: 2px 8px;
+  font-size: 0.68rem;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: var(--mono);
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.op-notify-item-link:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.op-notify-item-dismiss {
+  appearance: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  padding: 2px;
+  line-height: 1;
+}
+
+.op-notify-item-dismiss:hover { color: var(--text-strong); }
+
+.op-notify-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+/* The bell icon uses a Unicode character. Keep it from being
+   copy-pasted or selected accidentally. */
+#op-notify .op-notify-icon {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Copy-command buttons (requirement detail page)                            */
+/*   .req-copy-cmd-btn    : prominent button in the "继续任务" row           */
+/*   .req-copy-cmd-inline : low-emphasis button next to session id in lists  */
+/*   .req-copy-done       : flash style after a successful copy              */
+/* ------------------------------------------------------------------------- */
+
+.req-copy-cmd-btn {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+}
+
+.req-copy-cmd-inline {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  padding: 1px 8px;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 4px;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.req-copy-cmd-inline:hover {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+  border-color: var(--border-strong);
+}
+
+.req-copy-done {
+  color: var(--green) !important;
+  border-color: var(--green) !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Settings page                                                              */
+/* ------------------------------------------------------------------------- */
+
+.settings-page {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.settings-section {
+  margin: 18px 0;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-strong);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.settings-input {
+  padding: 6px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  color: var(--text-strong);
+  font-size: 0.88rem;
+  font-family: var(--mono);
+  border-radius: 3px;
+  max-width: 400px;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--cyan-soft);
+}
+
+.settings-input-narrow {
+  max-width: 100px;
+}
+
+.settings-saved {
+  margin-left: 8px;
+  color: var(--green);
+}
+
+.op-settings-link {
+  font-size: 15px;
+  cursor: pointer;
+  text-decoration: none;
+  padding: 2px 4px;
+}
+
+.op-settings-link:hover {
+  color: var(--text-strong);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Release checklist card (待上线 status)                                     */
+/* ------------------------------------------------------------------------- */
+
+.release-checklist {
+  margin: 14px 0 18px;
+  padding: 16px;
+  background: rgba(234, 179, 8, 0.06);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 4px;
+}
+
+.release-checklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.release-checklist-section h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  font-family: var(--mono);
+}
+
+.release-checklist-section ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.release-checklist-section ul li {
+  padding: 2px 0;
+  font-size: 0.82rem;
+}
+
+.release-checklist-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.release-checklist-table td {
+  padding: 2px 8px 2px 0;
+  font-size: 0.82rem;
+  vertical-align: top;
+}
+
+.release-checklist-notes {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.release-checklist-notes h3 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--amber);
+  margin-bottom: 6px;
+  font-family: var(--mono);
+}
+
+.release-checklist-notes ul {
+  list-style: disc;
+  padding-left: 20px;
+}
+
+.release-checklist-notes ul li {
+  padding: 2px 0;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Auto-extract preview page                                                  */
+/* ------------------------------------------------------------------------- */
+
+.auto-extract-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auto-extract-summary {
+  padding: 10px 12px;
+  background: rgba(34, 211, 238, 0.06);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.auto-extract-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.auto-extract-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.auto-extract-file {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--bg-soft);
+}
+
+.auto-extract-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.auto-extract-accept {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.auto-extract-accept input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+}
+
+.auto-extract-original {
+  flex: 1;
+}
+
+.auto-extract-original summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.auto-extract-diff {
+  font-size: 0.78rem;
+  max-height: 200px;
+  overflow: auto;
+  background: #0e0e0e;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.auto-extract-textarea {
+  min-height: 120px;
 }

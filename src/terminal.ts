@@ -39,6 +39,12 @@ export type TerminalSession = {
   pty: IPty
   cols: number
   rows: number
+  cwd: string
+}
+
+export type StartSessionOptions = {
+  createNew?: boolean
+  title?: string
 }
 
 const OPENCODE_BIN_CANDIDATES = ["/usr/bin/opencode", "opencode"]
@@ -60,13 +66,21 @@ function pickOpencodeBin(): string {
 export function startSession(
   id: string,
   directory: string | null | undefined,
-  handler: TerminalHandler
+  handler: TerminalHandler,
+  options: StartSessionOptions = {}
 ): TerminalSession | { error: string } {
-  if (!isValidSessionId(id)) {
+  const createNew = options.createNew === true
+  if (!createNew && !isValidSessionId(id)) {
+    return { error: "Invalid session id" }
+  }
+  if (createNew && id && !isValidSessionId(id)) {
     return { error: "Invalid session id" }
   }
   const bin = pickOpencodeBin()
-  const args = ["--session", id]
+  const args = createNew ? ["run", "-i"] : ["--session", id]
+  if (createNew && options.title) {
+    args.push("--title", options.title)
+  }
   const cwd = resolveCwd(directory)
 
   let pty: IPty
@@ -83,7 +97,7 @@ export function startSession(
     return { error: `Failed to spawn ${bin}: ${message}` }
   }
 
-  const session: TerminalSession = { id, pty, cols: DEFAULT_COLS, rows: DEFAULT_ROWS }
+  const session: TerminalSession = { id, pty, cols: DEFAULT_COLS, rows: DEFAULT_ROWS, cwd }
 
   pty.onData((data) => {
     try {

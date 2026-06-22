@@ -18,6 +18,8 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { randomBytes } from "node:crypto"
 
+import { readRequirementState } from "./requirementState.ts"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -39,6 +41,15 @@ export interface Requirement {
   title: string
   status: ReqStatus
   project: string
+  /**
+   * Sub-path of intermediate grouping directories between the project
+   * root and this requirement. For example, a requirement at
+   *   ~/.agents/req/WMS/disaster-recovery/mq-migration/<req>/meta.md
+   * has project = "WMS" and groupPath = ["disaster-recovery", "mq-migration"].
+   * Legacy flat layouts (~/.agents/req/<req>/meta.md) carry an empty
+   * groupPath.
+   */
+  groupPath: string[]
   description: string
   sessionIds: string[]
   createdAt: number
@@ -48,6 +59,12 @@ export interface Requirement {
   testPath?: string
   notesPath?: string
   configPath?: string
+  /**
+   * Directory holding this requirement's files. Stored on the record so
+   * the status-write API can locate `state.json` without re-deriving the
+   * path from project/groupPath/id.
+   */
+  reqDir?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -57,7 +74,20 @@ export interface Requirement {
 export const DEFAULT_REQ_ID = "__default__"
 export const DEFAULT_PROJECT_NAME = "默认项目"
 
-const REQ_DIR = join(homedir(), ".agents", "req")
+const DEFAULT_REQ_DIR = join(homedir(), ".agents", "req")
+let _reqDir: string = DEFAULT_REQ_DIR
+
+/**
+ * Override the Hermes requirement scan root. Test-only — production code
+ * relies on the default `~/.agents/req/` path. Mirrors `_setStorePath`.
+ */
+export function _setReqDir(path: string): void {
+  _reqDir = path
+}
+
+export function _getReqDir(): string {
+  return _reqDir
+}
 
 // ---------------------------------------------------------------------------
 // Associations store (test-overridable)
@@ -285,7 +315,8 @@ function parseStartDate(value: string | undefined): number | null {
 async function loadRequirementFromDir(
   dirPath: string,
   dirName: string,
-  parentProject: string
+  parentProject: string,
+  groupPath: string[] = [],
 ): Promise<Requirement | null> {
   let st
   try {
@@ -307,6 +338,7 @@ async function loadRequirementFromDir(
   let description = ""
   let id = dirName
   let createdAt = st.mtimeMs
+  let updatedAt = st.mtimeMs
 
   let metaPresent = false
   if (existsSync(metaPath)) {
@@ -326,9 +358,29 @@ async function loadRequirementFromDir(
       if (sd !== null) createdAt = sd
       const desc = firstParagraph(fm.body)
       if (desc) description = desc
+
+      // Markdown-list fallback for hermes meta.md (e.g. "- Title: Foo").
+      // Only used when YAML frontmatter didn't already provide a value.
+      const titleMatch = raw.match(/^\s*-\s*Title\s*:\s*(.+?)\s*$/im)
+      if (titleMatch && (title === dirName || !title)) {
+        title = titleMatch[1].trim()
+      }
     } catch {
       // Keep defaults.
     }
+  }
+
+  // state.json wins over both frontmatter and the markdown-list status.
+  // readRequirementState also migrates `- Status: <english>` from
+  // meta.md the first time it runs.
+  try {
+    const state = await readRequirementState(dirPath)
+    if (state) {
+      status = state.status
+      updatedAt = Math.max(updatedAt, state.updatedAt)
+    }
+  } catch {
+    // ignore; fall back to whatever we already have.
   }
 
   return {
@@ -336,30 +388,102 @@ async function loadRequirementFromDir(
     title,
     status,
     project,
+    groupPath,
     description,
     sessionIds: [],
     createdAt,
-    updatedAt: st.mtimeMs,
+    updatedAt,
     metaPath: metaPresent ? metaPath : undefined,
     branchPath: existsSync(branchPath) ? branchPath : undefined,
     testPath: existsSync(testPath) ? testPath : undefined,
     notesPath: existsSync(notesPath) ? notesPath : undefined,
     configPath: existsSync(configPath) ? configPath : undefined,
+    reqDir: dirPath,
+  }
+}
+
+/**
+ * Recursively collect requirements (directories that contain meta.md)
+ * under `rootPath`. Any directory without meta.md is treated as an
+ * intermediate grouping directory and its segment name is appended to
+ * `groupPath` for descendants. Stops descending once a directory with
+ * meta.md is found (i.e. requirements cannot be nested inside other
+ * requirements).
+ *
+ * Bounded recursion: max depth 6 to keep accidental symlink loops or
+ * deeply nested test fixtures from spinning.
+ */
+async function collectRequirementsRecursive(
+  rootPath: string,
+  project: string,
+  groupPath: string[],
+  out: Requirement[],
+  depth = 0,
+): Promise<void> {
+  if (depth > 6) return
+  let st
+  try {
+    st = await stat(rootPath)
+  } catch {
+    return
+  }
+  if (!st.isDirectory()) return
+
+  // If this directory itself has a meta.md, it IS a requirement —
+  // record it and do not descend further.
+  if (existsSync(join(rootPath, "meta.md"))) {
+    const dirName = rootPath.split("/").filter(Boolean).pop() || rootPath
+    const req = await loadRequirementFromDir(rootPath, dirName, project, groupPath)
+    if (req) out.push(req)
+    return
+  }
+
+  let children: string[]
+  try {
+    children = await readdir(rootPath)
+  } catch {
+    return
+  }
+  for (const childName of children) {
+    if (childName.startsWith(".") || childName === "README.md") continue
+    const childPath = join(rootPath, childName)
+    let childSt
+    try {
+      childSt = await stat(childPath)
+    } catch {
+      continue
+    }
+    if (!childSt.isDirectory()) continue
+
+    if (existsSync(join(childPath, "meta.md"))) {
+      const req = await loadRequirementFromDir(childPath, childName, project, groupPath)
+      if (req) out.push(req)
+    } else {
+      // Intermediate group directory — recurse with extended groupPath.
+      await collectRequirementsRecursive(
+        childPath,
+        project,
+        [...groupPath, childName],
+        out,
+        depth + 1,
+      )
+    }
   }
 }
 
 export async function scanHermesRequirements(): Promise<Requirement[]> {
-  if (!existsSync(REQ_DIR)) return []
+  const reqDir = _reqDir
+  if (!existsSync(reqDir)) return []
   let topEntries: string[]
   try {
-    topEntries = await readdir(REQ_DIR)
+    topEntries = await readdir(reqDir)
   } catch {
     return []
   }
   const out: Requirement[] = []
   for (const name of topEntries) {
     if (name === "README.md" || name.startsWith(".")) continue
-    const topPath = join(REQ_DIR, name)
+    const topPath = join(reqDir, name)
     let topSt
     try {
       topSt = await stat(topPath)
@@ -381,25 +505,16 @@ export async function scanHermesRequirements(): Promise<Requirement[]> {
       const req = await loadRequirementFromDir(
         topPath,
         name,
-        DEFAULT_PROJECT_NAME
+        DEFAULT_PROJECT_NAME,
+        [],
       )
       if (req) out.push(req)
       continue
     }
 
-    // Two-level layout: ~/.agents/req/<project>/<req-id>/
-    let children: string[]
-    try {
-      children = await readdir(topPath)
-    } catch {
-      continue
-    }
-    for (const reqName of children) {
-      if (reqName.startsWith(".")) continue
-      const reqPath = join(topPath, reqName)
-      const req = await loadRequirementFromDir(reqPath, reqName, projectDisplay)
-      if (req) out.push(req)
-    }
+    // Project-level directory. Walk it recursively, accumulating the
+    // intermediate grouping path under `groupPath` for each leaf.
+    await collectRequirementsRecursive(topPath, projectDisplay, [], out)
   }
   return out
 }
@@ -415,6 +530,7 @@ function buildDefaultRequirement(sessionIds: string[]): Requirement {
     title: "默认需求",
     status: "开发中",
     project: DEFAULT_PROJECT_NAME,
+    groupPath: [],
     description:
       "未关联到具体需求的 session 归属到此默认需求。如需独立管理，可在 ~/.agents/req/ 下创建对应需求目录后重新关联。",
     sessionIds,
@@ -544,6 +660,27 @@ export async function associateSession(
     cur.push(sessionId)
   }
   store.associations[reqId] = cur
+  await saveAssociations(store)
+}
+
+export async function replaceAssociatedSession(
+  reqId: string,
+  oldSessionId: string,
+  newSessionId: string
+): Promise<void> {
+  if (!newSessionId) return
+  const store = await loadAssociations()
+  for (const [k, sids] of Object.entries(store.associations)) {
+    if (k === reqId) continue
+    const next = sids.filter((s) => s !== newSessionId)
+    if (next.length === 0) delete store.associations[k]
+    else store.associations[k] = next
+  }
+
+  const cur = store.associations[reqId] ?? []
+  const next = cur.filter((s) => s !== oldSessionId && s !== newSessionId)
+  next.push(newSessionId)
+  store.associations[reqId] = next
   await saveAssociations(store)
 }
 

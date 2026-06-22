@@ -43,9 +43,10 @@ export function shouldAutoInjectRequirementContext(
 export interface BuildTerminalWebSocketUrlOptions {
   protocol: string
   host: string
-  sessionId: string
+  sessionId?: string
   reqId?: string
   autoInject?: boolean
+  createNew?: boolean
 }
 
 /**
@@ -54,8 +55,12 @@ export interface BuildTerminalWebSocketUrlOptions {
  */
 export function buildTerminalWebSocketUrl(options: BuildTerminalWebSocketUrlOptions): string {
   const proto = options.protocol === "https:" ? "wss" : "ws"
-  let url = `${proto}://${options.host}/ws/session-terminal?id=${encodeURIComponent(options.sessionId)}`
-  if (options.reqId) url += `&req=${encodeURIComponent(options.reqId)}`
-  if (options.autoInject) url += "&inject=1"
-  return url
+  let url = `${proto}://${options.host}/ws/session-terminal`
+  const params: string[] = []
+  if (options.sessionId) params.push(`id=${encodeURIComponent(options.sessionId)}`)
+  if (options.reqId) params.push(`req=${encodeURIComponent(options.reqId)}`)
+  if (options.autoInject) params.push("inject=1")
+  if (options.createNew) params.push("new=1")
+  const query = params.join("&")
+  return query ? `${url}?${query}` : url
 }
