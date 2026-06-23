@@ -43,6 +43,8 @@ import {
   getRequirementForSession,
   getAllAssociatedSessionIds,
   buildInjectionContext,
+  scanHermesRequirements,
+  loadAssociations,
   DEFAULT_REQ_ID,
   DEFAULT_PROJECT_NAME,
 } from "./requirements.ts"
@@ -710,15 +712,20 @@ function bucketByGroupPath(requirements: Requirement[]): { key: string; segments
 
 const RequirementCard: FC<{ r: Requirement }> = ({ r }) => {
   const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
+  const isParent = !!(r.childIds && r.childIds.length > 0)
   return (
-    <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
+    <a class={`req-card${isParent ? " req-card-parent" : ""}`} href={`/requirement?id=${encodeURIComponent(r.id)}`}>
       <div class="req-card-header">
         <span class="req-card-title">{r.title}</span>
-        <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+        {isParent ? (
+          <span class="req-card-child-count">{r.childIds!.length} 子需求</span>
+        ) : (
+          <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+        )}
       </div>
       <div class="req-card-body">{snippet}</div>
       <div class="req-card-footer">
-        <span>{r.sessionIds.length} session(s)</span>
+        {isParent ? <span>分组需求</span> : <span>{r.sessionIds.length} session(s)</span>}
         <span>更新于 {formatRelAgo(r.updatedAt)}</span>
       </div>
     </a>
@@ -938,10 +945,13 @@ const RequirementDetailPage: FC<{
   testContent?: string
   configContent?: string
   state?: RequirementState | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, branchContent, notesContent, testContent, configContent, state }) => {
+  childReqs?: Requirement[]
+  parentReq?: Requirement | null
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, branchContent, notesContent, testContent, configContent, state, childReqs, parentReq }) => {
+  const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
-  const canSwitch = !!req.reqDir
+  const canSwitch = !!req.reqDir && !isParent
   const next = nextStatus(req.status)
   const history = state?.history ?? []
   // Reverse-chronological display, but keep a stable copy.
@@ -950,15 +960,43 @@ const RequirementDetailPage: FC<{
     <Layout title={`Requirement ${req.title}`} active="requirements">
       <div class="req-detail">
       <div class="page-header">
-        <a href="/projects" class="back-link">← All requirements</a>
-        <h1>{req.title} <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span></h1>
+        {parentReq ? (
+          <a href={`/requirement?id=${encodeURIComponent(parentReq.id)}`} class="back-link">← {parentReq.title}</a>
+        ) : (
+          <a href="/projects" class="back-link">← All requirements</a>
+        )}
+        <h1>
+          {req.title}
+          {isParent ? null : <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span>}
+        </h1>
         <div class="meta-grid">
           <div><span class="field-label">项目</span> {req.project}{req.groupPath && req.groupPath.length > 0 ? <span class="muted small"> / {req.groupPath.join(" / ")}</span> : null}</div>
           <div><span class="field-label">Req ID</span> <code>{req.id}</code></div>
           <div><span class="field-label">更新于</span> {formatRelAgo(req.updatedAt)}</div>
+          {isParent ? <div><span class="field-label">子需求</span> {req.childIds!.length}</div> : null}
         </div>
       </div>
 
+      {isParent ? (
+        <>
+          {description ? (
+            <section class="req-hermes-section">
+              <h2 class="op-section-title">描述</h2>
+              <pre style="white-space: pre-wrap; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{description}</pre>
+            </section>
+          ) : null}
+
+          <HermesFileSection title="需求背景" content={backgroundContent} />
+
+          <section class="req-children-section" aria-label="子需求">
+            <h2 class="op-section-title">子需求（{childReqs?.length ?? 0}）</h2>
+            <div class="req-list">
+              {(childReqs ?? []).map((cr) => <RequirementCard r={cr} />)}
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
       {(() => {
         const orderedAssociated = sortByLastUsedDesc(associated)
         const recent = orderedAssociated[0] ?? null
@@ -1266,6 +1304,8 @@ const RequirementDetailPage: FC<{
           </form>
         ) : null}
       </section>
+      </>
+      )}
       </div>
       <script src="/static/req-detail.js" defer></script>
     </Layout>
@@ -1661,6 +1701,24 @@ app.get("/requirement", async (c) => {
     ? await getExtractHistoryForRequirement(req.id, 6)
     : []
 
+  // If this is a parent requirement, load its children for the detail page.
+  let childReqs: Requirement[] = []
+  if (req.childIds && req.childIds.length > 0) {
+    const allReqs = await scanHermesRequirements()
+    childReqs = allReqs.filter((r) => req.childIds!.includes(r.id))
+    // Attach session counts.
+    const store = await loadAssociations()
+    for (const cr of childReqs) {
+      cr.sessionIds = store.associations[cr.id] ?? []
+    }
+  }
+
+  // If this is a child requirement, load the parent for a back-link.
+  let parentReq: Requirement | null = null
+  if (req.parentReqId) {
+    parentReq = await getRequirement(req.parentReqId)
+  }
+
   return c.html(
     <RequirementDetailPage
       req={req}
@@ -1674,6 +1732,8 @@ app.get("/requirement", async (c) => {
       state={state}
       recommendations={recommendations}
       extractHistory={extractHistory}
+      childReqs={childReqs}
+      parentReq={parentReq}
     />
   )
 })

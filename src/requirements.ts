@@ -66,6 +66,18 @@ export interface Requirement {
    * path from project/groupPath/id.
    */
   reqDir?: string
+  /**
+   * If this requirement is a child of another requirement (nested inside
+   * its directory), the parent's req-id. Undefined for top-level or
+   * parent requirements.
+   */
+  parentReqId?: string
+  /**
+   * If this requirement has child requirements (sub-directories with
+   * their own meta.md), their req-ids. Undefined/empty for leaf
+   * requirements.
+   */
+  childIds?: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +330,7 @@ async function loadRequirementFromDir(
   dirName: string,
   parentProject: string,
   groupPath: string[] = [],
+  parentReqId?: string,
 ): Promise<Requirement | null> {
   let st
   try {
@@ -402,6 +415,7 @@ async function loadRequirementFromDir(
     notesPath: existsSync(notesPath) ? notesPath : undefined,
     configPath: existsSync(configPath) ? configPath : undefined,
     reqDir: dirPath,
+    parentReqId,
   }
 }
 
@@ -409,9 +423,14 @@ async function loadRequirementFromDir(
  * Recursively collect requirements (directories that contain meta.md)
  * under `rootPath`. Any directory without meta.md is treated as an
  * intermediate grouping directory and its segment name is appended to
- * `groupPath` for descendants. Stops descending once a directory with
- * meta.md is found (i.e. requirements cannot be nested inside other
- * requirements).
+ * `groupPath` for descendants.
+ *
+ * When a directory has meta.md, it is recorded as a requirement AND the
+ * scan continues into its sub-directories to discover child requirements.
+ * This supports the parent-child pattern where a top-level requirement
+ * acts as a grouping container (e.g. WMS-003-rabbitmq-to-rocketmq/
+ *   WMS-003-stock-diff-adjust/meta.md). Child requirements carry
+ * `parentReqId` pointing back to the parent.
  *
  * Bounded recursion: max depth 6 to keep accidental symlink loops or
  * deeply nested test fixtures from spinning.
@@ -422,6 +441,9 @@ async function collectRequirementsRecursive(
   groupPath: string[],
   out: Requirement[],
   depth = 0,
+  parentReqId?: string,
+  skipSelfMeta = false,
+  parentReqRef?: Requirement,
 ): Promise<void> {
   if (depth > 6) return
   let st
@@ -432,13 +454,31 @@ async function collectRequirementsRecursive(
   }
   if (!st.isDirectory()) return
 
-  // If this directory itself has a meta.md, it IS a requirement —
-  // record it and do not descend further.
-  if (existsSync(join(rootPath, "meta.md"))) {
+  let currentParent = parentReqId
+  let currentGroupPath = groupPath
+  let parentReq: Requirement | null = null
+
+  // If skipSelfMeta is true, the caller already loaded this requirement
+  // and passed it as parentReqRef. Use it directly so childIds can be
+  // tracked on the already-pushed record.
+  if (skipSelfMeta && parentReqRef) {
+    parentReq = parentReqRef
+    currentParent = parentReqRef.id
+  }
+
+  // If this directory itself has a meta.md, it IS a requirement.
+  // Record it, then continue scanning sub-directories for children.
+  // skipSelfMeta is used when we recurse into a child requirement's
+  // directory to find grand-children — the child was already loaded by
+  // the caller, so we must not load it again.
+  if (!skipSelfMeta && existsSync(join(rootPath, "meta.md"))) {
     const dirName = rootPath.split("/").filter(Boolean).pop() || rootPath
-    const req = await loadRequirementFromDir(rootPath, dirName, project, groupPath)
-    if (req) out.push(req)
-    return
+    parentReq = await loadRequirementFromDir(rootPath, dirName, project, groupPath, parentReqId)
+    if (parentReq) {
+      out.push(parentReq)
+      currentParent = parentReq.id
+      currentGroupPath = groupPath
+    }
   }
 
   let children: string[]
@@ -449,6 +489,7 @@ async function collectRequirementsRecursive(
   }
   for (const childName of children) {
     if (childName.startsWith(".") || childName === "README.md") continue
+    // Skip non-directory files (meta.md, branch.md, notes.md, etc.)
     const childPath = join(rootPath, childName)
     let childSt
     try {
@@ -458,17 +499,29 @@ async function collectRequirementsRecursive(
     }
     if (!childSt.isDirectory()) continue
 
+    // If child has meta.md, load it as a child requirement. If not,
+    // recurse as an intermediate grouping directory.
     if (existsSync(join(childPath, "meta.md"))) {
-      const req = await loadRequirementFromDir(childPath, childName, project, groupPath)
-      if (req) out.push(req)
+      const req = await loadRequirementFromDir(childPath, childName, project, currentGroupPath, currentParent)
+      if (req) {
+        out.push(req)
+        if (parentReq) {
+          if (!parentReq.childIds) parentReq.childIds = []
+          parentReq.childIds.push(req.id)
+        }
+        // Continue scanning into the child for grand-children.
+        // skipSelfMeta=true so the child is not loaded a second time;
+        // pass req as parentReqRef so grand-children can be tracked.
+        await collectRequirementsRecursive(childPath, project, currentGroupPath, out, depth + 1, req.id, true, req)
+      }
     } else {
-      // Intermediate group directory — recurse with extended groupPath.
       await collectRequirementsRecursive(
         childPath,
         project,
-        [...groupPath, childName],
+        [...currentGroupPath, childName],
         out,
         depth + 1,
+        currentParent,
       )
     }
   }
@@ -505,13 +558,8 @@ export async function scanHermesRequirements(): Promise<Requirement[]> {
     if (hasOwnMeta) {
       // Legacy flat layout: ~/.agents/req/<req-id>/meta.md
       // project comes from frontmatter or defaults to DEFAULT_PROJECT_NAME.
-      const req = await loadRequirementFromDir(
-        topPath,
-        name,
-        DEFAULT_PROJECT_NAME,
-        [],
-      )
-      if (req) out.push(req)
+      // Use collectRequirementsRecursive so children are discovered too.
+      await collectRequirementsRecursive(topPath, DEFAULT_PROJECT_NAME, [], out)
       continue
     }
 

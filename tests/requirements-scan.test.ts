@@ -86,15 +86,19 @@ test("scanHermesRequirements: 4-level layout — sub-project + sub-module groups
   assert.deepEqual(byId["0622-db-a"].groupPath, ["disaster-recovery", "db-failover"])
 })
 
-test("scanHermesRequirements: stops descending once a directory has meta.md", async () => {
+test("scanHermesRequirements: parent with nested child — both discovered", async () => {
   const root = freshFixture()
   // Parent has meta.md AND a child directory with another meta.md.
-  // The parent is the requirement; the nested child must NOT be picked up.
+  // Both should be discovered; child has parentReqId pointing to parent.
   writeMeta(join(root, "WMS", "outer-req"), { "req-id": "outer-req", title: "Outer" })
   writeMeta(join(root, "WMS", "outer-req", "inner-req"), { "req-id": "inner-req", title: "Inner" })
   const reqs = await scanHermesRequirements()
   const ids = reqs.map((r) => r.id).sort()
-  assert.deepEqual(ids, ["outer-req"])
+  assert.deepEqual(ids, ["inner-req", "outer-req"])
+  const outer = reqs.find((r) => r.id === "outer-req")!
+  const inner = reqs.find((r) => r.id === "inner-req")!
+  assert.ok(outer.childIds && outer.childIds.includes("inner-req"), "parent should have childIds")
+  assert.equal(inner.parentReqId, "outer-req")
 })
 
 test("scanHermesRequirements: flat legacy layout — <req-id>/meta.md", async () => {
