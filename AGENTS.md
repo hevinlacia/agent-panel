@@ -208,6 +208,10 @@ re-read the created files for sanity (no broken links, no secrets).
 
 ## 6. House rules
 
+- **This is a personal project.** Development can happen directly on the
+  `main` branch — no feature branches, worktrees, or PRs required unless
+  the change is experimental and the user wants isolation. Commit
+  directly to `main` after verification passes.
 - Do not add new top-level dependencies without an explicit reason in the
   PR description.
 - Do not reformat or reorder existing code unrelated to the task.
