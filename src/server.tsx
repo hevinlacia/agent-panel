@@ -710,22 +710,34 @@ function bucketByGroupPath(requirements: Requirement[]): { key: string; segments
   return entries.map(([key, value]) => ({ key, segments: value.segments, reqs: value.reqs }))
 }
 
-const RequirementCard: FC<{ r: Requirement }> = ({ r }) => {
+const RequirementCard: FC<{ r: Requirement; children?: Requirement[] }> = ({ r, children }) => {
   const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
   const isParent = !!(r.childIds && r.childIds.length > 0)
+  const childList = children ?? []
+  if (isParent) {
+    return (
+      <details class="req-card req-card-parent" open={false}>
+        <summary class="req-card-header">
+          <span class="req-card-title">{r.title}</span>
+          <span class="req-card-child-count">{childList.length} 子需求</span>
+        </summary>
+        <div class="req-card-children">
+          <div class="req-list">
+            {childList.map((cr) => <RequirementCard r={cr} />)}
+          </div>
+        </div>
+      </details>
+    )
+  }
   return (
-    <a class={`req-card${isParent ? " req-card-parent" : ""}`} href={`/requirement?id=${encodeURIComponent(r.id)}`}>
+    <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
       <div class="req-card-header">
         <span class="req-card-title">{r.title}</span>
-        {isParent ? (
-          <span class="req-card-child-count">{r.childIds!.length} 子需求</span>
-        ) : (
-          <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
-        )}
+        <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
       </div>
       <div class="req-card-body">{snippet}</div>
       <div class="req-card-footer">
-        {isParent ? <span>分组需求</span> : <span>{r.sessionIds.length} session(s)</span>}
+        <span>{r.sessionIds.length} session(s)</span>
         <span>更新于 {formatRelAgo(r.updatedAt)}</span>
       </div>
     </a>
@@ -791,9 +803,12 @@ const ProjectsPage: FC<{
       ) : (
         <div class="proj-list">
           {groups.map(({ project, requirements }, i) => {
-            const isOpen = project === DEFAULT_PROJECT_NAME || i === 0
+            const isOpen = project === DEFAULT_PROJECT_NAME
             const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
             const buckets = bucketByGroupPath(requirements)
+            // Helper: find children of a parent req within the same project.
+            const findChildren = (parentId: string): Requirement[] =>
+              requirements.filter((r) => r.parentReqId === parentId)
             return (
               <details class="proj-card" open={isOpen}>
                 <summary class="proj-card-header">
@@ -813,13 +828,13 @@ const ProjectsPage: FC<{
                           // Root group: render flat without an outer wrapper.
                           return (
                             <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} />)}
+                              {bucket.reqs.map((r) => <RequirementCard r={r} children={r.childIds ? findChildren(r.id) : undefined} />)}
                             </div>
                           )
                         }
                         const bucketLatest = bucket.reqs.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
                         return (
-                          <details class="req-subgroup" open>
+                          <details class="req-subgroup" open={false}>
                             <summary class="req-subgroup-header">
                               <span class="req-subgroup-crumbs">
                                 {bucket.segments.map((seg, idx) => (
@@ -835,7 +850,7 @@ const ProjectsPage: FC<{
                               </span>
                             </summary>
                             <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} />)}
+                              {bucket.reqs.map((r) => <RequirementCard r={r} children={r.childIds ? findChildren(r.id) : undefined} />)}
                             </div>
                           </details>
                         )
