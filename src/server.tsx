@@ -778,7 +778,7 @@ const ProjectsPage: FC<{
   groups: { project: string; requirements: Requirement[] }[]
   counts: Record<ReqStatus, number>
 }> = ({ groups, counts }) => {
-  const totalReqs = groups.reduce((acc, g) => acc + g.requirements.length, 0)
+  const totalReqs = groups.reduce((acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length, 0)
   return (
     <Layout title="Projects" active="requirements">
       <section class="req-flow" aria-label="requirement flow">
@@ -805,7 +805,10 @@ const ProjectsPage: FC<{
           {groups.map(({ project, requirements }, i) => {
             const isOpen = project === DEFAULT_PROJECT_NAME
             const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
-            const buckets = bucketByGroupPath(requirements)
+            // Top-level requirements only — children are rendered inside
+            // their parent's collapsible card via findChildren.
+            const topLevel = requirements.filter((r) => !r.parentReqId)
+            const buckets = bucketByGroupPath(topLevel)
             // Helper: find children of a parent req within the same project.
             const findChildren = (parentId: string): Requirement[] =>
               requirements.filter((r) => r.parentReqId === parentId)
@@ -814,7 +817,7 @@ const ProjectsPage: FC<{
                 <summary class="proj-card-header">
                   <span class="proj-card-name">{project}</span>
                   <span class="proj-card-meta">
-                    <span class="proj-card-count">{requirements.length} 需求</span>
+                    <span class="proj-card-count">{topLevel.length} 需求</span>
                     {latest > 0 ? <span>更新于 {formatRelAgo(latest)}</span> : null}
                   </span>
                 </summary>
