@@ -745,6 +745,18 @@ async function readFileSnippet(path: string | undefined, limit = 500): Promise<s
   }
 }
 
+/**
+ * Build the agent-context preamble injected into a session that is bound
+ * to a Hermes requirement. When the requirement is real (not the
+ * synthetic default, not missing), the output also lists the absolute
+ * paths of every known requirement file (branch / notes / test /
+ * config-changes) so the receiving agent knows where to write if the
+ * user asks it to update requirement state.
+ *
+ * Files that do not exist on disk are still listed by path; only their
+ * content section is omitted (the path is what makes the agent able to
+ * create them).
+ */
 export async function buildInjectionContext(reqId: string): Promise<string> {
   if (reqId === DEFAULT_REQ_ID) {
     return [
@@ -768,12 +780,43 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
   lines.push("【需求上下文】")
   lines.push(`需求：${req.title}`)
   lines.push(`状态：${req.status}`)
-  const branch = await readFileSnippet(req.branchPath)
-  if (branch) lines.push(`分支信息：${branch}`)
-  const notes = await readFileSnippet(req.notesPath)
-  if (notes) lines.push(`开发笔记：${notes}`)
-  const test = await readFileSnippet(req.testPath)
-  if (test) lines.push(`测试范围：${test}`)
-  lines.push("请基于以上需求上下文继续。")
+  if (req.reqDir) {
+    // Prefer the per-record *Path populated by loadRequirementFromDir;
+    // fall back to <reqDir>/<basename> so paths are always emitted, even
+    // for files that don't exist yet (the agent may create them).
+    const branchFile = req.branchPath ?? join(req.reqDir, "branch.md")
+    const notesFile = req.notesPath ?? join(req.reqDir, "notes.md")
+    const testFile = req.testPath ?? join(req.reqDir, "test.md")
+    const configFile = req.configPath ?? join(req.reqDir, "config-changes.md")
+    lines.push("")
+    lines.push("需求文件：")
+    lines.push(`  - 分支信息：${branchFile}`)
+    lines.push(`  - 开发笔记：${notesFile}`)
+    lines.push(`  - 测试范围：${testFile}`)
+    lines.push(`  - 配置变更：${configFile}`)
+    lines.push("")
+    const branch = await readFileSnippet(branchFile)
+    if (branch) lines.push(`分支信息（${branchFile}）：\n${branch}`)
+    if (branch) lines.push("")
+    const notes = await readFileSnippet(notesFile)
+    if (notes) lines.push(`开发笔记（${notesFile}）：\n${notes}`)
+    if (notes) lines.push("")
+    const test = await readFileSnippet(testFile)
+    if (test) lines.push(`测试范围（${testFile}）：\n${test}`)
+    if (test) lines.push("")
+    const config = await readFileSnippet(configFile)
+    if (config) lines.push(`配置变更（${configFile}）：\n${config}`)
+    if (config) lines.push("")
+  } else {
+    // No reqDir on the record (should not happen for real Hermes
+    // requirements, but stays defensive): fall back to the old behavior.
+    const branch = await readFileSnippet(req.branchPath)
+    if (branch) lines.push(`分支信息：${branch}`)
+    const notes = await readFileSnippet(req.notesPath)
+    if (notes) lines.push(`开发笔记：${notes}`)
+    const test = await readFileSnippet(req.testPath)
+    if (test) lines.push(`测试范围：${test}`)
+  }
+  lines.push("请基于以上需求上下文继续。你可以直接修改上述文件来更新需求信息。")
   return lines.join("\n")
 }

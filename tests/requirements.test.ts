@@ -28,6 +28,8 @@ import { randomBytes } from "node:crypto"
 import {
   _setStorePath,
   _getStorePath,
+  _setReqDir,
+  _getReqDir,
   loadAssociations,
   saveAssociations,
   associateSession,
@@ -126,6 +128,77 @@ test("buildInjectionContext: returns minimal context for DEFAULT_REQ_ID", async 
   assert.match(ctx, /需求：默认需求/)
   assert.match(ctx, /状态：开发中/)
   assert.match(ctx, /请基于以上需求上下文继续。/)
+  // DEFAULT_REQ_ID fallback must NOT include the new path-listing /
+  // file-modification hints — those are only for real Hermes requirements.
+  assert.equal(ctx.includes("需求文件"), false)
+  assert.equal(ctx.includes("你可以直接修改上述文件"), false)
+})
+
+test("buildInjectionContext: lists file paths and content for a real requirement", async () => {
+  freshStore()
+  const reqId = "REQ-PATHS-" + randomBytes(4).toString("hex")
+  // Legacy flat layout: <reqDir>/<req-id>/meta.md — matches
+  // scanHermesRequirements' legacy branch.
+  const reqDir = join(
+    "/tmp",
+    "opencode",
+    "test-req-paths-" + randomBytes(6).toString("hex"),
+  )
+  const reqSubDir = join(reqDir, reqId)
+  mkdirSync(reqSubDir, { recursive: true })
+
+  const metaContent =
+    "---\n" +
+    "title: Path Test Requirement\n" +
+    "status: 开发中\n" +
+    "---\n" +
+    "Path test description."
+  const branchContent = "Branch info snippet line one."
+  const notesContent = "Notes snippet line one."
+  writeFileSync(join(reqSubDir, "meta.md"), metaContent, "utf-8")
+  writeFileSync(join(reqSubDir, "branch.md"), branchContent, "utf-8")
+  writeFileSync(join(reqSubDir, "notes.md"), notesContent, "utf-8")
+
+  const prevReqDir = _getReqDir()
+  _setReqDir(reqDir)
+  try {
+    const ctx = await buildInjectionContext(reqId)
+
+    // Path-listing section must be present and include all four known
+    // files (branch, notes, test, config-changes) by absolute path.
+    assert.match(ctx, /需求文件：/)
+    assert.ok(ctx.includes(join(reqSubDir, "branch.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "notes.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "test.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "config-changes.md")))
+
+    // Content sections: label includes the path in parentheses, and the
+    // file body follows on the next line. Build RegExp from escaped path
+    // strings so any future '/' in paths does not break matching.
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    assert.match(
+      ctx,
+      new RegExp(`分支信息（${esc(join(reqSubDir, "branch.md"))}）：\\n${esc(branchContent)}`),
+    )
+    assert.match(
+      ctx,
+      new RegExp(`开发笔记（${esc(join(reqSubDir, "notes.md"))}）：\\n${esc(notesContent)}`),
+    )
+    assert.ok(ctx.includes(branchContent))
+    assert.ok(ctx.includes(notesContent))
+
+    // Files we did NOT create (test.md, config-changes.md) still appear
+    // in the path listing but have no content section.
+    assert.equal(ctx.includes("Test missing snippet"), false)
+    assert.equal(ctx.includes("测试范围（"), false)
+    assert.equal(ctx.includes("配置变更（"), false)
+
+    // Closing line must invite the injected agent to modify the files.
+    assert.match(ctx, /请基于以上需求上下文继续。/)
+    assert.match(ctx, /你可以直接修改上述文件来更新需求信息。/)
+  } finally {
+    _setReqDir(prevReqDir)
+  }
 })
 
 test("saveAssociations + loadAssociations: round-trip", async () => {
