@@ -83,6 +83,14 @@ import {
   type AutoExtractResult,
   type ContextFiles,
 } from "./autoExtract.ts"
+import {
+  recommendSessionsForRequirement,
+  type SessionRecommendation,
+} from "./sessionRecommendations.ts"
+import {
+  getExtractHistoryForRequirement,
+  type ExtractHistoryRecord,
+} from "./extractHistory.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -921,12 +929,14 @@ const RequirementDetailPage: FC<{
   req: Requirement
   associated: SessionInfo[]
   unassociated: SessionInfo[]
+  recommendations: SessionRecommendation[]
+  extractHistory: ExtractHistoryRecord[]
   branchContent?: string
   notesContent?: string
   testContent?: string
   configContent?: string
   state?: RequirementState | null
-}> = ({ req, associated, unassociated, branchContent, notesContent, testContent, configContent, state }) => {
+}> = ({ req, associated, unassociated, recommendations, extractHistory, branchContent, notesContent, testContent, configContent, state }) => {
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
   const canSwitch = !!req.reqDir
@@ -1068,6 +1078,35 @@ const RequirementDetailPage: FC<{
         )
       })()}
 
+      {recommendations.length > 0 ? (
+        <section class="req-recommendations" aria-label="疑似相关 session">
+          <h2 class="op-section-title">疑似相关 Session（{recommendations.length}）</h2>
+          <p class="muted small" style="margin-bottom: 8px;">根据标题、路径和关键词匹配推荐，点击右侧按钮一键绑定。</p>
+          <ul class="req-reco-list">
+            {recommendations.map((reco) => (
+              <li class="req-reco-item">
+                <div class="req-reco-info">
+                  <a href={`/session?id=${encodeURIComponent(reco.session.id)}`}>
+                    <code>{reco.session.id.slice(0, 20)}…</code>
+                  </a>
+                  <span class="req-reco-title">{reco.session.title || ""}</span>
+                  <span class="muted small">{formatRelAgo(reco.session.updated || reco.session.created)}</span>
+                </div>
+                <div class="req-reco-meta">
+                  <span class="req-reco-score muted small">{reco.score} 分</span>
+                  <span class="req-reco-reasons muted small">{reco.reasons.slice(0, 3).join(" · ")}</span>
+                  <form method="post" action="/api/requirement/associate" class="req-extract-trigger-form">
+                    <input type="hidden" name="reqId" value={req.id} />
+                    <input type="hidden" name="sessionId" value={reco.session.id} />
+                    <button type="submit" class="btn btn-secondary req-reco-bind" title="绑定此 session 到当前需求">绑定</button>
+                  </form>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <div class="req-status-flow">
         {REQ_STATUSES.map((s, i) => {
           const cls = i === currentIdx ? "req-flow-step active" : i < currentIdx ? "req-flow-step done" : "req-flow-step"
@@ -1145,6 +1184,26 @@ const RequirementDetailPage: FC<{
       <HermesFileSection title="开发笔记" content={notesContent} />
       <HermesFileSection title="测试范围" content={testContent} />
       <HermesFileSection title="配置变更" content={configContent} />
+
+      {extractHistory.length > 0 ? (
+        <section class="req-extract-history" aria-label="上下文提取历史">
+          <h2 class="op-section-title">提取历史（最近 {extractHistory.length} 次）</h2>
+          <ol class="req-extract-history-list">
+            {extractHistory.map((h) => (
+              <li class={`req-extract-history-item req-extract-history-${h.state}`}>
+                <span class="muted small mono">{new Date(h.doneAt).toLocaleString("zh-CN", { hour12: false })}</span>
+                <span class={`req-status-badge req-status-${h.state === "done" ? "done" : "testing"}`} style="margin-left: 6px;">
+                  {h.state === "done" ? "✓" : "✗"} {h.mode === "auto" ? "智能提取" : "摘要"}
+                </span>
+                <span class="muted small" style="margin-left: 6px;">{h.sessionId.slice(0, 16)}…</span>
+                {h.salvagedFromFork ? <span class="muted small" style="margin-left: 4px;">（fork 救回）</span> : null}
+                {h.summary ? <div class="req-extract-history-summary muted small">{h.summary}</div> : null}
+                {h.errorMessage ? <div class="req-extract-history-error muted small">{h.errorMessage}</div> : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       <section class="req-sessions">
         <h2 class="op-section-title">关联 Sessions ({associated.length})</h2>
@@ -1592,6 +1651,14 @@ app.get("/requirement", async (c) => {
     (s) => !s.parentId && !associatedAll.has(s.id) && !req.sessionIds.includes(s.id)
   )
   const state = req.reqDir ? await readRequirementState(req.reqDir) : null
+
+  const recommendations = req.id !== DEFAULT_REQ_ID
+    ? recommendSessionsForRequirement(req, unassociated, 6)
+    : []
+  const extractHistory = req.id !== DEFAULT_REQ_ID
+    ? await getExtractHistoryForRequirement(req.id, 6)
+    : []
+
   return c.html(
     <RequirementDetailPage
       req={req}
@@ -1602,6 +1669,8 @@ app.get("/requirement", async (c) => {
       testContent={testContent}
       configContent={configContent}
       state={state}
+      recommendations={recommendations}
+      extractHistory={extractHistory}
     />
   )
 })
@@ -1677,6 +1746,7 @@ function jobToJson(j: ExtractJob): Record<string, unknown> {
     sessionId: j.sessionId,
     state: j.state,
     mode: j.mode,
+    model: j.model,
     startedAt: j.startedAt,
     doneAt: j.doneAt,
     exitCode: j.exitCode,
@@ -1712,8 +1782,9 @@ app.post("/api/requirement/extract-context", async (c) => {
   const guard = await resolveExtractTarget(reqId, sessionId)
   if (!guard.ok) return c.text(guard.message, guard.status)
   const prompt = buildExtractPrompt(guard.req)
+  const cfg = await getConfig()
   try {
-    const job = createExtractJob({ reqId, sessionId, prompt })
+    const job = createExtractJob({ reqId, sessionId, prompt, model: cfg.extractModel })
     return c.json({ jobId: job.id, state: job.state }, 202)
   } catch (err) {
     if (err instanceof JobConflictError) {
@@ -1978,9 +2049,7 @@ app.post("/api/requirement/auto-extract", async (c) => {
   const files = await readContextFiles(guard.req.reqDir!)
   const prompt = buildAutoExtractPrompt(guard.req, files)
 
-  // Use the configured model instead of the hardcoded default.
   const cfg = await getConfig()
-  const { runExtractSummary } = await import("./sessionExtract.ts")
 
   try {
     const job = createExtractJob({
@@ -1988,15 +2057,7 @@ app.post("/api/requirement/auto-extract", async (c) => {
       sessionId,
       prompt,
       mode: "auto",
-      runFn: (opts) => runExtractSummary({
-        ...opts,
-        opencodeBin: "opencode",
-        // The model is baked into the argv inside runExtractSummary;
-        // we can't override it per-call without changing the API.
-        // For now, the config value is informational — the actual
-        // model used is still EXTRACT_MODEL. A follow-up could add
-        // a modelOverride param to RunExtractOptions.
-      }),
+      model: cfg.extractModel,
     })
     return c.json({ jobId: job.id, state: job.state }, 202)
   } catch (err) {

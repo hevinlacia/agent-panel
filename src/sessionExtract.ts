@@ -8,8 +8,8 @@
  *
  * Public surface:
  *   - buildExtractPrompt(req): build the fixed-template prompt string
- *   - runExtractSummary({sessionId, prompt, timeoutMs}): spawn opencode
- *     and return stdout (or throw with stderr/exit-code info)
+ *   - runExtractSummary({sessionId, prompt, model, timeoutMs}): spawn
+ *     opencode and return stdout (or throw with stderr/exit-code info)
  *   - appendSummaryToNotes(notesPath, sessionId, body): atomically
  *     append a timestamped section to notes.md, creating the file if
  *     absent
@@ -48,7 +48,7 @@ const MAX_STDERR_BYTES = 16 * 1024
 export const DEFAULT_EXTRACT_TIMEOUT_MS = 300_000
 
 /**
- * Model used for the summarization spawn.
+ * Default model used for the summarization spawn.
  *
  * Hardcoded to `litellm-local/deepseek-v4-flash-auto` because:
  *   - the prompt is small and structured; flash is more than capable
@@ -57,9 +57,8 @@ export const DEFAULT_EXTRACT_TIMEOUT_MS = 300_000
  *   - keeping it out of opencode's model-auto-pick avoids a 5-30s
  *     warm-up before generation even starts
  *
- * NOT exposed via env / config on purpose — the user plans a dedicated
- * dashboard settings page later, and we don't want a half-finished
- * env knob to compete with that.
+ * Callers can override this via RunExtractOptions.model; keeping the
+ * constant exported gives tests and config defaults one fallback value.
  */
 export const EXTRACT_MODEL = "litellm-local/deepseek-v4-flash-auto"
 
@@ -117,6 +116,8 @@ export interface ExtractResult {
 export interface RunExtractOptions {
   sessionId: string
   prompt: string
+  /** Model to pass to `opencode run -m`; defaults to EXTRACT_MODEL. */
+  model?: string
   /** Override for tests; if set, used as the executable instead of "opencode". */
   opencodeBin?: string
   timeoutMs?: number
@@ -134,9 +135,9 @@ export interface RunExtractOptions {
  * `--fork` tells opencode to clone the session first and run the prompt
  * on the clone, leaving the original session byte-identical.
  *
- * Why we pin `-m EXTRACT_MODEL`: the prompt is short + structured, and
- * a fast model avoids hitting our timeout on long sessions. See
- * `EXTRACT_MODEL` for the chosen value.
+  * Why we pass `-m`: the prompt is short + structured, and a fast model
+  * avoids hitting our timeout on long sessions. The dashboard settings
+  * page can override the fallback `EXTRACT_MODEL`.
  *
  * Errors / edge cases:
  *   - opencode missing / exits non-zero → resolves with exitCode set and
@@ -148,13 +149,14 @@ export interface RunExtractOptions {
 export function runExtractSummary(opts: RunExtractOptions): Promise<ExtractResult> {
   const bin = opts.opencodeBin || "opencode"
   const timeoutMs = opts.timeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS
+  const model = opts.model && opts.model.trim() ? opts.model.trim() : EXTRACT_MODEL
   const sp = opts.spawnFn || spawn
   const startedAt = Date.now()
 
   return new Promise<ExtractResult>((resolvePromise) => {
     const child = sp(
       bin,
-      ["run", "--session", opts.sessionId, "--fork", "-m", EXTRACT_MODEL, opts.prompt],
+      ["run", "--session", opts.sessionId, "--fork", "-m", model, opts.prompt],
       { stdio: ["ignore", "pipe", "pipe"] },
     )
 

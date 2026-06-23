@@ -8,7 +8,7 @@
  * same store.
  *
  * Public surface:
- *   - createExtractJob({reqId,sessionId,prompt}) → starts the spawn and
+ *   - createExtractJob({reqId,sessionId,prompt,model}) → starts the spawn and
  *     returns the freshly-stored job (state="running"). Throws if a job
  *     for the same sessionId is already running globally.
  *   - getExtractJob(jobId) → snapshot of the job, or null when missing
@@ -35,6 +35,7 @@ import { randomBytes } from "node:crypto"
 import {
   runExtractSummary,
   DEFAULT_EXTRACT_TIMEOUT_MS,
+  EXTRACT_MODEL,
   type ExtractResult,
   type RunExtractOptions,
 } from "./sessionExtract.ts"
@@ -50,6 +51,10 @@ import {
   parseAutoExtractOutput,
   filterAllowed,
 } from "./autoExtract.ts"
+import {
+  appendExtractHistory,
+  buildExtractHistoryRecord,
+} from "./extractHistory.ts"
 
 export type JobState = "running" | "done" | "failed"
 export type JobMode = "summary" | "auto"
@@ -61,6 +66,8 @@ export interface ExtractJob {
   state: JobState
   /** "summary" = plain markdown extract; "auto" = structured per-file diff. */
   mode: JobMode
+  /** Model passed to `opencode run -m` for this extract job. */
+  model: string
   startedAt: number
   doneAt: number | null
   /** Available once state !== "running". Empty string until then. */
@@ -148,6 +155,8 @@ export interface CreateExtractJobOptions {
   prompt: string
   /** "summary" (default) or "auto" for structured per-file diff. */
   mode?: JobMode
+  /** Model passed to `opencode run -m`. Defaults to EXTRACT_MODEL. */
+  model?: string
   /** Test-only override to bypass real opencode spawn. */
   runFn?: (opts: RunExtractOptions) => Promise<ExtractResult>
   /** Test-only override for the wall-clock used in startedAt. */
@@ -189,6 +198,7 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
 
   const promptAnchor =
     opts.promptAnchor ?? opts.prompt.slice(0, 30)
+  const model = opts.model && opts.model.trim() ? opts.model.trim() : EXTRACT_MODEL
 
   const job: ExtractJob = {
     id: newJobId(),
@@ -196,6 +206,7 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
     sessionId: opts.sessionId,
     state: "running",
     mode: opts.mode ?? "summary",
+    model,
     startedAt: now,
     doneAt: null,
     stdout: "",
@@ -229,7 +240,7 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
 
   const runner = opts.runFn ?? runExtractSummary
   // Fire and forget; the promise updates the job in-place on resolve.
-  runner({ sessionId: opts.sessionId, prompt: opts.prompt })
+  runner({ sessionId: opts.sessionId, prompt: opts.prompt, model })
     .then((result) => { void finalizeJob(job.id, result) })
     .catch((err: unknown) => {
       void finalizeJob(job.id, {
@@ -242,6 +253,12 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
     })
 
   return { ...job }
+}
+
+async function persistJobHistory(job: ExtractJob): Promise<void> {
+  const record = buildExtractHistoryRecord(job)
+  if (!record) return
+  await appendExtractHistory(record)
 }
 
 /**
@@ -294,6 +311,7 @@ async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> 
           : `/requirement/extract?jobId=${encodeURIComponent(j.id)}`,
       })
     }
+    await persistJobHistory(j)
     return
   }
 
@@ -330,6 +348,7 @@ async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> 
         state: "done",
       })
     }
+    await persistJobHistory(j)
     return
   }
 
@@ -348,6 +367,7 @@ async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> 
       state: "failed",
     })
   }
+  await persistJobHistory(j)
 }
 
 /**
