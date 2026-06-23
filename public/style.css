@@ -108,7 +108,16 @@ code {
 }
 .op-meta-item { color: var(--text-muted); }
 .op-meta-item:hover { color: var(--text-strong); }
-.op-refresh { color: var(--cyan); }
+.op-refresh {
+  color: var(--cyan);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+  padding: 0;
+}
 .op-refresh:hover { color: var(--primary-hover); }
 .op-routes {
   display: flex;

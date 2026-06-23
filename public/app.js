@@ -4,6 +4,15 @@
 (function () {
   "use strict"
 
+  const forceRefresh = document.getElementById("op-force-refresh")
+  if (forceRefresh) {
+    forceRefresh.addEventListener("click", function () {
+      const url = new URL(window.location.href)
+      url.searchParams.set("_force", String(Date.now()))
+      window.location.replace(url.toString())
+    })
+  }
+
   // ----- Sessions list (page-scoped) --------------------------------------
   // Refresh button is a plain link to /sessions/refresh; no JS required.
 

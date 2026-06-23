@@ -129,6 +129,7 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
             <span class="op-brand-status">SNAPSHOT READY</span>
           </div>
           <div class="op-meta">
+            <button type="button" class="op-meta-item op-refresh" id="op-force-refresh" title="强制刷新当前页面">↻ 强制刷新</button>
             <div class="op-notify" id="op-notify">
               <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
                 <span class="op-notify-icon" aria-hidden="true">🔔</span>
