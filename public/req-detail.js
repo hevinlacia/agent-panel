@@ -315,31 +315,30 @@
   // string when clicked, briefly swapping its label to "✓ 已复制".
   // ------------------------------------------------------------------
 
-  document.querySelectorAll("[data-copy-cmd]").forEach(function (btn) {
-    btn.addEventListener("click", function (ev) {
-      ev.preventDefault()
-      const cmd = btn.getAttribute("data-copy-cmd") || ""
-      if (!cmd) return
-      const finish = function () {
-        const orig = btn.textContent
-        btn.textContent = "✓ 已复制"
-        btn.classList.add("req-copy-done")
-        setTimeout(function () {
-          btn.textContent = orig
-          btn.classList.remove("req-copy-done")
-        }, 1500)
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(cmd).then(finish).catch(function () {
-          // fallthrough to legacy path
-          copyViaTextarea(cmd)
-          finish()
-        })
-      } else {
+  document.addEventListener("click", function (ev) {
+    const btn = ev.target && ev.target.closest ? ev.target.closest("[data-copy-cmd]") : null
+    if (!btn) return
+    ev.preventDefault()
+    const cmd = btn.getAttribute("data-copy-cmd") || ""
+    if (!cmd) return
+    const finish = function () {
+      const orig = btn.textContent
+      btn.textContent = "✓ 已复制"
+      btn.classList.add("req-copy-done")
+      setTimeout(function () {
+        btn.textContent = orig
+        btn.classList.remove("req-copy-done")
+      }, 1500)
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(cmd).then(finish).catch(function () {
         copyViaTextarea(cmd)
         finish()
-      }
-    })
+      })
+    } else {
+      copyViaTextarea(cmd)
+      finish()
+    }
   })
 
   function copyViaTextarea(text) {

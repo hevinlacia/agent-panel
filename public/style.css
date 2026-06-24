@@ -1373,6 +1373,9 @@ details.req-card.req-card-parent > summary::-webkit-details-marker {
   gap: 8px;
   flex-wrap: wrap;
 }
+form.req-session-inline-form {
+  width: 100%;
+}
 .req-session-inline-form select {
   font-family: inherit;
   font-size: 0.78rem;
@@ -1390,7 +1393,13 @@ details.req-card.req-card-parent > summary::-webkit-details-marker {
   background: var(--op-bg-soft, #181818);
   color: var(--text);
   border-radius: 3px;
-  min-width: 320px;
+  flex: 1 1 640px;
+  min-width: min(640px, 100%);
+  max-width: 100%;
+}
+.req-sessions > form.req-form-actions {
+  width: 100%;
+  flex-wrap: nowrap;
 }
 .req-form-actions input[type="text"] {
   font-family: inherit;
@@ -1400,7 +1409,12 @@ details.req-card.req-card-parent > summary::-webkit-details-marker {
   background: var(--op-bg-soft, #181818);
   color: var(--text);
   border-radius: 3px;
-  min-width: 320px;
+  flex: 1 1 820px;
+  min-width: min(820px, 100%);
+  max-width: 100%;
+}
+.req-sessions > form.req-form-actions .btn {
+  flex: 0 0 auto;
 }
 .req-session-panel-others {
   margin-top: 10px;
