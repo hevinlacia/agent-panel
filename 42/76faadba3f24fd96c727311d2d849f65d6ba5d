@@ -1,0 +1,41 @@
+docs/AI_DEVELOPMENT.md
+  168273c5abcba4c7 36-39,64-65
+src/server.tsx
+  168273c5abcba4c7 97-109,2471-2523,2540-2556,2763-2767
+tests/experienceMarkers.test.ts
+  168273c5abcba4c7 1-213
+.gitignore
+  168273c5abcba4c7 10
+README.md
+  168273c5abcba4c7 60,109,116-372,384-385,390-391
+AGENTS.md
+  168273c5abcba4c7 21-25,27,45-56
+src/experienceMarkers.ts
+  168273c5abcba4c7 1-307
+public/app.js
+  168273c5abcba4c7 71-83
+tests/experienceAutoSummary.test.ts
+  168273c5abcba4c7 1-275
+src/experienceAutoSummary.ts
+  168273c5abcba4c7 1-497
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4276faadba3f24fd96c727311d2d849f65d6ba5d",
+  "prompts": {
+    "168273c5abcba4c7": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1078a80c4ffeyWIBntj4kPiO99",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1789,
+      "total_deletions": 119,
+      "accepted_lines": 1681,
+      "overriden_lines": 0
+    }
+  }
+}
