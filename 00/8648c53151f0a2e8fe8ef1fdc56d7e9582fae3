@@ -1,0 +1,25 @@
+public/style.css
+  168273c5abcba4c7 1376-1378,1396-1402,1412-1417
+public/req-detail.js
+  168273c5abcba4c7 318-334,337-341,354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "008648c53151f0a2e8fe8ef1fdc56d7e9582fae3",
+  "prompts": {
+    "168273c5abcba4c7": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_1078a80c4ffeyWIBntj4kPiO99",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 26,
+      "accepted_lines": 39,
+      "overriden_lines": 0
+    }
+  }
+}
