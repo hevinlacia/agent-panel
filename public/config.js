@@ -25,6 +25,7 @@
 
     var data = {
       autoExtract: document.getElementById("cfg-auto-extract").checked,
+      autoExtractSchedule: document.getElementById("cfg-auto-extract-schedule").checked,
       extractModel: document.getElementById("cfg-model").value.trim(),
       minChangeMessages: parseInt(document.getElementById("cfg-min-change").value, 10),
     }

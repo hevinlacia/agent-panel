@@ -107,6 +107,9 @@ import {
   startAutoSummaryWorker,
   triggerExecutionForMarker,
 } from "./experienceAutoSummary.ts"
+import {
+  startAutoExtractScheduler,
+} from "./autoExtractScheduler.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -118,7 +121,7 @@ const NODE_MODULES_DIR = join(PROJECT_ROOT, "node_modules")
 // Layout
 // ---------------------------------------------------------------------------
 
-type Tab = "sessions" | "reports" | "requirements"
+type Tab = "sessions" | "reports" | "requirements" | "settings"
 
 /**
  * Operator-style topbar: thin console header with a logo block, optional
@@ -154,9 +157,8 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
                   <div class="op-notify-panel-actions">
                     <button type="button" class="op-notify-link" id="op-notify-mark-read">全部标记已读</button>
                     <button type="button" class="op-notify-link" id="op-notify-dismiss-all">全部清除</button>
-            </div>
-            <a href="/settings" class="op-meta-item op-settings-link" title="设置">⚙</a>
-          </div>
+                  </div>
+                </div>
                 <ul class="op-notify-list" id="op-notify-list"></ul>
                 <div class="op-notify-empty" id="op-notify-empty" hidden>暂无通知</div>
               </div>
@@ -165,9 +167,10 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
         </div>
         <div class="op-topbar-row op-topbar-routes">
           <nav class="op-routes">
-            <a href="/" class={active === "requirements" ? "op-route op-route-active" : "op-route"}>/projects</a>
-            <a href="/sessions" class={active === "sessions" ? "op-route op-route-active" : "op-route"}>/sessions</a>
-            <a href="/reports" class={active === "reports" ? "op-route op-route-active" : "op-route"}>/reports</a>
+            <a href="/" class={active === "requirements" ? "op-route op-route-active" : "op-route"}>Projects</a>
+            <a href="/sessions" class={active === "sessions" ? "op-route op-route-active" : "op-route"}>Sessions</a>
+            <a href="/reports" class={active === "reports" ? "op-route op-route-active" : "op-route"}>Reports</a>
+            <a href="/settings" class={active === "settings" ? "op-route op-route-active" : "op-route"}>Settings</a>
           </nav>
           <span class="op-embedded">embedded web terminal · {title}</span>
         </div>
@@ -2101,6 +2104,21 @@ const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => (
           </div>
 
           <div class="settings-field">
+            <label class="settings-label">
+              <input
+                type="checkbox"
+                name="autoExtractSchedule"
+                id="cfg-auto-extract-schedule"
+                checked={config.autoExtractSchedule}
+              />
+              <span>定时智能提取</span>
+            </label>
+            <p class="muted small">
+              开启后，后台每 10 分钟轮询一次：对新绑定 session 在创建 24 小时后自动触发一次智能提取；之后每 24 小时检查 session 是否有新增内容，有则再次触发。
+            </p>
+          </div>
+
+          <div class="settings-field">
             <label class="settings-label" for="cfg-model">提取模型</label>
             <input
               type="text"
@@ -2154,6 +2172,7 @@ app.post("/api/config", async (c) => {
   const body = await c.req.json().catch(() => null) ?? {}
   const partial: Partial<AppConfig> = {}
   if (typeof body.autoExtract === "boolean") partial.autoExtract = body.autoExtract
+  if (typeof body.autoExtractSchedule === "boolean") partial.autoExtractSchedule = body.autoExtractSchedule
   if (typeof body.extractModel === "string" && body.extractModel.trim()) partial.extractModel = body.extractModel.trim()
   if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
   const next = await setConfig(partial)
@@ -2765,6 +2784,12 @@ await initMarkers()
 // Start the background worker that polls for marked sessions and
 // triggers auto-summary forks once sessions are idle ≥1 hour.
 startAutoSummaryWorker()
+
+// Start the background scheduler for automated smart context extraction.
+// Polls every 10 min; triggers auto-extract 24 h after session creation
+// (initial) and every 24 h when sessions have new content (periodic).
+// Controlled by the `autoExtractSchedule` config toggle.
+startAutoExtractScheduler()
 
 serve({ fetch: app.fetch, websocket: { server: wss }, port }, (info) => {
   console.log(`OpenCode Dashboard running at http://localhost:${info.port}`)

@@ -33,6 +33,13 @@ export interface AppConfig {
    */
   autoExtract: boolean
   /**
+   * false (default) = scheduled auto-extract is disabled.
+   * true = the background scheduler polls every 10 min and triggers
+   * auto-extract for sessions that are 24 h old (initial) or have
+   * new content since the last extract (periodic).
+   */
+  autoExtractSchedule: boolean
+  /**
    * Model used for extract spawns. Falls back to
    * `litellm-local/deepseek-v4-flash-auto` when empty.
    */
@@ -46,6 +53,7 @@ export interface AppConfig {
 
 const DEFAULTS: AppConfig = {
   autoExtract: false,
+  autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
   minChangeMessages: 5,
 }
@@ -78,6 +86,7 @@ async function load(): Promise<AppConfig> {
     const parsed = JSON.parse(raw)
     _cache = {
       autoExtract: parsed.autoExtract ?? DEFAULTS.autoExtract,
+      autoExtractSchedule: parsed.autoExtractSchedule ?? DEFAULTS.autoExtractSchedule,
       extractModel: parsed.extractModel || DEFAULTS.extractModel,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
     }
@@ -92,11 +101,12 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "autoExtract" | "extractModel" | "minChangeMessages">>,
+  partial: Partial<Pick<AppConfig, "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
     autoExtract: partial.autoExtract ?? cur.autoExtract,
+    autoExtractSchedule: partial.autoExtractSchedule ?? cur.autoExtractSchedule,
     extractModel: partial.extractModel ?? cur.extractModel,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
   }
