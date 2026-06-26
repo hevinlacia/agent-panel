@@ -875,6 +875,30 @@ code {
   .req-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* Status filter: clickable flow cells on the projects page */
+.req-flow a.op-flow-cell {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.req-flow a.op-flow-cell:hover {
+  background: var(--bg-hover);
+}
+.req-flow-cell-active {
+  background: var(--bg-hover);
+  box-shadow: inset 0 -2px 0 0 currentColor;
+}
+.req-filter-clear {
+  color: var(--amber);
+  text-decoration: none;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+.req-filter-clear:hover {
+  text-decoration: underline;
+}
+
 .req-create-form {
   display: flex;
   gap: 8px;

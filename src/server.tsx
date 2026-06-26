@@ -800,32 +800,62 @@ const SessionPicker: FC<{ candidates: SessionInfo[]; listId: string; placeholder
 const ProjectsPage: FC<{
   groups: { project: string; requirements: Requirement[] }[]
   counts: Record<ReqStatus, number>
-}> = ({ groups, counts }) => {
-  const totalReqs = groups.reduce((acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length, 0)
+  statusFilter: string
+}> = ({ groups, counts, statusFilter }) => {
+  const filterActive = statusFilter !== "" && (REQ_STATUSES as string[]).includes(statusFilter)
+  const filteredGroups = filterActive
+    ? groups
+        .map((g) => ({
+          ...g,
+          requirements: g.requirements.filter((r) => r.status === statusFilter),
+        }))
+        .filter((g) => g.requirements.length > 0)
+    : groups
+  const totalReqs = filteredGroups.reduce(
+    (acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length,
+    0,
+  )
   return (
     <Layout title="Projects" active="requirements">
       <section class="req-flow" aria-label="requirement flow">
-        {REQ_STATUSES.map((s) => (
-          <div class={`op-flow-cell req-flow-cell-${REQ_STATUS_SLUG[s]}`}>
-            <span class="op-flow-k">{s}</span>
-            <span class="op-flow-v">{counts[s]}</span>
-          </div>
-        ))}
+        {REQ_STATUSES.map((s) => {
+          const isActive = statusFilter === s
+          const href = isActive ? "/" : `/?status=${encodeURIComponent(s)}`
+          return (
+            <a
+              href={href}
+              class={`op-flow-cell req-flow-cell-${REQ_STATUS_SLUG[s]}${isActive ? " req-flow-cell-active" : ""}`}
+              title={isActive ? `取消筛选：${s}` : `筛选状态：${s}`}
+            >
+              <span class="op-flow-k">{s}</span>
+              <span class="op-flow-v">{counts[s]}</span>
+            </a>
+          )
+        })}
       </section>
 
       <header class="op-section-head">
         <h1 class="op-section-title">REQUIREMENT BACKLOG</h1>
         <div class="op-section-meta">
           <span class="op-section-meta-item">{totalReqs} TRACKED</span>
-          <span class="op-section-meta-item muted">via hermes req-tracker</span>
+          {filterActive ? (
+            <a class="op-section-meta-item req-filter-clear" href="/" title="清除状态筛选">
+              ✕ 筛选：{statusFilter}
+            </a>
+          ) : (
+            <span class="op-section-meta-item muted">via hermes req-tracker</span>
+          )}
         </div>
       </header>
 
-      {groups.length === 0 ? (
-        <div class="op-empty"><p>No projects yet.</p></div>
+      {filteredGroups.length === 0 ? (
+        <div class="op-empty">
+          <p>{filterActive ? `没有状态为「${statusFilter}」的需求。` : "No projects yet."}</p>
+          {filterActive ? <p><a href="/">查看全部需求</a></p> : null}
+        </div>
       ) : (
         <div class="proj-list">
-          {groups.map(({ project, requirements }, i) => {
+          {filteredGroups.map(({ project, requirements }, i) => {
             const isOpen = project === DEFAULT_PROJECT_NAME
             const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
             // Top-level requirements only — children are rendered inside
@@ -1591,6 +1621,7 @@ app.get("/vendor/xterm-addon-fit/addon-fit.js", vendorFile("@xterm/addon-fit", "
 
 // Projects (requirements) landing page — the site homepage.
 async function renderProjectsPage(c: Context) {
+  const statusFilter = c.req.query("status") || ""
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
     "待设计": 0,
@@ -1604,7 +1635,7 @@ async function renderProjectsPage(c: Context) {
   for (const g of groups) {
     for (const r of g.requirements) counts[r.status] += 1
   }
-  return c.html(<ProjectsPage groups={groups} counts={counts} />)
+  return c.html(<ProjectsPage groups={groups} counts={counts} statusFilter={statusFilter} />)
 }
 
 app.get("/", async (c) => renderProjectsPage(c))
