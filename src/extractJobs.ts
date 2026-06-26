@@ -8,12 +8,16 @@
  * same store.
  *
  * Public surface:
- *   - createExtractJob({reqId,sessionId,prompt,model}) → starts the spawn and
- *     returns the freshly-stored job (state="running"). Throws if a job
- *     for the same sessionId is already running globally.
+ *   - createExtractJob({reqId,sessionId,prompt,model,autoAdopt,reqDir}) → starts
+ *     the spawn and returns the freshly-stored job (state="running"). Throws
+ *     if a job for the same sessionId is already running globally. When
+ *     `autoAdopt` is true, finalizeJob auto-writes parsed file diffs to
+ *     `reqDir` instead of directing the user to a preview page.
  *   - getExtractJob(jobId) → snapshot of the job, or null when missing
  *     (e.g. evicted by TTL).
  *   - findRunningJobForSession(sessionId) → for the mutex/UI restore.
+ *   - JOB_MAX_RUNNING_MS → max wall-clock for a running job before the
+ *     zombie reaper force-fails it.
  *   - _resetExtractJobs() → test-only reset of the singleton state.
  *
  * Constraints / safety:
@@ -31,6 +35,8 @@
  */
 
 import { randomBytes } from "node:crypto"
+import { writeFile, appendFile } from "node:fs/promises"
+import { join } from "node:path"
 
 import {
   runExtractSummary,
@@ -92,6 +98,17 @@ export interface ExtractJob {
    */
   autoResult: import("./autoExtract.ts").AutoExtractResult | null
   /**
+   * When true, finalizeJob auto-writes the parsed file updates/appends
+   * to `reqDir` instead of directing the user to a preview page.
+   * Used by the scheduled auto-extract scheduler.
+   */
+  autoAdopt: boolean
+  /**
+   * Requirement directory for auto-adopt file writes. Null for manual
+   * jobs that go through the preview/commit flow.
+   */
+  reqDir: string | null
+  /**
    * Internal: anchor text stored on the job at creation time so the
    * salvage step in `finalizeJob` can identify the right fork in the
    * database. Not serialized to the API.
@@ -111,6 +128,14 @@ export interface ExtractJob {
 /** TTL after which a finished job is evicted from memory. */
 export const JOB_TTL_MS = 30 * 60 * 1000
 
+/**
+ * Max wall-clock a job may stay in "running" state before the zombie
+ * reaper force-transitions it to "failed". Set to 3× the spawn timeout
+ * so normal slow jobs are not affected, but truly stuck jobs (e.g. the
+ * child's pipe is held open by a grandchild) don't linger forever.
+ */
+export const JOB_MAX_RUNNING_MS = 3 * DEFAULT_EXTRACT_TIMEOUT_MS
+
 const _jobs = new Map<string, ExtractJob>()
 
 /** Generate a short, URL-safe job id (12 hex chars). */
@@ -118,10 +143,30 @@ function newJobId(): string {
   return randomBytes(6).toString("hex")
 }
 
-/** Drop done/failed jobs older than JOB_TTL_MS. Runs on every access. */
+/**
+ * Drop done/failed jobs older than JOB_TTL_MS. Also force-fails
+ * "running" jobs that have exceeded `JOB_MAX_RUNNING_MS` — these are
+ * zombie jobs where the underlying spawn's pipe never closed (e.g. a
+ * grandchild process holds stdout open). Without this reaper, the job
+ * and its notification stay "running" forever.
+ */
 function evictStale(now: number): void {
   for (const [id, j] of _jobs) {
-    if (j.state === "running") continue
+    if (j.state === "running") {
+      if (now - j.startedAt > JOB_MAX_RUNNING_MS) {
+        j.state = "failed"
+        j.doneAt = now
+        j.errorMessage = "任务超时未响应（zombie job reaper）"
+        if (j._notificationId) {
+          updateNotification(j._notificationId, {
+            title: "✗ 任务超时未响应",
+            subtitle: `session ${j.sessionId} · 已运行超过 ${Math.round(JOB_MAX_RUNNING_MS / 60_000)} 分钟未完成`,
+            state: "failed",
+          })
+        }
+      }
+      continue
+    }
     if (j.doneAt && now - j.doneAt > JOB_TTL_MS) {
       _jobs.delete(id)
     }
@@ -173,6 +218,17 @@ export interface CreateExtractJobOptions {
    * against a stub.
    */
   promptAnchor?: string
+  /**
+   * When true, the job auto-writes parsed file updates to `reqDir`
+   * on completion instead of directing the user to a preview page.
+   * Used by the scheduled auto-extract scheduler.
+   */
+  autoAdopt?: boolean
+  /**
+   * Requirement directory for auto-adopt file writes. Required when
+   * `autoAdopt` is true.
+   */
+  reqDir?: string
 }
 
 export class JobConflictError extends Error {
@@ -218,6 +274,8 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
     forkTitle: null,
     salvagedFromFork: false,
     autoResult: null,
+    autoAdopt: opts.autoAdopt ?? false,
+    reqDir: opts.reqDir ?? null,
     _promptAnchor: promptAnchor,
     _salvageFn: opts.salvageFn ?? salvageFromFork,
     _notificationId: null,
@@ -226,15 +284,17 @@ export function createExtractJob(opts: CreateExtractJobOptions): ExtractJob {
 
   // Add a "running" notification card for this job. Subsequent state
   // transitions (done/failed/salvaged) are pushed via updateNotification.
+  // For autoAdopt jobs (scheduler), the notification has no actionHref
+  // because the user doesn't need to visit a preview page.
   const notifId = createNotification({
     type: "extract",
-    title: "正在生成会话摘要…",
+    title: opts.autoAdopt ? "⏰ 定时智能提取进行中…" : "正在生成会话摘要…",
     subtitle: `session ${opts.sessionId}`,
     state: "running",
     jobId: job.id,
     reqId: opts.reqId,
     sessionId: opts.sessionId,
-    actionHref: `/requirement/extract?jobId=${encodeURIComponent(job.id)}`,
+    actionHref: opts.autoAdopt ? null : `/requirement/extract?jobId=${encodeURIComponent(job.id)}`,
   })
   job._notificationId = notifId
 
@@ -262,6 +322,48 @@ async function persistJobHistory(job: ExtractJob): Promise<void> {
 }
 
 /**
+ * Auto-adopt: write the parsed file updates/appends directly to `reqDir`,
+ * skipping the manual preview/commit flow.
+ *
+ * Returns a human-readable description of what was written (or why it
+ * was skipped). Never throws — errors are captured in the description.
+ */
+async function applyAutoAdopt(j: ExtractJob): Promise<string> {
+  if (!j.reqDir) return "无法自动采纳：缺少需求目录"
+  if (!j.autoResult) {
+    const parsed = parseAutoExtractOutput(j.stdout)
+    j.autoResult = filterAllowed(parsed)
+  }
+  const { updates, appends, summary } = j.autoResult
+  if (updates.length === 0 && appends.length === 0) {
+    return summary || "无需更新"
+  }
+  const written: string[] = []
+  for (const u of updates) {
+    try {
+      const filePath = join(j.reqDir, u.filename)
+      if (!filePath.startsWith(j.reqDir + "/")) continue
+      await writeFile(filePath, u.content, "utf-8")
+      written.push(`更新 ${u.filename}`)
+    } catch {
+      written.push(`更新 ${u.filename} 失败`)
+    }
+  }
+  for (const a of appends) {
+    try {
+      const filePath = join(j.reqDir, a.filename)
+      if (!filePath.startsWith(j.reqDir + "/")) continue
+      await appendFile(filePath, "\n\n" + a.content + "\n", "utf-8")
+      written.push(`追加 ${a.filename}`)
+    } catch {
+      written.push(`追加 ${a.filename} 失败`)
+    }
+  }
+  const desc = written.length > 0 ? written.join("、") : "无变更"
+  return summary ? `${desc}｜${summary}` : desc
+}
+
+/**
  * Finalize a job once `runExtractSummary` resolves.
  *
  * The "happy path" (exit 0, non-empty stdout, no timeout) is trivial.
@@ -279,6 +381,10 @@ async function persistJobHistory(job: ExtractJob): Promise<void> {
 async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> {
   const j = _jobs.get(jobId)
   if (!j) return
+  // Guard against double-finalization: the zombie reaper in evictStale
+  // may have already force-failed this job while the runner promise
+  // was still pending.
+  if (j.state !== "running") return
   j.stdout = result.stdout
   j.stderr = result.stderr
   j.exitCode = result.exitCode
@@ -296,20 +402,34 @@ async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> 
     }
     if (j._notificationId) {
       const dur = ((j.doneAt - j.startedAt) / 1000).toFixed(1)
-      const title = j.mode === "auto"
-        ? `✓ 上下文分析完成（${dur}s）`
-        : `✓ 摘要生成完成（${dur}s）`
-      const subtitle = j.mode === "auto"
-        ? `session ${j.sessionId} · 进入预览页查看文件变更建议`
-        : `session ${j.sessionId} · 进入预览页确认后写入 notes.md`
-      updateNotification(j._notificationId, {
-        title,
-        subtitle,
-        state: "done",
-        actionHref: j.mode === "auto"
-          ? `/requirement/auto-extract?jobId=${encodeURIComponent(j.id)}`
-          : `/requirement/extract?jobId=${encodeURIComponent(j.id)}`,
-      })
+      if (j.autoAdopt && j.mode === "auto") {
+        // Auto-adopt: write files directly and notify what was adopted.
+        const adoptDesc = await applyAutoAdopt(j)
+        const hasChanges = j.autoResult != null &&
+          (j.autoResult.updates.length > 0 || j.autoResult.appends.length > 0)
+        updateNotification(j._notificationId, {
+          title: hasChanges
+            ? `✓ 定时提取已自动采纳（${dur}s）`
+            : `✓ 定时提取完成，无需更新（${dur}s）`,
+          subtitle: `session ${j.sessionId} · ${adoptDesc}`,
+          state: "done",
+        })
+      } else {
+        const title = j.mode === "auto"
+          ? `✓ 上下文分析完成（${dur}s）`
+          : `✓ 摘要生成完成（${dur}s）`
+        const subtitle = j.mode === "auto"
+          ? `session ${j.sessionId} · 进入预览页查看文件变更建议`
+          : `session ${j.sessionId} · 进入预览页确认后写入 notes.md`
+        updateNotification(j._notificationId, {
+          title,
+          subtitle,
+          state: "done",
+          actionHref: j.mode === "auto"
+            ? `/requirement/auto-extract?jobId=${encodeURIComponent(j.id)}`
+            : `/requirement/extract?jobId=${encodeURIComponent(j.id)}`,
+        })
+      }
     }
     await persistJobHistory(j)
     return
@@ -340,13 +460,31 @@ async function finalizeJob(jobId: string, result: ExtractResult): Promise<void> 
     j.salvagedFromFork = true
     j.state = "done"
     j.errorMessage = null
+    // For auto mode, parse the salvaged text into structured diffs.
+    if (j.mode === "auto") {
+      const parsed = parseAutoExtractOutput(salvage.text)
+      j.autoResult = filterAllowed(parsed)
+    }
     if (j._notificationId) {
       const dur = ((j.doneAt - j.startedAt) / 1000).toFixed(1)
-      updateNotification(j._notificationId, {
-        title: `✓ 已从 fork 救回摘要（${dur}s）`,
-        subtitle: `session ${j.sessionId} · 进程超时但 LLM 已写完`,
-        state: "done",
-      })
+      if (j.autoAdopt && j.mode === "auto") {
+        const adoptDesc = await applyAutoAdopt(j)
+        const hasChanges = j.autoResult != null &&
+          (j.autoResult.updates.length > 0 || j.autoResult.appends.length > 0)
+        updateNotification(j._notificationId, {
+          title: hasChanges
+            ? `✓ 定时提取已自动采纳（fork 救回，${dur}s）`
+            : `✓ 定时提取完成，无需更新（fork 救回，${dur}s）`,
+          subtitle: `session ${j.sessionId} · ${adoptDesc}`,
+          state: "done",
+        })
+      } else {
+        updateNotification(j._notificationId, {
+          title: `✓ 已从 fork 救回摘要（${dur}s）`,
+          subtitle: `session ${j.sessionId} · 进程超时但 LLM 已写完`,
+          state: "done",
+        })
+      }
     }
     await persistJobHistory(j)
     return

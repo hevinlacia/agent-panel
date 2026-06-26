@@ -129,3 +129,26 @@ test("recommendSessionsForRequirement: filters out zero-score sessions", () => {
   const recos = recommendSessionsForRequirement(req, [unrelated], 6)
   assert.equal(recos.length, 0)
 })
+
+test("scoreSessionForRequirement: returns null for fork sessions", () => {
+  const req = makeReq()
+  const session = makeSession({ title: "WMS 日志系统重构 (fork #1)" })
+  const result = scoreSessionForRequirement(req, session)
+  assert.equal(result, null)
+})
+
+test("scoreSessionForRequirement: returns null for fork sessions with high number", () => {
+  const req = makeReq()
+  const session = makeSession({ title: "Some task (fork #42)" })
+  const result = scoreSessionForRequirement(req, session)
+  assert.equal(result, null)
+})
+
+test("recommendSessionsForRequirement: filters out fork sessions", () => {
+  const req = makeReq({ title: "WMS 日志系统重构" })
+  const forkSession = makeSession({ title: "WMS 日志系统重构 (fork #1)" })
+  const realSession = makeSession({ title: "WMS 日志系统重构 bugfix" })
+  const recos = recommendSessionsForRequirement(req, [forkSession, realSession], 6)
+  assert.equal(recos.length, 1)
+  assert.ok(!recos[0].session.title.includes("(fork #"))
+})

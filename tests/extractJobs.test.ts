@@ -21,12 +21,13 @@ import {
   findRunningJobForSession,
   getExtractJob,
   JobConflictError,
+  JOB_MAX_RUNNING_MS,
   _resetExtractJobs,
 } from "../src/extractJobs.ts"
 import type { ExtractResult } from "../src/sessionExtract.ts"
 import type { SalvageResult } from "../src/forkSalvage.ts"
-import { _resetForTest as _resetNotifications } from "../src/notifications.ts"
-import { mkdtempSync } from "node:fs"
+import { _resetForTest as _resetNotifications, getNotifications } from "../src/notifications.ts"
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -369,4 +370,206 @@ test("salvage: success path is unaffected by salvageFn", async () => {
   assert.equal(final?.salvagedFromFork, false)
   assert.equal(final?.forkSessionId, null)
   assert.equal(salvageCalls, 0, "salvage should NOT be called on the happy path")
+})
+
+// ---------------------------------------------------------------------------
+// Auto-adopt tests
+// ---------------------------------------------------------------------------
+
+function fakeAutoOutput(opts: {
+  updates?: { filename: string; content: string }[]
+  appends?: { filename: string; content: string }[]
+  summary?: string
+}): string {
+  const parts: string[] = []
+  for (const u of opts.updates ?? []) {
+    parts.push(`===UPDATE: ${u.filename}===`, u.content, "")
+  }
+  for (const a of opts.appends ?? []) {
+    parts.push(`===APPEND: ${a.filename}===`, a.content, "")
+  }
+  parts.push("===SUMMARY===", opts.summary ?? "test summary")
+  return parts.join("\n")
+}
+
+test("autoAdopt: writes file updates to reqDir on successful auto-extract", async () => {
+  _resetExtractJobs()
+  const reqDir = mkdtempSync(join(tmpdir(), "auto-adopt-"))
+  writeFileSync(join(reqDir, "branch.md"), "old content")
+
+  const job = createExtractJob({
+    reqId: "req-auto-1",
+    sessionId: "ses_autoadopt111111",
+    prompt: "p",
+    mode: "auto",
+    autoAdopt: true,
+    reqDir,
+    runFn: fakeRunner({
+      stdout: fakeAutoOutput({
+        updates: [{ filename: "branch.md", content: "new content" }],
+        appends: [{ filename: "notes.md", content: "## 新摘要\nbody" }],
+        summary: "更新了 branch.md，追加了 notes.md",
+      }),
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+      timedOut: false,
+    }),
+    salvageFn: noSalvage,
+  })
+  await waitFor(() => (getExtractJob(job.id)?.state ?? "running") !== "running")
+  const final = getExtractJob(job.id)
+  assert.equal(final?.state, "done")
+  assert.equal(final?.autoAdopt, true)
+  assert.equal(readFileSync(join(reqDir, "branch.md"), "utf-8"), "new content")
+  assert.ok(readFileSync(join(reqDir, "notes.md"), "utf-8").includes("新摘要"))
+  const notifs = getNotifications()
+  const notif = notifs.find((n) => n.jobId === job.id)
+  assert.ok(notif)
+  assert.match(notif!.title, /定时提取已自动采纳/)
+  assert.match(notif!.subtitle, /更新 branch\.md/)
+})
+
+test("autoAdopt: notification says 'no changes' when output has no updates", async () => {
+  _resetExtractJobs()
+  const reqDir = mkdtempSync(join(tmpdir(), "auto-adopt-noop-"))
+
+  const job = createExtractJob({
+    reqId: "req-auto-2",
+    sessionId: "ses_autoadopt222222",
+    prompt: "p",
+    mode: "auto",
+    autoAdopt: true,
+    reqDir,
+    runFn: fakeRunner({
+      stdout: fakeAutoOutput({ summary: "无需更新" }),
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+      timedOut: false,
+    }),
+    salvageFn: noSalvage,
+  })
+  await waitFor(() => (getExtractJob(job.id)?.state ?? "running") !== "running")
+  const final = getExtractJob(job.id)
+  assert.equal(final?.state, "done")
+  const notifs = getNotifications()
+  const notif = notifs.find((n) => n.jobId === job.id)
+  assert.ok(notif)
+  assert.match(notif!.title, /无需更新/)
+})
+
+test("autoAdopt: salvage path also auto-adopts", async () => {
+  _resetExtractJobs()
+  const reqDir = mkdtempSync(join(tmpdir(), "auto-adopt-salvage-"))
+
+  const job = createExtractJob({
+    reqId: "req-auto-3",
+    sessionId: "ses_autoadopt333333",
+    prompt: "请用中文总结本次会话",
+    mode: "auto",
+    autoAdopt: true,
+    reqDir,
+    runFn: fakeRunner({
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+      durationMs: 300_000,
+      timedOut: true,
+    }),
+    salvageFn: fakeSalvageHit({
+      forkSessionId: "ses_forkauto1",
+      forkTitle: "X (fork #1)",
+      forkDurationMs: 18_000,
+      text: fakeAutoOutput({
+        appends: [{ filename: "notes.md", content: "## 从 fork 救回的摘要" }],
+        summary: "从 fork 救回",
+      }),
+    }),
+  })
+  await waitFor(() => (getExtractJob(job.id)?.state ?? "running") !== "running")
+  const final = getExtractJob(job.id)
+  assert.equal(final?.state, "done")
+  assert.equal(final?.salvagedFromFork, true)
+  assert.ok(readFileSync(join(reqDir, "notes.md"), "utf-8").includes("从 fork 救回的摘要"))
+  const notifs = getNotifications()
+  const notif = notifs.find((n) => n.jobId === job.id)
+  assert.ok(notif)
+  assert.match(notif!.title, /定时提取已自动采纳.*fork 救回/)
+})
+
+test("autoAdopt: notification has no actionHref (no preview page needed)", async () => {
+  _resetExtractJobs()
+  const reqDir = mkdtempSync(join(tmpdir(), "auto-adopt-nohref-"))
+
+  const job = createExtractJob({
+    reqId: "req-auto-4",
+    sessionId: "ses_autoadopt444444",
+    prompt: "p",
+    mode: "auto",
+    autoAdopt: true,
+    reqDir,
+    runFn: fakeRunner({
+      stdout: fakeAutoOutput({ summary: "nothing" }),
+      stderr: "",
+      exitCode: 0,
+      durationMs: 1,
+      timedOut: false,
+    }),
+    salvageFn: noSalvage,
+  })
+  await waitFor(() => (getExtractJob(job.id)?.state ?? "running") !== "running")
+  const notifs = getNotifications()
+  const notif = notifs.find((n) => n.jobId === job.id)
+  assert.ok(notif)
+  assert.equal(notif!.actionHref, null)
+})
+
+// ---------------------------------------------------------------------------
+// Zombie reaper tests
+// ---------------------------------------------------------------------------
+
+test("zombie reaper: force-fails jobs that exceed JOB_MAX_RUNNING_MS", () => {
+  _resetExtractJobs()
+  const job = createExtractJob({
+    reqId: "req-zombie-1",
+    sessionId: "ses_zombie111111111",
+    prompt: "p",
+    runFn: fakeRunner(
+      { stdout: "late", stderr: "", exitCode: 0, durationMs: 1, timedOut: false },
+      10 * 60_000,
+    ),
+    salvageFn: noSalvage,
+    nowFn: () => Date.now() - JOB_MAX_RUNNING_MS - 60_000,
+  })
+  assert.equal(job.state, "running")
+  const final = getExtractJob(job.id)
+  assert.equal(final?.state, "failed")
+  assert.match(final!.errorMessage!, /zombie job reaper/)
+  const notifs = getNotifications()
+  const notif = notifs.find((n) => n.jobId === job.id)
+  assert.ok(notif)
+  assert.match(notif!.title, /超时未响应/)
+  assert.equal(notif!.state, "failed")
+})
+
+test("zombie reaper: does not affect jobs still within timeout", () => {
+  _resetExtractJobs()
+  createExtractJob({
+    reqId: "req-zombie-2",
+    sessionId: "ses_zombie222222222",
+    prompt: "p",
+    runFn: fakeRunner(
+      { stdout: "ok", stderr: "", exitCode: 0, durationMs: 1, timedOut: false },
+      5_000,
+    ),
+    salvageFn: noSalvage,
+  })
+  const final = getExtractJob(getExtractJob("ses_zombie222222222")?.id ?? "")
+  // The job should still be running (not reaped).
+  // Note: getExtractJob by sessionId doesn't work, we need to find it differently.
+  // Actually we can use findRunningJobForSession.
+  const running = findRunningJobForSession("ses_zombie222222222")
+  assert.ok(running)
+  assert.equal(running!.state, "running")
 })

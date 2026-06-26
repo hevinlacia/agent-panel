@@ -8,6 +8,7 @@
  * Public surface:
  *   - recommendSessionsForRequirement(req, candidates, limit)
  *   - scoreSessionForRequirement(req, session)
+ *   - FORK_TITLE_RE — regex to detect fork sessions by title pattern.
  *
  * Constraints / safety:
  *   - Pure functions only; no I/O and no session transcript reads.
@@ -26,6 +27,9 @@ export interface SessionRecommendation {
   score: number
   reasons: string[]
 }
+
+/** Matches fork session titles assigned by `opencode run --fork`: "<source-title> (fork #N)". */
+export const FORK_TITLE_RE = /\(fork #\d+\)/i
 
 const ASCII_STOP_WORDS = new Set([
   "title",
@@ -117,6 +121,11 @@ export function scoreSessionForRequirement(
   req: Requirement,
   session: SessionInfo,
 ): SessionRecommendation | null {
+  // Fork sessions created by `opencode run --fork` get the title
+  // "<source-title> (fork #N)". They are auto-generated copies, not user
+  // work sessions — exclude them from recommendations.
+  if (session.title && FORK_TITLE_RE.test(session.title)) return null
+
   const title = normalize(session.title || "")
   const titleCompact = compact(session.title || "")
   const reqTitleCompact = compact(req.title || "")

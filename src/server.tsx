@@ -87,6 +87,7 @@ import {
   type ContextFiles,
 } from "./autoExtract.ts"
 import {
+  FORK_TITLE_RE,
   recommendSessionsForRequirement,
   type SessionRecommendation,
 } from "./sessionRecommendations.ts"
@@ -1725,7 +1726,11 @@ app.get("/requirement", async (c) => {
   const associatedAll = await getAllAssociatedSessionIds()
   const associated = sessions.filter((s) => req.sessionIds.includes(s.id))
   const unassociated = sessions.filter(
-    (s) => !s.parentId && !associatedAll.has(s.id) && !req.sessionIds.includes(s.id)
+    (s) =>
+      !s.parentId &&
+      !FORK_TITLE_RE.test(s.title || "") &&
+      !associatedAll.has(s.id) &&
+      !req.sessionIds.includes(s.id)
   )
   const state = req.reqDir ? await readRequirementState(req.reqDir) : null
 

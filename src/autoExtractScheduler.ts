@@ -56,7 +56,6 @@ import {
   type JobMode,
 } from "./extractJobs.ts"
 import { buildAutoExtractPrompt, type ContextFiles } from "./autoExtract.ts"
-import { createNotification } from "./notifications.ts"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -307,22 +306,16 @@ async function triggerAutoExtract(
       prompt,
       mode: "auto" as JobMode,
       model,
+      autoAdopt: true,
+      reqDir: req.reqDir,
     })
   } catch {
     // JobConflictError or other — skip silently.
     return false
   }
 
-  // Notify the user that a scheduled auto-extract has started.
-  createNotification({
-    type: "extract",
-    title: "⏰ 定时智能提取已触发",
-    subtitle: `session ${entry.sessionId} · 需求 ${req.title}`,
-    state: "running",
-    sessionId: entry.sessionId,
-    reqId: entry.reqId,
-    actionHref: null,
-  })
+  // The notification ("⏰ 定时智能提取进行中…") is created by
+  // createExtractJob itself; no need for a separate one here.
 
   return true
 }
