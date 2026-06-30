@@ -49,6 +49,20 @@ export interface AppConfig {
    * auto-trigger to fire. Prevents wasting tokens on trivial changes.
    */
   minChangeMessages: number
+  /**
+   * false (default) = auto-valuation worker discovers candidates but
+   * does NOT auto-mark them. The user must manually mark from the
+   * candidate list.
+   * true = the worker auto-marks sessions whose score ≥
+   * `valuationThreshold`, feeding them directly into the experience-
+   * summary pipeline.
+   */
+  autoValuation: boolean
+  /**
+   * Minimum score (0–100) for a session to be considered a candidate.
+   * Sessions below this score are filtered out. Default: 25.
+   */
+  valuationThreshold: number
 }
 
 const DEFAULTS: AppConfig = {
@@ -56,6 +70,8 @@ const DEFAULTS: AppConfig = {
   autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
   minChangeMessages: 5,
+  autoValuation: false,
+  valuationThreshold: 25,
 }
 
 const DEFAULT_PATH = join(
@@ -89,6 +105,8 @@ async function load(): Promise<AppConfig> {
       autoExtractSchedule: parsed.autoExtractSchedule ?? DEFAULTS.autoExtractSchedule,
       extractModel: parsed.extractModel || DEFAULTS.extractModel,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
+      autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
+      valuationThreshold: parsed.valuationThreshold ?? DEFAULTS.valuationThreshold,
     }
   } catch {
     _cache = { ...DEFAULTS }
@@ -101,7 +119,7 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages">>,
+  partial: Partial<Pick<AppConfig, "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -109,6 +127,8 @@ export async function setConfig(
     autoExtractSchedule: partial.autoExtractSchedule ?? cur.autoExtractSchedule,
     extractModel: partial.extractModel ?? cur.extractModel,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
+    autoValuation: partial.autoValuation ?? cur.autoValuation,
+    valuationThreshold: partial.valuationThreshold ?? cur.valuationThreshold,
   }
   _cache = next
   const dir = dirname(_path)

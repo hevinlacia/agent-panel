@@ -735,6 +735,28 @@ export async function replaceAssociatedSession(
   await saveAssociations(store)
 }
 
+/**
+ * Remove a session association from a requirement. If the session is not
+ * currently associated, this is a no-op. The session becomes an orphan
+ * (visible in the default requirement's list) unless re-associated.
+ */
+export async function dissociateSession(
+  reqId: string,
+  sessionId: string
+): Promise<void> {
+  if (!sessionId || !reqId) return
+  const store = await loadAssociations()
+  const cur = store.associations[reqId]
+  if (!cur) return
+  const next = cur.filter((s) => s !== sessionId)
+  if (next.length === 0) {
+    delete store.associations[reqId]
+  } else {
+    store.associations[reqId] = next
+  }
+  await saveAssociations(store)
+}
+
 export async function getRequirementForSession(
   sessionId: string
 ): Promise<Requirement> {

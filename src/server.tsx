@@ -39,6 +39,7 @@ import {
   listRequirementsByProject,
   getRequirement,
   associateSession,
+  dissociateSession,
   replaceAssociatedSession,
   getRequirementForSession,
   getAllAssociatedSessionIds,
@@ -119,6 +120,16 @@ import {
   isAutoExtractSchedulerRunning,
   POLL_INTERVAL_MS as AUTO_EXTRACT_POLL_MS,
 } from "./autoExtractScheduler.ts"
+import {
+  startAutoValuationWorker,
+  stopAutoValuationWorker,
+  isAutoValuationWorkerRunning,
+  getValuationStats,
+  getRecentCandidates,
+  pollOnce as valuationPollOnce,
+  POLL_INTERVAL_MS as VALUATION_POLL_MS,
+  type ValuationStats,
+} from "./autoValuation.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -737,10 +748,10 @@ function bucketByGroupPath(requirements: Requirement[]): { key: string; segments
   return entries.map(([key, value]) => ({ key, segments: value.segments, reqs: value.reqs }))
 }
 
-const RequirementCard: FC<{ r: Requirement; children?: Requirement[] }> = ({ r, children }) => {
+const RequirementCard: FC<{ r: Requirement; childReqs?: Requirement[] }> = ({ r, childReqs }) => {
   const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
   const isParent = !!(r.childIds && r.childIds.length > 0)
-  const childList = children ?? []
+  const childList = childReqs ?? []
   if (isParent) {
     return (
       <details class="req-card req-card-parent" open={false}>
@@ -805,16 +816,30 @@ const ProjectsPage: FC<{
   groups: { project: string; requirements: Requirement[] }[]
   counts: Record<ReqStatus, number>
   statusFilter: string
-}> = ({ groups, counts, statusFilter }) => {
+  showCompleted: boolean
+}> = ({ groups, counts, statusFilter, showCompleted }) => {
   const filterActive = statusFilter !== "" && (REQ_STATUSES as string[]).includes(statusFilter)
+  // Hide "已完成" requirements by default when no status filter is active.
+  const hideCompleted = !filterActive && !showCompleted
   const filteredGroups = filterActive
     ? groups
-        .map((g) => ({
-          ...g,
-          requirements: g.requirements.filter((r) => r.status === statusFilter),
-        }))
+        .map((g) => {
+          const matching = g.requirements.filter((r) => r.status === statusFilter)
+          // Include parents of matching children so they're not orphaned.
+          const parentIds = new Set(matching.filter((r) => r.parentReqId).map((r) => r.parentReqId!))
+          const matchingIds = new Set(matching.map((r) => r.id))
+          const needed = g.requirements.filter((r) => matchingIds.has(r.id) || parentIds.has(r.id))
+          return { ...g, requirements: needed }
+        })
         .filter((g) => g.requirements.length > 0)
     : groups
+        .map((g) => ({
+            ...g,
+            requirements: hideCompleted
+              ? g.requirements.filter((r) => r.status !== "已完成")
+              : g.requirements,
+          }))
+        .filter((g) => g.requirements.length > 0)
   const totalReqs = filteredGroups.reduce(
     (acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length,
     0,
@@ -847,7 +872,18 @@ const ProjectsPage: FC<{
               ✕ 筛选：{statusFilter}
             </a>
           ) : (
-            <span class="op-section-meta-item muted">via hermes req-tracker</span>
+            <>
+              {hideCompleted ? (
+                <a class="op-section-meta-item" href="/?showCompleted=1" title="显示已完成需求">
+                  + 显示已完成
+                </a>
+              ) : (
+                <a class="op-section-meta-item req-filter-clear" href="/" title="隐藏已完成需求">
+                  ✕ 隐藏已完成
+                </a>
+              )}
+              <span class="op-section-meta-item muted">via hermes req-tracker</span>
+            </>
           )}
         </div>
       </header>
@@ -888,7 +924,7 @@ const ProjectsPage: FC<{
                           // Root group: render flat without an outer wrapper.
                           return (
                             <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} children={r.childIds ? findChildren(r.id) : undefined} />)}
+                              {bucket.reqs.map((r) => <RequirementCard r={r} childReqs={r.childIds ? findChildren(r.id) : undefined} />)}
                             </div>
                           )
                         }
@@ -910,7 +946,7 @@ const ProjectsPage: FC<{
                               </span>
                             </summary>
                             <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} children={r.childIds ? findChildren(r.id) : undefined} />)}
+                              {bucket.reqs.map((r) => <RequirementCard r={r} childReqs={r.childIds ? findChildren(r.id) : undefined} />)}
                             </div>
                           </details>
                         )
@@ -1119,6 +1155,11 @@ const RequirementDetailPage: FC<{
                 </form>
                 <button type="button" class="btn btn-secondary req-new-session-btn" data-req-id={req.id} title="为该需求再创建一个 session">另开新 session</button>
                 <span class="req-new-session-result" data-req-id={req.id}></span>
+                <form method="post" action="/api/requirement/dissociate" class="req-dissociate-form" onsubmit="return confirm('确认解除此 session 与该需求的绑定？');">
+                  <input type="hidden" name="reqId" value={req.id} />
+                  <input type="hidden" name="sessionId" value={recent.id} />
+                  <button type="submit" class="btn btn-secondary req-dissociate-btn" title="解除此 session 与该需求的绑定">解除绑定</button>
+                </form>
               </div>
             ) : (
               <div class="req-session-panel-empty">
@@ -1196,6 +1237,22 @@ const RequirementDetailPage: FC<{
                           title="让 agent 读取需求上下文文件，根据 session 内容判断哪些文件需要更新"
                         >
                           🤖 智能提取 →
+                        </button>
+                      </form>
+                      <form
+                        method="post"
+                        action="/api/requirement/dissociate"
+                        class="req-dissociate-form req-dissociate-inline"
+                        onsubmit="return confirm('确认解除此 session 与该需求的绑定？');"
+                      >
+                        <input type="hidden" name="reqId" value={req.id} />
+                        <input type="hidden" name="sessionId" value={s.id} />
+                        <button
+                          type="submit"
+                          class="muted small req-dissociate-link-inline"
+                          title="解除此 session 与该需求的绑定"
+                        >
+                          解除绑定
                         </button>
                       </form>
                     </li>
@@ -1626,6 +1683,7 @@ app.get("/vendor/xterm-addon-fit/addon-fit.js", vendorFile("@xterm/addon-fit", "
 // Projects (requirements) landing page — the site homepage.
 async function renderProjectsPage(c: Context) {
   const statusFilter = c.req.query("status") || ""
+  const showCompleted = c.req.query("showCompleted") === "1"
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
     "待设计": 0,
@@ -1639,7 +1697,7 @@ async function renderProjectsPage(c: Context) {
   for (const g of groups) {
     for (const r of g.requirements) counts[r.status] += 1
   }
-  return c.html(<ProjectsPage groups={groups} counts={counts} statusFilter={statusFilter} />)
+  return c.html(<ProjectsPage groups={groups} counts={counts} statusFilter={statusFilter} showCompleted={showCompleted} />)
 }
 
 app.get("/", async (c) => renderProjectsPage(c))
@@ -1928,6 +1986,28 @@ app.post("/api/requirement/associate", async (c) => {
 })
 
 /**
+ * POST /api/requirement/dissociate
+ * Body: reqId, sessionId
+ *
+ * Removes a session from a requirement's association list. The session
+ * becomes an orphan (visible in the default requirement) unless re-associated
+ * elsewhere. Used by the "解除绑定" buttons on the requirement detail page.
+ */
+app.post("/api/requirement/dissociate", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const sessionId = String(form.get("sessionId") || "")
+  if (!reqId || !sessionId) return c.text("Missing reqId or sessionId", 400)
+  if (!isValidSessionId(sessionId)) {
+    return c.text("Invalid session id", 400)
+  }
+  const exists = await getRequirement(reqId)
+  if (!exists) return c.text("Requirement not found", 404)
+  await dissociateSession(reqId, sessionId)
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+/**
  * Shared validation for both job-start and preview routes.
  *
  * Returns either a ready-to-use {req, sessionId} pair or a Hono Response
@@ -2149,7 +2229,9 @@ const SchedulersPage: FC<{
     details: { label: string; value: string }[]
   }[]
   extractQueues: { reqId: string; queueLength: number; nextAvailableAt: number }[]
-}> = ({ schedulers, extractQueues }) => {
+  valuationCandidates: { sessionId: string; score: number; reasons: string[]; signals: string[] }[]
+  valuationStats: { lastPollAt: number | null; sessionsScanned: number; candidatesFound: number; threshold: number }
+}> = ({ schedulers, extractQueues, valuationCandidates, valuationStats }) => {
   return (
     <Layout title="Schedulers" active="schedulers">
       <header class="op-section-head">
@@ -2187,6 +2269,34 @@ const SchedulersPage: FC<{
           </div>
         ))}
       </div>
+
+      {valuationCandidates.length > 0 ? (
+        <section class="sched-queues">
+          <h2 class="op-section-title" style="font-size: 0.9rem; margin-top: 20px;">VALUATION CANDIDATES</h2>
+          <p class="muted small">自动发现的高价值 session 候选（score ≥ {valuationStats.threshold}），点击 session ID 可查看详情。</p>
+          <table class="sched-queue-table">
+            <thead>
+              <tr><th>Session</th><th>Score</th><th>Signals</th><th>Reasons</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              {valuationCandidates.map((c) => (
+                <tr>
+                  <td><a href={`/session?id=${encodeURIComponent(c.sessionId)}`}><code>{c.sessionId.slice(0, 16)}…</code></a></td>
+                  <td><strong>{c.score}</strong></td>
+                  <td>{c.signals.join(", ")}</td>
+                  <td class="muted small" style="max-width: 400px">{c.reasons.slice(0, 3).join("； ")}</td>
+                  <td>
+                    <form method="post" action="/api/valuation/mark" style="display:inline">
+                      <input type="hidden" name="sessionId" value={c.sessionId} />
+                      <button type="submit" class="btn btn-sm btn-primary">标记</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       {extractQueues.length > 0 ? (
         <section class="sched-queues">
@@ -2267,7 +2377,32 @@ app.get("/schedulers", async (c) => {
     },
   ]
 
-  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} />)
+  // Valuation worker stats (always collected for display, even when disabled).
+  const valStats = getValuationStats()
+  const valCandidates = getRecentCandidates(10)
+
+  const valuationScheduler = {
+    name: "Session 价值发现",
+    running: isAutoValuationWorkerRunning(),
+    pollIntervalMs: VALUATION_POLL_MS,
+    pollIntervalLabel: "10 min",
+    enabled: cfg.autoValuation,
+    description: "每 10 分钟扫描近 48h 的 session，通过元数据 + SQLite 内容两层评分识别有经验总结价值的 session（日志/DB 验证、skill 发现、经验纠错等）。开启后自动标记超阈值的 session 进入经验总结流程。",
+    details: [
+      { label: "自动标记", value: cfg.autoValuation ? "✅ autoValuation = true" : "❌ autoValuation = false（仅发现，不自动标记）" },
+      { label: "阈值", value: `${cfg.valuationThreshold ?? 25}` },
+      { label: "上次扫描", value: valStats.lastPollAt ? formatRelAgo(valStats.lastPollAt) : "未运行" },
+      { label: "新扫描", value: `${valStats.sessionsScanned} 个` },
+      { label: "内容评分", value: `${valStats.contentScored} 个` },
+      { label: "候选发现", value: `${valStats.candidatesFound} 个` },
+      { label: "已自动标记", value: `${valStats.autoMarked} 个` },
+      { label: "已有标记跳过", value: `${valStats.alreadyMarked} 个` },
+    ],
+  }
+
+  schedulers.push(valuationScheduler)
+
+  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} valuationCandidates={valCandidates} valuationStats={valStats} />)
 })
 
 // ---------------------------------------------------------------------------
@@ -2346,6 +2481,39 @@ const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => (
             </p>
           </div>
 
+          <h2 class="op-section-title" style="font-size: 0.85rem; margin-top: 24px;">Session 价值发现</h2>
+
+          <div class="settings-field">
+            <label class="settings-label">
+              <input
+                type="checkbox"
+                name="autoValuation"
+                id="cfg-auto-valuation"
+                checked={config.autoValuation}
+              />
+              <span>自动标记高价值 session</span>
+            </label>
+            <p class="muted small">
+              开启后，后台每 10 分钟扫描近 48h 的 session，通过元数据 + SQLite 内容两层评分识别有经验总结价值的 session，自动标记进入经验总结流程。关闭则只发现在 <a href="/schedulers">Schedulers</a> 页面展示候选列表，不自动标记。
+            </p>
+          </div>
+
+          <div class="settings-field">
+            <label class="settings-label" for="cfg-valuation-threshold">价值评分阈值</label>
+            <input
+              type="number"
+              id="cfg-valuation-threshold"
+              name="valuationThreshold"
+              value={config.valuationThreshold}
+              min={1}
+              max={100}
+              class="settings-input settings-input-narrow"
+            />
+            <p class="muted small">
+              分数 ≥ 此阈值的 session 被视为候选。信号类别（验证/纠错/skill/知识/调试）各 +15 分，代码工具调用和 token 量也有加分。默认 25。
+            </p>
+          </div>
+
           <button type="submit" class="btn btn-primary">保存设置</button>
           <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
         </form>
@@ -2372,6 +2540,8 @@ app.post("/api/config", async (c) => {
   if (typeof body.autoExtractSchedule === "boolean") partial.autoExtractSchedule = body.autoExtractSchedule
   if (typeof body.extractModel === "string" && body.extractModel.trim()) partial.extractModel = body.extractModel.trim()
   if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
+  if (typeof body.autoValuation === "boolean") partial.autoValuation = body.autoValuation
+  if (typeof body.valuationThreshold === "number" && body.valuationThreshold > 0) partial.valuationThreshold = Math.floor(body.valuationThreshold)
   const next = await setConfig(partial)
   return c.json(next)
 })
@@ -2759,6 +2929,57 @@ app.get("/api/experience/markers", (c) => {
   return c.json({ markers })
 })
 
+// ---------------------------------------------------------------------------
+// Session valuation API
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/valuation/candidates
+ * Returns recent valuation candidates (score ≥ threshold), newest/highest first.
+ */
+app.get("/api/valuation/candidates", (c) => {
+  const limit = parseInt(c.req.query("limit") || "20", 10)
+  const candidates = getRecentCandidates(limit)
+  const stats = getValuationStats()
+  return c.json({ candidates, stats })
+})
+
+/**
+ * POST /api/valuation/mark
+ * Body (JSON or form-encoded): { sessionId }
+ * Manually mark a session from the valuation candidate list.
+ * Also accepts form-encoded POST from the schedulers page table.
+ */
+app.post("/api/valuation/mark", async (c) => {
+  const contentType = c.req.header("content-type") || ""
+  let sessionId = ""
+  if (contentType.includes("application/json")) {
+    const body = await c.req.json().catch(() => null) ?? {}
+    sessionId = String(body.sessionId || "")
+  } else {
+    const form = await c.req.formData().catch(() => null)
+    sessionId = String(form?.get("sessionId") || "")
+  }
+  if (!sessionId) return c.json({ error: "Missing sessionId" }, 400)
+  if (!isValidSessionId(sessionId)) return c.json({ error: "Invalid sessionId" }, 400)
+  const marker = await markSession(sessionId, { note: "manual: from valuation candidates" })
+  // Redirect back to /schedulers for form POSTs.
+  if (!contentType.includes("application/json")) {
+    return c.redirect("/schedulers")
+  }
+  return c.json({ ok: true, marker })
+})
+
+/**
+ * POST /api/valuation/poll
+ * Manually trigger a valuation poll cycle (useful for testing/debugging).
+ */
+app.post("/api/valuation/poll", async (c) => {
+  await valuationPollOnce()
+  const stats = getValuationStats()
+  return c.json({ ok: true, stats })
+})
+
 // API: confirm or reject candidates.
 // Extended: if the confirmed report has an associated marker (i.e. it
 // was auto-generated from a marked session), trigger the execution fork
@@ -3014,6 +3235,12 @@ startAutoSummaryWorker()
 // (initial) and every 24 h when sessions have new content (periodic).
 // Controlled by the `autoExtractSchedule` config toggle.
 startAutoExtractScheduler()
+
+// Start the background worker for session value discovery.
+// Polls every 10 min; scans sessions updated within 48h, scores them
+// using metadata + SQLite content, and auto-marks sessions above the
+// configured threshold (when autoValuation is enabled).
+startAutoValuationWorker()
 
 serve({ fetch: app.fetch, websocket: { server: wss }, port }, (info) => {
   console.log(`OpenCode Dashboard running at http://localhost:${info.port}`)
