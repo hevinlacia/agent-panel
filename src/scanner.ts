@@ -131,3 +131,42 @@ export async function saveConfirmation(conf: Confirmation): Promise<string> {
   await writeFile(filePath, JSON.stringify(conf, null, 2) + "\n", "utf-8")
   return filePath
 }
+
+export type ConfirmationStatus = {
+  confirmedIds: string[]
+  rejectedIds: string[]
+}
+
+/**
+ * Read all confirmation JSON files and merge those whose `reportPath`
+ * matches into a single { confirmedIds, rejectedIds } set. Matching by
+ * the full reportPath inside the JSON (not by filename prefix) avoids
+ * collisions: all regular reports are named `report.md`, so a filename
+ * slug would be shared across different reports.
+ */
+export async function getConfirmationStatus(reportPath: string): Promise<ConfirmationStatus> {
+  const confirmed = new Set<string>()
+  const rejected = new Set<string>()
+  try {
+    const entries = await readdir(CONFIRMATION_DIR, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue
+      try {
+        const raw = await readFile(join(CONFIRMATION_DIR, entry.name), "utf-8")
+        const conf = JSON.parse(raw) as Confirmation
+        if (conf.reportPath !== reportPath) continue
+        if (conf.mode === "confirm" && Array.isArray(conf.confirmedIds)) {
+          conf.confirmedIds.forEach((id) => confirmed.add(id))
+        }
+        if (conf.mode === "reject" && Array.isArray(conf.rejectedIds)) {
+          conf.rejectedIds.forEach((id) => rejected.add(id))
+        }
+      } catch {
+        // skip unreadable / malformed JSON
+      }
+    }
+  } catch {
+    // confirmations dir doesn't exist yet
+  }
+  return { confirmedIds: [...confirmed], rejectedIds: [...rejected] }
+}

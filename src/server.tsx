@@ -10,7 +10,7 @@ import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { join, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { scanReports, getReport, saveConfirmation, type Confirmation } from "./scanner.ts"
+import { scanReports, getReport, saveConfirmation, getConfirmationStatus, type Confirmation, type ConfirmationStatus } from "./scanner.ts"
 import type { Candidate, ParsedReport } from "./parser.ts"
 import {
   scanSessions,
@@ -487,7 +487,7 @@ const RatingBadge: FC<{ rating: string }> = ({ rating }) => {
   return <span class={cls}>{rating}</span>
 }
 
-const ReportListPage: FC<{ reports: Awaited<ReturnType<typeof scanReports>> }> = ({ reports }) => (
+const ReportListPage: FC<{ reports: (Awaited<ReturnType<typeof scanReports>>[number] & { confirmedCount?: number; rejectedCount?: number })[] }> = ({ reports }) => (
   <Layout title="Reports" active="reports">
     <div class="page-header">
       <h1>Experience Reports</h1>
@@ -502,7 +502,7 @@ const ReportListPage: FC<{ reports: Awaited<ReturnType<typeof scanReports>> }> =
     ) : (
       <div class="report-grid">
         {reports.map((r) => (
-          <a class="report-card" href={`/report?path=${encodeURIComponent(r.reportPath)}`}>
+          <a class={`report-card${r.confirmedCount ? " report-card-confirmed" : ""}`} href={`/report?path=${encodeURIComponent(r.reportPath)}`}>
             <div class="report-card-header">
               <span class="report-session">{r.session}</span>
               <span class="report-date">{r.generated || "unknown date"}</span>
@@ -511,6 +511,8 @@ const ReportListPage: FC<{ reports: Awaited<ReturnType<typeof scanReports>> }> =
               <span class="stat stat-high">{r.highCount} 高</span>
               <span class="stat stat-medium">{r.mediumCount} 中</span>
               <span class="stat stat-total">{r.candidateCount} total</span>
+              {r.confirmedCount ? <span class="stat stat-confirmed">✓ {r.confirmedCount} confirmed</span> : null}
+              {r.rejectedCount ? <span class="stat stat-rejected">✗ {r.rejectedCount} rejected</span> : null}
             </div>
             <div class="report-card-footer muted">{r.scope}</div>
           </a>
@@ -524,11 +526,11 @@ const ReportListPage: FC<{ reports: Awaited<ReturnType<typeof scanReports>> }> =
 // Report detail page
 // ---------------------------------------------------------------------------
 
-const CandidateCard: FC<{ c: Candidate }> = ({ c }) => (
-  <div class="candidate-card" data-cid={c.id}>
+const CandidateCard: FC<{ c: Candidate; confirmed?: boolean }> = ({ c, confirmed }) => (
+  <div class={`candidate-card${confirmed ? " checked" : ""}`} data-cid={c.id}>
     <div class="candidate-header">
       <label class="candidate-check">
-        <input type="checkbox" data-cid={c.id} />
+        <input type="checkbox" data-cid={c.id} checked={confirmed ?? false} />
         <span class="cid">[{c.id}]</span>
       </label>
       <span class="candidate-title">{c.title}</span>
@@ -547,7 +549,9 @@ const CandidateCard: FC<{ c: Candidate }> = ({ c }) => (
   </div>
 )
 
-const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ report, reportPath }) => (
+const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string; confirmation: ConfirmationStatus }> = ({ report, reportPath, confirmation }) => {
+  const confirmedSet = new Set(confirmation.confirmedIds)
+  return (
   <Layout title={`Report — ${report.meta.session}`} active="reports">
     <div class="page-header">
       <a href="/reports" class="back-link">← Back to reports</a>
@@ -556,6 +560,8 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
         {report.meta.scope && <div><span class="field-label">Scope</span> {report.meta.scope}</div>}
         {report.meta.generated && <div><span class="field-label">Generated</span> {report.meta.generated}</div>}
         {report.meta.artifact && <div><span class="field-label">Artifact</span> <code>{report.meta.artifact}</code></div>}
+        {confirmation.confirmedIds.length > 0 && <div><span class="field-label">Confirmed</span> <span class="stat stat-confirmed">{confirmation.confirmedIds.length} candidate(s)</span></div>}
+        {confirmation.rejectedIds.length > 0 && <div><span class="field-label">Rejected</span> <span class="stat stat-rejected">{confirmation.rejectedIds.length} candidate(s)</span></div>}
       </div>
     </div>
 
@@ -574,7 +580,7 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
         <div class="candidate-list">
           {report.candidates
             .filter((c) => c.category === "candidate")
-            .map((c) => <CandidateCard c={c} />)}
+            .map((c) => <CandidateCard c={c} confirmed={confirmedSet.has(c.id)} />)}
         </div>
 
         {report.candidates.some((c) => c.category === "interaction") && (
@@ -583,7 +589,7 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
             <div class="candidate-list">
               {report.candidates
                 .filter((c) => c.category === "interaction")
-                .map((c) => <CandidateCard c={c} />)}
+                .map((c) => <CandidateCard c={c} confirmed={confirmedSet.has(c.id)} />)}
             </div>
           </>
         )}
@@ -598,10 +604,11 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string }> = ({ re
     )}
 
     <script dangerouslySetInnerHTML={{
-      __html: `window.__REPORT_PATH__ = ${JSON.stringify(reportPath)};`,
+      __html: `window.__REPORT_PATH__ = ${JSON.stringify(reportPath)}; window.__CONFIRMED_IDS__ = ${JSON.stringify(confirmation.confirmedIds)}; window.__REJECTED_IDS__ = ${JSON.stringify(confirmation.rejectedIds)};`,
     }} />
   </Layout>
-)
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Session detail (embedded terminal) page
@@ -1723,7 +1730,15 @@ app.get("/sessions/refresh", async (c) => {
 // Reports list (the original / path moved here)
 app.get("/reports", async (c) => {
   const reports = await scanReports()
-  return c.html(<ReportListPage reports={reports} />)
+  const enriched = await Promise.all(
+    reports
+      .filter((r) => r.highCount > 0 || r.mediumCount > 0)
+      .map(async (r) => {
+        const status = await getConfirmationStatus(r.reportPath)
+        return { ...r, confirmedCount: status.confirmedIds.length, rejectedCount: status.rejectedIds.length }
+      }),
+  )
+  return c.html(<ReportListPage reports={enriched} />)
 })
 
 // Backwards-compatible redirect: /report (no s) -> /reports
@@ -1738,7 +1753,8 @@ app.get("/report", async (c) => {
   }
   const report = await getReport(reportPath)
   if (!report) return c.text("Report not found", 404)
-  return c.html(<ReportDetailPage report={report} reportPath={reportPath} />)
+  const confirmation = await getConfirmationStatus(reportPath)
+  return c.html(<ReportDetailPage report={report} reportPath={reportPath} confirmation={confirmation} />)
 })
 
 // Embedded terminal page

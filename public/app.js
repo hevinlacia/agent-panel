@@ -20,6 +20,9 @@
   const reportPath = window.__REPORT_PATH__
   if (!reportPath) return
 
+  const confirmedIds = window.__CONFIRMED_IDS__ || []
+  const rejectedIds = window.__REJECTED_IDS__ || []
+
   const checkboxes = document.querySelectorAll('input[type="checkbox"][data-cid]')
   if (checkboxes.length === 0) return
   const selectionInfo = document.getElementById("selection-info")

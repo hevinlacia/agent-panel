@@ -580,6 +580,12 @@ code {
   border-color: var(--primary);
   background: var(--bg-hover);
 }
+.report-card-confirmed {
+  border-color: var(--green);
+  border-width: 2px;
+}
+.stat-confirmed { color: var(--green); }
+.stat-rejected { color: var(--red); }
 .report-card-header {
   display: flex;
   justify-content: space-between;

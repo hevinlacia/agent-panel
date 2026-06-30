@@ -123,7 +123,7 @@ export function buildAutoExtractPrompt(
     "3. 保持原有文件的格式和风格（表格用 Markdown 表格，列表用 - 或 *）",
     "4. 对于 branch.md，更新分支信息、PR、合并状态等",
     "5. 对于 config-changes.md，更新 MQ 开关、Apollo/Nacos 配置、数据库 DDL 等",
-    "6. 对于 test.md，更新测试入口、验证步骤、注意事项等",
+    "6. 对于 test.md，更新测试场景清单、日志关键字（正常/异常）、自测记录、UAT 回归记录、注意事项等",
     "7. 对于 notes.md，追加本次会话的关键决策、已完成验证、待办事项",
     "8. 如果会话内容与需求上下文无关或无需更新，只输出 SUMMARY 说明原因",
     "",
