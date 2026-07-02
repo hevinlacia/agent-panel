@@ -1526,6 +1526,95 @@ form.req-session-inline-form {
 }
 .req-status-history-list li { line-height: 1.4; }
 
+/* Requirement impact assessment: pre-coding safety gate for WMS flows. */
+.impact-card {
+  margin: 14px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.impact-card-incomplete {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.05);
+}
+.impact-card-complete {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+.impact-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.impact-status {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.impact-status-ok {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.14);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+.impact-status-warn {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+.impact-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.impact-metric {
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.12);
+}
+.impact-metric .field-label {
+  display: block;
+  margin-bottom: 4px;
+}
+.impact-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.impact-list-block {
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.1);
+}
+.impact-list-block h3 {
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 0.76rem;
+  color: var(--text-strong);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.impact-list-block ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+.impact-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Requirement → Session context extractor (preview page)                    */
 /*   .req-extract-link        : prominent button in the "继续任务" row       */
@@ -1762,6 +1851,9 @@ form.req-session-inline-form {
   .req-subgroup-header { flex-wrap: wrap; }
   .req-status-form { flex-wrap: wrap; }
   .req-status-next { margin-left: 0; }
+  .impact-card-head { flex-direction: column; }
+  .impact-grid { grid-template-columns: 1fr; }
+  .impact-columns { grid-template-columns: 1fr; }
 }
 
 /* ------------------------------------------------------------------------- */

@@ -5,6 +5,7 @@
  * managed by the Hermes `req-tracker` skill. The dashboard owns only
  * session associations, persisted at
  * `~/.local/share/opencode-dashboard/associations.json`.
+ * `impact.md` is the pre-coding safety gate for business-flow risk.
  *
  * Tests can override the associations store path via `_setStorePath`.
  *
@@ -36,6 +37,76 @@ export const REQ_STATUSES: ReqStatus[] = [
   "已完成",
 ]
 
+/**
+ * Status-specific execution contract injected into requirement-bound sessions.
+ * The current requirement status acts as a lightweight role switch so each
+ * phase gets different required context, prohibitions, and completion criteria.
+ */
+export interface RequirementPhaseProfile {
+  role: string
+  mustRead: string[]
+  mustDo: string[]
+  mustNotDo: string[]
+  doneCriteria: string[]
+}
+
+/**
+ * Dashboard-owned phase profiles keyed by the canonical requirement statuses.
+ * Keep this exhaustive with `REQ_STATUSES`; tests assert every status has a
+ * non-empty profile so new statuses cannot silently skip phase guidance.
+ */
+export const REQUIREMENT_PHASE_PROFILES: Record<ReqStatus, RequirementPhaseProfile> = {
+  待设计: {
+    role: "需求分析 / 方案澄清者",
+    mustRead: ["memory.md", "background.md", "impact.md"],
+    mustDo: ["澄清目标、范围、约束和未决问题", "识别可能影响的核心业务链路", "把关键决策和开放问题写回 memory.md 或 background.md"],
+    mustNotDo: ["在范围未明确时直接改代码", "跳过影响面识别"],
+    doneCriteria: ["需求目标、范围和开放问题清晰", "impact.md 有初步风险判断"],
+  },
+  待开发: {
+    role: "技术方案 / 任务拆解者",
+    mustRead: ["memory.md", "background.md", "impact.md", "branch.md", "config-changes.md"],
+    mustDo: ["确认仓库、分支、基准分支和影响模块", "补齐编码前影响面与配置变更预估", "拆出可验证的开发任务"],
+    mustNotDo: ["未确认目标分支就改动或提交", "遗漏 DB/Apollo/Nacos/RocketMQ 配置影响"],
+    doneCriteria: ["branch.md 和 impact.md 足够指导开发", "config-changes.md 记录已知或预计配置变更"],
+  },
+  开发中: {
+    role: "代码实现者",
+    mustRead: ["memory.md", "impact.md", "branch.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-backend-logging.md"],
+    mustDo: ["先按 impact.md 校验核心链路风险", "实现最小正确改动并同步维护 branch.md/config-changes.md/notes.md", "涉及入口、MQ、Job、外部调用、异常处理时补齐 tid 日志"],
+    mustNotDo: ["只改代码不更新需求文件", "绕过现有项目规范或删除用户未授权改动", "引入无法追踪的硬编码配置"],
+    doneCriteria: ["代码改动完成且关键路径可解释", "需求文件记录分支、配置、影响面和阶段性进展"],
+  },
+  自测中: {
+    role: "自测验证者",
+    mustRead: ["test.md", "impact.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md", "~/.agents/knowledge/wms/conventions-wms-backend-logging.md"],
+    mustDo: ["记录触发方式和 tid", "用 tid 串起入口、关键分支、成功/失败日志", "验证 DB 或副作用并做反向检查", "在 test.md 写入 A/B/C/D 置信度"],
+    mustNotDo: ["只用接口成功作为通过结论", "缺少 tid 时宣称链路验证通过", "忽略 ERROR/Exception/consumeFail/rollback 等反向证据"],
+    doneCriteria: ["核心场景至少达到 B 级证据", "test.md 留下可复用验证链路和证据摘要"],
+  },
+  测试中: {
+    role: "测试支持 / 缺陷排查者",
+    mustRead: ["test.md", "impact.md", "notes.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md"],
+    mustDo: ["围绕测试反馈复现并定位证据", "更新 test.md 的实际结果和缺陷证据", "把排查结论和待跟进项追加到 notes.md"],
+    mustNotDo: ["把测试现象当根因", "未记录复现数据和日志关键字就结束排查"],
+    doneCriteria: ["测试问题有复现、定位或明确阻塞项", "test.md/notes.md 可支撑后续回归"],
+  },
+  待上线: {
+    role: "发布经理 / 风险审查者",
+    mustRead: ["branch.md", "config-changes.md", "test.md", "impact.md", "review.md"],
+    mustDo: ["检查分支合并、配置发布、测试证据、Review 结论和回滚方案", "把发布预检结论写入 release-check.md", "对阻塞项明确标注 OK/需关注/阻塞"],
+    mustNotDo: ["缺少测试证据或配置确认时放行", "忽略 review.md 中未关闭的问题", "直接修改 state.json"],
+    doneCriteria: ["release-check.md 覆盖分支、配置、测试、Review、回滚", "阻塞项清零或有用户确认的处理结论"],
+  },
+  已完成: {
+    role: "复盘沉淀者",
+    mustRead: ["memory.md", "notes.md", "test.md", "release-check.md"],
+    mustDo: ["沉淀上线结果、复盘和可复用经验", "识别可进入 knowledge 的业务链路、接口、踩坑或规范", "保持 notes.md/memory.md 为后续 session 可读"],
+    mustNotDo: ["继续当作开发任务推进", "把未验证猜测沉淀为事实"],
+    doneCriteria: ["需求结论和经验已归档", "后续类似需求能从 memory.md/notes.md 复用上下文"],
+  },
+}
+
 export interface Requirement {
   id: string
   title: string
@@ -60,6 +131,7 @@ export interface Requirement {
   testPath?: string
   notesPath?: string
   configPath?: string
+  impactPath?: string
   memoryPath?: string
   reviewPath?: string
   /**
@@ -348,6 +420,7 @@ async function loadRequirementFromDir(
   const testPath = join(dirPath, "test.md")
   const notesPath = join(dirPath, "notes.md")
   const configPath = join(dirPath, "config-changes.md")
+  const impactPath = join(dirPath, "impact.md")
   const memoryPath = join(dirPath, "memory.md")
   const reviewPath = join(dirPath, "review.md")
 
@@ -418,6 +491,7 @@ async function loadRequirementFromDir(
     testPath: existsSync(testPath) ? testPath : undefined,
     notesPath: existsSync(notesPath) ? notesPath : undefined,
     configPath: existsSync(configPath) ? configPath : undefined,
+    impactPath: existsSync(impactPath) ? impactPath : undefined,
     memoryPath: existsSync(memoryPath) ? memoryPath : undefined,
     reviewPath: existsSync(reviewPath) ? reviewPath : undefined,
     reqDir: dirPath,
@@ -831,17 +905,20 @@ async function readFileSnippet(path: string | undefined, limit = 500): Promise<s
  *   2. memory.md content (up to 1,200 chars) — the lifecycle memory ledger
  *   3. background.md content (up to 500 chars) — the why/what of the work
  *   4. notes.md (current progress, up to 300 chars)
- *   5. branch.md (branch / commit context, up to 300 chars)
- *   6. absolute paths to all seven known files so the agent knows where
+ *   5. impact.md (pre-coding safety gate, up to 500 chars)
+ *   6. branch.md (branch / commit context, up to 300 chars)
+ *   7. the phase profile for the requirement's current status
+ *   8. absolute paths to all known files so the agent knows where
  *      to read further or write updates
- *   7. a routing guide that tells the agent which file is authoritative
+ *   9. a routing guide that tells the agent which file is authoritative
  *      for release/test/review work
- *   8. a closing line that tells the agent NOT to start work and to wait
+ *   10. a closing line that tells the agent NOT to start work and to wait
  *      for the user to issue the next instruction
  *
  * test.md, config-changes.md, and review.md are listed by path but their
  * bodies are NOT inlined — the agent can read them on demand once the
- * user gives it a concrete task. Files that do not exist on disk are
+ * user gives it a concrete task. impact.md is inlined because it is the
+ * coding safety gate. Files that do not exist on disk are
  * still listed by path (the agent may create them).
  *
  * The DEFAULT_REQ_ID / "req not found" fallbacks return a minimal
@@ -881,6 +958,7 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     const notesFile = req.notesPath ?? join(req.reqDir, "notes.md")
     const testFile = req.testPath ?? join(req.reqDir, "test.md")
     const configFile = req.configPath ?? join(req.reqDir, "config-changes.md")
+    const impactFile = req.impactPath ?? join(req.reqDir, "impact.md")
     const memoryFile = req.memoryPath ?? join(req.reqDir, "memory.md")
     const reviewFile = req.reviewPath ?? join(req.reqDir, "review.md")
 
@@ -912,6 +990,15 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     }
 
     lines.push("")
+    lines.push("影响面评估：")
+    const impact = await readFileSnippet(impactFile, 500)
+    if (impact) {
+      lines.push(impact)
+    } else {
+      lines.push(`（未提供 impact.md，路径：${impactFile}。编码前必须补齐核心链路、阻塞风险、自测清单和回滚方案。）`)
+    }
+
+    lines.push("")
     lines.push("分支与改动：")
     const branch = await readFileSnippet(branchFile, 300)
     if (branch) {
@@ -920,12 +1007,22 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
       lines.push(`（未提供 branch.md，路径：${branchFile}）`)
     }
 
+    const profile = REQUIREMENT_PHASE_PROFILES[req.status]
+    lines.push("")
+    lines.push("阶段执行规范：")
+    lines.push(`  - 当前身份：${profile.role}`)
+    lines.push(`  - 必读：${profile.mustRead.join("、")}`)
+    lines.push(`  - 必做：${profile.mustDo.join("；")}`)
+    lines.push(`  - 禁止：${profile.mustNotDo.join("；")}`)
+    lines.push(`  - 完成标准：${profile.doneCriteria.join("；")}`)
+
     lines.push("")
     lines.push("需求文件：")
     lines.push(`  - 需求记忆：${memoryFile}`)
     lines.push(`  - 需求背景：${backgroundFile}`)
     lines.push(`  - 分支信息：${branchFile}`)
     lines.push(`  - 开发笔记：${notesFile}`)
+    lines.push(`  - 影响面评估：${impactFile}`)
     lines.push(`  - 测试范围：${testFile}`)
     lines.push(`  - 配置变更：${configFile}`)
     lines.push(`  - 上线 Review：${reviewFile}`)
@@ -933,6 +1030,7 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     lines.push("")
     lines.push("AI 路由说明：")
     lines.push("  - 新 session 先读 memory.md，必要时再读 notes.md 追溯历史 session。")
+    lines.push("  - 编码前必须先读/补 impact.md，确认不会阻塞 WMS 核心链路。")
     lines.push("  - 上线清单以 branch.md、config-changes.md、test.md、review.md 为准。")
     lines.push("  - 测试用例和可复用验证链路维护在 test.md。")
     lines.push("  - 待上线 code review 记录维护在 review.md。")
@@ -965,6 +1063,7 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     lines.push("- 代码 push 或 merge 成功 → branch.md（记录分支名、关键 commit、合并状态）")
     lines.push("- 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md")
     lines.push("- 明确测试场景或回归范围 → test.md")
+    lines.push("- 编码前、影响面变化或发现核心链路风险 → impact.md")
     lines.push("- 完成阶段性进展、关键决策、踩坑 → 追加到 notes.md")
     lines.push(
       "重要：更新需求文件是任务的一部分。代码 push 完成但需求文件未更新 = 任务未完成。",

@@ -502,6 +502,110 @@ export async function getSession(id: string): Promise<SessionInfo | null> {
   return all.find((s) => s.id === id) ?? null
 }
 
+/**
+ * Fetch sessions by a list of IDs, bypassing the 200-row LIMIT in
+ * `scanSessions`. Used by the requirement detail page to display all
+ * associated sessions — even those too old to appear in the recent-only
+ * scan.
+ *
+ * Each ID is validated against `SESSION_ID_RE` before being interpolated
+ * into the SQL IN-clause, so string injection is impossible. Sessions
+ * that don't exist in SQLite (archived or missing) are silently omitted.
+ *
+ * Falls back to `scanSessions()` + filter when SQLite is unavailable.
+ */
+export async function getSessionsByIds(ids: string[]): Promise<SessionInfo[]> {
+  const valid = ids.filter((id) => SESSION_ID_RE.test(id))
+  if (valid.length === 0) return []
+
+  // Build a parameter-less IN-clause — IDs are strictly alphanumeric
+  // (validated above), so interpolation is safe.
+  const quoted = valid.map((id) => `'${id}'`).join(", ")
+  const query = `
+select
+  id            as id,
+  project_id    as projectId,
+  directory     as directory,
+  path          as path,
+  title         as title,
+  time_created  as created,
+  time_updated  as updated,
+  agent         as agent,
+  parent_id     as parentId,
+  model         as model,
+  cost          as cost,
+  tokens_input        as tokensInput,
+  tokens_output       as tokensOutput,
+  tokens_reasoning    as tokensReasoning,
+  tokens_cache_read   as tokensCacheRead,
+  tokens_cache_write  as tokensCacheWrite
+from session
+where id in (${quoted})
+order by time_updated desc
+`.trim()
+
+  const fallback = async (): Promise<SessionInfo[]> => {
+    const all = await scanSessions()
+    const idSet = new Set(valid)
+    return all.filter((s) => idSet.has(s.id))
+  }
+
+  return new Promise((resolve) => {
+    if (!existsSync(DEFAULT_DB_PATH)) {
+      resolve(fallback())
+      return
+    }
+    let proc: ReturnType<typeof spawn>
+    try {
+      proc = spawn("sqlite3", ["-json", DEFAULT_DB_PATH, query], {
+        stdio: ["ignore", "pipe", "pipe"],
+      })
+    } catch {
+      resolve(fallback())
+      return
+    }
+    let stdout = ""
+    let stderr = ""
+    const timer = setTimeout(() => {
+      try { proc.kill() } catch { /* noop */ }
+    }, SQLITE_TIMEOUT_MS)
+    proc.stdout?.on("data", (d) => { stdout += d.toString("utf-8") })
+    proc.stderr?.on("data", (d) => { stderr += d.toString("utf-8") })
+    proc.on("error", () => {
+      clearTimeout(timer)
+      resolve(fallback())
+    })
+    proc.on("close", (code) => {
+      clearTimeout(timer)
+      if (code !== 0) {
+        if (process.env.DEBUG_OPENCODE_DASH) {
+          console.warn(`[sessions] getSessionsByIds sqlite3 exited code=${code} stderr=${stderr.slice(0, 200)}`)
+        }
+        resolve(fallback())
+        return
+      }
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(stdout)
+      } catch {
+        resolve(fallback())
+        return
+      }
+      if (!Array.isArray(parsed)) {
+        resolve(fallback())
+        return
+      }
+      const out: SessionInfo[] = []
+      for (const item of parsed) {
+        if (!item || typeof item !== "object") continue
+        const norm = normalizeSession(item as RawSession, "db")
+        if (norm) out.push(norm)
+      }
+      resolve(out)
+    })
+  })
+}
+
 /** Counters shown on the dashboard top strip. */
 export function summarizeSessions(sessions: SessionInfo[]): {
   total: number

@@ -5,8 +5,8 @@
  *
  * Role: the "smart" extract mode. Instead of just summarizing the
  * session into notes.md, the agent sees the full requirement context
- * (meta.md, memory.md, branch.md, config-changes.md, test.md,
- * notes.md, review.md) and
+ * (meta.md, memory.md, branch.md, config-changes.md, impact.md,
+ * test.md, notes.md, review.md) and
  * decides which files need updating based on what happened in the
  * session.
  *
@@ -33,6 +33,7 @@ export interface ContextFiles {
   memory?: string
   branch?: string
   config?: string
+  impact?: string
   test?: string
   notes?: string
   review?: string
@@ -94,6 +95,9 @@ export function buildAutoExtractPrompt(
   if (files.config !== undefined) {
     parts.push("=== 现有 config-changes.md ===", files.config || "(空)", "")
   }
+  if (files.impact !== undefined) {
+    parts.push("=== 现有 impact.md（编码前影响面评估）===", files.impact || "(空)", "")
+  }
   if (files.test !== undefined) {
     parts.push("=== 现有 test.md ===", files.test || "(空)", "")
   }
@@ -133,10 +137,11 @@ export function buildAutoExtractPrompt(
     "4. 对于 memory.md，维护跨 session 的需求记忆：当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围、Session 摘要索引",
     "5. 对于 branch.md，维护上线包中的应用、仓库、分支、基准分支、PR/Commit、是否需上线、备注",
     "6. 对于 config-changes.md，维护 DB、Apollo、Nacos、RocketMQ Topic/Group、阿里云控制台等非代码配置变更",
-    "7. 对于 test.md，维护 PRD/需求测试用例、自测记录、可复用验证链路，方便 test/UAT/PRO 前重复验证",
-    "8. 对于 review.md，仅在本次会话包含待上线 code review 或用户确认的 review 处理结论时更新",
-    "9. 对于 notes.md，追加本次会话的关键决策、已完成验证、待办事项",
-    "10. 如果会话内容与需求上下文无关或无需更新，只输出 SUMMARY 说明原因",
+    "7. 对于 impact.md，维护编码前影响面评估：风险等级、核心链路、影响入口、数据影响、阻塞风险、自测清单、回滚方案；重点说明是否可能阻塞 WMS 入库/库存/出库/复核/发运/回传等核心流程",
+    "8. 对于 test.md，维护 PRD/需求测试用例、自测记录、可复用验证链路，方便 test/UAT/PRO 前重复验证；WMS 需求必须按 conventions-wms-agent-self-test-evidence.md 维护触发证据、tid 日志链路、DB 结果、副作用、反向证据和 A/B/C/D 置信度，不要只写接口成功",
+    "9. 对于 review.md，仅在本次会话包含待上线 code review 或用户确认的 review 处理结论时更新",
+    "10. 对于 notes.md，追加本次会话的关键决策、已完成验证、待办事项",
+    "11. 如果会话内容与需求上下文无关或无需更新，只输出 SUMMARY 说明原因",
     "",
     "不要写客套话，不要用 markdown 代码块包裹整篇输出。",
   )
@@ -240,6 +245,7 @@ export const ALLOWED_UPDATE_FILES = new Set([
   "memory.md",
   "branch.md",
   "config-changes.md",
+  "impact.md",
   "test.md",
   "notes.md",
   "review.md",
@@ -248,6 +254,7 @@ export const ALLOWED_UPDATE_FILES = new Set([
 export const ALLOWED_APPEND_FILES = new Set([
   "memory.md",
   "notes.md",
+  "impact.md",
   "meta.md",
   "review.md",
 ])

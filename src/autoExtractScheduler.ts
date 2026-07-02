@@ -36,7 +36,7 @@
  *
  * Read-this-with:
  *   - `src/extractJobs.ts` (createExtractJob — the job spawn mechanism).
- *   - `src/autoExtract.ts` (buildAutoExtractPrompt — the prompt builder).
+ *   - `src/autoExtract.ts` (ContextFiles and prompt builder).
  *   - `src/requirements.ts` (listRequirementsByProject, associations).
  *   - `src/sessions.ts` (scanSessions — SessionInfo with timestamps).
  *   - `src/experienceAutoSummary.ts` (the analogous background worker
@@ -57,6 +57,7 @@ import {
   type JobMode,
 } from "./extractJobs.ts"
 import { buildAutoExtractPrompt, type ContextFiles } from "./autoExtract.ts"
+import { IMPACT_FILE } from "./impactAssessment.ts"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -282,16 +283,17 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
       return ""
     }
   }
-  const [meta, memory, branch, config, test, notes, review] = await Promise.all([
+  const [meta, memory, branch, config, impact, test, notes, review] = await Promise.all([
     readSafe("meta.md"),
     readSafe("memory.md"),
     readSafe("branch.md"),
     readSafe("config-changes.md"),
+    readSafe(IMPACT_FILE),
     readSafe("test.md"),
     readSafe("notes.md"),
     readSafe("review.md"),
   ])
-  return { meta, memory, branch, config, test, notes, review }
+  return { meta, memory, branch, config, impact, test, notes, review }
 }
 
 // ---------------------------------------------------------------------------

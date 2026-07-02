@@ -19,6 +19,7 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
       memory: "## 当前进展\n- 已完成建模",
       branch: "| Source branch | `feature/x` |",
       config: "## MQ\nmq.switch.x = true",
+      impact: "## 风险等级\n- 等级：中风险\n## 核心链路\n- 出库复核",
       test: "## 测试入口\n- 按钮",
       notes: "## 旧摘要\n老内容",
       review: "## 发现项\n- 无阻塞问题",
@@ -30,6 +31,7 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
   assert.match(prompt, /memory\.md/)
   assert.match(prompt, /branch\.md/)
   assert.match(prompt, /config-changes\.md/)
+  assert.match(prompt, /impact\.md/)
   assert.match(prompt, /test\.md/)
   assert.match(prompt, /notes\.md/)
   assert.match(prompt, /review\.md/)
@@ -37,6 +39,8 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
   assert.match(prompt, /===APPEND:/)
   assert.match(prompt, /不要修改 meta\.md 中的 Status 行/)
   assert.match(prompt, /需求生命周期记忆/)
+  assert.match(prompt, /编码前影响面评估/)
+  assert.match(prompt, /阻塞 WMS 入库\/库存\/出库\/复核\/发运\/回传/)
   assert.match(prompt, /可复用验证链路/)
 })
 
@@ -102,20 +106,24 @@ test("filterAllowed removes non-whitelisted filenames", () => {
     "hacked",
     "===UPDATE: config-changes.md===",
     "config content",
+    "===UPDATE: impact.md===",
+    "impact content",
   ].join("\n"))
 
   const filtered = filterAllowed(result)
   const updateNames = filtered.updates.map((u) => u.filename).sort()
-  assert.deepEqual(updateNames, ["branch.md", "config-changes.md", "memory.md", "review.md"])
+  assert.deepEqual(updateNames, ["branch.md", "config-changes.md", "impact.md", "memory.md", "review.md"])
   assert.equal(filtered.appends.length, 0)
 })
 
-test("filterAllowed allows appending to memory.md, notes.md, meta.md, and review.md", () => {
+test("filterAllowed allows appending to memory.md, notes.md, impact.md, meta.md, and review.md", () => {
   const result = parseAutoExtractOutput([
     "===APPEND: memory.md===",
     "memory content",
     "===APPEND: notes.md===",
     "note content",
+    "===APPEND: impact.md===",
+    "impact content",
     "===APPEND: meta.md===",
     "extra meta",
     "===APPEND: review.md===",
@@ -123,5 +131,5 @@ test("filterAllowed allows appending to memory.md, notes.md, meta.md, and review
   ].join("\n"))
 
   const filtered = filterAllowed(result)
-  assert.equal(filtered.appends.length, 4)
+  assert.equal(filtered.appends.length, 5)
 })

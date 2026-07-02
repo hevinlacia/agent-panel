@@ -15,6 +15,7 @@ import type { Candidate, ParsedReport } from "./parser.ts"
 import {
   scanSessions,
   getSession,
+  getSessionsByIds,
   summarizeSessions,
   groupSessionsByParent,
   isValidSessionId,
@@ -84,6 +85,12 @@ import {
   type ReleaseChecklist,
   type ChecklistFiles,
 } from "./releaseChecklist.ts"
+import {
+  IMPACT_FILE,
+  IMPACT_TEMPLATE,
+  buildImpactAssessment,
+  type ImpactAssessment,
+} from "./impactAssessment.ts"
 import {
   buildAutoExtractPrompt,
   parseAutoExtractOutput,
@@ -856,12 +863,20 @@ const ProjectsPage: FC<{
         })
         .filter((g) => g.requirements.length > 0)
     : groups
-        .map((g) => ({
-            ...g,
-            requirements: hideCompleted
-              ? g.requirements.filter((r) => r.status !== "已完成")
-              : g.requirements,
-          }))
+        .map((g) => {
+            if (!hideCompleted) return g
+            // Filter out "已完成" requirements, then also remove parent
+            // requirements whose children are all "已完成" (empty containers).
+            const remaining = g.requirements.filter((r) => r.status !== "已完成")
+            const remainingIds = new Set(remaining.map((r) => r.id))
+            const filtered = remaining.filter((r) => {
+              if (r.childIds && r.childIds.length > 0) {
+                return r.childIds.some((cid) => remainingIds.has(cid))
+              }
+              return true
+            })
+            return { ...g, requirements: filtered }
+          })
         .filter((g) => g.requirements.length > 0)
   const totalReqs = filteredGroups.reduce(
     (acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length,
@@ -1088,6 +1103,53 @@ const ReleaseChecklistCard: FC<{ checklist: ReleaseChecklist }> = ({ checklist }
   )
 }
 
+const ImpactAssessmentCard: FC<{ req: Requirement; assessment: ImpactAssessment }> = ({ req, assessment }) => {
+  const missingText = assessment.missingSections.length > 0
+    ? assessment.missingSections.join("、")
+    : "已覆盖全部必填项"
+  const statusText = assessment.complete ? "已完成" : assessment.exists ? "待补齐" : "未创建"
+  return (
+    <section class={`impact-card${assessment.complete ? " impact-card-complete" : " impact-card-incomplete"}`} aria-label="需求影响面评估">
+      <div class="impact-card-head">
+        <div>
+          <h2 class="op-section-title">需求影响面评估</h2>
+          <p class="muted small">编码前安全门：确认不会阻塞 WMS 入库、库存、出库、复核、发运、回传等核心链路。</p>
+        </div>
+        <span class={`impact-status ${assessment.complete ? "impact-status-ok" : "impact-status-warn"}`}>{statusText}</span>
+      </div>
+      <div class="impact-grid">
+        <div class="impact-metric"><span class="field-label">风险等级</span><strong>{assessment.riskLevel}</strong></div>
+        <div class="impact-metric"><span class="field-label">缺失项</span><span>{missingText}</span></div>
+      </div>
+      <div class="impact-columns">
+        <div class="impact-list-block">
+          <h3>核心链路</h3>
+          {assessment.coreFlows.length > 0 ? <ul>{assessment.coreFlows.map((x) => <li>{x}</li>)}</ul> : <p class="muted small">尚未识别核心链路。</p>}
+        </div>
+        <div class="impact-list-block">
+          <h3>阻塞风险</h3>
+          {assessment.blockers.length > 0 ? <ul>{assessment.blockers.map((x) => <li>{x}</li>)}</ul> : <p class="muted small">尚未描述主流程阻塞、异常兜底或补偿风险。</p>}
+        </div>
+        <div class="impact-list-block">
+          <h3>自测重点</h3>
+          {assessment.testItems.length > 0 ? <ul>{assessment.testItems.map((x) => <li>{x}</li>)}</ul> : <p class="muted small">尚未沉淀自测/回归链路。</p>}
+        </div>
+      </div>
+      {!assessment.complete ? (
+        <div class="impact-actions">
+          {req.reqDir ? (
+            <form method="post" action="/api/requirement/impact-template">
+              <input type="hidden" name="reqId" value={req.id} />
+              <button type="submit" class="btn btn-primary">{assessment.exists ? "补齐模板" : "创建 impact.md 模板"}</button>
+            </form>
+          ) : null}
+          <span class="muted small">建议在进入「开发中」编码前补齐，测试可直接按这里回归核心链路。</span>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 const RequirementDetailPage: FC<{
   req: Requirement
   associated: SessionInfo[]
@@ -1099,12 +1161,14 @@ const RequirementDetailPage: FC<{
   notesContent?: string
   testContent?: string
   configContent?: string
+  impactContent?: string
   memoryContent?: string
   reviewContent?: string
+  impactAssessment: ImpactAssessment
   state?: RequirementState | null
   childReqs?: Requirement[]
   parentReq?: Requirement | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, branchContent, notesContent, testContent, configContent, memoryContent, reviewContent, state, childReqs, parentReq }) => {
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, state, childReqs, parentReq }) => {
   const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
@@ -1397,6 +1461,15 @@ const RequirementDetailPage: FC<{
         <p class="muted small" style="margin: 6px 0 0;">合成的默认需求不支持状态切换。</p>
       )}
 
+      {description ? (
+        <section class="req-hermes-section">
+          <h2 class="op-section-title">描述</h2>
+          <pre style="white-space: pre-wrap; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{description}</pre>
+        </section>
+      ) : null}
+
+      <ImpactAssessmentCard req={req} assessment={impactAssessment} />
+
       {req.status === "待上线" && req.reqDir ? (() => {
         const checklist = buildReleaseChecklist({
           meta: undefined,
@@ -1409,17 +1482,11 @@ const RequirementDetailPage: FC<{
         return <ReleaseChecklistCard checklist={checklist} />
       })() : null}
 
-      {description ? (
-        <section class="req-hermes-section">
-          <h2 class="op-section-title">描述</h2>
-          <pre style="white-space: pre-wrap; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{description}</pre>
-        </section>
-      ) : null}
-
       <HermesFileSection title="需求记忆" content={memoryContent} />
       <HermesFileSection title="需求背景" content={backgroundContent} />
       <HermesFileSection title="分支信息" content={branchContent} />
       <HermesFileSection title="开发笔记" content={notesContent} />
+      <HermesFileSection title="影响面评估" content={impactContent} />
       <HermesFileSection title="测试范围" content={testContent} />
       <HermesFileSection title="配置变更" content={configContent} />
       <HermesFileSection title="上线 Review" content={reviewContent} />
@@ -1929,19 +1996,23 @@ app.get("/requirement", async (c) => {
       return undefined
     }
   }
-  const [backgroundContent, branchContent, notesContent, testContent, configContent, memoryContent, reviewContent] = await Promise.all([
+  const [backgroundContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent] = await Promise.all([
     readFileSafe(req.backgroundPath),
     readFileSafe(req.branchPath),
     readFileSafe(req.notesPath),
     readFileSafe(req.testPath),
     readFileSafe(req.configPath),
+    readFileSafe(req.impactPath),
     readFileSafe(req.memoryPath),
     readFileSafe(req.reviewPath),
   ])
+  const impactAssessment = buildImpactAssessment(impactContent)
 
-  const sessions = await scanSessions()
+  const [sessions, associated] = await Promise.all([
+    scanSessions(),
+    req.sessionIds.length > 0 ? getSessionsByIds(req.sessionIds) : Promise.resolve([]),
+  ])
   const associatedAll = await getAllAssociatedSessionIds()
-  const associated = sessions.filter((s) => req.sessionIds.includes(s.id))
   const unassociated = sessions.filter(
     (s) =>
       !s.parentId &&
@@ -1986,8 +2057,10 @@ app.get("/requirement", async (c) => {
       notesContent={notesContent}
       testContent={testContent}
       configContent={configContent}
+      impactContent={impactContent}
       memoryContent={memoryContent}
       reviewContent={reviewContent}
+      impactAssessment={impactAssessment}
       state={state}
       recommendations={recommendations}
       extractHistory={extractHistory}
@@ -2333,6 +2406,37 @@ app.post("/api/requirement/status", async (c) => {
     return c.json({ ok: true, status })
   }
   return c.redirect(redirectBack, 303)
+})
+
+/**
+ * POST /api/requirement/impact-template
+ * Creates `impact.md` with the standard pre-coding safety template.
+ * Existing files are preserved by appending only missing template sections.
+ */
+app.post("/api/requirement/impact-template", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  if (!reqId) return c.text("Missing reqId", 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+
+  const impactPath = join(req.reqDir, IMPACT_FILE)
+  const existing = existsSync(impactPath) ? await readFile(impactPath, "utf-8").catch(() => "") : ""
+  const current = buildImpactAssessment(existing)
+  const missingSections = current.missingSections
+
+  if (!existing.trim()) {
+    await writeFile(impactPath, IMPACT_TEMPLATE, "utf-8")
+  } else if (missingSections.length > 0) {
+    const templateSections = buildImpactAssessment(IMPACT_TEMPLATE).sections
+    const additions = missingSections
+      .map((section) => `## ${section}\n${templateSections[section] ?? "- 待补充"}`)
+      .join("\n\n")
+    await appendFile(impactPath, `\n\n${additions}\n`, "utf-8")
+  }
+
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
 // ---------------------------------------------------------------------------
@@ -2716,16 +2820,17 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
       return undefined
     }
   }
-  const [meta, memory, branch, config, test, notes, review] = await Promise.all([
+  const [meta, memory, branch, config, impact, test, notes, review] = await Promise.all([
     readSafe("meta.md"),
     readSafe("memory.md"),
     readSafe("branch.md"),
     readSafe("config-changes.md"),
+    readSafe(IMPACT_FILE),
     readSafe("test.md"),
     readSafe("notes.md"),
     readSafe("review.md"),
   ])
-  return { meta, memory, branch, config, test, notes, review }
+  return { meta, memory, branch, config, impact, test, notes, review }
 }
 
 /**
@@ -2936,7 +3041,7 @@ app.post("/api/requirement/auto-extract/commit", async (c) => {
   if (!guard.req.reqDir) return c.text("Requirement has no directory", 400)
 
   const reqDir = guard.req.reqDir
-  const allowedFiles = new Set(["memory.md", "branch.md", "config-changes.md", "test.md", "notes.md", "review.md", "meta.md"])
+  const allowedFiles = new Set(["memory.md", "branch.md", "config-changes.md", IMPACT_FILE, "test.md", "notes.md", "review.md", "meta.md"])
   let written = 0
 
   // Process updates and appends from form fields

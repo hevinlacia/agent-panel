@@ -40,6 +40,7 @@ import {
   buildInjectionContext,
   scanHermesRequirements,
   DEFAULT_REQ_ID,
+  REQUIREMENT_PHASE_PROFILES,
 } from "../src/requirements.ts"
 
 function freshStore(): string {
@@ -159,11 +160,13 @@ test("buildInjectionContext: lists file paths and content for a real requirement
   const memoryContent = "# 需求记忆\n\n## 当前进展\n- 已完成第一轮改造。"
   const branchContent = "Branch info snippet line one."
   const notesContent = "Notes snippet line one."
+  const impactContent = "# 需求影响面评估\n\n## 风险等级\n- 等级：中风险\n\n## 核心链路\n- 影响出库复核链路。"
   writeFileSync(join(reqSubDir, "meta.md"), metaContent, "utf-8")
   writeFileSync(join(reqSubDir, "memory.md"), memoryContent, "utf-8")
   writeFileSync(join(reqSubDir, "background.md"), backgroundContent, "utf-8")
   writeFileSync(join(reqSubDir, "branch.md"), branchContent, "utf-8")
   writeFileSync(join(reqSubDir, "notes.md"), notesContent, "utf-8")
+  writeFileSync(join(reqSubDir, "impact.md"), impactContent, "utf-8")
 
   const prevReqDir = _getReqDir()
   _setReqDir(reqDir)
@@ -176,15 +179,21 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.match(ctx, /需求记忆：/)
     assert.match(ctx, /需求背景：/)
     assert.match(ctx, /当前进展：/)
+    assert.match(ctx, /影响面评估：/)
     assert.match(ctx, /分支与改动：/)
+    assert.match(ctx, /阶段执行规范：/)
+    assert.match(ctx, /当前身份：代码实现者/)
+    assert.match(ctx, /必读：memory\.md、impact\.md、branch\.md、config-changes\.md/)
+    assert.match(ctx, /完成标准：代码改动完成且关键路径可解释/)
 
-    // Path-listing section must include all seven known files (memory,
-    // background, branch, notes, test, config-changes, review) by absolute path.
+    // Path-listing section must include all eight known files (memory,
+    // background, branch, notes, impact, test, config-changes, review) by absolute path.
     assert.match(ctx, /需求文件：/)
     assert.ok(ctx.includes(join(reqSubDir, "memory.md")))
     assert.ok(ctx.includes(join(reqSubDir, "background.md")))
     assert.ok(ctx.includes(join(reqSubDir, "branch.md")))
     assert.ok(ctx.includes(join(reqSubDir, "notes.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "impact.md")))
     assert.ok(ctx.includes(join(reqSubDir, "test.md")))
     assert.ok(ctx.includes(join(reqSubDir, "config-changes.md")))
     assert.ok(ctx.includes(join(reqSubDir, "review.md")))
@@ -194,7 +203,9 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.ok(ctx.includes(backgroundContent))
     assert.ok(ctx.includes(branchContent))
     assert.ok(ctx.includes(notesContent))
+    assert.ok(ctx.includes(impactContent))
     assert.match(ctx, /新 session 先读 memory\.md/)
+    assert.match(ctx, /编码前必须先读\/补 impact\.md/)
     assert.match(ctx, /状态只通过 dashboard\/API 更新/)
 
     // Files we did NOT create (test.md, config-changes.md) still appear
@@ -214,9 +225,56 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.match(ctx, /【需求文档维护/)
     assert.match(ctx, /必须立即更新对应文件/)
     assert.match(ctx, /代码 push 完成但需求文件未更新/)
+    assert.match(ctx, /影响面变化或发现核心链路风险 → impact\.md/)
     assert.match(ctx, /不要修改 meta\.md 的 status 字段/)
   } finally {
     _setReqDir(prevReqDir)
+  }
+})
+
+test("buildInjectionContext: injects self-test phase profile for 自测中", async () => {
+  freshStore()
+  const reqId = "REQ-PHASE-" + randomBytes(4).toString("hex")
+  const reqDir = join(
+    "/tmp",
+    "opencode",
+    "test-req-phase-" + randomBytes(6).toString("hex"),
+  )
+  const reqSubDir = join(reqDir, reqId)
+  mkdirSync(reqSubDir, { recursive: true })
+
+  writeFileSync(
+    join(reqSubDir, "meta.md"),
+    "---\n" +
+      "title: Phase Profile Requirement\n" +
+      "status: 自测中\n" +
+      "---\n",
+    "utf-8",
+  )
+
+  const prevReqDir = _getReqDir()
+  _setReqDir(reqDir)
+  try {
+    const ctx = await buildInjectionContext(reqId)
+    assert.match(ctx, /阶段执行规范：/)
+    assert.match(ctx, /当前身份：自测验证者/)
+    assert.match(ctx, /conventions-wms-agent-self-test-evidence\.md/)
+    assert.match(ctx, /记录触发方式和 tid/)
+    assert.match(ctx, /只用接口成功作为通过结论/)
+    assert.match(ctx, /核心场景至少达到 B 级证据/)
+  } finally {
+    _setReqDir(prevReqDir)
+  }
+})
+
+test("REQUIREMENT_PHASE_PROFILES: covers every dashboard requirement status", () => {
+  for (const status of ["待设计", "待开发", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
+    const profile = REQUIREMENT_PHASE_PROFILES[status]
+    assert.ok(profile.role)
+    assert.ok(profile.mustRead.length > 0)
+    assert.ok(profile.mustDo.length > 0)
+    assert.ok(profile.mustNotDo.length > 0)
+    assert.ok(profile.doneCriteria.length > 0)
   }
 })
 
