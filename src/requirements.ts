@@ -928,16 +928,19 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
   // the live session, so the agent that does the work also records it.
   if (req.reqDir) {
     lines.push("")
-    lines.push("【需求文档维护】")
+    lines.push("【需求文档维护 — 必须执行】")
     lines.push(
-      "本 session 关联了上述需求文件。在开发过程中达成以下成果时，请主动更新对应文件：",
+      "本 session 关联了上述需求文件。以下事件发生后，必须立即更新对应文件，不得跳过：",
     )
-    lines.push("- 确定或变更分支策略、关键 commit → branch.md")
-    lines.push("- 发现 DB/Apollo/Nacos 配置变更 → config-changes.md")
-    lines.push("- 明确测试场景、回归范围 → test.md")
-    lines.push("- 阶段性进展、关键决策、踩坑 → 追加到 notes.md")
+    lines.push("- 代码 push 或 merge 成功 → branch.md（记录分支名、关键 commit、合并状态）")
+    lines.push("- 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md")
+    lines.push("- 明确测试场景或回归范围 → test.md")
+    lines.push("- 完成阶段性进展、关键决策、踩坑 → 追加到 notes.md")
     lines.push(
-      "更新方式：直接用文件工具编辑上述路径的文件，保持简洁，只记录关键信息。不要修改 meta.md 的 status 字段（由 dashboard 管理）。",
+      "重要：更新需求文件是任务的一部分。代码 push 完成但需求文件未更新 = 任务未完成。",
+    )
+    lines.push(
+      "直接编辑上述路径的文件，保持简洁。不要修改 meta.md 的 status 字段（由 dashboard 管理）。",
     )
   }
 

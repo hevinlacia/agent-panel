@@ -203,8 +203,9 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.equal(ctx.includes("你可以直接修改上述文件"), false)
 
     // Maintenance instructions are present for real requirements.
-    assert.match(ctx, /【需求文档维护】/)
-    assert.match(ctx, /请主动更新对应文件/)
+    assert.match(ctx, /【需求文档维护/)
+    assert.match(ctx, /必须立即更新对应文件/)
+    assert.match(ctx, /代码 push 完成但需求文件未更新/)
     assert.match(ctx, /不要修改 meta\.md 的 status 字段/)
   } finally {
     _setReqDir(prevReqDir)
