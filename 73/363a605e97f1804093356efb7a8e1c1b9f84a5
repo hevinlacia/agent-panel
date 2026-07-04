@@ -1,0 +1,43 @@
+src/autoExtractScheduler.ts
+  b70ad4bb61747166 286,289-290,298
+src/requirementState.ts
+  b70ad4bb61747166 21-23,53-55,66-68
+docs/AI_DEVELOPMENT.md
+  b70ad4bb61747166 99-113
+src/requirementAlignment.ts
+  b70ad4bb61747166 1-105
+README.md
+  b70ad4bb61747166 76-78
+src/autoExtract.ts
+  b70ad4bb61747166 8-9,30,35-36,95-100,146-155,257-258,269-270
+tests/requirement-state.test.ts
+  b70ad4bb61747166 63-64,77
+src/server.tsx
+  b70ad4bb61747166 89-93,755,1159-1189,1197-1198,1210,1250-1251,1450-1451,1529-1530,1893,2044,2046-2047,2103-2104,2491-2519,2901,2904-2905,2913,3124
+tests/autoExtract.test.ts
+  b70ad4bb61747166 20-21,34-35,46-47,107-110,125,129,133-136,148
+tests/requirements.test.ts
+  b70ad4bb61747166 132,161-162,168-169,182,184,194-195,198-199,210,215-216,227,236,281
+src/requirements.ts
+  b70ad4bb61747166 8-9,24,31,34,62-67,140-143,433-434,506-507,917-935,942,977-978,989-997,1046-1047,1058-1059,1090
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "73363a605e97f1804093356efb7a8e1c1b9f84a5",
+  "prompts": {
+    "b70ad4bb61747166": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0d4114236ffe6rDwgyva9krghl",
+        "model": "cch/gpt-5.5"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 351,
+      "total_deletions": 87,
+      "accepted_lines": 340,
+      "overriden_lines": 0
+    }
+  }
+}
