@@ -69,7 +69,7 @@ test("scanHermesRequirements: 4-level layout — sub-project + sub-module groups
   // A sibling sub-project also under WMS, to exercise multiple group keys.
   writeMeta(
     join(root, "WMS", "disaster-recovery", "db-failover", "0622-db-a"),
-    { "req-id": "0622-db-a", title: "DB A", status: "待开发" },
+    { "req-id": "0622-db-a", title: "DB A", status: "方案设计" },
   )
 
   const reqs = await scanHermesRequirements()

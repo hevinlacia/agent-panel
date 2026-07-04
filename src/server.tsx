@@ -753,7 +753,7 @@ const SessionMissingPage: FC<{ id: string; backReqId?: string }> = ({ id, backRe
 
 const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
   "需求对齐": "align",
-  "待开发": "pending",
+  "方案设计": "design",
   "开发中": "dev",
   "自测中": "selftest",
   "测试中": "testing",
@@ -1891,7 +1891,7 @@ async function renderProjectsPage(c: Context) {
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
     "需求对齐": 0,
-    "待开发": 0,
+    "方案设计": 0,
     "开发中": 0,
     "自测中": 0,
     "测试中": 0,

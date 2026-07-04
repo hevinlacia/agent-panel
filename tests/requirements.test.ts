@@ -278,7 +278,7 @@ test("buildInjectionContext: injects self-test phase profile for 自测中", asy
 })
 
 test("REQUIREMENT_PHASE_PROFILES: covers every dashboard requirement status", () => {
-  for (const status of ["需求对齐", "待开发", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
+  for (const status of ["需求对齐", "方案设计", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
     const profile = REQUIREMENT_PHASE_PROFILES[status]
     assert.ok(profile.role)
     assert.ok(profile.mustRead.length > 0)

@@ -69,7 +69,8 @@ export function mapHermesStatusToReqStatus(raw: string): ReqStatus {
     case "ready":
     case "planned":
     case "pending":
-      return "待开发"
+    case "待开发":
+      return "方案设计"
     case "dev":
     case "developing":
     case "in-progress":
@@ -111,8 +112,14 @@ export function extractHermesStatus(metaText: string): string | null {
   return null
 }
 
+function normalizeReqStatus(v: unknown): ReqStatus | null {
+  if (v === "待开发") return "方案设计"
+  if (typeof v === "string" && (REQ_STATUSES as string[]).includes(v)) return v as ReqStatus
+  return null
+}
+
 function isReqStatus(v: unknown): v is ReqStatus {
-  return typeof v === "string" && (REQ_STATUSES as string[]).includes(v)
+  return normalizeReqStatus(v) === v
 }
 
 function statePath(reqDir: string): string {
@@ -152,7 +159,7 @@ export async function readRequirementState(reqDir: string): Promise<RequirementS
       const parsed = JSON.parse(raw) as unknown
       if (parsed && typeof parsed === "object") {
         const o = parsed as Record<string, unknown>
-        const status = isReqStatus(o.status) ? o.status : null
+        const status = normalizeReqStatus(o.status)
         if (status) {
           const updatedAt = typeof o.updatedAt === "number" ? o.updatedAt : Date.now()
           const history: StateTransition[] = []
@@ -160,10 +167,11 @@ export async function readRequirementState(reqDir: string): Promise<RequirementS
             for (const h of o.history) {
               if (!h || typeof h !== "object") continue
               const hr = h as Record<string, unknown>
-              if (!isReqStatus(hr.status)) continue
+              const historyStatus = normalizeReqStatus(hr.status)
+              if (!historyStatus) continue
               history.push({
-                status: hr.status,
-                from: isReqStatus(hr.from) ? hr.from : null,
+                status: historyStatus,
+                from: normalizeReqStatus(hr.from),
                 at: typeof hr.at === "number" ? hr.at : 0,
                 note: typeof hr.note === "string" && hr.note ? hr.note : undefined,
               })

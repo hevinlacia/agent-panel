@@ -28,11 +28,11 @@ import { readRequirementState } from "./requirementState.ts"
 // Types
 // ---------------------------------------------------------------------------
 
-export type ReqStatus = "需求对齐" | "待开发" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
+export type ReqStatus = "需求对齐" | "方案设计" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
 
 export const REQ_STATUSES: ReqStatus[] = [
   "需求对齐",
-  "待开发",
+  "方案设计",
   "开发中",
   "自测中",
   "测试中",
@@ -66,12 +66,12 @@ export const REQUIREMENT_PHASE_PROFILES: Record<ReqStatus, RequirementPhaseProfi
     mustNotDo: ["讨论代码实现、技术方案、分支或改造方式", "把 PRD 原文当作后续阶段的主要上下文", "在业务口径未明确时推进到开发"],
     doneCriteria: ["alignment.md 已覆盖业务目标、范围、场景、规则、验收口径、非目标和未决问题", "prd.md 只保留来源链接/摘要/转化记录，后续阶段无需默认重读 PRD"],
   },
-  待开发: {
-    role: "技术方案 / 任务拆解者",
+  方案设计: {
+    role: "技术方案设计 / 影响评估者",
     mustRead: ["memory.md", "background.md", "impact.md", "branch.md", "config-changes.md"],
-    mustDo: ["确认仓库、分支、基准分支和影响模块", "补齐编码前影响面与配置变更预估", "拆出可验证的开发任务"],
-    mustNotDo: ["未确认目标分支就改动或提交", "遗漏 DB/Apollo/Nacos/RocketMQ 配置影响"],
-    doneCriteria: ["branch.md 和 impact.md 足够指导开发", "config-changes.md 记录已知或预计配置变更"],
+    mustDo: ["把业务语言翻译成开发可执行技术方案", "识别是否涉及核心链路、是否可能阻塞主流程，并补齐 impact.md 风险等级", "确认影响模块、配置变更、验证路径和最小开发任务"],
+    mustNotDo: ["未完成核心链路和阻塞风险评估就进入编码", "遗漏 DB/Apollo/Nacos/RocketMQ 配置影响", "在方案未明确时直接改代码"],
+    doneCriteria: ["impact.md 明确核心链路、影响面、风险等级和阻塞风险", "branch.md/config-changes.md/test.md 足够指导开发和验证"],
   },
   开发中: {
     role: "代码实现者",
@@ -221,8 +221,10 @@ function emptyAssociations(): AssociationStore {
   return { version: 2, associations: {} }
 }
 
-function isReqStatus(v: unknown): v is ReqStatus {
-  return typeof v === "string" && (REQ_STATUSES as string[]).includes(v)
+function normalizeReqStatus(v: unknown): ReqStatus | null {
+  if (v === "待开发") return "方案设计"
+  if (typeof v === "string" && (REQ_STATUSES as string[]).includes(v)) return v as ReqStatus
+  return null
 }
 
 /**
@@ -450,8 +452,8 @@ async function loadRequirementFromDir(
       const fields = fm.fields
       if (fields["req-id"]) id = fields["req-id"]
       if (fields["title"]) title = fields["title"]
-      const rawStatus = fields["status"]
-      if (isReqStatus(rawStatus)) status = rawStatus
+      const rawStatus = normalizeReqStatus(fields["status"])
+      if (rawStatus) status = rawStatus
       if (fields["project"] && fields["project"].trim()) {
         project = fields["project"].trim()
       }

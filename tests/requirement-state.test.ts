@@ -62,7 +62,8 @@ test("extractHermesStatus: returns null when no Status line exists", () => {
 test("mapHermesStatusToReqStatus: maps known english labels", () => {
   assert.equal(mapHermesStatusToReqStatus("intake"), "需求对齐")
   assert.equal(mapHermesStatusToReqStatus("待设计"), "需求对齐")
-  assert.equal(mapHermesStatusToReqStatus("ready"), "待开发")
+  assert.equal(mapHermesStatusToReqStatus("ready"), "方案设计")
+  assert.equal(mapHermesStatusToReqStatus("待开发"), "方案设计")
   assert.equal(mapHermesStatusToReqStatus("dev"), "开发中")
   assert.equal(mapHermesStatusToReqStatus("test"), "测试中")
   assert.equal(mapHermesStatusToReqStatus("done"), "已完成")
@@ -74,7 +75,7 @@ test("mapHermesStatusToReqStatus: unknown value falls back to 开发中", () => 
 })
 
 test("nextStatus: walks forward through REQ_STATUSES", () => {
-  assert.equal(nextStatus("需求对齐"), "待开发")
+  assert.equal(nextStatus("需求对齐"), "方案设计")
   assert.equal(nextStatus("开发中"), "自测中")
   assert.equal(nextStatus("测试中"), "待上线")
   // Last stage has no next.
@@ -100,7 +101,7 @@ test("readRequirementState: migrates `- Status: ready` from meta.md and writes s
   ])
   const state = await readRequirementState(reqDir)
   assert.ok(state, "expected migrated state")
-  assert.equal(state!.status, "待开发")
+  assert.equal(state!.status, "方案设计")
   assert.equal(state!.history.length, 1)
   assert.equal(state!.history[0].from, null)
   assert.equal(typeof state!.history[0].at, "number")
@@ -109,7 +110,7 @@ test("readRequirementState: migrates `- Status: ready` from meta.md and writes s
   const sp = join(reqDir, "state.json")
   assert.ok(existsSync(sp), "state.json should be created on migration")
   const onDisk = JSON.parse(readFileSync(sp, "utf-8"))
-  assert.equal(onDisk.status, "待开发")
+  assert.equal(onDisk.status, "方案设计")
 })
 
 test("writeRequirementStatus: appends a transition with from + at", async () => {
@@ -125,7 +126,7 @@ test("writeRequirementStatus: appends a transition with from + at", async () => 
   assert.equal(next.history.length, 2)
   const last = next.history[next.history.length - 1]
   assert.equal(last.status, "开发中")
-  assert.equal(last.from, "待开发")
+  assert.equal(last.from, "方案设计")
   assert.equal(last.note, "started coding")
 })
 
