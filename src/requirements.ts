@@ -5,6 +5,8 @@
  * managed by the Hermes `req-tracker` skill. The dashboard owns only
  * session associations, persisted at
  * `~/.local/share/opencode-dashboard/associations.json`.
+ * `alignment.md` is the product/business alignment brief for the first
+ * requirement phase; `prd.md` is kept as the original-source trace.
  * `impact.md` is the pre-coding safety gate for business-flow risk.
  *
  * Tests can override the associations store path via `_setStorePath`.
@@ -19,16 +21,17 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { randomBytes } from "node:crypto"
 
+import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
 import { readRequirementState } from "./requirementState.ts"
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type ReqStatus = "待设计" | "待开发" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
+export type ReqStatus = "需求对齐" | "待开发" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
 
 export const REQ_STATUSES: ReqStatus[] = [
-  "待设计",
+  "需求对齐",
   "待开发",
   "开发中",
   "自测中",
@@ -56,12 +59,12 @@ export interface RequirementPhaseProfile {
  * non-empty profile so new statuses cannot silently skip phase guidance.
  */
 export const REQUIREMENT_PHASE_PROFILES: Record<ReqStatus, RequirementPhaseProfile> = {
-  待设计: {
-    role: "需求分析 / 方案澄清者",
-    mustRead: ["memory.md", "background.md", "impact.md"],
-    mustDo: ["澄清目标、范围、约束和未决问题", "识别可能影响的核心业务链路", "把关键决策和开放问题写回 memory.md 或 background.md"],
-    mustNotDo: ["在范围未明确时直接改代码", "跳过影响面识别"],
-    doneCriteria: ["需求目标、范围和开放问题清晰", "impact.md 有初步风险判断"],
+  需求对齐: {
+    role: "业务需求对齐者",
+    mustRead: ["alignment.md", "memory.md", "background.md", "prd.md"],
+    mustDo: ["只和产品或业务对齐真实业务诉求、目标、范围、验收口径和未决问题", "把 PRD 或飞书原文提炼成 alignment.md 标准格式", "在 memory.md/background.md 记录已确认结论和开放问题"],
+    mustNotDo: ["讨论代码实现、技术方案、分支或改造方式", "把 PRD 原文当作后续阶段的主要上下文", "在业务口径未明确时推进到开发"],
+    doneCriteria: ["alignment.md 已覆盖业务目标、范围、场景、规则、验收口径、非目标和未决问题", "prd.md 只保留来源链接/摘要/转化记录，后续阶段无需默认重读 PRD"],
   },
   待开发: {
     role: "技术方案 / 任务拆解者",
@@ -134,6 +137,10 @@ export interface Requirement {
   impactPath?: string
   memoryPath?: string
   reviewPath?: string
+  /** Standard business-alignment brief used by the first requirement phase. */
+  alignmentPath?: string
+  /** Raw or semi-raw PRD source trace; not a primary context file after alignment. */
+  prdPath?: string
   /**
    * Directory holding this requirement's files. Stored on the record so
    * the status-write API can locate `state.json` without re-deriving the
@@ -423,6 +430,8 @@ async function loadRequirementFromDir(
   const impactPath = join(dirPath, "impact.md")
   const memoryPath = join(dirPath, "memory.md")
   const reviewPath = join(dirPath, "review.md")
+  const alignmentPath = join(dirPath, ALIGNMENT_FILE)
+  const prdPath = join(dirPath, PRD_FILE)
 
   let title = dirName
   let status: ReqStatus = "开发中"
@@ -494,6 +503,8 @@ async function loadRequirementFromDir(
     impactPath: existsSync(impactPath) ? impactPath : undefined,
     memoryPath: existsSync(memoryPath) ? memoryPath : undefined,
     reviewPath: existsSync(reviewPath) ? reviewPath : undefined,
+    alignmentPath: existsSync(alignmentPath) ? alignmentPath : undefined,
+    prdPath: existsSync(prdPath) ? prdPath : undefined,
     reqDir: dirPath,
     parentReqId,
   }
@@ -903,30 +914,32 @@ async function readFileSnippet(path: string | undefined, limit = 500): Promise<s
  * to a Hermes requirement. The output is concise, memory-first:
  *   1. requirement title + status (always)
  *   2. memory.md content (up to 1,200 chars) — the lifecycle memory ledger
- *   3. background.md content (up to 500 chars) — the why/what of the work
- *   4. notes.md (current progress, up to 300 chars)
- *   5. impact.md (pre-coding safety gate, up to 500 chars)
- *   6. branch.md (branch / commit context, up to 300 chars)
- *   7. the phase profile for the requirement's current status
- *   8. absolute paths to all known files so the agent knows where
- *      to read further or write updates
- *   9. a routing guide that tells the agent which file is authoritative
- *      for release/test/review work
- *   10. a closing line that tells the agent NOT to start work and to wait
- *      for the user to issue the next instruction
- *
- * test.md, config-changes.md, and review.md are listed by path but their
- * bodies are NOT inlined — the agent can read them on demand once the
- * user gives it a concrete task. impact.md is inlined because it is the
- * coding safety gate. Files that do not exist on disk are
- * still listed by path (the agent may create them).
+  *   3. alignment.md content (up to 900 chars) — business alignment brief
+  *   4. background.md content (up to 500 chars) — the why/what of the work
+  *   5. notes.md (current progress, up to 300 chars)
+  *   6. impact.md (pre-coding safety gate, up to 500 chars)
+  *   7. branch.md (branch / commit context, up to 300 chars)
+  *   8. the phase profile for the requirement's current status
+  *   9. absolute paths to all known files so the agent knows where
+  *      to read further or write updates
+  *   10. a routing guide that tells the agent which file is authoritative
+  *      for release/test/review work
+  *   11. a closing line that tells the agent NOT to start work and to wait
+  *      for the user to issue the next instruction
+  *
+  * test.md, config-changes.md, review.md, and prd.md are listed by path
+  * but their bodies are NOT inlined — the agent can read them on demand
+  * once the user gives it a concrete task. impact.md is inlined because
+  * it is the coding safety gate. alignment.md is inlined because it is
+  * the normalized business source of truth. Files that do not exist on
+  * disk are still listed by path (the agent may create them).
  *
  * The DEFAULT_REQ_ID / "req not found" fallbacks return a minimal
  * 4-line block that only carries the new closing instruction.
  */
 export async function buildInjectionContext(reqId: string): Promise<string> {
   const closing =
-    "请阅读以上需求背景和进展信息。不要自行开始执行任何任务，等待用户下达具体任务安排。"
+    "请阅读以上需求背景、需求对齐结论和进展信息。不要自行开始执行任何任务，等待用户下达具体任务安排。"
   if (reqId === DEFAULT_REQ_ID) {
     return [
       "【需求上下文】",
@@ -961,6 +974,8 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     const impactFile = req.impactPath ?? join(req.reqDir, "impact.md")
     const memoryFile = req.memoryPath ?? join(req.reqDir, "memory.md")
     const reviewFile = req.reviewPath ?? join(req.reqDir, "review.md")
+    const alignmentFile = req.alignmentPath ?? join(req.reqDir, ALIGNMENT_FILE)
+    const prdFile = req.prdPath ?? join(req.reqDir, PRD_FILE)
 
     lines.push("")
     lines.push("需求记忆：")
@@ -969,6 +984,15 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
       lines.push(memory)
     } else {
       lines.push(`（未提供 memory.md，路径：${memoryFile}。这是跨 session 的需求生命周期记忆入口。）`)
+    }
+
+    lines.push("")
+    lines.push("需求对齐：")
+    const alignment = await readFileSnippet(alignmentFile, 900)
+    if (alignment) {
+      lines.push(alignment)
+    } else {
+      lines.push(`（未提供 alignment.md，路径：${alignmentFile}。需求对齐阶段必须把产品/业务 PRD 或口述需求提炼成此标准格式。）`)
     }
 
     lines.push("")
@@ -1019,6 +1043,8 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     lines.push("")
     lines.push("需求文件：")
     lines.push(`  - 需求记忆：${memoryFile}`)
+    lines.push(`  - 需求对齐：${alignmentFile}`)
+    lines.push(`  - PRD 来源：${prdFile}`)
     lines.push(`  - 需求背景：${backgroundFile}`)
     lines.push(`  - 分支信息：${branchFile}`)
     lines.push(`  - 开发笔记：${notesFile}`)
@@ -1029,7 +1055,8 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
 
     lines.push("")
     lines.push("AI 路由说明：")
-    lines.push("  - 新 session 先读 memory.md，必要时再读 notes.md 追溯历史 session。")
+    lines.push("  - 新 session 先读 memory.md 和 alignment.md；prd.md 只用于必要时回溯原始 PRD 来源。")
+    lines.push("  - 需求对齐阶段只处理业务目标、范围、规则、验收和未决问题，不进入代码方案。")
     lines.push("  - 编码前必须先读/补 impact.md，确认不会阻塞 WMS 核心链路。")
     lines.push("  - 上线清单以 branch.md、config-changes.md、test.md、review.md 为准。")
     lines.push("  - 测试用例和可复用验证链路维护在 test.md。")
@@ -1060,6 +1087,7 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
     lines.push(
       "本 session 关联了上述需求文件。以下事件发生后，必须立即更新对应文件，不得跳过：",
     )
+    lines.push("- 用户提供 PRD/飞书需求文档，或完成产品/业务口径澄清 → prd.md（来源记录）+ alignment.md（标准化需求对齐结论）")
     lines.push("- 代码 push 或 merge 成功 → branch.md（记录分支名、关键 commit、合并状态）")
     lines.push("- 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md")
     lines.push("- 明确测试场景或回归范围 → test.md")

@@ -86,6 +86,12 @@ import {
   type ChecklistFiles,
 } from "./releaseChecklist.ts"
 import {
+  ALIGNMENT_FILE,
+  ALIGNMENT_TEMPLATE,
+  PRD_FILE,
+  PRD_TEMPLATE,
+} from "./requirementAlignment.ts"
+import {
   IMPACT_FILE,
   IMPACT_TEMPLATE,
   buildImpactAssessment,
@@ -746,7 +752,7 @@ const SessionMissingPage: FC<{ id: string; backReqId?: string }> = ({ id, backRe
 // ---------------------------------------------------------------------------
 
 const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
-  "待设计": "design",
+  "需求对齐": "align",
   "待开发": "pending",
   "开发中": "dev",
   "自测中": "selftest",
@@ -1150,6 +1156,37 @@ const ImpactAssessmentCard: FC<{ req: Requirement; assessment: ImpactAssessment 
   )
 }
 
+const AlignmentCard: FC<{ req: Requirement; alignmentContent?: string; prdContent?: string }> = ({ req, alignmentContent, prdContent }) => {
+  const hasAlignment = !!alignmentContent?.trim()
+  const hasPrd = !!prdContent?.trim()
+  const complete = hasAlignment && !/待补充|待确认/.test(alignmentContent || "")
+  const statusText = complete ? "已完成" : hasAlignment ? "待补齐" : "未创建"
+  return (
+    <section class={`impact-card${complete ? " impact-card-complete" : " impact-card-incomplete"}`} aria-label="需求对齐">
+      <div class="impact-card-head">
+        <div>
+          <h2 class="op-section-title">需求对齐</h2>
+          <p class="muted small">业务对齐门：把产品/业务 PRD 或口述需求转成标准业务说明；后续阶段默认以 alignment.md 为准。</p>
+        </div>
+        <span class={`impact-status ${complete ? "impact-status-ok" : "impact-status-warn"}`}>{statusText}</span>
+      </div>
+      <div class="impact-grid">
+        <div class="impact-metric"><span class="field-label">标准文档</span><strong>{hasAlignment ? "alignment.md" : "缺失"}</strong></div>
+        <div class="impact-metric"><span class="field-label">PRD 来源</span><span>{hasPrd ? "prd.md 已记录" : "未记录"}</span></div>
+      </div>
+      <div class="impact-actions">
+        {req.reqDir ? (
+          <form method="post" action="/api/requirement/alignment-template">
+            <input type="hidden" name="reqId" value={req.id} />
+            <button type="submit" class="btn btn-primary">{hasAlignment ? "补齐需求对齐模板" : "创建需求对齐模板"}</button>
+          </form>
+        ) : null}
+        <span class="muted small">如果用户提供飞书 PRD，先记录到 prd.md，再提炼成 alignment.md；PRD 后续只用于回溯。</span>
+      </div>
+    </section>
+  )
+}
+
 const RequirementDetailPage: FC<{
   req: Requirement
   associated: SessionInfo[]
@@ -1157,6 +1194,8 @@ const RequirementDetailPage: FC<{
   recommendations: SessionRecommendation[]
   extractHistory: ExtractHistoryRecord[]
   backgroundContent?: string
+  alignmentContent?: string
+  prdContent?: string
   branchContent?: string
   notesContent?: string
   testContent?: string
@@ -1168,7 +1207,7 @@ const RequirementDetailPage: FC<{
   state?: RequirementState | null
   childReqs?: Requirement[]
   parentReq?: Requirement | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, state, childReqs, parentReq }) => {
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, state, childReqs, parentReq }) => {
   const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
@@ -1208,6 +1247,8 @@ const RequirementDetailPage: FC<{
           ) : null}
 
           <HermesFileSection title="需求背景" content={backgroundContent} />
+          <HermesFileSection title="需求对齐" content={alignmentContent} />
+          <HermesFileSection title="PRD 来源" content={prdContent} />
 
           <section class="req-children-section" aria-label="子需求">
             <h2 class="op-section-title">子需求（{childReqs?.length ?? 0}）</h2>
@@ -1406,6 +1447,8 @@ const RequirementDetailPage: FC<{
         </section>
       ) : null}
 
+      <AlignmentCard req={req} alignmentContent={alignmentContent} prdContent={prdContent} />
+
       <div class="req-status-flow">
         {REQ_STATUSES.map((s, i) => {
           const cls = i === currentIdx ? "req-flow-step active" : i < currentIdx ? "req-flow-step done" : "req-flow-step"
@@ -1483,6 +1526,8 @@ const RequirementDetailPage: FC<{
       })() : null}
 
       <HermesFileSection title="需求记忆" content={memoryContent} />
+      <HermesFileSection title="需求对齐" content={alignmentContent} />
+      <HermesFileSection title="PRD 来源" content={prdContent} />
       <HermesFileSection title="需求背景" content={backgroundContent} />
       <HermesFileSection title="分支信息" content={branchContent} />
       <HermesFileSection title="开发笔记" content={notesContent} />
@@ -1845,7 +1890,7 @@ async function renderProjectsPage(c: Context) {
   const showCompleted = c.req.query("showCompleted") === "1"
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
-    "待设计": 0,
+    "需求对齐": 0,
     "待开发": 0,
     "开发中": 0,
     "自测中": 0,
@@ -1996,8 +2041,10 @@ app.get("/requirement", async (c) => {
       return undefined
     }
   }
-  const [backgroundContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent] = await Promise.all([
+  const [backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent] = await Promise.all([
     readFileSafe(req.backgroundPath),
+    readFileSafe(req.alignmentPath),
+    readFileSafe(req.prdPath),
     readFileSafe(req.branchPath),
     readFileSafe(req.notesPath),
     readFileSafe(req.testPath),
@@ -2053,6 +2100,8 @@ app.get("/requirement", async (c) => {
       associated={associated}
       unassociated={unassociated}
       backgroundContent={backgroundContent}
+      alignmentContent={alignmentContent}
+      prdContent={prdContent}
       branchContent={branchContent}
       notesContent={notesContent}
       testContent={testContent}
@@ -2439,6 +2488,35 @@ app.post("/api/requirement/impact-template", async (c) => {
   return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
+/**
+ * POST /api/requirement/alignment-template
+ * Creates the business-only alignment.md and PRD source-trace template.
+ * Existing files are preserved; templates are appended only when absent.
+ */
+app.post("/api/requirement/alignment-template", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  if (!reqId) return c.text("Missing reqId", 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+
+  const alignmentPath = join(req.reqDir, ALIGNMENT_FILE)
+  const prdPath = join(req.reqDir, PRD_FILE)
+  const existingAlignment = existsSync(alignmentPath) ? await readFile(alignmentPath, "utf-8").catch(() => "") : ""
+  const existingPrd = existsSync(prdPath) ? await readFile(prdPath, "utf-8").catch(() => "") : ""
+  if (!existingAlignment.trim()) {
+    await writeFile(alignmentPath, ALIGNMENT_TEMPLATE, "utf-8")
+  } else if (!existingAlignment.includes("## 9. PRD 转化记录")) {
+    await appendFile(alignmentPath, "\n\n" + ALIGNMENT_TEMPLATE.split("## 9. PRD 转化记录")[1]!.replace(/^/, "## 9. PRD 转化记录") + "\n", "utf-8")
+  }
+  if (!existingPrd.trim()) {
+    await writeFile(prdPath, PRD_TEMPLATE, "utf-8")
+  }
+
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
 // ---------------------------------------------------------------------------
 // Schedulers page
 // ---------------------------------------------------------------------------
@@ -2820,9 +2898,11 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
       return undefined
     }
   }
-  const [meta, memory, branch, config, impact, test, notes, review] = await Promise.all([
+  const [meta, memory, alignment, prd, branch, config, impact, test, notes, review] = await Promise.all([
     readSafe("meta.md"),
     readSafe("memory.md"),
+    readSafe(ALIGNMENT_FILE),
+    readSafe(PRD_FILE),
     readSafe("branch.md"),
     readSafe("config-changes.md"),
     readSafe(IMPACT_FILE),
@@ -2830,7 +2910,7 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
     readSafe("notes.md"),
     readSafe("review.md"),
   ])
-  return { meta, memory, branch, config, impact, test, notes, review }
+  return { meta, memory, alignment, prd, branch, config, impact, test, notes, review }
 }
 
 /**
@@ -3041,7 +3121,7 @@ app.post("/api/requirement/auto-extract/commit", async (c) => {
   if (!guard.req.reqDir) return c.text("Requirement has no directory", 400)
 
   const reqDir = guard.req.reqDir
-  const allowedFiles = new Set(["memory.md", "branch.md", "config-changes.md", IMPACT_FILE, "test.md", "notes.md", "review.md", "meta.md"])
+  const allowedFiles = new Set(["memory.md", ALIGNMENT_FILE, PRD_FILE, "branch.md", "config-changes.md", IMPACT_FILE, "test.md", "notes.md", "review.md", "meta.md"])
   let written = 0
 
   // Process updates and appends from form fields

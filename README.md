@@ -73,7 +73,9 @@ npm run typecheck
 - 需求目录来自 Hermes `~/.agents/req/<project>/.../<req-id>/`，dashboard 只维护 session 关联和状态写入。
 - `memory.md` 是新建 session 的首要记忆入口：记录当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围和各 session 摘要索引。
 - `branch.md` 和 `config-changes.md` 构成上线包：应用/仓库/分支/PR/Commit、DB 变更、Apollo/Nacos、RocketMQ Topic/Group、阿里云控制台配置等。
-- `test.md` 维护 PRD/需求测试用例、自测记录和可复用验证链路，方便 test 自测后在 UAT/上线前复验。
+- `alignment.md` 是「需求对齐」阶段的标准文档：把产品/业务真实诉求、范围、业务规则、场景流程、验收口径和未决问题提炼成纯业务说明，不写代码方案。
+- `prd.md` 只记录产品 PRD/飞书文档来源、原文摘要和转化记录；后续阶段默认以 `alignment.md` 为准，只有回溯原始描述时才需要再看 PRD。
+- `test.md` 维护业务验收用例、自测记录和可复用验证链路，方便 test 自测后在 UAT/上线前复验。
 - `review.md` 维护待上线 Code Review 范围、发现项、用户确认和复查结论。
 - 「智能提取」会读取 `memory.md / branch.md / config-changes.md / test.md / notes.md / review.md` 并生成可预览的文件变更建议；人工确认后才写入发布事实文件。定时触发只在每天本地 00:00 执行一次，并且只检查最近 24 小时内创建或更新过的需求 session。
 - 「召回历史」会从本机 OpenCode SQLite 只读读取指定 session 的 text part，过滤 reasoning/tool/step，用于在需求信息不明确时追溯原始对话证据。

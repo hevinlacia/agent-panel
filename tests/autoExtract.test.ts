@@ -17,6 +17,8 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
     {
       meta: "- Title: Test Req\n- Status: dev",
       memory: "## 当前进展\n- 已完成建模",
+      alignment: "## 1. 业务目标\n- 降低人工对账成本",
+      prd: "## 来源信息\n- 链接或位置：飞书文档",
       branch: "| Source branch | `feature/x` |",
       config: "## MQ\nmq.switch.x = true",
       impact: "## 风险等级\n- 等级：中风险\n## 核心链路\n- 出库复核",
@@ -29,6 +31,8 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
   assert.match(prompt, /开发中/)
   assert.match(prompt, /meta\.md/)
   assert.match(prompt, /memory\.md/)
+  assert.match(prompt, /alignment\.md/)
+  assert.match(prompt, /prd\.md/)
   assert.match(prompt, /branch\.md/)
   assert.match(prompt, /config-changes\.md/)
   assert.match(prompt, /impact\.md/)
@@ -39,6 +43,8 @@ test("buildAutoExtractPrompt includes file contents and rules", () => {
   assert.match(prompt, /===APPEND:/)
   assert.match(prompt, /不要修改 meta\.md 中的 Status 行/)
   assert.match(prompt, /需求生命周期记忆/)
+  assert.match(prompt, /需求对齐阶段的标准格式/)
+  assert.match(prompt, /后续阶段默认只看 alignment\.md/)
   assert.match(prompt, /编码前影响面评估/)
   assert.match(prompt, /阻塞 WMS 入库\/库存\/出库\/复核\/发运\/回传/)
   assert.match(prompt, /可复用验证链路/)
@@ -98,6 +104,10 @@ test("filterAllowed removes non-whitelisted filenames", () => {
     '{"status": "已完成"}',
     "===UPDATE: branch.md===",
     "new content",
+    "===UPDATE: alignment.md===",
+    "alignment content",
+    "===UPDATE: prd.md===",
+    "prd content",
     "===UPDATE: memory.md===",
     "memory content",
     "===UPDATE: review.md===",
@@ -112,14 +122,18 @@ test("filterAllowed removes non-whitelisted filenames", () => {
 
   const filtered = filterAllowed(result)
   const updateNames = filtered.updates.map((u) => u.filename).sort()
-  assert.deepEqual(updateNames, ["branch.md", "config-changes.md", "impact.md", "memory.md", "review.md"])
+  assert.deepEqual(updateNames, ["alignment.md", "branch.md", "config-changes.md", "impact.md", "memory.md", "prd.md", "review.md"])
   assert.equal(filtered.appends.length, 0)
 })
 
-test("filterAllowed allows appending to memory.md, notes.md, impact.md, meta.md, and review.md", () => {
+test("filterAllowed allows appending to requirement context files", () => {
   const result = parseAutoExtractOutput([
     "===APPEND: memory.md===",
     "memory content",
+    "===APPEND: alignment.md===",
+    "alignment content",
+    "===APPEND: prd.md===",
+    "prd content",
     "===APPEND: notes.md===",
     "note content",
     "===APPEND: impact.md===",
@@ -131,5 +145,5 @@ test("filterAllowed allows appending to memory.md, notes.md, impact.md, meta.md,
   ].join("\n"))
 
   const filtered = filterAllowed(result)
-  assert.equal(filtered.appends.length, 5)
+  assert.equal(filtered.appends.length, 7)
 })

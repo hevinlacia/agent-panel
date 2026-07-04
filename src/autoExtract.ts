@@ -5,8 +5,8 @@
  *
  * Role: the "smart" extract mode. Instead of just summarizing the
  * session into notes.md, the agent sees the full requirement context
- * (meta.md, memory.md, branch.md, config-changes.md, impact.md,
- * test.md, notes.md, review.md) and
+ * (meta.md, memory.md, alignment.md, prd.md, branch.md,
+ * config-changes.md, impact.md, test.md, notes.md, review.md) and
  * decides which files need updating based on what happened in the
  * session.
  *
@@ -27,10 +27,13 @@
  */
 
 import type { Requirement } from "./requirements.ts"
+import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
 
 export interface ContextFiles {
   meta?: string
   memory?: string
+  alignment?: string
+  prd?: string
   branch?: string
   config?: string
   impact?: string
@@ -89,6 +92,12 @@ export function buildAutoExtractPrompt(
   if (files.memory !== undefined) {
     parts.push("=== 现有 memory.md（需求生命周期记忆）===", files.memory || "(空)", "")
   }
+  if (files.alignment !== undefined) {
+    parts.push("=== 现有 alignment.md（需求对齐标准格式）===", files.alignment || "(空)", "")
+  }
+  if (files.prd !== undefined) {
+    parts.push("=== 现有 prd.md（PRD 来源追溯，不作为后续主上下文）===", files.prd || "(空)", "")
+  }
   if (files.branch !== undefined) {
     parts.push("=== 现有 branch.md ===", files.branch || "(空)", "")
   }
@@ -134,14 +143,16 @@ export function buildAutoExtractPrompt(
     "1. 不要修改 meta.md 中的 Status 行（状态只有用户能改）",
     "2. 只输出有变更的文件，不要输出未变更的文件",
     "3. 保持原有文件的格式和风格（表格用 Markdown 表格，列表用 - 或 *）",
-    "4. 对于 memory.md，维护跨 session 的需求记忆：当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围、Session 摘要索引",
-    "5. 对于 branch.md，维护上线包中的应用、仓库、分支、基准分支、PR/Commit、是否需上线、备注",
-    "6. 对于 config-changes.md，维护 DB、Apollo、Nacos、RocketMQ Topic/Group、阿里云控制台等非代码配置变更",
-    "7. 对于 impact.md，维护编码前影响面评估：风险等级、核心链路、影响入口、数据影响、阻塞风险、自测清单、回滚方案；重点说明是否可能阻塞 WMS 入库/库存/出库/复核/发运/回传等核心流程",
-    "8. 对于 test.md，维护 PRD/需求测试用例、自测记录、可复用验证链路，方便 test/UAT/PRO 前重复验证；WMS 需求必须按 conventions-wms-agent-self-test-evidence.md 维护触发证据、tid 日志链路、DB 结果、副作用、反向证据和 A/B/C/D 置信度，不要只写接口成功",
-    "9. 对于 review.md，仅在本次会话包含待上线 code review 或用户确认的 review 处理结论时更新",
-    "10. 对于 notes.md，追加本次会话的关键决策、已完成验证、待办事项",
-    "11. 如果会话内容与需求上下文无关或无需更新，只输出 SUMMARY 说明原因",
+    "4. 对于 alignment.md，维护需求对齐阶段的标准格式：业务目标、用户/角色、现状痛点、范围、非目标、业务规则、场景流程、验收口径、依赖约束、开放问题；只写业务需求，不写技术方案或代码实现",
+    "5. 如果用户提供 PRD/飞书文档，把来源链接、标题、更新时间、关键原文摘要和转化记录写入 prd.md，同时把可执行业务结论提炼进 alignment.md；后续阶段默认只看 alignment.md，prd.md 仅用于追溯",
+    "6. 对于 memory.md，维护跨 session 的需求记忆：当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围、Session 摘要索引",
+    "7. 对于 branch.md，维护上线包中的应用、仓库、分支、基准分支、PR/Commit、是否需上线、备注",
+    "8. 对于 config-changes.md，维护 DB、Apollo、Nacos、RocketMQ Topic/Group、阿里云控制台等非代码配置变更",
+    "9. 对于 impact.md，维护编码前影响面评估：风险等级、核心链路、影响入口、数据影响、阻塞风险、自测清单、回滚方案；重点说明是否可能阻塞 WMS 入库/库存/出库/复核/发运/回传等核心流程",
+    "10. 对于 test.md，维护业务验收用例、自测记录、可复用验证链路，方便 test/UAT/PRO 前重复验证；WMS 需求必须按 conventions-wms-agent-self-test-evidence.md 维护触发证据、tid 日志链路、DB 结果、副作用、反向证据和 A/B/C/D 置信度，不要只写接口成功",
+    "11. 对于 review.md，仅在本次会话包含待上线 code review 或用户确认的 review 处理结论时更新",
+    "12. 对于 notes.md，追加本次会话的关键决策、已完成验证、待办事项",
+    "13. 如果会话内容与需求上下文无关或无需更新，只输出 SUMMARY 说明原因",
     "",
     "不要写客套话，不要用 markdown 代码块包裹整篇输出。",
   )
@@ -243,6 +254,8 @@ function collectUntilDelimiter(
  */
 export const ALLOWED_UPDATE_FILES = new Set([
   "memory.md",
+  ALIGNMENT_FILE,
+  PRD_FILE,
   "branch.md",
   "config-changes.md",
   "impact.md",
@@ -253,6 +266,8 @@ export const ALLOWED_UPDATE_FILES = new Set([
 
 export const ALLOWED_APPEND_FILES = new Set([
   "memory.md",
+  ALIGNMENT_FILE,
+  PRD_FILE,
   "notes.md",
   "impact.md",
   "meta.md",

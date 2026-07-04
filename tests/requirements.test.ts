@@ -129,7 +129,7 @@ test("buildInjectionContext: returns minimal context for DEFAULT_REQ_ID", async 
   const ctx = await buildInjectionContext(DEFAULT_REQ_ID)
   assert.match(ctx, /需求：默认需求/)
   assert.match(ctx, /状态：开发中/)
-  assert.match(ctx, /请阅读以上需求背景和进展信息/)
+  assert.match(ctx, /请阅读以上需求背景、需求对齐结论和进展信息/)
   // DEFAULT_REQ_ID fallback must NOT include the new path-listing /
   // file-modification hints — those are only for real Hermes requirements.
   assert.equal(ctx.includes("需求文件"), false)
@@ -158,11 +158,15 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     "Path test description."
   const backgroundContent = "Background snippet line one."
   const memoryContent = "# 需求记忆\n\n## 当前进展\n- 已完成第一轮改造。"
+  const alignmentContent = "# 需求对齐\n\n## 1. 业务目标\n- 明确业务诉求。"
+  const prdContent = "# PRD 来源追溯\n\n- 链接或位置：飞书文档"
   const branchContent = "Branch info snippet line one."
   const notesContent = "Notes snippet line one."
   const impactContent = "# 需求影响面评估\n\n## 风险等级\n- 等级：中风险\n\n## 核心链路\n- 影响出库复核链路。"
   writeFileSync(join(reqSubDir, "meta.md"), metaContent, "utf-8")
   writeFileSync(join(reqSubDir, "memory.md"), memoryContent, "utf-8")
+  writeFileSync(join(reqSubDir, "alignment.md"), alignmentContent, "utf-8")
+  writeFileSync(join(reqSubDir, "prd.md"), prdContent, "utf-8")
   writeFileSync(join(reqSubDir, "background.md"), backgroundContent, "utf-8")
   writeFileSync(join(reqSubDir, "branch.md"), branchContent, "utf-8")
   writeFileSync(join(reqSubDir, "notes.md"), notesContent, "utf-8")
@@ -175,8 +179,9 @@ test("buildInjectionContext: lists file paths and content for a real requirement
 
     // Three labeled content sections must each carry their own file body
     // — no more combined "开发笔记" block, and the new "需求记忆" /
-    // "需求背景" / "当前进展" / "分支与改动" sections must all appear.
+    // "需求对齐" / "需求背景" / "当前进展" / "分支与改动" sections must all appear.
     assert.match(ctx, /需求记忆：/)
+    assert.match(ctx, /需求对齐：/)
     assert.match(ctx, /需求背景：/)
     assert.match(ctx, /当前进展：/)
     assert.match(ctx, /影响面评估：/)
@@ -186,10 +191,12 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.match(ctx, /必读：memory\.md、impact\.md、branch\.md、config-changes\.md/)
     assert.match(ctx, /完成标准：代码改动完成且关键路径可解释/)
 
-    // Path-listing section must include all eight known files (memory,
-    // background, branch, notes, impact, test, config-changes, review) by absolute path.
+    // Path-listing section must include all ten known files (memory,
+    // alignment, prd, background, branch, notes, impact, test, config-changes, review) by absolute path.
     assert.match(ctx, /需求文件：/)
     assert.ok(ctx.includes(join(reqSubDir, "memory.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "alignment.md")))
+    assert.ok(ctx.includes(join(reqSubDir, "prd.md")))
     assert.ok(ctx.includes(join(reqSubDir, "background.md")))
     assert.ok(ctx.includes(join(reqSubDir, "branch.md")))
     assert.ok(ctx.includes(join(reqSubDir, "notes.md")))
@@ -200,11 +207,13 @@ test("buildInjectionContext: lists file paths and content for a real requirement
 
     // Bodies of the three inlined files appear in the output.
     assert.ok(ctx.includes(memoryContent))
+    assert.ok(ctx.includes(alignmentContent))
     assert.ok(ctx.includes(backgroundContent))
     assert.ok(ctx.includes(branchContent))
     assert.ok(ctx.includes(notesContent))
     assert.ok(ctx.includes(impactContent))
-    assert.match(ctx, /新 session 先读 memory\.md/)
+    assert.match(ctx, /新 session 先读 memory\.md 和 alignment\.md/)
+    assert.match(ctx, /prd\.md 只用于必要时回溯原始 PRD 来源/)
     assert.match(ctx, /编码前必须先读\/补 impact\.md/)
     assert.match(ctx, /状态只通过 dashboard\/API 更新/)
 
@@ -215,7 +224,7 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.equal(ctx.includes("配置变更（"), false)
 
     // The new closing line tells the agent to wait for instructions.
-    assert.match(ctx, /请阅读以上需求背景和进展信息/)
+    assert.match(ctx, /请阅读以上需求背景、需求对齐结论和进展信息/)
     assert.match(ctx, /不要自行开始执行任何任务/)
     // Old "continue and modify files" closing line is gone.
     assert.equal(ctx.includes("请基于以上需求上下文继续"), false)
@@ -224,6 +233,7 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     // Maintenance instructions are present for real requirements.
     assert.match(ctx, /【需求文档维护/)
     assert.match(ctx, /必须立即更新对应文件/)
+    assert.match(ctx, /用户提供 PRD\/飞书需求文档/)
     assert.match(ctx, /代码 push 完成但需求文件未更新/)
     assert.match(ctx, /影响面变化或发现核心链路风险 → impact\.md/)
     assert.match(ctx, /不要修改 meta\.md 的 status 字段/)
@@ -268,7 +278,7 @@ test("buildInjectionContext: injects self-test phase profile for 自测中", asy
 })
 
 test("REQUIREMENT_PHASE_PROFILES: covers every dashboard requirement status", () => {
-  for (const status of ["待设计", "待开发", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
+  for (const status of ["需求对齐", "待开发", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
     const profile = REQUIREMENT_PHASE_PROFILES[status]
     assert.ok(profile.role)
     assert.ok(profile.mustRead.length > 0)

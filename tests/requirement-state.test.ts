@@ -60,7 +60,8 @@ test("extractHermesStatus: returns null when no Status line exists", () => {
 })
 
 test("mapHermesStatusToReqStatus: maps known english labels", () => {
-  assert.equal(mapHermesStatusToReqStatus("intake"), "待设计")
+  assert.equal(mapHermesStatusToReqStatus("intake"), "需求对齐")
+  assert.equal(mapHermesStatusToReqStatus("待设计"), "需求对齐")
   assert.equal(mapHermesStatusToReqStatus("ready"), "待开发")
   assert.equal(mapHermesStatusToReqStatus("dev"), "开发中")
   assert.equal(mapHermesStatusToReqStatus("test"), "测试中")
@@ -73,7 +74,7 @@ test("mapHermesStatusToReqStatus: unknown value falls back to 开发中", () => 
 })
 
 test("nextStatus: walks forward through REQ_STATUSES", () => {
-  assert.equal(nextStatus("待设计"), "待开发")
+  assert.equal(nextStatus("需求对齐"), "待开发")
   assert.equal(nextStatus("开发中"), "自测中")
   assert.equal(nextStatus("测试中"), "待上线")
   // Last stage has no next.

@@ -283,9 +283,11 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
       return ""
     }
   }
-  const [meta, memory, branch, config, impact, test, notes, review] = await Promise.all([
+  const [meta, memory, alignment, prd, branch, config, impact, test, notes, review] = await Promise.all([
     readSafe("meta.md"),
     readSafe("memory.md"),
+    readSafe("alignment.md"),
+    readSafe("prd.md"),
     readSafe("branch.md"),
     readSafe("config-changes.md"),
     readSafe(IMPACT_FILE),
@@ -293,7 +295,7 @@ async function readContextFiles(reqDir: string): Promise<ContextFiles> {
     readSafe("notes.md"),
     readSafe("review.md"),
   ])
-  return { meta, memory, branch, config, impact, test, notes, review }
+  return { meta, memory, alignment, prd, branch, config, impact, test, notes, review }
 }
 
 // ---------------------------------------------------------------------------

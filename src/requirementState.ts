@@ -18,9 +18,9 @@
  *   }
  *
  * Migration: if state.json is missing but `<req-dir>/meta.md` contains a
- * line like `- Status: <english-value>` (hermes legacy format), the
- * english value is mapped to the chinese 7-stage vocabulary and a
- * state.json file is created. After migration, state.json wins.
+ * line like `- Status: <english-or-legacy-value>` (hermes legacy format),
+ * the value is mapped to the chinese 7-stage vocabulary and a state.json
+ * file is created. After migration, state.json wins.
  *
  * Only `node:` built-ins are used. Never touches `.env` / secret files.
  */
@@ -50,9 +50,9 @@ export interface RequirementState {
 }
 
 /**
- * Map a hermes meta.md `- Status: <value>` english label to the
- * dashboard's chinese 7-stage vocabulary. Unknown values map to
- * `开发中` (the dashboard's "in progress" default).
+ * Map a hermes meta.md `- Status: <value>` label to the dashboard's
+ * chinese 7-stage vocabulary. Unknown values map to `开发中` (the
+ * dashboard's "in progress" default).
  *
  * Kept inline as a string table so it is easy to extend; not exported
  * as a Map because we want exhaustive case matching.
@@ -63,7 +63,9 @@ export function mapHermesStatusToReqStatus(raw: string): ReqStatus {
     case "intake":
     case "design":
     case "designing":
-      return "待设计"
+    case "待设计":
+    case "需求对齐":
+      return "需求对齐"
     case "ready":
     case "planned":
     case "pending":

@@ -96,16 +96,21 @@ and `resolveCwd` from `sessions.ts`).
 
 **Requirement lifecycle memory.** Hermes requirement directories may
 contain these AI-facing files: `memory.md` (cross-session lifecycle
-memory), `background.md` (why/what), `branch.md` (release applications
-and branches), `config-changes.md` (DB / Apollo / Nacos / RocketMQ Topic
-and Group / cloud-console changes), `test.md` (test cases, self-test
-records, reusable verification chains), `notes.md` (append-only session
-notes), and `review.md` (pre-release code review findings and user
-decisions). New-session injection is memory-first. Scheduled smart
-extracts run once per day at local 00:00, only inspect sessions created
-or updated in the last 24 hours, and generate previewable changes instead
-of auto-adopting release facts. Experience auto-summary runs once per day
-at local 01:00 with the same 24-hour recent-session window.
+memory), `alignment.md` (business-only requirement alignment), `prd.md`
+(PRD / Feishu source trace, used only for later backtracking),
+`background.md` (why/what), `branch.md` (release applications and
+branches), `config-changes.md` (DB / Apollo / Nacos / RocketMQ Topic and
+Group / cloud-console changes), `test.md` (business acceptance cases,
+self-test records, reusable verification chains), `notes.md` (append-only
+session notes), and `review.md` (pre-release code review findings and
+user decisions). New-session injection reads `memory.md` and
+`alignment.md` first; raw PRD content should be converted into
+`alignment.md` during the `需求对齐` phase so later phases rarely need to
+reopen `prd.md`. Scheduled smart extracts run once per day at local
+00:00, only inspect sessions created or updated in the last 24 hours, and
+generate previewable changes instead of auto-adopting release facts.
+Experience auto-summary runs once per day at local 01:00 with the same
+24-hour recent-session window.
 
 **Historical recall.** `/requirement/recall?reqId=…&sessionId=…` and
 `/api/session/transcript?id=…` read OpenCode SQLite directly through
