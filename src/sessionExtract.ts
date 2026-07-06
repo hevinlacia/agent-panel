@@ -33,6 +33,7 @@ import { dirname } from "node:path"
 
 import type { Requirement } from "./requirements.ts"
 import { runQueuedOpencodeProcess } from "./opencodeProcessQueue.ts"
+import { buildManagedEnv } from "./config.ts"
 
 /** Cap stdout we keep in memory; opencode summaries are tiny (< 4KB). */
 const MAX_STDOUT_BYTES = 256 * 1024
@@ -147,16 +148,18 @@ export interface RunExtractOptions {
  *   - timeout → SIGKILL the process, resolve with timedOut=true.
  *   - stdout is truncated to MAX_STDOUT_BYTES; stderr to MAX_STDERR_BYTES.
  */
-export function runExtractSummary(opts: RunExtractOptions): Promise<ExtractResult> {
+export async function runExtractSummary(opts: RunExtractOptions): Promise<ExtractResult> {
   const bin = opts.opencodeBin || "opencode"
   const timeoutMs = opts.timeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS
   const model = opts.model && opts.model.trim() ? opts.model.trim() : EXTRACT_MODEL
   const startedAt = Date.now()
+  const env = await buildManagedEnv()
 
   return runQueuedOpencodeProcess({
     bin,
     args: ["run", "--session", opts.sessionId, "--fork", "-m", model, opts.prompt],
     spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
+    env,
     timeoutMs,
     spawnFn: opts.spawnFn,
   }).then((result) => ({

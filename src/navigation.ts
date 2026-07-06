@@ -3,7 +3,7 @@
  * dashboard's time-filter links. Kept in a side-effect-free module so
  * `tests/navigation.test.ts` can assert the contract without booting Hono.
  *
- * The order of `NAV_ITEMS` is the visual left-to-right order in the topbar.
+ * The order of `NAV_ITEMS` is the visual top-to-bottom order in the sidebar.
  * `HOME_PATH === PROJECTS_PATH` because the projects view is the site home.
  */
 
@@ -13,8 +13,10 @@ export const PROJECTS_ALIAS_PATH = "/projects"
 export const SESSIONS_PATH = "/sessions"
 export const REPORTS_PATH = "/reports"
 export const SCHEDULERS_PATH = "/schedulers"
+export const SETTINGS_PATH = "/settings"
+export const ENV_VARS_PATH = "/env-vars"
 
-export type NavKey = "requirements" | "sessions" | "reports" | "schedulers"
+export type NavKey = "requirements" | "sessions" | "reports" | "schedulers" | "settings" | "envvars"
 
 export interface NavItem {
   key: NavKey
@@ -27,6 +29,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: "sessions", label: "/sessions", href: SESSIONS_PATH },
   { key: "reports", label: "/reports", href: REPORTS_PATH },
   { key: "schedulers", label: "/schedulers", href: SCHEDULERS_PATH },
+  { key: "envvars", label: "/env-vars", href: ENV_VARS_PATH },
+  { key: "settings", label: "/settings", href: SETTINGS_PATH },
 ] as const
 
 export function sessionsDaysPath(days: number): string {

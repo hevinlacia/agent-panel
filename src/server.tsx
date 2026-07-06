@@ -1,6 +1,6 @@
 /** @jsxImportSource hono/jsx */
 import { Hono, type Context } from "hono"
-import { sessionsDaysPath, SESSIONS_PATH } from "./navigation.ts"
+import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH } from "./navigation.ts"
 import { type FC } from "hono/jsx"
 import { serve } from "@hono/node-server"
 import { upgradeWebSocket } from "@hono/node-server"
@@ -75,10 +75,19 @@ import {
   markAllRead,
 } from "./notifications.ts"
 import {
+  buildManagedEnv,
   getConfig,
   setConfig,
   initConfig,
+  safeEnvVars,
+  safeEnvVarsByFile,
+  deleteEnvVar,
+  ENV_VAR_CATALOG,
   type AppConfig,
+  type EnvFileKind,
+  type EnvFileGroup,
+  type EnvVarEntry,
+  upsertEnvVar,
 } from "./config.ts"
 import {
   buildReleaseChecklist,
@@ -170,12 +179,29 @@ const NODE_MODULES_DIR = join(PROJECT_ROOT, "node_modules")
 // Layout
 // ---------------------------------------------------------------------------
 
-type Tab = "sessions" | "reports" | "requirements" | "settings" | "schedulers"
+type Tab = "sessions" | "reports" | "requirements" | "settings" | "schedulers" | "envvars"
+
+const NAV_ICONS: Record<Tab, string> = {
+  requirements: "PR",
+  sessions: "SE",
+  reports: "RP",
+  schedulers: "SC",
+  settings: "ST",
+  envvars: "EV",
+}
+
+const NAV_LABELS: Record<Tab, string> = {
+  requirements: "Projects",
+  sessions: "Sessions",
+  reports: "Reports",
+  schedulers: "Schedulers",
+  settings: "Settings",
+  envvars: "Env Vars",
+}
 
 /**
- * Operator-style topbar: thin console header with a logo block, optional
- * status badge, and a route strip below it. Both Sessions and Reports nav
- * still work — the route strip keeps them visible in the new style.
+ * Ark-router-inspired application shell: fixed sidebar for primary sections,
+ * compact top command row, and unchanged page body contracts for each route.
  */
 const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, active, children }) => (
   <html lang="zh-CN">
@@ -186,46 +212,63 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
       <link rel="stylesheet" href="/static/style.css" />
     </head>
     <body>
-      <header class="op-topbar">
-        <div class="op-topbar-row">
-          <div class="op-brand">
-            <span class="op-brand-name">OpenCode Operator</span>
-            <span class="op-brand-sep">|</span>
-            <span class="op-brand-status">SNAPSHOT READY</span>
+      <div class="op-shell">
+        <aside class="op-sidebar">
+          <a class="op-sidebar-brand" href="/" aria-label="OpenCode Dashboard home">
+            <span class="op-brand-mark">OC</span>
+            <span class="op-brand-copy">
+              <span class="op-brand-name">OpenCode</span>
+              <span class="op-brand-status">Dashboard</span>
+            </span>
+          </a>
+          <nav class="op-sidebar-nav" aria-label="Primary navigation">
+            {NAV_ITEMS.map((item) => {
+              const key = item.key as Tab
+              return (
+                <a href={item.href} class={active === key ? "op-sidebar-link op-sidebar-link-active" : "op-sidebar-link"}>
+                  <span class="op-sidebar-icon">{NAV_ICONS[key]}</span>
+                  <span>{NAV_LABELS[key]}</span>
+                </a>
+              )
+            })}
+          </nav>
+          <div class="op-sidebar-card">
+            <span class="op-sidebar-card-k">LOCAL PANEL</span>
+            <span class="op-sidebar-card-v">localhost:7331</span>
           </div>
-          <div class="op-meta">
-            <button type="button" class="op-meta-item op-refresh" id="op-force-refresh" title="强制刷新当前页面">↻ 强制刷新</button>
-            <div class="op-notify" id="op-notify">
-              <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
-                <span class="op-notify-icon" aria-hidden="true">🔔</span>
-                <span class="op-notify-badge" id="op-notify-badge" hidden>0</span>
-              </button>
-              <div class="op-notify-panel" id="op-notify-panel" hidden role="dialog" aria-label="通知列表">
-                <div class="op-notify-panel-head">
-                  <span class="op-notify-panel-title">通知中心</span>
-                  <div class="op-notify-panel-actions">
-                    <button type="button" class="op-notify-link" id="op-notify-mark-read">全部标记已读</button>
-                    <button type="button" class="op-notify-link" id="op-notify-dismiss-all">全部清除</button>
+        </aside>
+        <div class="op-content-shell">
+          <header class="op-topbar">
+            <div class="op-topbar-row">
+              <div class="op-title-block">
+                <span class="op-title-eyebrow">{NAV_LABELS[active]}</span>
+                <span class="op-title-main">{title}</span>
+              </div>
+              <div class="op-meta">
+                <button type="button" class="op-meta-item op-refresh" id="op-force-refresh" title="强制刷新当前页面">Refresh</button>
+                <div class="op-notify" id="op-notify">
+                  <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
+                    <span class="op-notify-icon" aria-hidden="true">N</span>
+                    <span class="op-notify-badge" id="op-notify-badge" hidden>0</span>
+                  </button>
+                  <div class="op-notify-panel" id="op-notify-panel" hidden role="dialog" aria-label="通知列表">
+                    <div class="op-notify-panel-head">
+                      <span class="op-notify-panel-title">通知中心</span>
+                      <div class="op-notify-panel-actions">
+                        <button type="button" class="op-notify-link" id="op-notify-mark-read">全部标记已读</button>
+                        <button type="button" class="op-notify-link" id="op-notify-dismiss-all">全部清除</button>
+                      </div>
+                    </div>
+                    <ul class="op-notify-list" id="op-notify-list"></ul>
+                    <div class="op-notify-empty" id="op-notify-empty" hidden>暂无通知</div>
                   </div>
                 </div>
-                <ul class="op-notify-list" id="op-notify-list"></ul>
-                <div class="op-notify-empty" id="op-notify-empty" hidden>暂无通知</div>
               </div>
             </div>
-          </div>
+          </header>
+          <main class={(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}>{children}</main>
         </div>
-        <div class="op-topbar-row op-topbar-routes">
-          <nav class="op-routes">
-            <a href="/" class={active === "requirements" ? "op-route op-route-active" : "op-route"}>Projects</a>
-            <a href="/sessions" class={active === "sessions" ? "op-route op-route-active" : "op-route"}>Sessions</a>
-            <a href="/reports" class={active === "reports" ? "op-route op-route-active" : "op-route"}>Reports</a>
-            <a href="/schedulers" class={active === "schedulers" ? "op-route op-route-active" : "op-route"}>Schedulers</a>
-            <a href="/settings" class={active === "settings" ? "op-route op-route-active" : "op-route"}>Settings</a>
-          </nav>
-          <span class="op-embedded">embedded web terminal · {title}</span>
-        </div>
-      </header>
-      <main class={(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}>{children}</main>
+      </div>
       <div id="op-toast-host" class="op-toast-host" aria-live="polite" aria-atomic="false"></div>
       <script src="/static/notifications.js" defer></script>
       <script src="/static/app.js" defer></script>
@@ -2147,6 +2190,7 @@ app.post("/api/requirement/new-session", async (c) => {
   const ctx = await buildInjectionContext(reqId)
   const title = req.title || reqId
   const startMs = Date.now()
+  const env = await buildManagedEnv()
 
   // Run via the dashboard-owned process queue so background session
   // creation cannot exceed the global OpenCode process cap.
@@ -2154,6 +2198,7 @@ app.post("/api/requirement/new-session", async (c) => {
     bin: "opencode",
     args: ["run", ctx, "--title", title],
     spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
+    env,
   }).catch(() => {})
 
   // Poll for the newly created session id. clearSessionCache forces the
@@ -2727,12 +2772,14 @@ app.get("/schedulers", async (c) => {
 // Settings page + config API
 // ---------------------------------------------------------------------------
 
-const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => (
-  <Layout title="Settings" active="requirements">
+const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => {
+  return (
+  <Layout title="Settings" active="settings">
     <div class="settings-page">
       <div class="page-header">
         <a href="/projects" class="back-link">← Back to projects</a>
         <h1>Dashboard 设置</h1>
+        <p class="muted">管理后台调度和智能提取设置。环境变量已移至 <a href="/env-vars">/env-vars</a> 页面。</p>
       </div>
 
       <section class="settings-section">
@@ -2854,16 +2901,132 @@ const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => (
     </div>
     <script src="/static/config.js" defer></script>
   </Layout>
-)
+  )
+}
 
 app.get("/settings", async (c) => {
   const config = await getConfig()
   return c.html(<SettingsPage config={config} />)
 })
 
+// ---------------------------------------------------------------------------
+// Env vars page + env API
+// ---------------------------------------------------------------------------
+
+const EnvVarsPage: FC<{ groups: EnvFileGroup[] }> = ({ groups }) => {
+  const catalogByName = new Map(ENV_VAR_CATALOG.map((entry) => [entry.name, entry]))
+  const totalVars = groups.reduce((sum, g) => sum + g.variables.length, 0)
+  const setVars = groups.reduce((sum, g) => sum + g.variables.filter((v) => v.hasValue).length, 0)
+  return (
+  <Layout title="Env Vars" active="envvars">
+    <div class="settings-page env-vars-page">
+      <div class="page-header">
+        <a href="/projects" class="back-link">← Back to projects</a>
+        <h1>环境变量管理</h1>
+        <p class="muted">管理 OpenCode skill 所需的环境变量，按文件分组。修改直接写入 <code>~/.config/opencode/</code> 下的原始 env 文件，SOPS 同步会加密敏感文件。</p>
+        <span class="settings-env-count">{setVars} / {totalVars} SET</span>
+      </div>
+
+      <section class="settings-section env-add-section">
+        <div class="settings-section-head">
+          <div>
+            <h2 class="op-section-title">添加 / 覆盖变量</h2>
+            <p class="muted small">填写变量名和值，选择目标文件后保存。值不会回显，只显示脱敏预览。</p>
+          </div>
+        </div>
+        <form id="env-form" class="settings-env-form">
+          <div class="settings-env-grid env-vars-grid">
+            <label class="settings-field">
+              <span class="settings-label">变量名</span>
+              <input id="env-name" class="settings-input" name="name" list="env-known-vars" placeholder="OPENCODE_AI_ARK_HEVIN_API_KEY" autocomplete="off" spellcheck={false} pattern="[A-Za-z_][A-Za-z0-9_]*" required />
+              <datalist id="env-known-vars">
+                {ENV_VAR_CATALOG.map((entry) => <option value={entry.name} label={entry.requiredBy} />)}
+              </datalist>
+            </label>
+            <label class="settings-field settings-env-value-field">
+              <span class="settings-label">值</span>
+              <input id="env-value" class="settings-input" name="value" type="password" placeholder="粘贴新值覆盖旧值" autocomplete="off" spellcheck={false} required />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">说明</span>
+              <input id="env-note" class="settings-input" name="note" placeholder="如：WMS UAT X-Token" autocomplete="off" spellcheck={false} />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">目标文件</span>
+              <select id="env-file" class="settings-input env-file-select" name="file">
+                {groups.map((g) => (
+                  <option value={g.file} selected={g.file === "secrets"}>
+                    {g.label}{g.sensitive ? " (sensitive)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div class="settings-env-actions">
+            <button type="submit" class="btn btn-primary">保存变量</button>
+            <button type="button" id="env-clear" class="btn btn-secondary">清空输入</button>
+            <span id="env-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
+          </div>
+        </form>
+      </section>
+
+      {groups.map((group) => {
+        const setCount = group.variables.filter((v) => v.hasValue).length
+        return (
+        <section class="settings-section settings-section-env env-file-group" data-file={group.file}>
+          <div class="settings-section-head">
+            <div>
+              <h2 class="op-section-title">
+                {group.label}
+                {group.sensitive ? <span class="env-file-badge env-file-badge-sensitive">sensitive</span> : <span class="env-file-badge env-file-badge-safe">plaintext</span>}
+              </h2>
+              <p class="muted small env-file-path">{group.path}</p>
+            </div>
+            <span class="settings-env-count">{setCount} / {group.variables.length} SET</span>
+          </div>
+
+          <div class="settings-env-list" id={`env-list-${group.file}`}>
+            {group.variables.length === 0 ? (
+              <div class="settings-env-empty">此文件中暂无已知变量。</div>
+            ) : group.variables.map((entry) => {
+              const placeholder = catalogByName.get(entry.name)?.placeholder ?? "Paste token / cookie / key"
+              return (
+              <div class="settings-env-row" data-name={entry.name} data-file={group.file}>
+                <div class="settings-env-main">
+                  <code>{entry.name}</code>
+                  <span class={`settings-env-source settings-env-source-${entry.source}`}>{entry.source === "managed" ? "file" : entry.source === "process" ? "process env" : "missing"}</span>
+                  <span class="settings-env-preview">{entry.preview}</span>
+                  {entry.note ? <span class="settings-env-note">{entry.note}</span> : null}
+                  <span class="settings-env-desc">{entry.requiredBy} · {entry.description}</span>
+                </div>
+                <div class="settings-env-row-actions">
+                  <button type="button" class="btn btn-sm btn-secondary env-edit" data-name={entry.name} data-note={entry.note} data-file={group.file} data-placeholder={placeholder}>覆盖</button>
+                  <button type="button" class="btn btn-sm btn-reject env-delete" data-name={entry.name} data-file={group.file}>删除</button>
+                </div>
+              </div>
+            )})}
+          </div>
+        </section>
+        )
+      })}
+    </div>
+    <script src="/static/env-vars.js" defer></script>
+  </Layout>
+  )
+}
+
+app.get("/env-vars", async (c) => {
+  const groups = await safeEnvVarsByFile()
+  return c.html(<EnvVarsPage groups={groups} />)
+})
+
+app.get("/api/env-vars", async (c) => {
+  return c.json({ groups: await safeEnvVarsByFile() })
+})
+
 app.get("/api/config", async (c) => {
   const config = await getConfig()
-  return c.json(config)
+  return c.json({ ...config, envVars: await safeEnvVars(config) })
 })
 
 app.post("/api/config", async (c) => {
@@ -2877,7 +3040,42 @@ app.post("/api/config", async (c) => {
   if (typeof body.autoValuation === "boolean") partial.autoValuation = body.autoValuation
   if (typeof body.valuationThreshold === "number" && body.valuationThreshold > 0) partial.valuationThreshold = Math.floor(body.valuationThreshold)
   const next = await setConfig(partial)
-  return c.json(next)
+  return c.json({ ...next, envVars: await safeEnvVars(next) })
+})
+
+app.post("/api/config/env", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const action = typeof body.action === "string" ? body.action : "upsert"
+  const name = typeof body.name === "string" ? body.name.trim().toUpperCase() : ""
+  if (!/^[A-Z_][A-Z0-9_]{0,79}$/.test(name)) return c.json({ error: "Invalid variable name" }, 400)
+
+  const config = await getConfig()
+  const envVars = [...config.envVars]
+  const existing = envVars.findIndex((entry) => entry.name === name)
+
+  if (action === "delete") {
+    await deleteEnvVar(name)
+    if (existing >= 0) envVars.splice(existing, 1)
+    const next = await setConfig({ envVars })
+    return c.json({ envVars: await safeEnvVars(next), groups: await safeEnvVarsByFile(next) })
+  } else {
+    const value = typeof body.value === "string" ? body.value : ""
+    if (!value && existing < 0) return c.json({ error: "Missing value" }, 400)
+    const note = typeof body.note === "string" ? body.note : ""
+    const file = body.file === "config" || body.file === "internal" || body.file === "secrets" ? body.file as EnvFileKind : "secrets"
+    await upsertEnvVar(name, value || envVars[existing]?.value || "", file)
+    const nextEntry: EnvVarEntry = {
+      name,
+      value: "",
+      note,
+      updatedAt: Date.now(),
+    }
+    if (existing >= 0) envVars[existing] = nextEntry
+    else envVars.push(nextEntry)
+  }
+
+  const next = await setConfig({ envVars })
+  return c.json({ envVars: await safeEnvVars(next), groups: await safeEnvVarsByFile(next) })
 })
 
 // ---------------------------------------------------------------------------
@@ -3429,6 +3627,7 @@ app.get(
           }
 
           const startMs = Date.now()
+          const env = await buildManagedEnv()
           const result = startSession(id, directory, {
             onOutput: (chunk) => {
               if (exited) return
@@ -3455,7 +3654,7 @@ app.get(
               }
               try { ws.close(1011, "spawn error") } catch { /* noop */ }
             },
-          }, { createNew, title })
+          }, { createNew, title, env })
           if ("error" in result) {
             try {
               ws.send(JSON.stringify({ type: "error", message: result.error }))

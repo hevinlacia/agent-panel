@@ -16,28 +16,30 @@ import {
   PROJECTS_PATH,
   REPORTS_PATH,
   SCHEDULERS_PATH,
+  SETTINGS_PATH,
   SESSIONS_PATH,
+  ENV_VARS_PATH,
   sessionsDaysPath,
 } from "../src/navigation.ts"
 
-test("NAV_ITEMS labels are projects, sessions, reports, schedulers in that order", () => {
+test("NAV_ITEMS labels are projects, sessions, reports, schedulers, env-vars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.label),
-    ["/projects", "/sessions", "/reports", "/schedulers"],
+    ["/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
   )
 })
 
-test("NAV_ITEMS hrefs are /, /sessions, /reports, /schedulers in that order", () => {
+test("NAV_ITEMS hrefs are /, /sessions, /reports, /schedulers, /env-vars, /settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.href),
-    ["/", "/sessions", "/reports", "/schedulers"],
+    ["/", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
   )
 })
 
-test("NAV_ITEMS keys are requirements, sessions, reports, schedulers in that order", () => {
+test("NAV_ITEMS keys are requirements, sessions, reports, schedulers, envvars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.key),
-    ["requirements", "sessions", "reports", "schedulers"],
+    ["requirements", "sessions", "reports", "schedulers", "envvars", "settings"],
   )
 })
 
@@ -51,10 +53,12 @@ test("PROJECTS_ALIAS_PATH is /projects and is distinct from HOME_PATH", () => {
   assert.notEqual(PROJECTS_ALIAS_PATH, HOME_PATH)
 })
 
-test("SESSIONS_PATH, REPORTS_PATH and SCHEDULERS_PATH constants", () => {
+test("route path constants", () => {
   assert.equal(SESSIONS_PATH, "/sessions")
   assert.equal(REPORTS_PATH, "/reports")
   assert.equal(SCHEDULERS_PATH, "/schedulers")
+  assert.equal(SETTINGS_PATH, "/settings")
+  assert.equal(ENV_VARS_PATH, "/env-vars")
 })
 
 test("sessionsDaysPath builds /sessions?days=<n>", () => {

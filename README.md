@@ -55,6 +55,9 @@ npm run typecheck
 | `/requirement?id=<req_...>` | 需求详情页（展示需求记忆、上线包、测试链路、Review、关联 session）。 |
 | `/reports` | Experience report 列表（原 `/` 路径平移到这里）。 |
 | `/report?path=...` | 单个 report 详情与 candidate 勾选/确认。 |
+| `/schedulers` | 后台调度器状态页（自动提取、价值发现、全量同步等 worker 运行状态）。 |
+| `/env-vars` | **环境变量管理**。按文件分组（config / internal / secrets）管理 OpenCode skill 所需的 env vars，修改直接写入 `~/.config/opencode/` 下的原始 env 文件。 |
+| `/settings` | Dashboard 设置（提取模型、自动提取开关、价值发现阈值等）。 |
 | `/sessions/refresh` | 强制刷新 session 缓存后重新渲染列表。 |
 | `/api/sessions` `/api/session?id=...` | JSON API |
 | `/api/reports` `/api/report?path=...` `/api/confirm` | 原有 report API |

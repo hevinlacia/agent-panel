@@ -45,6 +45,7 @@ export type TerminalSession = {
 export type StartSessionOptions = {
   createNew?: boolean
   title?: string
+  env?: Record<string, string>
 }
 
 const OPENCODE_BIN_CANDIDATES = ["/usr/bin/opencode", "opencode"]
@@ -90,7 +91,7 @@ export function startSession(
       cols: DEFAULT_COLS,
       rows: DEFAULT_ROWS,
       cwd,
-      env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>,
+      env: { ...(options.env ?? (process.env as Record<string, string>)), TERM: "xterm-256color" },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

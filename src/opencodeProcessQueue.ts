@@ -25,6 +25,7 @@ export interface QueuedOpencodeProcessOptions {
   bin: string
   args: string[]
   spawnOptions?: Parameters<typeof spawn>[2]
+  env?: Record<string, string>
   timeoutMs?: number
   spawnFn?: typeof spawn
   onSpawn?: (child: ChildProcess) => void
@@ -79,7 +80,10 @@ function startItem(item: QueueItem): void {
   const sp = item.opts.spawnFn ?? spawn
   let child: ChildProcess
   try {
-    child = sp(item.opts.bin, item.opts.args, item.opts.spawnOptions ?? { stdio: ["ignore", "pipe", "pipe"] })
+    const spawnOptions = item.opts.env
+      ? { ...(item.opts.spawnOptions ?? { stdio: ["ignore", "pipe", "pipe"] }), env: item.opts.env }
+      : (item.opts.spawnOptions ?? { stdio: ["ignore", "pipe", "pipe"] })
+    child = sp(item.opts.bin, item.opts.args, spawnOptions)
   } catch (err) {
     activeCount--
     item.reject(err)
