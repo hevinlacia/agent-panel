@@ -35,6 +35,7 @@ type PiEntry = {
   timestamp?: unknown
   provider?: unknown
   modelId?: unknown
+  name?: unknown
   message?: unknown
 }
 
@@ -118,6 +119,12 @@ async function readPiSessionFile(path: string): Promise<SessionInfo | null> {
     if (!modelId && entry.type === "model_change") {
       if (typeof entry.modelId === "string") modelId = entry.modelId
       if (typeof entry.provider === "string") modelProvider = entry.provider
+    }
+    // Prefer the display name set via `pi --name` (stored in a
+    // `session_info` entry) over the first user message.
+    if (!title && entry.type === "session_info" && typeof entry.name === "string") {
+      const n = entry.name.trim()
+      if (n) title = safeTruncate(n)
     }
     if (!title && entry.type === "message") {
       title = textFromUserMessage(entry.message)

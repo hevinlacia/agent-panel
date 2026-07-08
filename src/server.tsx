@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws"
 import { readFile, writeFile, appendFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { join, dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { scanReports, getReport, saveConfirmation, getConfirmationStatus, type Confirmation, type ConfirmationStatus } from "./scanner.ts"
@@ -2201,11 +2202,13 @@ app.get("/requirement", async (c) => {
  * it, associate the new session with the requirement and return
  * `{ sessionId, command }` as JSON.
  *
- * OpenCode: `opencode run "<injection-context>" --title "<title>"`
- * Pi:       `pi -p "<injection-context>" --name "<title>"`
+ * OpenCode: spawn `opencode run "<injection-context>" --title "<title>"` and
+ * poll for the new id (15s timeout).
+ * Pi:       pre-assign a UUID session-id, return
+ * `pi --session-id <id> --name "<title>"` immediately (no spawn, no wait);
+ * the session is created when the user runs the command.
  *
- * The user copies the returned resume command (`opencode -s <id>` or
- * `pi --session <id>`) and pastes it into their terminal.
+ * The user copies the returned command and pastes it into their terminal.
  *
  * Errors:
  *   400 - missing reqId
@@ -2220,32 +2223,33 @@ app.post("/api/requirement/new-session", async (c) => {
   if (!req) return c.json({ error: "Requirement not found" }, 404)
 
   const { harness } = await getConfig()
-  const ctx = await buildInjectionContext(reqId)
   const title = req.title || reqId
-  const startMs = Date.now()
-  const env = await buildManagedEnv()
 
   if (harness === "pi") {
-    // `pi -p` runs non-interactively: it creates a session, processes the
-    // context prompt, and exits - mirroring `opencode run`. The user then
-    // continues the seeded session via `pi --session <id>`.
-    const child = spawn("pi", ["-p", ctx, "--name", title], {
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-      env,
+    // Pi: return a copyable command immediately. Pre-assign a UUID
+    // session-id so the requirement binding is recorded now; when the
+    // user runs the command, pi creates the session with this exact id
+    // and the dashboard scan picks it up. No background spawn, no wait.
+    const sessionId = randomUUID()
+    const name = `${req.id} ${title}`.slice(0, 100)
+    try { await associateSession(reqId, sessionId) } catch { /* noop */ }
+    return c.json({
+      sessionId,
+      command: `pi --session-id ${sessionId} --name ${JSON.stringify(name)}`,
     })
-    child.on("error", () => { /* surfaced via poll timeout */ })
-    child.unref()
-  } else {
-    // Run via the dashboard-owned process queue so background session
-    // creation cannot exceed the global OpenCode process cap.
-    void runQueuedOpencodeProcess({
-      bin: "opencode",
-      args: ["run", ctx, "--title", title],
-      spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
-      env,
-    }).catch(() => {})
   }
+
+  // OpenCode: spawn `opencode run "<ctx>" --title <title>` as a detached
+  // background process, then poll for the new session id.
+  const ctx = await buildInjectionContext(reqId)
+  const startMs = Date.now()
+  const env = await buildManagedEnv()
+  void runQueuedOpencodeProcess({
+    bin: "opencode",
+    args: ["run", ctx, "--title", title],
+    spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
+    env,
+  }).catch(() => {})
 
   // Poll for the newly created session id. clearDashboardSessionCache forces
   // the next scan to re-read the store so we see the new row the moment the
