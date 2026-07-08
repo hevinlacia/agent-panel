@@ -939,6 +939,22 @@ async function readFileSnippet(path: string | undefined, limit = 500): Promise<s
  * The DEFAULT_REQ_ID / "req not found" fallbacks return a minimal
  * 4-line block that only carries the new closing instruction.
  */
+/** Directory where per-session injection context files are written for `pi --append-system-prompt`. */
+const INJECTION_CTX_DIR = join(homedir(), ".local", "share", "agent-panel", "ctx")
+
+/**
+ * Write the requirement injection context to a per-session file and return
+ * its path, so the `pi --session-id <id> --name <title> --append-system-prompt
+ * <file>` command can feed a large multi-line context without overflowing
+ * argv limits or shell-escaping pain.
+ */
+export async function writeInjectionContext(sessionId: string, ctx: string): Promise<string> {
+  await mkdir(INJECTION_CTX_DIR, { recursive: true })
+  const path = join(INJECTION_CTX_DIR, `${sessionId}.md`)
+  await writeFile(path, ctx, "utf-8")
+  return path
+}
+
 export async function buildInjectionContext(reqId: string): Promise<string> {
   const closing =
     "请阅读以上需求背景、需求对齐结论和进展信息。不要自行开始执行任何任务，等待用户下达具体任务安排。"

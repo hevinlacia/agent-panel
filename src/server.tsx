@@ -43,6 +43,7 @@ import {
   getRequirementForSession,
   getAllAssociatedSessionIds,
   buildInjectionContext,
+  writeInjectionContext,
   scanHermesRequirements,
   loadAssociations,
   DEFAULT_REQ_ID,
@@ -2232,10 +2233,12 @@ app.post("/api/requirement/new-session", async (c) => {
     // and the dashboard scan picks it up. No background spawn, no wait.
     const sessionId = randomUUID()
     const name = `${req.id} ${title}`.slice(0, 100)
+    const ctx = await buildInjectionContext(reqId)
+    const ctxFile = await writeInjectionContext(sessionId, ctx)
     try { await associateSession(reqId, sessionId) } catch { /* noop */ }
     return c.json({
       sessionId,
-      command: `pi --session-id ${sessionId} --name ${JSON.stringify(name)}`,
+      command: `pi --session-id ${sessionId} --name ${JSON.stringify(name)} --append-system-prompt ${ctxFile}`,
     })
   }
 
