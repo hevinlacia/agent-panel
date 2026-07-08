@@ -212,7 +212,7 @@ export const ENV_VAR_CATALOG: readonly EnvVarCatalogEntry[] = [
 ] as const
 
 const DEFAULTS: AppConfig = {
-  harness: "opencode",
+  harness: "pi",
   autoExtract: false,
   autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
@@ -477,7 +477,7 @@ function formatEnvLine(key: string, value: string): string {
 }
 
 function normalizeHarness(value: unknown): DashboardHarness {
-  return value === "pi" ? "pi" : "opencode"
+  return value === "opencode" ? "opencode" : "pi"
 }
 
 function normalizeEnvVars(value: unknown): EnvVarEntry[] {

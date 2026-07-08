@@ -32,7 +32,7 @@ export type { DashboardHarness }
 export { summarizeSessions }
 
 export function normalizeHarness(value: unknown): DashboardHarness {
-  return value === "pi" ? "pi" : "opencode"
+  return value === "opencode" ? "opencode" : "pi"
 }
 
 export function harnessLabel(harness: DashboardHarness): string {
