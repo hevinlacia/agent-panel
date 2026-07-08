@@ -1,4 +1,4 @@
-# AI_DEVELOPMENT.md — agent-panel handoff
+# AI_DEVELOPMENT.md — opencode-dashboard handoff
 
 > Long-form handoff for future AIs and developers continuing this project.
 > For quick rules and the verification checklist, see [`AGENTS.md`](../AGENTS.md).
@@ -8,7 +8,7 @@
 
 ## 1. Quick orientation
 
-`agent-panel` is a single-process Node.js web app that you can run
+`opencode-dashboard` is a single-process Node.js web app that you can run
 locally and point at the same machine's OpenCode data directory. It does
 two things:
 
@@ -57,7 +57,7 @@ as ESM / classic scripts with `defer` and `type="module"` respectively.
 ## 2. Architecture / file map
 
 ```
-agent-panel/
+opencode-dashboard/
 ├── src/
 │   ├── server.tsx          # Hono app, JSX, upgradeWebSocket, vendor + static routes
 │   ├── sessions.ts         # SQLite → CLI → fs scan, helpers, session-id guard
@@ -318,7 +318,7 @@ selected checkboxes.
   without a bundler and survives `node --test` runs that resolve
   the package.
 - To upgrade xterm: bump `@xterm/xterm` and `@xterm/addon-fit` in
-  `package.json`, run `npm install`, and re-verify the three vendor
+  `package.json`, run `bun install`, and re-verify the three vendor
   routes return 200 (the file paths inside the package may move
   between major versions).
 
@@ -331,8 +331,8 @@ selected checkboxes.
 ```bash
 mise list                # confirm node/npm are installed
 mise current             # see the active version
-mise exec -- npm test          # node --test --import tsx tests/*.test.ts
-mise exec -- npm run typecheck # tsc --noEmit
+mise exec -- bun test          # node --test --import tsx tests/*.test.ts
+mise exec -- bun run typecheck # tsc --noEmit
 ```
 
 Tests are pure unit tests for the side-effect-free modules. They
@@ -402,8 +402,8 @@ read DOM state with `js(...)` for non-visual checks.
 
 ```bash
 # Start the server (background).
-cd /home/hevin/GitHub/agent-panel
-npm start &
+cd /home/hevin/Developer/tools/agent-panel
+bun start &
 SERVER_PID=$!
 sleep 2
 
@@ -501,12 +501,12 @@ that no overflow appears in either regime.
 ### `EADDRINUSE` on port 7331
 
 - `lsof -i :7331` (or `ss -ltnp 'sport = :7331'`) to find the
-  conflicting PID. Common offenders: a previous `npm start` whose
+  conflicting PID. Common offenders: a previous `bun start` whose
   parent shell was killed but the Node child survived, or a
-  long-running `mise exec -- npm run dev` from another terminal.
+  long-running `mise exec -- bun run dev` from another terminal.
 - Kill the owner with `kill <pid>`; do not blindly `pkill node`
   because the host may be running other OpenCode-related services.
-- Or run on another port: `PORT=7401 npm start`.
+- Or run on another port: `PORT=7401 bun start`.
 
 ### `sqlite3: command not found`
 
@@ -516,13 +516,13 @@ that no overflow appears in either regime.
   `source: "fs"` and the `RUNNING LANES` block keeps working.
 - To restore the SQLite source, install `sqlite3` (Arch:
   `sudo pacman -S sqlite`; macOS: preinstalled; Debian/Ubuntu:
-  `sudo apt install sqlite3`). Re-run `npm start`; the cache TTL is
+  `sudo apt install sqlite3`). Re-run `bun start`; the cache TTL is
   4 s, so the new source should be picked up within a refresh.
 
 ### `node-pty` native binding fails to build or load
 
 - `node-pty` is a native module. On a fresh checkout run
-  `npm rebuild node-pty` (or `npm install` if it has never been
+  `bun install --force` (or `bun install` if it has never been
   built). On Linux you may need `python3`, `make`, and a C++
   toolchain (`gcc/g++`); on macOS Xcode CLT.
 - If rebuild fails, the `/session?id=…` page still renders but

@@ -53,6 +53,13 @@ export type SessionInfo = {
   tokensCacheRead?: number
   tokensCacheWrite?: number
   cost?: number
+  /** Pi JSONL-derived counts, populated when the active harness is Pi. */
+  messageCount?: number
+  userMessageCount?: number
+  assistantMessageCount?: number
+  toolResultCount?: number
+  toolCallCount?: number
+  thinkingLevel?: string
   /** SQLite parent_id column; null/undefined for top-level sessions. */
   parentId?: string | null
 }

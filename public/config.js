@@ -39,10 +39,13 @@
     form.addEventListener("submit", function (ev) {
       ev.preventDefault()
 
+      var repoInputs = Array.prototype.slice.call(document.querySelectorAll(".cfg-github-repo"))
       var data = {
         autoExtract: document.getElementById("cfg-auto-extract").checked,
         autoExtractSchedule: document.getElementById("cfg-auto-extract-schedule").checked,
         fullSyncSchedule: document.getElementById("cfg-full-sync-schedule").checked,
+        fullSyncTimes: document.getElementById("cfg-full-sync-times").value.split(/[，,\s]+/).map(function (s) { return s.trim() }).filter(Boolean),
+        fullSyncGithubRepos: repoInputs.filter(function (el) { return el.checked }).map(function (el) { return el.value }),
         extractModel: document.getElementById("cfg-model").value.trim(),
         minChangeMessages: parseInt(document.getElementById("cfg-min-change").value, 10),
         autoValuation: document.getElementById("cfg-auto-valuation").checked,

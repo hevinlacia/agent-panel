@@ -30,13 +30,22 @@ test("getConfig returns defaults when no file exists", async () => {
   assert.equal(cfg.extractModel, "litellm-local/deepseek-v4-flash-auto")
   assert.equal(cfg.minChangeMessages, 5)
   assert.equal(cfg.fullSyncSchedule, true)
+  assert.deepEqual(cfg.fullSyncTimes, ["12:00", "18:00", "20:30", "23:30"])
+  assert.deepEqual(cfg.fullSyncGithubRepos, [])
   assert.deepEqual(cfg.envVars, [])
 })
 
 test("setConfig persists and reloads", async () => {
   const p = newTmpPath()
   _resetForTest(p)
-  await setConfig({ autoExtract: true, extractModel: "gpt-4o", minChangeMessages: 10, fullSyncSchedule: false })
+  await setConfig({
+    autoExtract: true,
+    extractModel: "gpt-4o",
+    minChangeMessages: 10,
+    fullSyncSchedule: false,
+    fullSyncTimes: ["7:05", "18:00", "bad"],
+    fullSyncGithubRepos: ["github/browser-harness", "/etc/passwd"],
+  })
   _resetForTest(p)
   await initConfig()
   const cfg = await getConfig()
@@ -44,6 +53,8 @@ test("setConfig persists and reloads", async () => {
   assert.equal(cfg.extractModel, "gpt-4o")
   assert.equal(cfg.minChangeMessages, 10)
   assert.equal(cfg.fullSyncSchedule, false)
+  assert.deepEqual(cfg.fullSyncTimes, ["07:05", "18:00"])
+  assert.deepEqual(cfg.fullSyncGithubRepos, ["/home/hevin/Developer/github/browser-harness"])
 })
 
 test("setConfig merges partial updates", async () => {

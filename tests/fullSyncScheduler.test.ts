@@ -14,6 +14,7 @@ import {
   FULL_SYNC_HOUR,
   FULL_SYNC_MINUTE,
   msUntilNextLocalTime,
+  normalizeFullSyncTimes,
   triggerFullSync,
 } from "../src/fullSyncScheduler.ts"
 
@@ -56,6 +57,11 @@ test("msUntilNextLocalTime: rolls to next day after 20:30", () => {
   assert.equal(msUntilNextLocalTime(20, 30, now), (23 * 60 + 59) * 60 * 1000)
 })
 
+test("normalizeFullSyncTimes: keeps valid HH:mm values and falls back to defaults", () => {
+  assert.deepEqual(normalizeFullSyncTimes(["7:05", "18:00", "bad", "24:00"]), ["07:05", "18:00"])
+  assert.deepEqual(normalizeFullSyncTimes([]), ["12:00", "18:00", "20:30", "23:30"])
+})
+
 test("triggerFullSync: runs fixed full-sync command", async () => {
   const captured: { argv?: string[]; env?: NodeJS.ProcessEnv } = {}
   const result = await triggerFullSync({
@@ -66,6 +72,20 @@ test("triggerFullSync: runs fixed full-sync command", async () => {
   assert.equal(result.ok, true)
   assert.deepEqual(captured.argv, ["--full"])
   assert.equal(captured.env?.OPENCODE_SYNC_SOURCE, "dashboard-full-sync")
+})
+
+test("triggerFullSync: adds GitHub projects sync when repos are selected", async () => {
+  const captured: { argv?: string[]; env?: NodeJS.ProcessEnv } = {}
+  const result = await triggerFullSync({
+    syncScript: fakeScriptPath(),
+    githubRepos: ["/home/hevin/Developer/github/browser-harness"],
+    spawnFn: fakeSpawn({ code: 0, stdout: "ok", captured }),
+    nowFn: () => 1000,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(captured.argv, ["--full", "--github-projects"])
+  assert.ok(captured.env?.GITHUB_PROJECTS_CONFIG)
+  assert.ok(captured.env?.GITHUB_PROJECTS_SYNC_SCRIPT)
 })
 
 test("triggerFullSync: returns failure when script is missing", async () => {

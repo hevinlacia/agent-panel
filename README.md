@@ -1,4 +1,4 @@
-# agent-panel
+# opencode-dashboard
 
 本地常驻 Web 控制面，在浏览器里驱动本机的 coding agent session。当前以 **pi** 为主力
 harness，同时保留 OpenCode 兼容代码（后续逐步清理）。
@@ -17,20 +17,20 @@ session」都按当前 harness 分派。
 ## 快速开始
 
 ```bash
-cd ~/Developer/playground/agent-panel
-npm install
-npm start
-# -> Agent Panel running at http://localhost:7331
+cd ~/Developer/tools/agent-panel
+bun install
+bun start
+# -> opencode-dashboard running at http://localhost:7331
 ```
 
-开发模式（文件变更自动重启）：`npm run dev`
-类型检查：`npm run typecheck`
+开发模式（文件变更自动重启）：`bun run dev`
+类型检查：`bun run typecheck`
 
 后台常驻（Linux + systemd user service）：
 
 ```bash
 ./scripts/install-systemd.sh
-# -> 安装并启动 agent-panel.service，默认端口 7331
+# -> 安装并启动 opencode-dashboard.service，默认端口 7331
 # -> PORT=8080 ./scripts/install-systemd.sh 可改端口
 ```
 
@@ -39,7 +39,7 @@ npm start
 ## Harness 模式
 
 全局 `config.harness`（`"opencode" | "pi"`），右上角切换，持久化到
-`~/.local/share/agent-panel/config.json`。切换后所有路由重新按 harness 读取数据 /
+`~/.local/share/opencode-dashboard/config.json`。切换后所有路由重新按 harness 读取数据 /
 spawn 终端。
 
 | 能力 | pi 模式（主力） | opencode 模式（保留） |
@@ -88,7 +88,7 @@ OpenCode 专属页面（`/reports` `/report` `/schedulers` `/env-vars` 及对应
 ## 需求生命周期（Hermes，harness 无关）
 
 需求目录在 `~/.agents/req/<project>/.../<req-id>/`，dashboard 只维护 session 关联
-（`~/.local/share/agent-panel/associations.json`）和状态写入。关键文件：
+（`~/.local/share/opencode-dashboard/associations.json`）和状态写入。关键文件：
 
 - `memory.md` — 新建 session 的首要记忆入口
 - `alignment.md` — 需求对齐阶段的标准业务说明
@@ -127,9 +127,9 @@ public/
 ## 验证
 
 ```bash
-npm run typecheck   # tsc --noEmit，覆盖 src 与 tests
-npm test            # node --test + tsx
-npm start           # 打开 http://localhost:7331
+bun run typecheck   # tsc --noEmit，覆盖 src 与 tests
+bun test            # node --test + tsx
+bun start           # 打开 http://localhost:7331
 ```
 
 ## 安全约束

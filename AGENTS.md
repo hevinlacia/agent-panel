@@ -1,12 +1,12 @@
-# AGENTS.md — agent-panel
+# AGENTS.md — opencode-dashboard
 
-> AI / developer guide for the `agent-panel` repo.
+> AI / developer guide for the `opencode-dashboard` repo.
 > This file is read before making changes. Project-specific rules win; personal
 > overlay rules in the `<!-- personal-project-hooks:start -->` block are additive.
 
 ## 1. Project purpose
 
-`agent-panel` is a **local web control panel** for browsing and driving
+`opencode-dashboard` is a **local web control panel** for browsing and driving
 OpenCode sessions on the same machine. It runs as a single Hono + `hono/jsx`
 SSR process (no Vite / React build chain) and exposes:
 
@@ -49,7 +49,7 @@ Default port: `7331` (overridable via `PORT`).
   experience reports, and triggers execution forks on user confirmation.
 - `src/experienceMarkers.ts` — persistent marker store for sessions flagged
   by the user for deferred auto-summarization. Backed by
-  `~/.local/share/agent-panel/experience-markers.json` (7-day TTL).
+  `~/.local/share/opencode-dashboard/experience-markers.json` (7-day TTL).
 - `src/experienceAutoSummary.ts` — background worker that polls the marker
   store, waits for sessions to go idle ≥1 h, then forks them to generate
   experience reports and execute confirmed candidates. Reuses
@@ -208,14 +208,14 @@ mise list                  # confirm node/npm are installed
 mise current               # see the active version
 
 # 1. Compile-only check.
-mise exec -- npm run typecheck
+mise exec -- bun run typecheck
 
 # 2. Unit tests (paths, sessions, terminalProtocol).
-mise exec -- npm test
+mise exec -- bun test
 
 # 3. Manual / visual check (only when the change touched UI, CSS, or the
 #    embedded terminal page).
-npm start &                 # serves on http://localhost:7331
+bun start &                 # serves on http://localhost:7331
 # Use the browser-harness skill to:
 #   - screenshot /
 #   - assert laneCount, no horizontal overflow, MODEL + WORKTREE labels visible
@@ -223,7 +223,7 @@ npm start &                 # serves on http://localhost:7331
 #   - open /reports and confirm cards still render
 ```
 
-For docs-only changes, `typecheck` and `npm test` are not required; just
+For docs-only changes, `typecheck` and `bun test` are not required; just
 re-read the created files for sanity (no broken links, no secrets).
 
 ## 6. House rules

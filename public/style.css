@@ -3908,16 +3908,16 @@ body {
 
 .sched-config-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 0.85fr) minmax(340px, 1.35fr) minmax(240px, 1fr);
-  gap: 14px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .sched-config-card {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
-  padding: 16px;
+  padding: 18px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.035);
@@ -4001,9 +4001,63 @@ body {
   cursor: pointer;
 }
 
+.sched-github-repos {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sched-repo-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.sched-repo-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.14);
+  cursor: pointer;
+}
+
+.sched-repo-row input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--cyan);
+}
+
+.sched-repo-row span {
+  min-width: 0;
+}
+
+.sched-repo-row strong,
+.sched-repo-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sched-repo-row strong {
+  color: var(--text-strong);
+  font-size: 0.82rem;
+}
+
+.sched-repo-row small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
 .sched-config-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 130px;
+  grid-template-columns: minmax(360px, 1fr) 160px;
   gap: 12px;
 }
 
@@ -4078,45 +4132,4 @@ body {
   .sched-switch-row {
     align-items: flex-start;
   }
-}
-
-/* ── Harness switch (top-right OpenCode/Pi toggle) ── */
-
-.op-harness-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.25);
-}
-
-.op-harness-btn {
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  padding: 3px 9px;
-  cursor: pointer;
-  line-height: 1.4;
-  transition: background 0.12s, color 0.12s;
-}
-
-.op-harness-btn:hover {
-  color: var(--text-strong);
-  background: var(--bg-hover);
-}
-
-.op-harness-btn-active {
-  color: var(--bg);
-  background: var(--cyan);
-}
-
-.op-harness-btn-active:hover {
-  color: var(--bg);
-  background: var(--primary-hover);
 }

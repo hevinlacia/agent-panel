@@ -5,7 +5,7 @@ import { type FC } from "hono/jsx"
 import { serve } from "@hono/node-server"
 import { upgradeWebSocket } from "@hono/node-server"
 import { WebSocketServer } from "ws"
-import { readFile, writeFile, appendFile } from "node:fs/promises"
+import { readFile, writeFile, appendFile, readdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -168,12 +168,12 @@ import {
   readSessionTranscript,
 } from "./sessionTranscript.ts"
 import {
-  FULL_SYNC_HOUR,
-  FULL_SYNC_MINUTE,
+  DEFAULT_FULL_SYNC_TIMES,
   getLastFullSyncResult,
   isFullSyncSchedulerRunning,
   POLL_INTERVAL_MS as FULL_SYNC_POLL_MS,
   startFullSyncScheduler,
+  stopFullSyncScheduler,
 } from "./fullSyncScheduler.ts"
 import {
   getOpencodeProcessQueueStatus,
@@ -256,10 +256,6 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
                 <span class="op-title-main">{title}</span>
               </div>
               <div class="op-meta">
-                <div class="op-harness-switch" id="op-harness-switch" title="切换 agent harness：OpenCode / Pi">
-                  <button type="button" class="op-harness-btn" data-harness="opencode" aria-pressed="true">OC</button>
-                  <button type="button" class="op-harness-btn" data-harness="pi" aria-pressed="false">PI</button>
-                </div>
                 <button type="button" class="op-meta-item op-refresh" id="op-force-refresh" title="强制刷新当前页面">Refresh</button>
                 <div class="op-notify" id="op-notify">
                   <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
@@ -285,7 +281,6 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
         </div>
       </div>
       <div id="op-toast-host" class="op-toast-host" aria-live="polite" aria-atomic="false"></div>
-      <script src="/static/harness-switch.js" defer></script>
       <script src="/static/notifications.js" defer></script>
       <script src="/static/app.js" defer></script>
     </body>
@@ -396,15 +391,15 @@ const SessionLane: FC<{ session: SessionInfo; index: number; total: number; chil
   const runTag = "RUN-LANE-" + String(total - index).padStart(3, "0")
   const titleLine = "Agent Run"
   const agentName = session.agent || "session"
-  const subtitle = `OpenCode ${agentName} thread is active.`
+  const subtitle = `Pi ${agentName} session is active.`
   const statusPhrase = session.status === "running"
-    ? `OpenCode ${agentName} thread is live — last touched ${relText}.`
+    ? `Pi ${agentName} session is live — last touched ${relText}.`
     : session.status === "idle"
-    ? `OpenCode ${agentName} thread is paused — last touched ${relText}.`
-    : `OpenCode ${agentName} thread is stale — last touched ${relText}.`
+    ? `Pi ${agentName} session is paused — last touched ${relText}.`
+    : `Pi ${agentName} session is stale — last touched ${relText}.`
   const worktree = session.worktree || "none"
-  const branch = session.directory ? session.directory.split("/").filter(Boolean).pop() || worktree : worktree
-  const totalTokens = (session.tokensInput || 0) + (session.tokensOutput || 0) + (session.tokensCacheRead || 0)
+  const totalTokens = (session.tokensInput || 0) + (session.tokensOutput || 0) + (session.tokensReasoning || 0) + (session.tokensCacheRead || 0) + (session.tokensCacheWrite || 0)
+  const messageCount = session.messageCount ?? 0
   const childList = childSessions && childSessions.length > 0 ? childSessions : null
   return (
     <div class="op-lane">
@@ -421,44 +416,44 @@ const SessionLane: FC<{ session: SessionInfo; index: number; total: number; chil
           <p class="op-lane-subtitle">{subtitle}</p>
           <p class="op-lane-phrase">{statusPhrase}</p>
           <div class="op-lane-stats">
-            <span class="op-stat"><span class="op-stat-k">INPUT</span><span class="op-stat-v">{formatTokens(session.tokensInput)}</span></span>
-            <span class="op-stat"><span class="op-stat-k">OUTPUT</span><span class="op-stat-v">{formatTokens(session.tokensOutput)}</span></span>
-            <span class="op-stat"><span class="op-stat-k">CACHE&nbsp;R</span><span class="op-stat-v">{formatTokens(session.tokensCacheRead)}</span></span>
-            <span class="op-stat"><span class="op-stat-k">REASON</span><span class="op-stat-v">{formatTokens(session.tokensReasoning)}</span></span>
-            <span class="op-stat"><span class="op-stat-k">TOTAL</span><span class="op-stat-v">{formatTokens(totalTokens)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">MESSAGES</span><span class="op-stat-v">{formatTokens(messageCount)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">USER</span><span class="op-stat-v">{formatTokens(session.userMessageCount)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">ASSIST</span><span class="op-stat-v">{formatTokens(session.assistantMessageCount)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">TOOLS</span><span class="op-stat-v">{formatTokens(session.toolCallCount)}</span></span>
+            <span class="op-stat"><span class="op-stat-k">TOKENS</span><span class="op-stat-v">{formatTokens(totalTokens)}</span></span>
           </div>
           <div class="op-lane-grid">
             <div class="op-grid-cell">
-              <span class="op-grid-k">CODEX THREAD</span>
+              <span class="op-grid-k">PI SESSION</span>
               <span class="op-grid-v mono">{shortSessionId(session.id)}</span>
             </div>
             <div class="op-grid-cell">
-              <span class="op-grid-k">THREAD FLAGS</span>
-              <span class="op-grid-v mono">{statusLabel(session.status)} · {sourceLabel(session.source)}</span>
+              <span class="op-grid-k">STATUS</span>
+              <span class="op-grid-v mono">{statusLabel(session.status)} · updated {relText}</span>
             </div>
             <div class="op-grid-cell">
-              <span class="op-grid-k">PROTOCOL EVENT</span>
-              <span class="op-grid-v mono">opencode.pty.start</span>
-            </div>
-            <div class="op-grid-cell">
-              <span class="op-grid-k">BRANCH</span>
-              <span class="op-grid-v mono" title={session.directory}>{branch}</span>
-            </div>
-            <div class="op-grid-cell">
-              <span class="op-grid-k">WORKTREE</span>
+              <span class="op-grid-k">PROJECT DIR</span>
               <span class="op-grid-v mono" title={session.directory || ""}>{worktree}</span>
-            </div>
-            <div class="op-grid-cell">
-              <span class="op-grid-k">BACKLOG OWNERSHIP</span>
-              <span class="op-grid-v mono">{session.projectId || "global"}</span>
             </div>
             <div class="op-grid-cell">
               <span class="op-grid-k">MODEL</span>
               <span class="op-grid-v mono" title={session.modelProvider ? `${session.modelProvider}` : ""}>{modelDisplay(session)}</span>
             </div>
             <div class="op-grid-cell">
-              <span class="op-grid-k">NEXT RETRY</span>
-              <span class="op-grid-v mono">{updatedText} · {relText}</span>
+              <span class="op-grid-k">PROVIDER</span>
+              <span class="op-grid-v mono">{session.modelProvider || "unknown"}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">THINKING</span>
+              <span class="op-grid-v mono">{session.thinkingLevel || "default"}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">TOOL RESULTS</span>
+              <span class="op-grid-v mono">{formatTokens(session.toolResultCount)}</span>
+            </div>
+            <div class="op-grid-cell">
+              <span class="op-grid-k">UPDATED</span>
+              <span class="op-grid-v mono">{updatedText}</span>
             </div>
           </div>
         </div>
@@ -536,15 +531,13 @@ const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof sum
 
       {top.length === 0 ? (
         <div class="op-empty">
-          <p>No OpenCode sessions found.</p>
+          <p>No Pi sessions found.</p>
           <p class="muted small">No sessions in the selected time range. Try a wider range or <a href={sessionsDaysPath(0)}>view all</a>.</p>
           <p class="muted small">
-            Start one with <code>opencode</code> in any project, or ensure{" "}
-            <code>~/.local/share/opencode/opencode.db</code> is readable.
+            Start one with <code>pi</code> in any project, or ensure <code>~/.pi/agent/sessions</code> is readable.
           </p>
           <p class="muted small">
-            Useful commands: <code>opencode web</code>, <code>opencode serve --port 4096</code>,
-            <code>opencode attach http://localhost:4096 --session &lt;id&gt;</code>
+            Useful commands: <code>pi -c</code>, <code>pi -r</code>, <code>pi --session &lt;id&gt;</code>.
           </p>
         </div>
       ) : (
@@ -554,14 +547,14 @@ const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof sum
       )}
 
       <section class="op-hints">
-        <h2 class="op-hints-title">OPENCODE WEB / SERVE / ATTACH</h2>
+        <h2 class="op-hints-title">PI SESSION COMMANDS</h2>
         <ul class="op-hints-list">
-          <li><code>opencode web</code> — start server and open web interface in your browser.</li>
-          <li><code>opencode serve --port 4096</code> — run a headless server on port 4096.</li>
-          <li><code>opencode attach http://localhost:4096 --session &lt;id&gt;</code> — attach a TTY client to a running server.</li>
+          <li><code>pi -c</code> — continue the most recent session.</li>
+          <li><code>pi -r</code> — browse and resume previous sessions.</li>
+          <li><code>pi --session &lt;id&gt;</code> — resume a specific Pi session.</li>
         </ul>
         <p class="op-hints-note muted small">
-          The dashboard's primary attach path is the embedded terminal — those commands are provided as a fallback.
+          The dashboard's primary resume path is the embedded terminal — these commands are provided as a CLI fallback.
         </p>
       </section>
     </Layout>
@@ -2620,6 +2613,156 @@ app.post("/api/requirement/alignment-template", async (c) => {
 // Schedulers page
 // ---------------------------------------------------------------------------
 
+const DEVELOPER_ROOT = join(process.env.HOME || "", "Developer")
+
+async function listDeveloperGithubRepos(): Promise<{ path: string; label: string; remote: string }[]> {
+  const roots = ["github", "personal", "infra", "playground", "tools"].map((name) => join(DEVELOPER_ROOT, name))
+  const repos: { path: string; label: string; remote: string }[] = []
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const repoPath = join(root, entry.name)
+      if (!existsSync(join(repoPath, ".git"))) continue
+      const remote = await readGitRemote(repoPath)
+      if (!remote.includes("github.com")) continue
+      repos.push({
+        path: repoPath,
+        label: repoPath.startsWith(`${DEVELOPER_ROOT}/`) ? repoPath.slice(DEVELOPER_ROOT.length + 1) : repoPath,
+        remote,
+      })
+    }
+  }
+  return repos.sort((a, b) => a.label.localeCompare(b.label))
+}
+
+function readGitRemote(repoPath: string): Promise<string> {
+  return new Promise((resolveRemote) => {
+    const child = spawn("git", ["-C", repoPath, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] })
+    let out = ""
+    child.stdout?.on("data", (d: Buffer) => { out += d.toString("utf-8") })
+    child.on("close", () => resolveRemote(out.trim()))
+    child.on("error", () => resolveRemote(""))
+  })
+}
+
+const SchedulerConfigPanel: FC<{ config: AppConfig; githubRepos: { path: string; label: string; remote: string }[] }> = ({ config, githubRepos }) => (
+  <section class="sched-config-panel" aria-label="定时任务配置">
+    <div class="sched-config-panel-head">
+      <div>
+        <p class="sched-eyebrow">CONFIGURATION</p>
+        <h2 class="op-section-title">定时任务设置</h2>
+        <p class="muted small">集中配置全量同步、智能提取和 session 价值发现；Schedulers 面板仅展示任务运行状态。</p>
+      </div>
+    </div>
+
+    <form id="config-form" class="sched-config-form">
+      <div class="sched-config-grid">
+        <article class="sched-config-card">
+          <div class="sched-config-card-top">
+            <span class="sched-config-pill">SYNC</span>
+            <div>
+              <h3>配置 / GitHub 全量同步</h3>
+              <p class="muted small">按配置时间运行全量同步，可额外同步选中的 <code>~/Developer</code> GitHub 仓库。</p>
+            </div>
+          </div>
+          <label class="sched-switch-row">
+            <span>
+              <strong>启用全量同步</strong>
+              <small>执行 <code>opencode-cron-sync.sh --full</code>，选中仓库时追加 GitHub projects sync。</small>
+            </span>
+            <input type="checkbox" name="fullSyncSchedule" id="cfg-full-sync-schedule" checked={config.fullSyncSchedule} />
+          </label>
+          <label class="settings-field">
+            <span class="settings-label">同步时间</span>
+            <input type="text" id="cfg-full-sync-times" name="fullSyncTimes" value={(config.fullSyncTimes?.length ? config.fullSyncTimes : [...DEFAULT_FULL_SYNC_TIMES]).join(", ")} class="settings-input" placeholder="12:00, 18:00, 20:30, 23:30" spellcheck={false} />
+          </label>
+          <div class="sched-github-repos">
+            <span class="settings-label">同步 GitHub 仓库</span>
+            <p class="muted small">留空则只同步配置；勾选后在全量同步中同步对应 GitHub 仓库。</p>
+            <div class="sched-repo-list">
+              {githubRepos.length === 0 ? (
+                <div class="sched-repo-empty muted small">未发现 <code>~/Developer</code> 下的 GitHub remote 仓库。</div>
+              ) : githubRepos.map((repo) => (
+                <label class="sched-repo-row">
+                  <input type="checkbox" class="cfg-github-repo" value={repo.path} checked={config.fullSyncGithubRepos.includes(repo.path)} />
+                  <span>
+                    <strong>{repo.label}</strong>
+                    <small>{repo.remote}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </article>
+
+        <article class="sched-config-card sched-config-card-wide">
+          <div class="sched-config-card-top">
+            <span class="sched-config-pill">EXTRACT</span>
+            <div>
+              <h3>上下文提取策略</h3>
+              <p class="muted small">控制 idle 自动提取和每天 00:00 的定时智能提取。</p>
+            </div>
+          </div>
+          <div class="sched-switch-stack">
+            <label class="sched-switch-row">
+              <span>
+                <strong>自动提取模式</strong>
+                <small>关联 session idle 且消息增量超过阈值时触发。</small>
+              </span>
+              <input type="checkbox" name="autoExtract" id="cfg-auto-extract" checked={config.autoExtract} />
+            </label>
+            <label class="sched-switch-row">
+              <span>
+                <strong>定时智能提取</strong>
+                <small>每天 00:00 扫描近 24 小时有变化的需求 session。</small>
+              </span>
+              <input type="checkbox" name="autoExtractSchedule" id="cfg-auto-extract-schedule" checked={config.autoExtractSchedule} />
+            </label>
+          </div>
+          <div class="sched-config-controls">
+            <label class="settings-field">
+              <span class="settings-label">提取模型</span>
+              <input type="text" id="cfg-model" name="extractModel" value={config.extractModel} class="settings-input" spellcheck={false} />
+            </label>
+            <label class="settings-field sched-config-number">
+              <span class="settings-label">最小消息增量</span>
+              <input type="number" id="cfg-min-change" name="minChangeMessages" value={config.minChangeMessages} min={1} max={100} class="settings-input settings-input-narrow" />
+            </label>
+          </div>
+        </article>
+
+        <article class="sched-config-card">
+          <div class="sched-config-card-top">
+            <span class="sched-config-pill">VALUE</span>
+            <div>
+              <h3>Session 价值发现</h3>
+              <p class="muted small">每 10 分钟扫描近 48h session，识别可沉淀经验。</p>
+            </div>
+          </div>
+          <label class="sched-switch-row">
+            <span>
+              <strong>自动标记高价值 session</strong>
+              <small>关闭时仅展示候选，不自动进入总结流程。</small>
+            </span>
+            <input type="checkbox" name="autoValuation" id="cfg-auto-valuation" checked={config.autoValuation} />
+          </label>
+          <label class="settings-field sched-config-number">
+            <span class="settings-label">价值评分阈值</span>
+            <input type="number" id="cfg-valuation-threshold" name="valuationThreshold" value={config.valuationThreshold} min={1} max={100} class="settings-input settings-input-narrow" />
+          </label>
+        </article>
+      </div>
+
+      <div class="sched-config-actions">
+        <button type="submit" class="btn btn-primary">保存定时任务设置</button>
+        <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
+      </div>
+    </form>
+  </section>
+)
+
 const SchedulersPage: FC<{
   schedulers: {
     name: string
@@ -2633,112 +2776,19 @@ const SchedulersPage: FC<{
   extractQueues: { reqId: string; queueLength: number; nextAvailableAt: number }[]
   valuationCandidates: { sessionId: string; score: number; reasons: string[]; signals: string[] }[]
   valuationStats: { lastPollAt: number | null; sessionsScanned: number; candidatesFound: number; threshold: number }
-  config: AppConfig
-}> = ({ schedulers, extractQueues, valuationCandidates, valuationStats, config }) => {
+}> = ({ schedulers, extractQueues, valuationCandidates, valuationStats }) => {
   return (
     <Layout title="Schedulers" active="schedulers">
       <header class="op-section-head">
         <div>
           <h1 class="op-section-title">BACKGROUND SCHEDULERS</h1>
-          <p class="muted small">查看后台任务运行状态，并直接调整对应的调度开关、模型和阈值。</p>
+          <p class="muted small">展示后台任务运行状态、最近结果和队列信息；配置入口已移到 Settings。</p>
         </div>
         <div class="op-section-meta">
           <span class="op-section-meta-item">{schedulers.filter((s) => s.running).length} / {schedulers.length} RUNNING</span>
+          <a class="op-section-meta-item" href="/settings">Settings</a>
         </div>
       </header>
-
-      <section class="sched-config-panel" aria-label="定时任务配置">
-        <div class="sched-config-panel-head">
-          <div>
-            <p class="sched-eyebrow">CONFIGURATION</p>
-            <h2 class="op-section-title">定时任务配置</h2>
-            <p class="muted small">任务状态和配置放在同一个面板：先看是否运行，再决定是否启用、调参或只保留候选发现。</p>
-          </div>
-        </div>
-
-        <form id="config-form" class="sched-config-form">
-          <div class="sched-config-grid">
-            <article class="sched-config-card">
-              <div class="sched-config-card-top">
-                <span class="sched-config-pill">SYNC</span>
-                <div>
-                  <h3>每日全量同步</h3>
-                  <p class="muted small">每天本地 20:30 运行一次配置全量同步。</p>
-                </div>
-              </div>
-              <label class="sched-switch-row">
-                <span>
-                  <strong>启用全量同步</strong>
-                  <small>执行 <code>opencode-cron-sync.sh --full</code></small>
-                </span>
-                <input type="checkbox" name="fullSyncSchedule" id="cfg-full-sync-schedule" checked={config.fullSyncSchedule} />
-              </label>
-            </article>
-
-            <article class="sched-config-card sched-config-card-wide">
-              <div class="sched-config-card-top">
-                <span class="sched-config-pill">EXTRACT</span>
-                <div>
-                  <h3>上下文提取策略</h3>
-                  <p class="muted small">控制 idle 自动提取和每天 00:00 的定时智能提取。</p>
-                </div>
-              </div>
-              <div class="sched-switch-stack">
-                <label class="sched-switch-row">
-                  <span>
-                    <strong>自动提取模式</strong>
-                    <small>关联 session idle 且消息增量超过阈值时触发。</small>
-                  </span>
-                  <input type="checkbox" name="autoExtract" id="cfg-auto-extract" checked={config.autoExtract} />
-                </label>
-                <label class="sched-switch-row">
-                  <span>
-                    <strong>定时智能提取</strong>
-                    <small>每天 00:00 扫描近 24 小时有变化的需求 session。</small>
-                  </span>
-                  <input type="checkbox" name="autoExtractSchedule" id="cfg-auto-extract-schedule" checked={config.autoExtractSchedule} />
-                </label>
-              </div>
-              <div class="sched-config-controls">
-                <label class="settings-field">
-                  <span class="settings-label">提取模型</span>
-                  <input type="text" id="cfg-model" name="extractModel" value={config.extractModel} class="settings-input" spellcheck={false} />
-                </label>
-                <label class="settings-field sched-config-number">
-                  <span class="settings-label">最小消息增量</span>
-                  <input type="number" id="cfg-min-change" name="minChangeMessages" value={config.minChangeMessages} min={1} max={100} class="settings-input settings-input-narrow" />
-                </label>
-              </div>
-            </article>
-
-            <article class="sched-config-card">
-              <div class="sched-config-card-top">
-                <span class="sched-config-pill">VALUE</span>
-                <div>
-                  <h3>Session 价值发现</h3>
-                  <p class="muted small">每 10 分钟扫描近 48h session，识别可沉淀经验。</p>
-                </div>
-              </div>
-              <label class="sched-switch-row">
-                <span>
-                  <strong>自动标记高价值 session</strong>
-                  <small>关闭时仅展示候选，不自动进入总结流程。</small>
-                </span>
-                <input type="checkbox" name="autoValuation" id="cfg-auto-valuation" checked={config.autoValuation} />
-              </label>
-              <label class="settings-field sched-config-number">
-                <span class="settings-label">价值评分阈值</span>
-                <input type="number" id="cfg-valuation-threshold" name="valuationThreshold" value={config.valuationThreshold} min={1} max={100} class="settings-input settings-input-narrow" />
-              </label>
-            </article>
-          </div>
-
-          <div class="sched-config-actions">
-            <button type="submit" class="btn btn-primary">保存调度配置</button>
-            <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
-          </div>
-        </form>
-      </section>
 
       <div class="sched-list">
         {schedulers.map((s) => (
@@ -2817,7 +2867,6 @@ const SchedulersPage: FC<{
           </table>
         </section>
       ) : null}
-      <script src="/static/config.js" defer></script>
     </Layout>
   )
 }
@@ -2838,13 +2887,15 @@ app.get("/schedulers", async (c) => {
       name: "OpenCode 全量同步",
       running: isFullSyncSchedulerRunning(),
       pollIntervalMs: FULL_SYNC_POLL_MS,
-      pollIntervalLabel: `${String(FULL_SYNC_HOUR).padStart(2, "0")}:${String(FULL_SYNC_MINUTE).padStart(2, "0")}`,
+      pollIntervalLabel: (cfg.fullSyncTimes?.length ? cfg.fullSyncTimes : [...DEFAULT_FULL_SYNC_TIMES]).join(", "),
       enabled: cfg.fullSyncSchedule,
-      description: "每天本地 20:30 触发一次 OpenCode 配置全量同步；这是唯一保留的自动同步机制。",
+      description: "按配置时间触发配置全量同步；可追加同步选中的 ~/Developer GitHub 仓库。",
       details: (() => {
         const last = getLastFullSyncResult()
         return [
           { label: "配置开关", value: cfg.fullSyncSchedule ? "✅ fullSyncSchedule = true" : "❌ fullSyncSchedule = false" },
+          { label: "同步时间", value: (cfg.fullSyncTimes?.length ? cfg.fullSyncTimes : [...DEFAULT_FULL_SYNC_TIMES]).join(", ") },
+          { label: "GitHub 仓库", value: cfg.fullSyncGithubRepos.length > 0 ? `${cfg.fullSyncGithubRepos.length} 个已选择` : "未选择（仅同步配置）" },
           { label: "上次结果", value: last ? (last.ok ? "success" : `failed: ${last.stderr || last.exitCode}`) : "本进程尚未执行" },
         ]
       })(),
@@ -2917,50 +2968,33 @@ app.get("/schedulers", async (c) => {
 
   schedulers.push(valuationScheduler)
 
-  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} valuationCandidates={valCandidates} valuationStats={valStats} config={cfg} />)
+  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} valuationCandidates={valCandidates} valuationStats={valStats} />)
 })
 
 // ---------------------------------------------------------------------------
 // Settings page + config API
 // ---------------------------------------------------------------------------
 
-const SettingsPage: FC = () => {
+const SettingsPage: FC<{ config: AppConfig; githubRepos: { path: string; label: string; remote: string }[] }> = ({ config, githubRepos }) => {
   return (
   <Layout title="Settings" active="settings">
     <div class="settings-page">
       <div class="page-header">
         <a href="/projects" class="back-link">← Back to projects</a>
         <h1>Dashboard 设置</h1>
-        <p class="muted">设置已按使用场景拆分：定时任务配置在 Schedulers，环境变量管理在 Env Vars。</p>
+        <p class="muted">这里集中管理定时任务设置；Schedulers 页面只展示后台任务运行状态和队列。</p>
       </div>
 
-      <section class="settings-section settings-router-section">
-        <div class="settings-section-head">
-          <div>
-            <h2 class="op-section-title">设置入口</h2>
-            <p class="muted small">这里保留入口导航，避免把调度开关和凭据管理混在一个长表单里。</p>
-          </div>
-        </div>
-        <div class="settings-route-grid">
-          <a class="settings-route-card settings-route-card-primary" href="/schedulers">
-            <span class="settings-route-kicker">Schedulers</span>
-            <strong>定时任务面板</strong>
-            <span>查看运行状态，配置全量同步、智能提取、自动价值发现和阈值。</span>
-          </a>
-          <a class="settings-route-card" href="/env-vars">
-            <span class="settings-route-kicker">Env Vars</span>
-            <strong>环境变量管理</strong>
-            <span>按 env 文件管理模型、Kibana、Nacos、数据库和 API token。</span>
-          </a>
-        </div>
-      </section>
+      <SchedulerConfigPanel config={config} githubRepos={githubRepos} />
     </div>
+    <script src="/static/config.js" defer></script>
   </Layout>
   )
 }
 
 app.get("/settings", async (c) => {
-  return c.html(<SettingsPage />)
+  const [cfg, githubRepos] = await Promise.all([getConfig(), listDeveloperGithubRepos()])
+  return c.html(<SettingsPage config={cfg} githubRepos={githubRepos} />)
 })
 
 // ---------------------------------------------------------------------------
@@ -3142,12 +3176,19 @@ app.post("/api/config", async (c) => {
   if (body.harness === "pi" || body.harness === "opencode") partial.harness = body.harness
   if (typeof body.autoExtract === "boolean") partial.autoExtract = body.autoExtract
   if (typeof body.autoExtractSchedule === "boolean") partial.autoExtractSchedule = body.autoExtractSchedule
+  const shouldRestartFullSyncScheduler = typeof body.fullSyncSchedule === "boolean" || Array.isArray(body.fullSyncTimes) || Array.isArray(body.fullSyncGithubRepos)
   if (typeof body.fullSyncSchedule === "boolean") partial.fullSyncSchedule = body.fullSyncSchedule
+  if (Array.isArray(body.fullSyncTimes)) partial.fullSyncTimes = body.fullSyncTimes
+  if (Array.isArray(body.fullSyncGithubRepos)) partial.fullSyncGithubRepos = body.fullSyncGithubRepos
   if (typeof body.extractModel === "string" && body.extractModel.trim()) partial.extractModel = body.extractModel.trim()
   if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
   if (typeof body.autoValuation === "boolean") partial.autoValuation = body.autoValuation
   if (typeof body.valuationThreshold === "number" && body.valuationThreshold > 0) partial.valuationThreshold = Math.floor(body.valuationThreshold)
   const next = await setConfig(partial)
+  if (shouldRestartFullSyncScheduler) {
+    stopFullSyncScheduler()
+    startFullSyncScheduler()
+  }
   return c.json({ ...next, envVars: await safeEnvVars(next) })
 })
 

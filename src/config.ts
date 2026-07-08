@@ -27,7 +27,7 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 export type DashboardHarness = "opencode" | "pi"
 
@@ -74,10 +74,14 @@ export interface AppConfig {
    */
   valuationThreshold: number
   /**
-   * true (default) = dashboard runs the full OpenCode config sync once
-   * per day at 20:30. This replaces frequent hook/systemd auto-syncs.
+   * true (default) = dashboard runs the full configuration sync at the
+   * configured local times. This replaces frequent hook/systemd auto-syncs.
    */
   fullSyncSchedule: boolean
+  /** Local HH:mm schedule for full configuration sync. Defaults to 12:00, 18:00, 20:30, and 23:30. */
+  fullSyncTimes: string[]
+  /** Developer workspace GitHub repositories to include in the full sync, as absolute paths or ~/Developer-relative paths. */
+  fullSyncGithubRepos: string[]
   /**
    * Legacy dashboard-managed variables from older versions. New writes go
    * to OpenCode env files so the SOPS-backed workstation sync can persist
@@ -220,6 +224,8 @@ const DEFAULTS: AppConfig = {
   autoValuation: false,
   valuationThreshold: 25,
   fullSyncSchedule: true,
+  fullSyncTimes: ["12:00", "18:00", "20:30", "23:30"],
+  fullSyncGithubRepos: [],
   envVars: [],
 }
 
@@ -258,6 +264,8 @@ async function load(): Promise<AppConfig> {
       autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
       valuationThreshold: parsed.valuationThreshold ?? DEFAULTS.valuationThreshold,
       fullSyncSchedule: parsed.fullSyncSchedule ?? DEFAULTS.fullSyncSchedule,
+      fullSyncTimes: normalizeSyncTimes(parsed.fullSyncTimes),
+      fullSyncGithubRepos: normalizeDeveloperRepoPaths(parsed.fullSyncGithubRepos),
       envVars: normalizeEnvVars(parsed.envVars),
     }
   } catch {
@@ -271,7 +279,7 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -283,6 +291,8 @@ export async function setConfig(
     autoValuation: partial.autoValuation ?? cur.autoValuation,
     valuationThreshold: partial.valuationThreshold ?? cur.valuationThreshold,
     fullSyncSchedule: partial.fullSyncSchedule ?? cur.fullSyncSchedule,
+    fullSyncTimes: partial.fullSyncTimes ? normalizeSyncTimes(partial.fullSyncTimes) : cur.fullSyncTimes,
+    fullSyncGithubRepos: partial.fullSyncGithubRepos ? normalizeDeveloperRepoPaths(partial.fullSyncGithubRepos) : cur.fullSyncGithubRepos,
     envVars: partial.envVars ? normalizeEnvVars(partial.envVars) : cur.envVars,
   }
   _cache = next
@@ -476,8 +486,39 @@ function formatEnvLine(key: string, value: string): string {
   return `${key}=${JSON.stringify(value)}`
 }
 
-function normalizeHarness(value: unknown): DashboardHarness {
-  return value === "opencode" ? "opencode" : "pi"
+function normalizeHarness(_value: unknown): DashboardHarness {
+  return "pi"
+}
+
+function normalizeSyncTimes(value: unknown): string[] {
+  if (!Array.isArray(value)) return DEFAULTS.fullSyncTimes
+  const seen = new Set<string>()
+  for (const raw of value) {
+    if (typeof raw !== "string") continue
+    const match = raw.trim().match(/^(\d{1,2}):(\d{2})$/)
+    if (!match) continue
+    const hour = Number(match[1])
+    const minute = Number(match[2])
+    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) continue
+    seen.add(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`)
+  }
+  return seen.size > 0 ? [...seen].sort() : DEFAULTS.fullSyncTimes
+}
+
+function normalizeDeveloperRepoPaths(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const developerRoot = join(homedir(), "Developer")
+  const seen = new Set<string>()
+  for (const raw of value) {
+    if (typeof raw !== "string") continue
+    const trimmed = raw.trim()
+    if (!trimmed || trimmed.includes("\0")) continue
+    const expanded = trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed.startsWith("/") ? trimmed : join(developerRoot, trimmed)
+    const normalized = resolve(expanded)
+    if (normalized === developerRoot || !normalized.startsWith(`${developerRoot}/`)) continue
+    seen.add(normalized)
+  }
+  return [...seen].sort()
 }
 
 function normalizeEnvVars(value: unknown): EnvVarEntry[] {

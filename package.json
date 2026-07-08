@@ -1,7 +1,7 @@
 {
-  "name": "agent-panel",
+  "name": "opencode-dashboard",
   "version": "0.1.0",
-  "description": "Web control panel for OpenCode — review experience reports, confirm candidates, and more.",
+  "description": "Local web dashboard for pi coding agent sessions, requirements, schedulers, and reports.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.tsx",
@@ -23,8 +23,9 @@
     "tsx": "^4.22.3",
     "typescript": "^5.9.3"
   },
-  "allowScripts": {
-    "esbuild@0.28.1": true,
-    "node-pty@1.1.0": true
-  }
+  "packageManager": "bun@1.3.14",
+  "trustedDependencies": [
+    "esbuild",
+    "node-pty"
+  ]
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Uninstall the agent-panel systemd user service.
+# Uninstall the opencode-dashboard systemd user service.
 #
 # Keeps the log file by default. Pass --purge to remove it as well.
 
 set -euo pipefail
 
-SERVICE_NAME="agent-panel.service"
+SERVICE_NAME="opencode-dashboard.service"
 UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}"
-LOG_FILE="${HOME}/.local/state/agent-panel.log"
+LOG_FILE="${HOME}/.local/state/opencode-dashboard.log"
 
 if systemctl --user list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}"; then
   systemctl --user disable --now "${SERVICE_NAME}" || true

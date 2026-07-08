@@ -37,6 +37,7 @@ type PiEntry = {
   modelId?: unknown
   name?: unknown
   message?: unknown
+  thinkingLevel?: unknown
 }
 
 let cache: { at: number; data: SessionInfo[] } | null = null
@@ -108,17 +109,32 @@ async function readPiSessionFile(path: string): Promise<SessionInfo | null> {
   let title = ""
   let modelId = ""
   let modelProvider = ""
+  let thinkingLevel = ""
+  let messageCount = 0
+  let userMessageCount = 0
+  let assistantMessageCount = 0
+  let toolResultCount = 0
+  let toolCallCount = 0
+  let tokensInput = 0
+  let tokensOutput = 0
+  let tokensReasoning = 0
+  let tokensCacheRead = 0
+  let tokensCacheWrite = 0
+  let cost = 0
 
-  for (const line of lines.slice(1, 160)) {
+  for (const line of lines.slice(1)) {
     let entry: PiEntry
     try {
       entry = JSON.parse(line) as PiEntry
     } catch {
       continue
     }
-    if (!modelId && entry.type === "model_change") {
+    if (entry.type === "model_change") {
       if (typeof entry.modelId === "string") modelId = entry.modelId
       if (typeof entry.provider === "string") modelProvider = entry.provider
+    }
+    if (entry.type === "thinking_level_change" && typeof entry.thinkingLevel === "string") {
+      thinkingLevel = entry.thinkingLevel
     }
     // Prefer the display name set via `pi --name` (stored in a
     // `session_info` entry) over the first user message.
@@ -126,10 +142,33 @@ async function readPiSessionFile(path: string): Promise<SessionInfo | null> {
       const n = entry.name.trim()
       if (n) title = safeTruncate(n)
     }
-    if (!title && entry.type === "message") {
-      title = textFromUserMessage(entry.message)
+    if (entry.type === "message") {
+      messageCount += 1
+      if (!title) title = textFromUserMessage(entry.message)
+      if (entry.message && typeof entry.message === "object") {
+        const msg = entry.message as { role?: unknown; content?: unknown; provider?: unknown; model?: unknown; usage?: unknown }
+        if (msg.role === "user") userMessageCount += 1
+        if (msg.role === "assistant") assistantMessageCount += 1
+        if (msg.role === "toolResult") toolResultCount += 1
+        if (typeof msg.provider === "string") modelProvider = msg.provider
+        if (typeof msg.model === "string") modelId = msg.model
+        if (Array.isArray(msg.content)) {
+          toolCallCount += msg.content.filter((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "toolCall").length
+        }
+        if (msg.usage && typeof msg.usage === "object") {
+          const usage = msg.usage as Record<string, unknown>
+          tokensInput += typeof usage.input === "number" ? usage.input : 0
+          tokensOutput += typeof usage.output === "number" ? usage.output : 0
+          tokensReasoning += typeof usage.reasoning === "number" ? usage.reasoning : 0
+          tokensCacheRead += typeof usage.cacheRead === "number" ? usage.cacheRead : 0
+          tokensCacheWrite += typeof usage.cacheWrite === "number" ? usage.cacheWrite : 0
+          if (usage.cost && typeof usage.cost === "object") {
+            const usageCost = usage.cost as Record<string, unknown>
+            cost += typeof usageCost.total === "number" ? usageCost.total : 0
+          }
+        }
+      }
     }
-    if (title && modelId) break
   }
 
   return {
@@ -142,9 +181,22 @@ async function readPiSessionFile(path: string): Promise<SessionInfo | null> {
     status: statusFromUpdated(updated || created),
     source: "fs",
     agent: "pi",
+    path,
     worktree: deriveWorktree({ directory: cwd, path: null }),
     modelId: modelId || undefined,
     modelProvider: modelProvider || undefined,
+    tokensInput,
+    tokensOutput,
+    tokensReasoning,
+    tokensCacheRead,
+    tokensCacheWrite,
+    cost,
+    messageCount,
+    userMessageCount,
+    assistantMessageCount,
+    toolResultCount,
+    toolCallCount,
+    thinkingLevel: thinkingLevel || undefined,
   }
 }
 
