@@ -98,7 +98,7 @@ const DEFAULT_STORE_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "experience-markers.json",
 )
 

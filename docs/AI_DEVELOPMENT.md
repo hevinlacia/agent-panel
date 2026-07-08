@@ -1,4 +1,4 @@
-# AI_DEVELOPMENT.md — opencode-dashboard handoff
+# AI_DEVELOPMENT.md — agent-panel handoff
 
 > Long-form handoff for future AIs and developers continuing this project.
 > For quick rules and the verification checklist, see [`AGENTS.md`](../AGENTS.md).
@@ -8,7 +8,7 @@
 
 ## 1. Quick orientation
 
-`opencode-dashboard` is a single-process Node.js web app that you can run
+`agent-panel` is a single-process Node.js web app that you can run
 locally and point at the same machine's OpenCode data directory. It does
 two things:
 
@@ -57,7 +57,7 @@ as ESM / classic scripts with `defer` and `type="module"` respectively.
 ## 2. Architecture / file map
 
 ```
-opencode-dashboard/
+agent-panel/
 ├── src/
 │   ├── server.tsx          # Hono app, JSX, upgradeWebSocket, vendor + static routes
 │   ├── sessions.ts         # SQLite → CLI → fs scan, helpers, session-id guard
@@ -402,7 +402,7 @@ read DOM state with `js(...)` for non-visual checks.
 
 ```bash
 # Start the server (background).
-cd /home/hevin/GitHub/opencode-dashboard
+cd /home/hevin/GitHub/agent-panel
 npm start &
 SERVER_PID=$!
 sleep 2

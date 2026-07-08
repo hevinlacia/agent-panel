@@ -16,7 +16,7 @@
  * Each test points the store at a fresh temp file under
  * /tmp/opencode/test-req-X/associations.json so the tests cannot
  * interfere with the real user store at
- * ~/.local/share/opencode-dashboard/associations.json.
+ * ~/.local/share/agent-panel/associations.json.
  */
 
 import { test } from "node:test"

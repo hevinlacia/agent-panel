@@ -13,7 +13,7 @@
  * salvage, and history pipeline as manual clicks.
  *
  * State is persisted to
- * `~/.local/share/opencode-dashboard/auto-extract-schedule.json` so the
+ * `~/.local/share/agent-panel/auto-extract-schedule.json` so the
  * scheduler survives dashboard restarts without re-triggering extracts
  * that already ran.
  *
@@ -105,7 +105,7 @@ const DEFAULT_STORE_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "auto-extract-schedule.json",
 )
 

@@ -4,7 +4,7 @@
  * Requirement records live as Markdown directories under `~/.agents/req/`,
  * managed by the Hermes `req-tracker` skill. The dashboard owns only
  * session associations, persisted at
- * `~/.local/share/opencode-dashboard/associations.json`.
+ * `~/.local/share/agent-panel/associations.json`.
  * `alignment.md` is the product/business alignment brief for the first
  * requirement phase; `prd.md` is kept as the original-source trace.
  * `impact.md` is the pre-coding safety gate for business-flow risk.
@@ -196,7 +196,7 @@ const DEFAULT_STORE_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "associations.json"
 )
 

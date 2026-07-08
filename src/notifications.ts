@@ -3,7 +3,7 @@
  *
  * Role: aggregate async events (extract-context jobs, system alerts,
  * errors) into a UI-facing notification center. Each notification is
- * persisted to disk at `~/.local/share/opencode-dashboard/notifications.json`
+ * persisted to disk at `~/.local/share/agent-panel/notifications.json`
  * so the bell badge and dropdown survive a dashboard restart.
  *
  * Public surface:
@@ -76,7 +76,7 @@ const DEFAULT_STORE_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "notifications.json",
 )
 

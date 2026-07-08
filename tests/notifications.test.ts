@@ -31,7 +31,7 @@ import {
 } from "../src/notifications.ts"
 
 function newTmpStorePath(): string {
-  const dir = mkdtempSync(join(tmpdir(), "opencode-dashboard-notif-"))
+  const dir = mkdtempSync(join(tmpdir(), "agent-panel-notif-"))
   return join(dir, "notifications.json")
 }
 

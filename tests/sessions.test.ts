@@ -68,8 +68,8 @@ test("parseModelString: tolerates JSON with non-string keys", () => {
 
 test("deriveWorktree: rewrites an under-$HOME directory as ~/...", () => {
   const home = homedir()
-  const out = deriveWorktree({ directory: `${home}/GitHub/opencode-dashboard`, path: "GitHub/opencode-dashboard" })
-  assert.equal(out, "~/GitHub/opencode-dashboard")
+  const out = deriveWorktree({ directory: `${home}/GitHub/agent-panel`, path: "GitHub/agent-panel" })
+  assert.equal(out, "~/GitHub/agent-panel")
 })
 
 test("deriveWorktree: returns ~ when directory === $HOME", () => {
@@ -83,8 +83,8 @@ test("deriveWorktree: keeps absolute path when directory is outside $HOME", () =
 })
 
 test("deriveWorktree: falls back to ~/path when only `path` is set", () => {
-  const out = deriveWorktree({ directory: "", path: "GitHub/opencode-dashboard" })
-  assert.equal(out, "~/GitHub/opencode-dashboard")
+  const out = deriveWorktree({ directory: "", path: "GitHub/agent-panel" })
+  assert.equal(out, "~/GitHub/agent-panel")
 })
 
 test("deriveWorktree: returns 'none' when both directory and path are empty", () => {
@@ -100,8 +100,8 @@ test("deriveWorktree: tolerates null inputs", () => {
 test("deriveWorktree: strips leading slashes from `path`", () => {
   // The SQLite `path` column is a relative path; leading slashes are
   // an artifact of broken rows and should not leak into the UI.
-  const out = deriveWorktree({ directory: "", path: "/GitHub/opencode-dashboard" })
-  assert.equal(out, "~/GitHub/opencode-dashboard")
+  const out = deriveWorktree({ directory: "", path: "/GitHub/agent-panel" })
+  assert.equal(out, "~/GitHub/agent-panel")
 })
 
 

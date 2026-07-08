@@ -36,7 +36,7 @@ import { join } from "node:path"
 
 // Redirect notification writes to a temp file so test artifact
 // notifications don't leak into the production store at
-// ~/.local/share/opencode-dashboard/notifications.json.
+// ~/.local/share/agent-panel/notifications.json.
 const _notifTmpPath = join(mkdtempSync(join(tmpdir(), "opencode-extract-job-test-")), "notifications.json")
 _resetNotifications(_notifTmpPath)
 _resetExtractJobs()

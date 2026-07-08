@@ -220,4 +220,182 @@
       }
     })
   })
+
+  /* ── One-click token extraction ── */
+
+  var extractBtn = document.getElementById("env-extract-btn")
+  var extractClear = document.getElementById("env-extract-clear")
+  var extractTextarea = document.getElementById("env-extract-curl")
+  var extractStatus = document.getElementById("env-extract-status")
+
+  function setExtractStatus(msg, isError) {
+    if (!extractStatus) return
+    extractStatus.textContent = msg || ""
+    extractStatus.className = "env-extract-status muted small" + (isError ? " env-extract-status-error" : "")
+  }
+
+  if (extractClear) {
+    extractClear.addEventListener("click", function () {
+      if (extractTextarea) extractTextarea.value = ""
+      setExtractStatus("")
+    })
+  }
+
+  if (extractBtn) {
+    extractBtn.addEventListener("click", function () {
+      var curlText = extractTextarea ? extractTextarea.value.trim() : ""
+      if (!curlText) {
+        setExtractStatus("请粘贴 curl 命令", true)
+        return
+      }
+
+      extractBtn.disabled = true
+      setExtractStatus("解析中…")
+
+      fetch("/api/env-vars/extract-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ curl: curlText }),
+      })
+        .then(function (res) {
+          if (!res.ok) return res.json().then(function (d) { throw new Error(d.error || "HTTP " + res.status) })
+          return res.json()
+        })
+        .then(function (data) {
+          setExtractStatus("")
+          if (!data.tokens || data.tokens.length === 0) {
+            setExtractStatus("未识别到 token", true)
+            return
+          }
+          openExtractModal(data.tokens)
+        })
+        .catch(function (err) {
+          setExtractStatus("提取失败：" + (err && err.message ? err.message : err), true)
+        })
+        .finally(function () {
+          extractBtn.disabled = false
+        })
+    })
+  }
+
+  /**
+   * Confirmation modal showing extracted tokens (redacted, editable).
+   * On confirm, writes each token via /api/config/env and reloads.
+   */
+  function openExtractModal(tokens) {
+    var existing = document.getElementById("env-modal-overlay")
+    if (existing) existing.remove()
+
+    var overlay = document.createElement("div")
+    overlay.id = "env-modal-overlay"
+    overlay.className = "env-modal-overlay"
+
+    var modal = document.createElement("div")
+    modal.className = "env-modal env-extract-modal"
+
+    var title = document.createElement("div")
+    title.className = "env-modal-title"
+    title.textContent = "确认提取的 Token"
+
+    var subtitle = document.createElement("div")
+    subtitle.className = "env-extract-subtitle muted small"
+    subtitle.textContent = "以下 token 将写入 secrets 文件，可修改后确认。"
+
+    modal.appendChild(title)
+    modal.appendChild(subtitle)
+
+    // Create an editable field for each token
+    var fields = []
+    tokens.forEach(function (token) {
+      var row = document.createElement("div")
+      row.className = "env-extract-field-row"
+
+      var label = document.createElement("label")
+      label.className = "env-modal-label"
+      label.textContent = token.name + " （" + token.source + "）"
+
+      var input = document.createElement("input")
+      input.className = "env-modal-input"
+      input.type = "password"
+      input.value = token.value
+      input.spellcheck = false
+      input.autocomplete = "off"
+
+      var preview = document.createElement("span")
+      preview.className = "env-extract-field-preview muted small"
+      preview.textContent = token.preview
+
+      row.appendChild(label)
+      row.appendChild(input)
+      row.appendChild(preview)
+      modal.appendChild(row)
+
+      fields.push({ name: token.name, file: token.file, input: input })
+    })
+
+    var status = document.createElement("div")
+    status.className = "env-modal-status"
+    modal.appendChild(status)
+
+    var actions = document.createElement("div")
+    actions.className = "env-modal-actions"
+
+    var cancelBtn = document.createElement("button")
+    cancelBtn.type = "button"
+    cancelBtn.className = "btn btn-secondary"
+    cancelBtn.textContent = "取消"
+
+    var confirmBtn = document.createElement("button")
+    confirmBtn.type = "button"
+    confirmBtn.className = "btn btn-primary"
+    confirmBtn.textContent = "写入环境变量"
+
+    actions.appendChild(cancelBtn)
+    actions.appendChild(confirmBtn)
+    modal.appendChild(actions)
+    overlay.appendChild(modal)
+    document.body.appendChild(overlay)
+
+    function closeModal() {
+      overlay.remove()
+    }
+
+    function doSave() {
+      var promises = fields.map(function (f) {
+        var value = f.input.value.trim()
+        if (!value) return Promise.resolve()
+        return requestJson("/api/config/env", {
+          action: "upsert",
+          name: f.name,
+          value: value,
+          note: "extracted from curl",
+          file: f.file,
+        })
+      })
+
+      confirmBtn.disabled = true
+      cancelBtn.disabled = true
+      status.textContent = "写入中…"
+      status.className = "env-modal-status"
+
+      Promise.all(promises)
+        .then(function () {
+          status.textContent = "✓ 已写入，正在刷新…"
+          status.className = "env-modal-status env-modal-status-success"
+          window.location.reload()
+        })
+        .catch(function (err) {
+          status.textContent = "写入失败：" + (err && err.message ? err.message : err)
+          status.className = "env-modal-status env-modal-status-error"
+          confirmBtn.disabled = false
+          cancelBtn.disabled = false
+        })
+    }
+
+    cancelBtn.addEventListener("click", closeModal)
+    confirmBtn.addEventListener("click", doSave)
+    overlay.addEventListener("click", function (ev) {
+      if (ev.target === overlay) closeModal()
+    })
+  }
 })()

@@ -1,12 +1,12 @@
-# AGENTS.md — opencode-dashboard
+# AGENTS.md — agent-panel
 
-> AI / developer guide for the `opencode-dashboard` repo.
+> AI / developer guide for the `agent-panel` repo.
 > This file is read before making changes. Project-specific rules win; personal
 > overlay rules in the `<!-- personal-project-hooks:start -->` block are additive.
 
 ## 1. Project purpose
 
-`opencode-dashboard` is a **local web control panel** for browsing and driving
+`agent-panel` is a **local web control panel** for browsing and driving
 OpenCode sessions on the same machine. It runs as a single Hono + `hono/jsx`
 SSR process (no Vite / React build chain) and exposes:
 
@@ -49,7 +49,7 @@ Default port: `7331` (overridable via `PORT`).
   experience reports, and triggers execution forks on user confirmation.
 - `src/experienceMarkers.ts` — persistent marker store for sessions flagged
   by the user for deferred auto-summarization. Backed by
-  `~/.local/share/opencode-dashboard/experience-markers.json` (7-day TTL).
+  `~/.local/share/agent-panel/experience-markers.json` (7-day TTL).
 - `src/experienceAutoSummary.ts` — background worker that polls the marker
   store, waits for sessions to go idle ≥1 h, then forks them to generate
   experience reports and execute confirmed candidates. Reuses
@@ -245,7 +245,7 @@ re-read the created files for sanity (no broken links, no secrets).
 
 Before starting work in this project, check for personal project convention files and apply them as additive guidance:
 
-1. If `~/.config/opencode/project-overrides/opencode-dashboard.md` exists, read it before making changes.
+1. If `~/.config/opencode/project-overrides/agent-panel.md` exists, read it before making changes.
 2. Treat personal project conventions as additive. They must not override repository safety, compliance, release, or team workflow rules in this `AGENTS.md`.
 3. If there is a conflict, this project's `AGENTS.md` wins.
 4. Use the personal conventions for exploration order, local environment defaults, recurring commands, and knowledge entrypoints only.

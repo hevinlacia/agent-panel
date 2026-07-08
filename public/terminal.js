@@ -145,7 +145,7 @@
             ready = true
             if (typeof parsed.cols === "number") cols = parsed.cols
             if (typeof parsed.rows === "number") rows = parsed.rows
-            setStatus("connected: opencode --session " + (parsed.id || id))
+            setStatus("connected: " + (typeof window.__HARNESS__ === "string" && window.__HARNESS__ === "pi" ? "pi" : "opencode") + " --session " + (parsed.id || id))
             if (pendingResize) {
               ws.send(JSON.stringify({ type: "resize", cols: pendingResize.cols, rows: pendingResize.rows }))
               pendingResize = null

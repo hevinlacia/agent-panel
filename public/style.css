@@ -3697,6 +3697,75 @@ body {
 
 /* ── Env var edit modal ── */
 
+/* ── One-click token extract ── */
+
+.env-extract-section {
+  margin-bottom: 20px;
+}
+
+.env-extract-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.env-extract-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-strong);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.env-extract-textarea:focus {
+  border-color: var(--cyan);
+}
+
+.env-extract-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.env-extract-status {
+  min-height: 1em;
+}
+
+.env-extract-status-error {
+  color: var(--red);
+}
+
+.env-extract-modal {
+  width: min(520px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.env-extract-subtitle {
+  margin-bottom: 16px;
+}
+
+.env-extract-field-row {
+  margin-bottom: 14px;
+}
+
+.env-extract-field-preview {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+/* ── Env var edit modal ── */
+
 .env-modal-overlay {
   position: fixed;
   inset: 0;
@@ -3793,4 +3862,261 @@ body {
   .env-vars-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Scheduler configuration panel ── */
+
+.sched-config-panel {
+  margin: 16px 0 22px;
+  padding: 20px;
+  border: 1px solid rgba(34, 211, 238, 0.16);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 38%),
+    linear-gradient(135deg, rgba(19, 24, 32, 0.94), rgba(10, 14, 20, 0.96));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+}
+
+.sched-config-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.sched-config-panel .op-section-title {
+  border-bottom: 0;
+  padding-bottom: 2px;
+  margin-bottom: 2px;
+}
+
+.sched-eyebrow,
+.settings-route-kicker {
+  margin: 0 0 4px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.sched-config-form {
+  margin-top: 18px;
+}
+
+.sched-config-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(340px, 1.35fr) minmax(240px, 1fr);
+  gap: 14px;
+}
+
+.sched-config-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.sched-config-card-wide {
+  background: rgba(34, 211, 238, 0.045);
+}
+
+.sched-config-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.sched-config-card h3 {
+  margin: 0 0 3px;
+  color: var(--text-strong);
+  font-size: 0.98rem;
+}
+
+.sched-config-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.sched-config-pill {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.1);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.sched-switch-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sched-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+}
+
+.sched-switch-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sched-switch-row strong {
+  color: var(--text-strong);
+  font-size: 0.88rem;
+}
+
+.sched-switch-row small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.sched-switch-row input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.sched-config-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 130px;
+  gap: 12px;
+}
+
+.sched-config-number .settings-input {
+  max-width: 120px;
+}
+
+.sched-config-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.settings-route-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.settings-route-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 132px;
+  padding: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.settings-route-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(34, 211, 238, 0.32);
+  background: rgba(34, 211, 238, 0.06);
+}
+
+.settings-route-card-primary {
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.12), rgba(255, 255, 255, 0.035));
+}
+
+.settings-route-card strong {
+  color: var(--text-strong);
+  font-size: 1rem;
+}
+
+.settings-route-card span:last-child {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .sched-config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .sched-config-panel {
+    padding: 16px;
+    border-radius: 18px;
+  }
+  .sched-config-controls,
+  .settings-route-grid {
+    grid-template-columns: 1fr;
+  }
+  .sched-switch-row {
+    align-items: flex-start;
+  }
+}
+
+/* ── Harness switch (top-right OpenCode/Pi toggle) ── */
+
+.op-harness-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.op-harness-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 3px 9px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: background 0.12s, color 0.12s;
+}
+
+.op-harness-btn:hover {
+  color: var(--text-strong);
+  background: var(--bg-hover);
+}
+
+.op-harness-btn-active {
+  color: var(--bg);
+  background: var(--cyan);
+}
+
+.op-harness-btn-active:hover {
+  color: var(--bg);
+  background: var(--primary-hover);
 }

@@ -1,15 +1,15 @@
 /**
  * public/config.js
  *
- * Role: page-scoped script for the /settings page. Handles dashboard
- * config saves (extract, valuation, sync toggles).
+ * Role: page-scoped script for pages containing the dashboard config form.
+ * Handles scheduler config saves (extract, valuation, sync toggles).
  *
  * Constraints / safety:
  *   - No external deps; vanilla DOM only.
  *
  * Read-this-with:
  *   - src/config.ts (the store this script writes to)
- *   - src/server.tsx (/settings route + /api/config)
+ *   - src/server.tsx (/schedulers route + /api/config)
  */
 
 (function () {

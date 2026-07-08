@@ -1,5 +1,5 @@
 {
-  "name": "opencode-dashboard",
+  "name": "agent-panel",
   "version": "0.1.0",
   "description": "Web control panel for OpenCode — review experience reports, confirm candidates, and more.",
   "type": "module",

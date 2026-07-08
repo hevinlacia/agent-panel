@@ -14,12 +14,9 @@ import { scanReports, getReport, saveConfirmation, getConfirmationStatus, type C
 import type { Candidate, ParsedReport } from "./parser.ts"
 import {
   scanSessions,
-  getSession,
-  getSessionsByIds,
   summarizeSessions,
   groupSessionsByParent,
   isValidSessionId,
-  clearSessionCache,
   type SessionInfo,
 } from "./sessions.ts"
 import {
@@ -89,6 +86,18 @@ import {
   type EnvVarEntry,
   upsertEnvVar,
 } from "./config.ts"
+import {
+  scanDashboardSessions,
+  getDashboardSession,
+  getDashboardSessionsByIds,
+  clearDashboardSessionCache,
+  isValidDashboardSessionId,
+  extractDashboardSessionId,
+  buildResumeCommand,
+  harnessLabel,
+  type DashboardHarness,
+} from "./dashboardSessions.ts"
+import { extractTokensFromCurl, type ExtractedToken } from "./tokenExtract.ts"
 import {
   buildReleaseChecklist,
   type ReleaseChecklist,
@@ -208,17 +217,17 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>{title} — OpenCode Dashboard</title>
+      <title>{title} — Agent Panel</title>
       <link rel="stylesheet" href="/static/style.css" />
     </head>
     <body>
       <div class="op-shell">
         <aside class="op-sidebar">
-          <a class="op-sidebar-brand" href="/" aria-label="OpenCode Dashboard home">
-            <span class="op-brand-mark">OC</span>
+          <a class="op-sidebar-brand" href="/" aria-label="Agent Panel home">
+            <span class="op-brand-mark">AP</span>
             <span class="op-brand-copy">
-              <span class="op-brand-name">OpenCode</span>
-              <span class="op-brand-status">Dashboard</span>
+              <span class="op-brand-name">Agent</span>
+              <span class="op-brand-status">Panel</span>
             </span>
           </a>
           <nav class="op-sidebar-nav" aria-label="Primary navigation">
@@ -245,6 +254,10 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
                 <span class="op-title-main">{title}</span>
               </div>
               <div class="op-meta">
+                <div class="op-harness-switch" id="op-harness-switch" title="切换 agent harness：OpenCode / Pi">
+                  <button type="button" class="op-harness-btn" data-harness="opencode" aria-pressed="true">OC</button>
+                  <button type="button" class="op-harness-btn" data-harness="pi" aria-pressed="false">PI</button>
+                </div>
                 <button type="button" class="op-meta-item op-refresh" id="op-force-refresh" title="强制刷新当前页面">Refresh</button>
                 <div class="op-notify" id="op-notify">
                   <button type="button" class="op-notify-bell" id="op-notify-bell" aria-label="通知中心" aria-expanded="false">
@@ -270,6 +283,7 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
         </div>
       </div>
       <div id="op-toast-host" class="op-toast-host" aria-live="polite" aria-atomic="false"></div>
+      <script src="/static/harness-switch.js" defer></script>
       <script src="/static/notifications.js" defer></script>
       <script src="/static/app.js" defer></script>
     </body>
@@ -463,12 +477,14 @@ const SessionLane: FC<{ session: SessionInfo; index: number; total: number; chil
   )
 }
 
-const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof summarizeSessions>; days: number }> = ({ sessions, summary, days }) => {
+const SessionsPage: FC<{ sessions: SessionInfo[]; summary: ReturnType<typeof summarizeSessions>; days: number; harness: DashboardHarness }> = ({ sessions, summary, days, harness }) => {
   const { top, childrenByParent } = groupSessionsByParent(sessions)
   // Flow strip and totals count only top-level sessions, not subagent children.
   const topSummary = summarizeSessions(top)
   const source = top[0]?.source ?? sessions[0]?.source ?? "db"
-  const sourceText = source === "db" ? "sqlite store" : source === "cli" ? "opencode CLI" : "fs fallback"
+  const sourceText = harness === "pi"
+    ? "pi jsonl store"
+    : source === "db" ? "sqlite store" : source === "cli" ? "opencode CLI" : "fs fallback"
   return (
     <Layout title="Sessions" active="sessions">
       <section class="op-flow" aria-label="operator flow">
@@ -686,7 +702,7 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string; confirmat
 // Session detail (embedded terminal) page
 // ---------------------------------------------------------------------------
 
-const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; reqContext?: string; createNew?: boolean }> = ({ session, req, reqContext, createNew }) => {
+const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; reqContext?: string; createNew?: boolean; harness: DashboardHarness }> = ({ session, req, reqContext, createNew, harness }) => {
   const updatedText = formatUpdated(session.updated || session.created)
   const worktree = session.worktree || "none"
   const model = modelDisplay(session)
@@ -694,10 +710,13 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
   const ctx = reqContext ?? ""
   const descSnippet = req && req.description ? req.description.slice(0, 200) : ""
   const isNew = createNew === true
-  const initJs = `window.__REQ_ID__ = ${JSON.stringify(reqId)}; window.__REQ_CONTEXT__ = ${JSON.stringify(ctx)}; window.__CREATE_NEW__ = ${JSON.stringify(isNew)};`
+  const initJs = `window.__REQ_ID__ = ${JSON.stringify(reqId)}; window.__REQ_CONTEXT__ = ${JSON.stringify(ctx)}; window.__CREATE_NEW__ = ${JSON.stringify(isNew)}; window.__HARNESS__ = ${JSON.stringify(harness)};`
+  const resumeCmd = buildResumeCommand(harness, session.id || "<id>")
   const terminalTitle = isNew
-    ? (req ? `opencode run -i --title ${JSON.stringify(req.title).slice(1, -1)}` : "opencode run -i")
-    : `opencode --session ${session.id}`
+    ? (harness === "pi"
+      ? (req ? `pi --name ${JSON.stringify(req.title).slice(1, -1)}` : "pi (new session)")
+      : (req ? `opencode run -i --title ${JSON.stringify(req.title).slice(1, -1)}` : "opencode run -i"))
+    : resumeCmd
   return (
     <Layout title={`Session ${session.id || "new"}`} active="sessions">
       <div class="page-header session-detail-header">
@@ -746,12 +765,20 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
       </div>
 
       <section class="hints-section">
-        <h2>OpenCode CLI hints</h2>
-        <ul class="hints-list">
-          <li><code>opencode web</code> — start OpenCode's own web interface in your browser.</li>
-          <li><code>opencode serve --port 4096</code> — start a headless server, then attach with:</li>
-          <li><code>opencode attach http://localhost:4096 --session {session.id || "<id>"}</code></li>
-        </ul>
+        <h2>{harness === "pi" ? "Pi CLI hints" : "OpenCode CLI hints"}</h2>
+        {harness === "pi" ? (
+          <ul class="hints-list">
+            <li><code>pi --session {session.id || "<id>"}</code> - 在你自己的终端里继续这个 session。</li>
+            <li><code>pi --fork {session.id || "<id>"}</code> - 从当前 session 复制出一个新 session。</li>
+            <li><code>pi -r</code> - 浏览选择历史 session 恢复；<code>pi -c</code> 继续最近一次。</li>
+          </ul>
+        ) : (
+          <ul class="hints-list">
+            <li><code>opencode web</code> - start OpenCode's own web interface in your browser.</li>
+            <li><code>opencode serve --port 4096</code> - start a headless server, then attach with:</li>
+            <li><code>opencode attach http://localhost:4096 --session {session.id || "<id>"}</code></li>
+          </ul>
+        )}
         <p class="muted small">
           This page runs an embedded <code>node-pty</code> terminal locally; it is independent of any
           remote <code>opencode serve</code> process.
@@ -1951,20 +1978,22 @@ app.get("/", async (c) => renderProjectsPage(c))
 
 // Sessions landing page (was previously at "/")
 app.get("/sessions", async (c) => {
+  const { harness } = await getConfig()
   const days = parseDaysParam(c.req.query("days"))
   const maxAgeMs = days > 0 ? days * 24 * 60 * 60 * 1000 : undefined
-  const sessions = await scanSessions(false, maxAgeMs)
+  const sessions = await scanDashboardSessions(harness, false, maxAgeMs)
   const summary = summarizeSessions(sessions)
-  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} />)
+  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} harness={harness} />)
 })
 
 // Refresh cache: re-scan sessions.
 app.get("/sessions/refresh", async (c) => {
+  const { harness } = await getConfig()
   const days = parseDaysParam(c.req.query("days"))
   const maxAgeMs = days > 0 ? days * 24 * 60 * 60 * 1000 : undefined
-  const sessions = await scanSessions(true, maxAgeMs)
+  const sessions = await scanDashboardSessions(harness, true, maxAgeMs)
   const summary = summarizeSessions(sessions)
-  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} />)
+  return c.html(<SessionsPage sessions={sessions} summary={summary} days={days} harness={harness} />)
 })
 
 // Reports list (the original / path moved here)
@@ -1999,24 +2028,25 @@ app.get("/report", async (c) => {
 
 // Embedded terminal page
 app.get("/session", async (c) => {
+  const { harness } = await getConfig()
   const id = c.req.query("id")
   const reqIdParam = c.req.query("req")
   const newMode = c.req.query("new") === "1"
 
-  // In "new" mode we don't require an id — opencode will create a real
+  // In "new" mode we don't require an id - the harness will create a real
   // session id when the PTY starts, and we'll push it back to the page.
   if (!newMode) {
     if (!id) {
       return c.text("Missing session id", 400)
     }
-    if (!isValidSessionId(id)) {
+    if (!isValidDashboardSessionId(harness, id)) {
       return c.text("Invalid session id", 400)
     }
-  } else if (id && !isValidSessionId(id)) {
+  } else if (id && !isValidDashboardSessionId(harness, id)) {
     return c.text("Invalid session id", 400)
   }
 
-  let session: SessionInfo | null = id ? await getSession(id) : null
+  let session: SessionInfo | null = id ? await getDashboardSession(harness, id) : null
   let req: Requirement | null = null
   if (reqIdParam) {
     req = await getRequirement(reqIdParam)
@@ -2053,7 +2083,7 @@ app.get("/session", async (c) => {
     req = await getRequirementForSession(id)
   }
   const reqContext = req ? await buildInjectionContext(req.id) : ""
-  return c.html(<SessionTerminalPage session={session} req={req} reqContext={reqContext} createNew={newMode} />)
+  return c.html(<SessionTerminalPage session={session} req={req} reqContext={reqContext} createNew={newMode} harness={harness} />)
 })
 
 // ---------------------------------------------------------------------------
@@ -2069,6 +2099,7 @@ app.get("/requirement", async (c) => {
   if (!id) return c.text("Missing requirement id", 400)
   const req = await getRequirement(id)
   if (!req) return c.text("Requirement not found", 404)
+  const { harness } = await getConfig()
 
   // Do NOT auto-create a session here, even when the requirement is in
   // an active stage with no bound sessions. The detail page renders an
@@ -2099,8 +2130,8 @@ app.get("/requirement", async (c) => {
   const impactAssessment = buildImpactAssessment(impactContent)
 
   const [sessions, associated] = await Promise.all([
-    scanSessions(),
-    req.sessionIds.length > 0 ? getSessionsByIds(req.sessionIds) : Promise.resolve([]),
+    scanDashboardSessions(harness),
+    req.sessionIds.length > 0 ? getDashboardSessionsByIds(harness, req.sessionIds) : Promise.resolve([]),
   ])
   const associatedAll = await getAllAssociatedSessionIds()
   const unassociated = sessions.filter(
@@ -2165,20 +2196,21 @@ app.get("/requirement", async (c) => {
 /**
  * POST /api/requirement/new-session
  *
- * Spawn `opencode run "<injection-context>" --title "<title>"` as a
- * detached background process, then poll the session DB for the new
- * session id. Once we have it, associate the new session with the
- * requirement and return `{ sessionId, command }` as JSON.
+ * Spawn a detached background process that creates a new session for the
+ * requirement, then poll the session store for the new id. Once we have
+ * it, associate the new session with the requirement and return
+ * `{ sessionId, command }` as JSON.
  *
- * The user copies the returned `opencode -s <id>` command and pastes it
- * into their terminal. This replaces the old behavior of redirecting to
- * /session?new=1 (the web-terminal PTY path) — the copyable command
- * works in any terminal without keeping a browser tab open.
+ * OpenCode: `opencode run "<injection-context>" --title "<title>"`
+ * Pi:       `pi -p "<injection-context>" --name "<title>"`
+ *
+ * The user copies the returned resume command (`opencode -s <id>` or
+ * `pi --session <id>`) and pastes it into their terminal.
  *
  * Errors:
- *   400 — missing reqId
- *   404 — requirement not found
- *   504 — opencode did not register a new session within 15s
+ *   400 - missing reqId
+ *   404 - requirement not found
+ *   504 - harness did not register a new session within 15s
  */
 app.post("/api/requirement/new-session", async (c) => {
   const form = await c.req.formData()
@@ -2187,30 +2219,44 @@ app.post("/api/requirement/new-session", async (c) => {
   const req = await getRequirement(reqId)
   if (!req) return c.json({ error: "Requirement not found" }, 404)
 
+  const { harness } = await getConfig()
   const ctx = await buildInjectionContext(reqId)
   const title = req.title || reqId
   const startMs = Date.now()
   const env = await buildManagedEnv()
 
-  // Run via the dashboard-owned process queue so background session
-  // creation cannot exceed the global OpenCode process cap.
-  void runQueuedOpencodeProcess({
-    bin: "opencode",
-    args: ["run", ctx, "--title", title],
-    spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
-    env,
-  }).catch(() => {})
+  if (harness === "pi") {
+    // `pi -p` runs non-interactively: it creates a session, processes the
+    // context prompt, and exits - mirroring `opencode run`. The user then
+    // continues the seeded session via `pi --session <id>`.
+    const child = spawn("pi", ["-p", ctx, "--name", title], {
+      stdio: ["ignore", "ignore", "ignore"],
+      detached: true,
+      env,
+    })
+    child.on("error", () => { /* surfaced via poll timeout */ })
+    child.unref()
+  } else {
+    // Run via the dashboard-owned process queue so background session
+    // creation cannot exceed the global OpenCode process cap.
+    void runQueuedOpencodeProcess({
+      bin: "opencode",
+      args: ["run", ctx, "--title", title],
+      spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
+      env,
+    }).catch(() => {})
+  }
 
-  // Poll for the newly created session id. clearSessionCache forces the
-  // next scanSessions() to re-query sqlite/CLI/fs so we see the new
-  // row the moment opencode commits it.
-  clearSessionCache()
+  // Poll for the newly created session id. clearDashboardSessionCache forces
+  // the next scan to re-read the store so we see the new row the moment the
+  // harness commits it.
+  clearDashboardSessionCache(harness)
   const deadline = Date.now() + 15_000
   let sessionId = ""
   while (!sessionId && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500))
-    clearSessionCache()
-    const list = await scanSessions(true)
+    clearDashboardSessionCache(harness)
+    const list = await scanDashboardSessions(harness, true)
     const candidate = list.find(
       (s) => (s.created || 0) >= startMs,
     )
@@ -2222,7 +2268,7 @@ app.post("/api/requirement/new-session", async (c) => {
 
   if (!sessionId) {
     return c.json(
-      { error: "Session creation timed out — opencode may still be starting. Check the sessions list in a moment." },
+      { error: `Session creation timed out - ${harnessLabel(harness)} may still be starting. Check the sessions list in a moment.` },
       504,
     )
   }
@@ -2233,7 +2279,7 @@ app.post("/api/requirement/new-session", async (c) => {
     await associateSession(reqId, sessionId)
   } catch { /* noop */ }
 
-  return c.json({ sessionId, command: `opencode -s ${sessionId}` })
+  return c.json({ sessionId, command: buildResumeCommand(harness, sessionId) })
 })
 
 app.post("/api/requirement/associate", async (c) => {
@@ -2241,13 +2287,13 @@ app.post("/api/requirement/associate", async (c) => {
   const reqId = String(form.get("reqId") || "")
   const raw = String(form.get("sessionId") || "")
   if (!reqId || !raw) return c.text("Missing reqId or sessionId", 400)
-  // Extract a `ses_...` id from the input value. The datalist-backed
-  // search field stores values like "ses_xxx — title …" so users can
-  // search by either id prefix or title fragment; we accept either as
-  // long as a valid session id appears anywhere in the string.
-  const match = raw.match(/ses_[A-Za-z0-9]+/)
-  const sessionId = match ? match[0] : raw.trim()
-  if (!isValidSessionId(sessionId)) {
+  const { harness } = await getConfig()
+  // Extract a session id from the input value. The datalist-backed search
+  // field stores values like "<id> - title …" so users can search by either
+  // id prefix or title fragment; we accept either as long as a valid session
+  // id for the active harness appears anywhere in the string.
+  const sessionId = extractDashboardSessionId(harness, raw)
+  if (!isValidDashboardSessionId(harness, sessionId)) {
     return c.text(`Invalid session id: ${raw}`, 400)
   }
   const exists = await getRequirement(reqId)
@@ -2269,7 +2315,8 @@ app.post("/api/requirement/dissociate", async (c) => {
   const reqId = String(form.get("reqId") || "")
   const sessionId = String(form.get("sessionId") || "")
   if (!reqId || !sessionId) return c.text("Missing reqId or sessionId", 400)
-  if (!isValidSessionId(sessionId)) {
+  const { harness } = await getConfig()
+  if (!isValidDashboardSessionId(harness, sessionId)) {
     return c.text("Invalid session id", 400)
   }
   const exists = await getRequirement(reqId)
@@ -2579,15 +2626,112 @@ const SchedulersPage: FC<{
   extractQueues: { reqId: string; queueLength: number; nextAvailableAt: number }[]
   valuationCandidates: { sessionId: string; score: number; reasons: string[]; signals: string[] }[]
   valuationStats: { lastPollAt: number | null; sessionsScanned: number; candidatesFound: number; threshold: number }
-}> = ({ schedulers, extractQueues, valuationCandidates, valuationStats }) => {
+  config: AppConfig
+}> = ({ schedulers, extractQueues, valuationCandidates, valuationStats, config }) => {
   return (
     <Layout title="Schedulers" active="schedulers">
       <header class="op-section-head">
-        <h1 class="op-section-title">BACKGROUND SCHEDULERS</h1>
+        <div>
+          <h1 class="op-section-title">BACKGROUND SCHEDULERS</h1>
+          <p class="muted small">查看后台任务运行状态，并直接调整对应的调度开关、模型和阈值。</p>
+        </div>
         <div class="op-section-meta">
           <span class="op-section-meta-item">{schedulers.filter((s) => s.running).length} / {schedulers.length} RUNNING</span>
         </div>
       </header>
+
+      <section class="sched-config-panel" aria-label="定时任务配置">
+        <div class="sched-config-panel-head">
+          <div>
+            <p class="sched-eyebrow">CONFIGURATION</p>
+            <h2 class="op-section-title">定时任务配置</h2>
+            <p class="muted small">任务状态和配置放在同一个面板：先看是否运行，再决定是否启用、调参或只保留候选发现。</p>
+          </div>
+        </div>
+
+        <form id="config-form" class="sched-config-form">
+          <div class="sched-config-grid">
+            <article class="sched-config-card">
+              <div class="sched-config-card-top">
+                <span class="sched-config-pill">SYNC</span>
+                <div>
+                  <h3>每日全量同步</h3>
+                  <p class="muted small">每天本地 20:30 运行一次配置全量同步。</p>
+                </div>
+              </div>
+              <label class="sched-switch-row">
+                <span>
+                  <strong>启用全量同步</strong>
+                  <small>执行 <code>opencode-cron-sync.sh --full</code></small>
+                </span>
+                <input type="checkbox" name="fullSyncSchedule" id="cfg-full-sync-schedule" checked={config.fullSyncSchedule} />
+              </label>
+            </article>
+
+            <article class="sched-config-card sched-config-card-wide">
+              <div class="sched-config-card-top">
+                <span class="sched-config-pill">EXTRACT</span>
+                <div>
+                  <h3>上下文提取策略</h3>
+                  <p class="muted small">控制 idle 自动提取和每天 00:00 的定时智能提取。</p>
+                </div>
+              </div>
+              <div class="sched-switch-stack">
+                <label class="sched-switch-row">
+                  <span>
+                    <strong>自动提取模式</strong>
+                    <small>关联 session idle 且消息增量超过阈值时触发。</small>
+                  </span>
+                  <input type="checkbox" name="autoExtract" id="cfg-auto-extract" checked={config.autoExtract} />
+                </label>
+                <label class="sched-switch-row">
+                  <span>
+                    <strong>定时智能提取</strong>
+                    <small>每天 00:00 扫描近 24 小时有变化的需求 session。</small>
+                  </span>
+                  <input type="checkbox" name="autoExtractSchedule" id="cfg-auto-extract-schedule" checked={config.autoExtractSchedule} />
+                </label>
+              </div>
+              <div class="sched-config-controls">
+                <label class="settings-field">
+                  <span class="settings-label">提取模型</span>
+                  <input type="text" id="cfg-model" name="extractModel" value={config.extractModel} class="settings-input" spellcheck={false} />
+                </label>
+                <label class="settings-field sched-config-number">
+                  <span class="settings-label">最小消息增量</span>
+                  <input type="number" id="cfg-min-change" name="minChangeMessages" value={config.minChangeMessages} min={1} max={100} class="settings-input settings-input-narrow" />
+                </label>
+              </div>
+            </article>
+
+            <article class="sched-config-card">
+              <div class="sched-config-card-top">
+                <span class="sched-config-pill">VALUE</span>
+                <div>
+                  <h3>Session 价值发现</h3>
+                  <p class="muted small">每 10 分钟扫描近 48h session，识别可沉淀经验。</p>
+                </div>
+              </div>
+              <label class="sched-switch-row">
+                <span>
+                  <strong>自动标记高价值 session</strong>
+                  <small>关闭时仅展示候选，不自动进入总结流程。</small>
+                </span>
+                <input type="checkbox" name="autoValuation" id="cfg-auto-valuation" checked={config.autoValuation} />
+              </label>
+              <label class="settings-field sched-config-number">
+                <span class="settings-label">价值评分阈值</span>
+                <input type="number" id="cfg-valuation-threshold" name="valuationThreshold" value={config.valuationThreshold} min={1} max={100} class="settings-input settings-input-narrow" />
+              </label>
+            </article>
+          </div>
+
+          <div class="sched-config-actions">
+            <button type="submit" class="btn btn-primary">保存调度配置</button>
+            <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
+          </div>
+        </form>
+      </section>
 
       <div class="sched-list">
         {schedulers.map((s) => (
@@ -2666,6 +2810,7 @@ const SchedulersPage: FC<{
           </table>
         </section>
       ) : null}
+      <script src="/static/config.js" defer></script>
     </Layout>
   )
 }
@@ -2765,148 +2910,50 @@ app.get("/schedulers", async (c) => {
 
   schedulers.push(valuationScheduler)
 
-  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} valuationCandidates={valCandidates} valuationStats={valStats} />)
+  return c.html(<SchedulersPage schedulers={schedulers} extractQueues={extractQueues} valuationCandidates={valCandidates} valuationStats={valStats} config={cfg} />)
 })
 
 // ---------------------------------------------------------------------------
 // Settings page + config API
 // ---------------------------------------------------------------------------
 
-const SettingsPage: FC<{ config: AppConfig }> = ({ config }) => {
+const SettingsPage: FC = () => {
   return (
   <Layout title="Settings" active="settings">
     <div class="settings-page">
       <div class="page-header">
         <a href="/projects" class="back-link">← Back to projects</a>
         <h1>Dashboard 设置</h1>
-        <p class="muted">管理后台调度和智能提取设置。环境变量已移至 <a href="/env-vars">/env-vars</a> 页面。</p>
+        <p class="muted">设置已按使用场景拆分：定时任务配置在 Schedulers，环境变量管理在 Env Vars。</p>
       </div>
 
-      <section class="settings-section">
-        <h2 class="op-section-title">上下文提取</h2>
-        <form id="config-form" class="settings-form">
-          <div class="settings-field">
-            <label class="settings-label">
-              <input
-                type="checkbox"
-                name="fullSyncSchedule"
-                id="cfg-full-sync-schedule"
-                checked={config.fullSyncSchedule}
-              />
-              <span>每日 20:30 全量同步</span>
-            </label>
-            <p class="muted small">
-              开启后，dashboard 每晚 20:30 运行一次 <code>opencode-cron-sync.sh --full</code>。其它高频自动同步机制应保持关闭。
-            </p>
+      <section class="settings-section settings-router-section">
+        <div class="settings-section-head">
+          <div>
+            <h2 class="op-section-title">设置入口</h2>
+            <p class="muted small">这里保留入口导航，避免把调度开关和凭据管理混在一个长表单里。</p>
           </div>
-
-          <div class="settings-field">
-            <label class="settings-label">
-              <input
-                type="checkbox"
-                name="autoExtract"
-                id="cfg-auto-extract"
-                checked={config.autoExtract}
-              />
-              <span>自动提取模式</span>
-            </label>
-            <p class="muted small">
-              开启后，当关联 session 进入 idle 状态且消息增量超过阈值时，自动触发上下文提取。关闭则只能手动点击「提取上下文」。
-            </p>
-          </div>
-
-          <div class="settings-field">
-            <label class="settings-label">
-              <input
-                type="checkbox"
-                name="autoExtractSchedule"
-                id="cfg-auto-extract-schedule"
-                checked={config.autoExtractSchedule}
-              />
-              <span>定时智能提取</span>
-            </label>
-            <p class="muted small">
-              开启后，后台每天本地 00:00 触发一次：只检查最近 24 小时内创建或更新过的需求 session；首次未提取或有新增内容时生成智能提取预览。
-            </p>
-          </div>
-
-          <div class="settings-field">
-            <label class="settings-label" for="cfg-model">提取模型</label>
-            <input
-              type="text"
-              id="cfg-model"
-              name="extractModel"
-              value={config.extractModel}
-              class="settings-input"
-              spellcheck={false}
-            />
-            <p class="muted small">
-              用于 <code>opencode run --fork</code> 的模型 ID。默认 <code>litellm-local/deepseek-v4-flash-auto</code>。
-            </p>
-          </div>
-
-          <div class="settings-field">
-            <label class="settings-label" for="cfg-min-change">最小消息增量</label>
-            <input
-              type="number"
-              id="cfg-min-change"
-              name="minChangeMessages"
-              value={config.minChangeMessages}
-              min={1}
-              max={100}
-              class="settings-input settings-input-narrow"
-            />
-            <p class="muted small">
-              自动模式下，session 新增消息数低于此值时不触发提取（避免浪费 token）。
-            </p>
-          </div>
-
-          <h2 class="op-section-title" style="font-size: 0.85rem; margin-top: 24px;">Session 价值发现</h2>
-
-          <div class="settings-field">
-            <label class="settings-label">
-              <input
-                type="checkbox"
-                name="autoValuation"
-                id="cfg-auto-valuation"
-                checked={config.autoValuation}
-              />
-              <span>自动标记高价值 session</span>
-            </label>
-            <p class="muted small">
-              开启后，后台每 10 分钟扫描近 48h 的 session，通过元数据 + SQLite 内容两层评分识别有经验总结价值的 session，自动标记进入经验总结流程。关闭则只发现在 <a href="/schedulers">Schedulers</a> 页面展示候选列表，不自动标记。
-            </p>
-          </div>
-
-          <div class="settings-field">
-            <label class="settings-label" for="cfg-valuation-threshold">价值评分阈值</label>
-            <input
-              type="number"
-              id="cfg-valuation-threshold"
-              name="valuationThreshold"
-              value={config.valuationThreshold}
-              min={1}
-              max={100}
-              class="settings-input settings-input-narrow"
-            />
-            <p class="muted small">
-              分数 ≥ 此阈值的 session 被视为候选。信号类别（验证/纠错/skill/知识/调试）各 +15 分，代码工具调用和 token 量也有加分。默认 25。
-            </p>
-          </div>
-
-          <button type="submit" class="btn btn-primary">保存设置</button>
-          <span id="config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
-        </form>
+        </div>
+        <div class="settings-route-grid">
+          <a class="settings-route-card settings-route-card-primary" href="/schedulers">
+            <span class="settings-route-kicker">Schedulers</span>
+            <strong>定时任务面板</strong>
+            <span>查看运行状态，配置全量同步、智能提取、自动价值发现和阈值。</span>
+          </a>
+          <a class="settings-route-card" href="/env-vars">
+            <span class="settings-route-kicker">Env Vars</span>
+            <strong>环境变量管理</strong>
+            <span>按 env 文件管理模型、Kibana、Nacos、数据库和 API token。</span>
+          </a>
+        </div>
       </section>
     </div>
-    <script src="/static/config.js" defer></script>
   </Layout>
   )
 }
 
 app.get("/settings", async (c) => {
-  const config = await getConfig()
-  return c.html(<SettingsPage config={config} />)
+  return c.html(<SettingsPage />)
 })
 
 // ---------------------------------------------------------------------------
@@ -2926,6 +2973,23 @@ const EnvVarsPage: FC<{ groups: EnvFileGroup[] }> = ({ groups }) => {
         <p class="muted">管理 OpenCode skill 所需的环境变量，按文件分组。修改直接写入 <code>~/.config/opencode/</code> 下的原始 env 文件，SOPS 同步会加密敏感文件。</p>
         <span class="settings-env-count">{setVars} / {totalVars} SET</span>
       </div>
+
+      <section class="settings-section env-extract-section">
+        <div class="settings-section-head">
+          <div>
+            <h2 class="op-section-title">一键提取 Token</h2>
+            <p class="muted small">粘贴从浏览器 DevTools 复制的 curl 命令，自动提取 Ylops access / refresh token 并填充到环境变量。</p>
+          </div>
+        </div>
+        <div class="env-extract-form">
+          <textarea id="env-extract-curl" class="settings-input env-extract-textarea" placeholder="粘贴 curl 命令（含 Authorization header 和 Cookie）" rows={4} spellcheck={false}></textarea>
+          <div class="env-extract-actions">
+            <button type="button" id="env-extract-btn" class="btn btn-primary">提取 Token</button>
+            <button type="button" id="env-extract-clear" class="btn btn-secondary">清空</button>
+            <span id="env-extract-status" class="env-extract-status muted small"></span>
+          </div>
+        </div>
+      </section>
 
       <section class="settings-section env-add-section">
         <div class="settings-section-head">
@@ -3024,6 +3088,42 @@ app.get("/api/env-vars", async (c) => {
   return c.json({ groups: await safeEnvVarsByFile() })
 })
 
+/**
+ * POST /api/env-vars/extract-tokens
+ *
+ * Parse a pasted curl command and extract known JWT tokens
+ * (currently Ylops access + refresh). Returns the extracted tokens
+ * with redacted previews so the browser can show a confirmation dialog
+ * without exposing full values server-side.
+ *
+ * The actual write happens via the existing POST /api/config/env endpoint
+ * once the user confirms in the dialog.
+ */
+app.post("/api/env-vars/extract-tokens", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const curlText = typeof body.curl === "string" ? body.curl : ""
+  if (!curlText.trim()) return c.json({ error: "Missing curl text" }, 400)
+
+  const tokens = extractTokensFromCurl(curlText)
+  if (tokens.length === 0) {
+    return c.json({ error: "No recognised tokens found in the provided curl text" }, 422)
+  }
+
+  // Return redacted previews; full values are kept for the client to send
+  // back to /api/config/env on confirmation.
+  const preview = tokens.map((t) => ({
+    name: t.name,
+    file: t.file,
+    source: t.source,
+    preview: t.value.length > 12
+      ? `${t.value.slice(0, 6)}…${t.value.slice(-4)}`
+      : "******",
+    value: t.value,
+  }))
+
+  return c.json({ tokens: preview })
+})
+
 app.get("/api/config", async (c) => {
   const config = await getConfig()
   return c.json({ ...config, envVars: await safeEnvVars(config) })
@@ -3032,6 +3132,7 @@ app.get("/api/config", async (c) => {
 app.post("/api/config", async (c) => {
   const body = await c.req.json().catch(() => null) ?? {}
   const partial: Partial<AppConfig> = {}
+  if (body.harness === "pi" || body.harness === "opencode") partial.harness = body.harness
   if (typeof body.autoExtract === "boolean") partial.autoExtract = body.autoExtract
   if (typeof body.autoExtractSchedule === "boolean") partial.autoExtractSchedule = body.autoExtractSchedule
   if (typeof body.fullSyncSchedule === "boolean") partial.fullSyncSchedule = body.fullSyncSchedule
@@ -3578,15 +3679,17 @@ app.get("/api/report", async (c) => {
 
 // API: list sessions (JSON)
 app.get("/api/sessions", async (c) => {
-  const sessions = await scanSessions()
+  const { harness } = await getConfig()
+  const sessions = await scanDashboardSessions(harness)
   return c.json({ summary: summarizeSessions(sessions), sessions })
 })
 
 // API: get a single session
 app.get("/api/session", async (c) => {
+  const { harness } = await getConfig()
   const id = c.req.query("id")
   if (!id) return c.json({ error: "Missing id" }, 400)
-  const session = await getSession(id)
+  const session = await getDashboardSession(harness, id)
   if (!session) return c.json({ error: "Not found" }, 404)
   return c.json(session)
 })
@@ -3605,6 +3708,7 @@ app.get(
     return {
       onOpen: async (_evt, ws) => {
         try {
+          const { harness } = await getConfig()
           const url = ws.url ? new URL(ws.url) : null
           const id = url?.searchParams.get("id") ?? ""
           const createNew = url?.searchParams.get("new") === "1"
@@ -3619,7 +3723,7 @@ app.get(
           let directory: string | null = null
           let title: string | undefined
           if (!createNew) {
-            const sessionInfo = await getSession(id)
+            const sessionInfo = await getDashboardSession(harness, id)
             directory = sessionInfo?.directory ?? null
           } else if (reqId) {
             const req = await getRequirement(reqId)
@@ -3654,7 +3758,7 @@ app.get(
               }
               try { ws.close(1011, "spawn error") } catch { /* noop */ }
             },
-          }, { createNew, title, env })
+          }, { createNew, title, env, harness })
           if ("error" in result) {
             try {
               ws.send(JSON.stringify({ type: "error", message: result.error }))
@@ -3677,8 +3781,8 @@ app.get(
             const deadline = Date.now() + 10_000
             while (!discoveredId && Date.now() < deadline && !exited) {
               await new Promise((r) => setTimeout(r, 500))
-              clearSessionCache()
-              const list = await scanSessions(true)
+              clearDashboardSessionCache(harness)
+              const list = await scanDashboardSessions(harness, true)
               const candidate = list.find(
                 (s) => s.directory === cwd && (s.created || 0) >= startMs,
               )
@@ -3787,5 +3891,5 @@ startAutoValuationWorker()
 startFullSyncScheduler()
 
 serve({ fetch: app.fetch, websocket: { server: wss }, port }, (info) => {
-  console.log(`OpenCode Dashboard running at http://localhost:${info.port}`)
+  console.log(`Agent Panel running at http://localhost:${info.port}`)
 })

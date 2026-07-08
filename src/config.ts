@@ -29,7 +29,11 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
+export type DashboardHarness = "opencode" | "pi"
+
 export interface AppConfig {
+  /** Global agent harness used by session listing, terminal spawning, and requirement association UI. */
+  harness: DashboardHarness
   /**
    * false (default) = manual trigger only — user clicks "提取上下文".
    * true = auto-trigger when an associated session transitions to idle
@@ -144,7 +148,7 @@ function defaultEnvFiles(configDir: string): Record<EnvFileKind, { path: string;
 
 export const ENV_VAR_CATALOG: readonly EnvVarCatalogEntry[] = [
   // ── config (non-sensitive) ──
-  { name: "OPENCODE_MODEL_SUBAGENT", requiredBy: "Model routing", description: "Model ID used for subagent spawns.", placeholder: "ark-key-router/deepseek-v4-flash-auto", file: "config" },
+  { name: "OPENCODE_MODEL_SUBAGENT", requiredBy: "Model routing", description: "Model ID used for subagent spawns.", placeholder: "llm-provider-router/deepseek-v4-flash-auto", file: "config" },
   { name: "OPENCODE_MODEL_REVIEW", requiredBy: "Model routing", description: "Model ID used for code review.", placeholder: "MiniMax/MiniMax-M3", file: "config" },
   { name: "OPENCODE_KIBANA_TEST_USERNAME_SET", requiredBy: "Kibana log query", description: "Kibana test environment username.", placeholder: "", file: "config" },
   { name: "OPENCODE_KIBANA_TEST_PASSWORD_SET", requiredBy: "Kibana log query", description: "Kibana test environment password.", placeholder: "", file: "config" },
@@ -203,10 +207,12 @@ export const ENV_VAR_CATALOG: readonly EnvVarCatalogEntry[] = [
   { name: "OPENCODE_AI_BRAVE_API_KEY", requiredBy: "Brave Search MCP", description: "Brave Search API key.", placeholder: "", file: "secrets" },
   { name: "OPENCODE_AI_LITELLM_API_KEY", requiredBy: "LiteLLM router", description: "LiteLLM router API key.", placeholder: "", file: "secrets" },
   { name: "GITHUB_TOKEN", requiredBy: "GitHub CLI / MCP", description: "GitHub personal access token.", placeholder: "ghp_…", file: "secrets" },
-  { name: "YLOPS_TOKEN", requiredBy: "Ylops CI/CD Deploy", description: "DevOps JWT token used for Ylops build/deploy requests; copied after browser login when captcha blocks automation.", placeholder: "Paste Ylops JWT token", file: "secrets" },
+  { name: "YLOPS_TOKEN", requiredBy: "Ylops CI/CD Deploy", description: "DevOps JWT access token for Ylops build/deploy requests (~30 min expiry, auto-refreshed by script).", placeholder: "Paste Ylops JWT access token", file: "secrets" },
+  { name: "YLOPS_REFRESH_TOKEN", requiredBy: "Ylops CI/CD Deploy", description: "DevOps JWT refresh token for Ylops auto-refresh (~4.5h expiry).", placeholder: "Paste Ylops JWT refresh token", file: "secrets" },
 ] as const
 
 const DEFAULTS: AppConfig = {
+  harness: "opencode",
   autoExtract: false,
   autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
@@ -221,7 +227,7 @@ const DEFAULT_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "config.json",
 )
 
@@ -244,6 +250,7 @@ async function load(): Promise<AppConfig> {
     const raw = await readFile(_path, "utf-8")
     const parsed = JSON.parse(raw)
     _cache = {
+      harness: normalizeHarness(parsed.harness),
       autoExtract: parsed.autoExtract ?? DEFAULTS.autoExtract,
       autoExtractSchedule: parsed.autoExtractSchedule ?? DEFAULTS.autoExtractSchedule,
       extractModel: parsed.extractModel || DEFAULTS.extractModel,
@@ -264,10 +271,11 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
+    harness: partial.harness ? normalizeHarness(partial.harness) : cur.harness,
     autoExtract: partial.autoExtract ?? cur.autoExtract,
     autoExtractSchedule: partial.autoExtractSchedule ?? cur.autoExtractSchedule,
     extractModel: partial.extractModel ?? cur.extractModel,
@@ -466,6 +474,10 @@ function parseEnvValue(raw: string): string {
 
 function formatEnvLine(key: string, value: string): string {
   return `${key}=${JSON.stringify(value)}`
+}
+
+function normalizeHarness(value: unknown): DashboardHarness {
+  return value === "pi" ? "pi" : "opencode"
 }
 
 function normalizeEnvVars(value: unknown): EnvVarEntry[] {

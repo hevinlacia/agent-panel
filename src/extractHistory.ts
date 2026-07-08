@@ -13,7 +13,7 @@
  *
  * Constraints / safety:
  *   - Stores concise snippets only, not full session transcripts.
- *   - Only writes under `~/.local/share/opencode-dashboard/` by default.
+ *   - Only writes under `~/.local/share/agent-panel/` by default.
  *
  * Read-this-with:
  *   - `src/extractJobs.ts` writes records when jobs finish.
@@ -80,7 +80,7 @@ const DEFAULT_HISTORY_PATH = join(
   homedir(),
   ".local",
   "share",
-  "opencode-dashboard",
+  "agent-panel",
   "extract-history.json",
 )
 const MAX_RECORDS = 500

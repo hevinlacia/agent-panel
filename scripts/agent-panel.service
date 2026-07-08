@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenCode Dashboard (Hono SSR)
+Description=Agent Panel (Hono SSR)
 After=network.target
 
 [Service]

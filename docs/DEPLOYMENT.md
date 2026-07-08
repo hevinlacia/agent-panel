@@ -1,12 +1,12 @@
 # Deployment — systemd user service
 
-Run `opencode-dashboard` as a long-lived background service on Linux using
+Run `agent-panel` as a long-lived background service on Linux using
 **systemd user units** (no root required).
 
 ## TL;DR
 
 ```bash
-cd ~/GitHub/opencode-dashboard
+cd ~/GitHub/agent-panel
 ./scripts/install-systemd.sh
 
 # open http://localhost:7331
@@ -16,8 +16,8 @@ The script:
 
 1. resolves a `node` binary (priority: `$NODE_BIN` > `mise which node` > `PATH`),
 2. runs `npm install` if `node_modules/` is missing,
-3. renders `scripts/opencode-dashboard.service` into
-   `~/.config/systemd/user/opencode-dashboard.service`,
+3. renders `scripts/agent-panel.service` into
+   `~/.config/systemd/user/agent-panel.service`,
 4. `daemon-reload`, `enable`, `restart`,
 5. prints `systemctl status`.
 
@@ -50,13 +50,13 @@ Changing the port after install: rerun the script with the new `PORT=`.
 ## Common commands
 
 ```bash
-systemctl --user status   opencode-dashboard      # state + last log lines
-systemctl --user restart  opencode-dashboard      # apply code changes
-systemctl --user stop     opencode-dashboard
-systemctl --user start    opencode-dashboard
-systemctl --user disable  opencode-dashboard      # stop auto-start on login
-journalctl --user -u opencode-dashboard -f        # systemd-side logs
-tail -f ~/.local/state/opencode-dashboard.log     # stdout / stderr
+systemctl --user status   agent-panel      # state + last log lines
+systemctl --user restart  agent-panel      # apply code changes
+systemctl --user stop     agent-panel
+systemctl --user start    agent-panel
+systemctl --user disable  agent-panel      # stop auto-start on login
+journalctl --user -u agent-panel -f        # systemd-side logs
+tail -f ~/.local/state/agent-panel.log     # stdout / stderr
 ```
 
 ## Start on boot without login
@@ -73,10 +73,10 @@ Disable later with `sudo loginctl disable-linger "$USER"`.
 ## Updating after `git pull`
 
 ```bash
-cd ~/GitHub/opencode-dashboard
+cd ~/GitHub/agent-panel
 git pull
 npm install                                  # only if deps changed
-systemctl --user restart opencode-dashboard
+systemctl --user restart agent-panel
 ```
 
 If `package.json` added a native dependency (e.g. `node-pty`), npm may print
@@ -92,8 +92,8 @@ Then rerun `npm install` and restart the service.
 
 | Path                                                       | Purpose                          |
 | ---------------------------------------------------------- | -------------------------------- |
-| `~/.config/systemd/user/opencode-dashboard.service`        | Rendered unit file               |
-| `~/.local/state/opencode-dashboard.log`                    | Application stdout/stderr        |
+| `~/.config/systemd/user/agent-panel.service`        | Rendered unit file               |
+| `~/.local/state/agent-panel.log`                    | Application stdout/stderr        |
 | `~/.config/systemd/user/default.target.wants/...` (symlink)| Auto-start on user login         |
 
 Nothing under `/etc` or `/usr` is touched. No sudo is required (unless you opt
@@ -109,7 +109,7 @@ in to `enable-linger`).
 ## Troubleshooting
 
 - **`status` shows `Active: failed`**
-  Check `journalctl --user -u opencode-dashboard --since '5 min ago'` and the
+  Check `journalctl --user -u agent-panel --since '5 min ago'` and the
   app log. Most common cause: port in use (`ss -ltnp | grep 7331`) or `node`
   path stale after a Node version switch — rerun `install-systemd.sh`.
 
@@ -121,5 +121,5 @@ in to `enable-linger`).
   the service.
 
 - **Service started but `curl http://localhost:7331` fails**
-  Check the bound port from the log (`OpenCode Dashboard running at ...`); it
+  Check the bound port from the log (`Agent Panel running at ...`); it
   reflects the `PORT` env, not necessarily `7331`.
