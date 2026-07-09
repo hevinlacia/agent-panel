@@ -1,4 +1,4 @@
-# opencode-dashboard
+# agent-panel
 
 本地常驻 Web 控制面，在浏览器里驱动本机的 coding agent session。当前以 **pi** 为主力
 harness，同时保留 OpenCode 兼容代码（后续逐步清理）。
@@ -20,7 +20,7 @@ session」都按当前 harness 分派。
 cd ~/Developer/tools/agent-panel
 bun install
 bun start
-# -> opencode-dashboard running at http://localhost:7331
+# -> Agent Panel running at http://localhost:7331
 ```
 
 开发模式（文件变更自动重启）：`bun run dev`
@@ -30,7 +30,7 @@ bun start
 
 ```bash
 ./scripts/install-systemd.sh
-# -> 安装并启动 opencode-dashboard.service，默认端口 7331
+# -> 安装并启动 agent-panel.service，默认端口 7331
 # -> PORT=8080 ./scripts/install-systemd.sh 可改端口
 ```
 
@@ -39,7 +39,7 @@ bun start
 ## Harness 模式
 
 全局 `config.harness`（`"opencode" | "pi"`），右上角切换，持久化到
-`~/.local/share/opencode-dashboard/config.json`。切换后所有路由重新按 harness 读取数据 /
+`~/.local/share/agent-panel/config.json`。切换后所有路由重新按 harness 读取数据 /
 spawn 终端。
 
 | 能力 | pi 模式（主力） | opencode 模式（保留） |
@@ -59,7 +59,7 @@ spawn 终端。
 | 路径 | 说明 |
 | --- | --- |
 | `/` `/projects` | **Projects / Requirements** 需求管理（Hermes `~/.agents/req/`，按项目分组） |
-| `/requirement?id=<req>` | 需求详情：记忆 / 上线包 / 测试 / Review / 关联 session；「新建并绑定 session」按钮 |
+| `/requirement?id=<req>` | 需求详情：记忆 / 上线包 / 测试 / Code Review / 关联 session；「新建并绑定 session」按钮 |
 | `/sessions` | **Sessions** 仪表盘（Operator 风格 lane），按 harness 列 session |
 | `/session?id=<id>` | 单 session 详情 + 内嵌 xterm 终端 |
 | `/api/sessions` `/api/session?id=` `/api/config` | JSON API |
@@ -88,13 +88,14 @@ OpenCode 专属页面（`/reports` `/report` `/schedulers` `/env-vars` 及对应
 ## 需求生命周期（Hermes，harness 无关）
 
 需求目录在 `~/.agents/req/<project>/.../<req-id>/`，dashboard 只维护 session 关联
-（`~/.local/share/opencode-dashboard/associations.json`）和状态写入。关键文件：
+（`~/.local/share/agent-panel/associations.json`）和状态写入。关键文件：
 
 - `memory.md` — 新建 session 的首要记忆入口
 - `alignment.md` — 需求对齐阶段的标准业务说明
 - `branch.md` + `config-changes.md` - 上线包（分支 / DB / Apollo / Nacos / RocketMQ）
 - `branches.json` - 可选的结构化分支概览（仓库 ↔ 需求分支 ↔ test/uat/master 合并状态）；缺失时 dashboard 从 `branch.md` 兜底解析，agent 写入后为精确数据源
-- `test.md` / `review.md` / `impact.md` — 测试 / Review / 影响评估
+- `code-review.json` - dashboard 生成的 PRO diff 快照（扫描前会先更新本地生产基线），保存仓库/分支、提交、文件、风险标签和人工结论
+- `test.md` / `review.md` / `impact.md` — 测试 / Review / 影响评估；人工 Code Review 结论会同步写入 `review.md` 的托管区块
 
 ## 目录结构
 
@@ -111,6 +112,7 @@ src/
   requirements.ts         - Hermes 需求 + session 关联存储
   requirementState.ts     - 需求 state.json 读写
   branchScope.ts          - branches.json 读写 + branch.md 兜底解析（代码改动范围卡片）
+  codeReview.ts           - PRO diff 扫描、生产基线刷新、code-review.json 与 review.md 托管区块
   paths.ts                - 路径安全边界
   navigation.ts           - 导航项
   notifications.ts        - 通知中心持久化

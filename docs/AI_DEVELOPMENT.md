@@ -1,4 +1,4 @@
-# AI_DEVELOPMENT.md — opencode-dashboard handoff
+# AI_DEVELOPMENT.md — agent-panel handoff
 
 > Long-form handoff for future AIs and developers continuing this project.
 > For quick rules and the verification checklist, see [`AGENTS.md`](../AGENTS.md).
@@ -8,7 +8,7 @@
 
 ## 1. Quick orientation
 
-`opencode-dashboard` is a single-process Node.js web app that you can run
+`agent-panel` is a single-process Node.js web app that you can run
 locally and point at the same machine's OpenCode data directory. It does
 two things:
 
@@ -29,13 +29,15 @@ two things:
 | `GET /sessions` | Sessions dashboard (Operator console) | Source chip top-right (`SQLITE / CLI / FS`) |
 | `GET /session?id=<ses_…>` | Embedded terminal page | 404 page if id not in the current scan |
 | `GET /projects` | Projects / Requirements backlog | Same renderer as `/` |
-| `GET /requirement?id=<req_…>` | Requirement detail page | Shows memory, release package, tests, review, and sessions |
+| `GET /requirement?id=<req_…>` | Requirement detail page | Shows memory, release package, tests, Code Review, and sessions |
 | `GET /sessions/refresh` | Same dashboard, force-rescan | Bypasses the 4 s cache |
 | `GET /reports` | Experience report card grid | |
 | `GET /report?path=…` | Report detail with candidate checkboxes | Path is gated by `resolveHandoffPath` |
 | `GET /api/sessions` | `{ summary, sessions[] }` JSON | |
 | `GET /api/session?id=…` | Single session JSON | |
 | `GET /api/requirements` | `{ requirements[] }` JSON | Requirement records with associated session ids |
+| `POST /api/requirement/code-review/scan` | Redirects back to requirement | Refreshes local PRO/base refs, then writes `code-review.json` |
+| `POST /api/requirement/code-review/verdict` | Redirects back to requirement | Saves human verdict to `code-review.json` and managed `review.md` block |
 | `GET /api/reports` | `ReportSummary[]` JSON | |
 | `GET /api/report?path=…` | `ParsedReport` JSON | |
 | `POST /api/confirm` | `{ ok, savedPath, executionTriggered }` | Path gated by `resolveHandoffPath`; auto-triggers execution fork if report has a marker |
@@ -57,12 +59,13 @@ as ESM / classic scripts with `defer` and `type="module"` respectively.
 ## 2. Architecture / file map
 
 ```
-opencode-dashboard/
+agent-panel/
 ├── src/
 │   ├── server.tsx          # Hono app, JSX, upgradeWebSocket, vendor + static routes
 │   ├── sessions.ts         # SQLite → CLI → fs scan, helpers, session-id guard
 │   ├── terminal.ts         # node-pty wrapper (start/write/resize/kill)
 │   ├── terminalProtocol.ts # PURE WS-frame parser; no native imports
+│   ├── codeReview.ts       # PRO diff scan + human review snapshot/verdict
 │   ├── paths.ts            # resolveHandoffPath (single gate for report paths)
 │   ├── parser.ts           # experience-summary markdown → structured candidates
 │   ├── scanner.ts          # report scanner + saveConfirmation
@@ -102,8 +105,12 @@ memory), `alignment.md` (business-only requirement alignment), `prd.md`
 branches), `config-changes.md` (DB / Apollo / Nacos / RocketMQ Topic and
 Group / cloud-console changes), `test.md` (business acceptance cases,
 self-test records, reusable verification chains), `notes.md` (append-only
-session notes), and `review.md` (pre-release code review findings and
-user decisions). New-session injection reads `memory.md` and
+session notes), `code-review.json` (machine-readable PRO diff snapshot
+and human verdict), and `review.md` (pre-release code review findings and
+user decisions). The Code Review card reads `branches.json` first, falls
+back to `branch.md`, refreshes the configured production base ref before
+every scan, then mirrors the human verdict into a managed `review.md`
+block. New-session injection reads `memory.md` and
 `alignment.md` first; raw PRD content should be converted into
 `alignment.md` during the `需求对齐` phase so later phases rarely need to
 reopen `prd.md`. Scheduled smart extracts run once per day at local

@@ -2499,6 +2499,227 @@ form.req-session-inline-form {
   font-size: 0.72rem;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Code review card (PRO diff + human verdict)                                */
+/* ------------------------------------------------------------------------- */
+.code-review-card {
+  margin: 14px 0 18px;
+  padding: 16px;
+  background: rgba(168, 85, 247, 0.055);
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  border-radius: 4px;
+}
+
+.code-review-head,
+.code-review-scan-form,
+.code-review-verdict-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.code-review-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.code-review-head .op-section-title {
+  margin-bottom: 2px;
+}
+
+.code-review-status,
+.code-review-base,
+.code-review-risk-tag {
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  border-radius: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+}
+
+.code-review-status-approved,
+.code-review-base.is-ok {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.code-review-status-changes_requested,
+.code-review-status-blocked,
+.code-review-base.is-warn {
+  color: var(--amber);
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.code-review-scan-form {
+  margin-top: 12px;
+}
+
+.code-review-scan-form input,
+.code-review-verdict-form input,
+.code-review-verdict-form select,
+.code-review-verdict-form textarea {
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.code-review-scan-form input {
+  min-width: 180px;
+  font-family: var(--mono);
+}
+
+.code-review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.code-review-summary-grid > div,
+.code-review-repo {
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.code-review-summary-grid > div {
+  padding: 8px 10px;
+}
+
+.code-review-repos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-review-repo > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  list-style: none;
+}
+
+.code-review-repo > summary::-webkit-details-marker {
+  display: none;
+}
+
+.code-review-repo-body {
+  border-top: 1px solid var(--border-soft);
+  padding: 10px 12px 12px;
+}
+
+.code-review-path,
+.code-review-warn,
+.code-review-error,
+.code-review-empty {
+  margin: 6px 0;
+}
+
+.code-review-warn,
+.code-review-error,
+.code-review-warnings li {
+  color: var(--amber);
+}
+
+.code-review-warnings,
+.code-review-commits ul,
+.code-review-steps ul {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+.code-review-steps summary,
+.code-review-commits summary,
+.code-review-diff summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.code-review-steps .ok {
+  color: var(--green);
+}
+
+.code-review-steps .fail {
+  color: var(--amber);
+}
+
+.code-review-steps pre {
+  white-space: pre-wrap;
+  margin: 4px 0 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.code-review-files {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.code-review-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border-soft);
+  font-size: 0.8rem;
+}
+
+.code-review-file-path {
+  flex: 1;
+  min-width: 220px;
+  word-break: break-all;
+}
+
+.code-review-risk-tag {
+  color: var(--cyan);
+  background: rgba(34, 211, 238, 0.07);
+  border-color: rgba(34, 211, 238, 0.25);
+}
+
+.code-review-diff pre {
+  white-space: pre-wrap;
+  max-height: 520px;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 10px;
+  background: #0e0e0e;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.74rem;
+}
+
+.code-review-verdict-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.code-review-verdict-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.code-review-verdict-form textarea {
+  width: 100%;
+  font-family: var(--mono);
+}
+
 /* Collapsed raw branch.md text under the overview card. */
 .req-branch-md-details > summary {
   cursor: pointer;

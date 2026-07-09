@@ -13,6 +13,8 @@
  *   4. `req-new-session-btn` triggers background `opencode run` with
  *      the requirement's injection context; on success it renders a
  *      copyable `opencode -s <id>` command next to the button.
+ *   5. Code-review forms get lightweight disabled labels while a PRO diff
+ *      scan or verdict save is in-flight.
  *
  * Why a separate file from public/app.js: app.js is a single-IIFE
  * report-page-only script that early-returns on other pages. Mixing
@@ -324,6 +326,15 @@
   }
 
   document.querySelectorAll(".req-new-session-btn").forEach(attachNewSessionHandler)
+
+  document.querySelectorAll(".code-review-scan-form, .code-review-verdict-form").forEach(function (form) {
+    form.addEventListener("submit", function () {
+      const btn = form.querySelector('button[type="submit"]')
+      if (!btn || btn.disabled) return
+      btn.disabled = true
+      btn.textContent = form.classList.contains("code-review-scan-form") ? "刷新中…" : "保存中…"
+    })
+  })
 
   // ------------------------------------------------------------------
   // Clipboard copy: any element with `data-copy-cmd="..."` copies that

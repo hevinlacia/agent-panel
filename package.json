@@ -1,5 +1,5 @@
 {
-  "name": "opencode-dashboard",
+  "name": "agent-panel",
   "version": "0.1.0",
   "description": "Local web dashboard for pi coding agent sessions, requirements, schedulers, and reports.",
   "type": "module",

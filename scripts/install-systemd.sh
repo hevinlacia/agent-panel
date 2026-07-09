@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install opencode-dashboard as a systemd user service.
+# Install agent-panel as a systemd user service.
 #
 # Usage:
 #   ./scripts/install-systemd.sh                 # use defaults
@@ -10,13 +10,13 @@
 
 set -euo pipefail
 
-SERVICE_NAME="opencode-dashboard.service"
+SERVICE_NAME="agent-panel.service"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEMPLATE="${REPO_DIR}/scripts/opencode-dashboard.service"
+TEMPLATE="${REPO_DIR}/scripts/agent-panel.service"
 UNIT_DIR="${HOME}/.config/systemd/user"
 UNIT_FILE="${UNIT_DIR}/${SERVICE_NAME}"
 LOG_DIR="${HOME}/.local/state"
-LOG_FILE="${LOG_DIR}/opencode-dashboard.log"
+LOG_FILE="${LOG_DIR}/agent-panel.log"
 PORT="${PORT:-7331}"
 
 # Resolve bun binary. Priority: $BUN_BIN > mise > PATH.

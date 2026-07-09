@@ -126,6 +126,15 @@ import {
   type ImpactAssessment,
 } from "./impactAssessment.ts"
 import {
+  CODE_REVIEW_STATUSES,
+  DEFAULT_CODE_REVIEW_BASE_REF,
+  readCodeReviewSnapshot,
+  runCodeReviewScan,
+  saveCodeReviewVerdict,
+  type CodeReviewSnapshot,
+  type CodeReviewStatus,
+} from "./codeReview.ts"
+import {
   buildAutoExtractPrompt,
   parseAutoExtractOutput,
   filterAllowed,
@@ -1257,6 +1266,111 @@ const BranchScopeCard: FC<{ req: Requirement; scope: BranchScope }> = ({ req, sc
   )
 }
 
+const CODE_REVIEW_STATUS_LABELS: Record<CodeReviewStatus, string> = {
+  not_started: "未开始",
+  approved: "通过",
+  changes_requested: "需修改",
+  blocked: "阻塞",
+}
+
+const CodeReviewCard: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null }> = ({ req, scope, snapshot }) => {
+  const files = snapshot?.repos.reduce((n, r) => n + r.files.length, 0) ?? 0
+  const additions = snapshot?.repos.reduce((n, r) => n + r.additions, 0) ?? 0
+  const deletions = snapshot?.repos.reduce((n, r) => n + r.deletions, 0) ?? 0
+  const verdict = snapshot?.verdict
+  return (
+    <section class="code-review-card" aria-label="代码人工 Review">
+      <div class="code-review-head">
+        <div>
+          <h2 class="op-section-title">代码人工 Review</h2>
+          <p class="muted small">相较于生产基线的 Git diff 包。每次扫描都会先 fetch 并更新本地生产分支。</p>
+        </div>
+        <span class={`code-review-status code-review-status-${verdict?.status || "not_started"}`}>
+          {CODE_REVIEW_STATUS_LABELS[verdict?.status || "not_started"]}
+        </span>
+      </div>
+      {scope?.fallback ? <p class="code-review-warn muted small">当前改动范围来自 branch.md 兜底解析，建议先生成 branches.json 再 Review。</p> : null}
+      <form method="post" action="/api/requirement/code-review/scan" class="code-review-scan-form">
+        <input type="hidden" name="reqId" value={req.id} />
+        <label class="field-label" for={`code-review-base-${req.id}`}>生产基线</label>
+        <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" />
+        <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
+        {!scope ? <span class="muted small">需要先补充分支范围（branches.json 或 branch.md）。</span> : null}
+      </form>
+      {snapshot ? (
+        <>
+          <div class="code-review-summary-grid">
+            <div><span class="field-label">更新时间</span><strong>{formatUpdated(snapshot.updatedAt)}</strong></div>
+            <div><span class="field-label">仓库/分支</span><strong>{snapshot.repos.length}</strong></div>
+            <div><span class="field-label">文件</span><strong>{files}</strong></div>
+            <div><span class="field-label">增删</span><strong>+{additions} / -{deletions}</strong></div>
+          </div>
+          <div class="code-review-repos">
+            {snapshot.repos.map((repo) => (
+              <details class="code-review-repo" open={!!repo.error || repo.warnings.length > 0}>
+                <summary>
+                  <span><code>{repo.repoName}</code> / <code>{repo.branch}</code></span>
+                  <span class="muted small">{repo.files.length} 文件 · +{repo.additions}/-{repo.deletions}</span>
+                  <span class={`code-review-base ${repo.baseUpdate.ok ? "is-ok" : "is-warn"}`}>{repo.baseUpdate.ok ? "基线已刷新" : "基线异常"}</span>
+                </summary>
+                <div class="code-review-repo-body">
+                  {repo.projectPath ? <div class="muted small code-review-path">{repo.projectPath}</div> : null}
+                  {repo.dirty ? <p class="code-review-warn muted small">工作区有未提交改动，请确认是否会影响 Review 视角。</p> : null}
+                  {repo.error ? <p class="code-review-error muted small">{repo.error}</p> : null}
+                  {repo.warnings.length > 0 ? <ul class="code-review-warnings">{repo.warnings.map((w) => <li>{w}</li>)}</ul> : null}
+                  {repo.baseUpdate.steps.length > 0 ? (
+                    <details class="code-review-steps">
+                      <summary>生产基线刷新步骤</summary>
+                      <ul>{repo.baseUpdate.steps.map((s) => <li><span class={s.ok ? "ok" : "fail"}>{s.ok ? "✓" : "✗"}</span> <code>{s.command}</code>{s.stderr ? <pre>{s.stderr}</pre> : null}</li>)}</ul>
+                    </details>
+                  ) : null}
+                  {repo.commits.length > 0 ? (
+                    <details class="code-review-commits">
+                      <summary>提交列表（{repo.commits.length}）</summary>
+                      <ul>{repo.commits.map((c) => <li><code>{c}</code></li>)}</ul>
+                    </details>
+                  ) : null}
+                  {repo.files.length > 0 ? (
+                    <div class="code-review-files">
+                      {repo.files.map((f) => (
+                        <div class="code-review-file">
+                          <code>{f.status}</code>
+                          <span class="code-review-file-path">{f.path}</span>
+                          <span class="muted small">+{f.additions}/-{f.deletions}</span>
+                          {f.riskTags.map((t) => <span class="code-review-risk-tag">{t}</span>)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : <p class="muted small">没有文件变更。</p>}
+                  {repo.diff ? (
+                    <details class="code-review-diff">
+                      <summary>展开 unified diff{repo.diffTruncated ? "（已截断）" : ""}</summary>
+                      <pre>{repo.diff}</pre>
+                    </details>
+                  ) : null}
+                </div>
+              </details>
+            ))}
+          </div>
+          <form method="post" action="/api/requirement/code-review/verdict" class="code-review-verdict-form">
+            <input type="hidden" name="reqId" value={req.id} />
+            <div class="code-review-verdict-row">
+              <label><span class="field-label">结论</span><select name="status">{CODE_REVIEW_STATUSES.map((s) => <option value={s} selected={(verdict?.status || "not_started") === s}>{CODE_REVIEW_STATUS_LABELS[s]}</option>)}</select></label>
+              <label><span class="field-label">Reviewer</span><input name="reviewer" value={verdict?.reviewer || ""} placeholder="你的名字" /></label>
+            </div>
+            <label><span class="field-label">Review 摘要</span><textarea name="summary" rows={3}>{verdict?.summary || ""}</textarea></label>
+            <label><span class="field-label">待修复 / 关注项（每行一条）</span><textarea name="items" rows={4}>{verdict?.items.join("\n") || ""}</textarea></label>
+            <button type="submit" class="btn btn-primary">保存人工 Review 结论</button>
+            <span class="muted small">保存后会同步更新 code-review.json 和 review.md。</span>
+          </form>
+        </>
+      ) : (
+        <p class="muted small code-review-empty">尚未生成 Review 包。点击「刷新 PRO Diff」会先更新生产基线，再生成对比结果。</p>
+      )}
+    </section>
+  )
+}
+
 const ImpactAssessmentCard: FC<{ req: Requirement; assessment: ImpactAssessment }> = ({ req, assessment }) => {
   const missingText = assessment.missingSections.length > 0
     ? assessment.missingSections.join("、")
@@ -1353,10 +1467,11 @@ const RequirementDetailPage: FC<{
   reviewContent?: string
   impactAssessment: ImpactAssessment
   branchScope?: BranchScope | null
+  codeReviewSnapshot?: CodeReviewSnapshot | null
   state?: RequirementState | null
   childReqs?: Requirement[]
   parentReq?: Requirement | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, state, childReqs, parentReq }) => {
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, codeReviewSnapshot, state, childReqs, parentReq }) => {
   const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
@@ -1663,6 +1778,8 @@ const RequirementDetailPage: FC<{
       <ImpactAssessmentCard req={req} assessment={impactAssessment} />
 
       {branchScope && branchScope.repos.length > 0 ? <BranchScopeCard req={req} scope={branchScope} /> : null}
+
+      {req.reqDir ? <CodeReviewCard req={req} scope={branchScope} snapshot={codeReviewSnapshot} /> : null}
 
       {req.status === "待上线" && req.reqDir ? (() => {
         const checklist = buildReleaseChecklist({
@@ -2214,6 +2331,7 @@ app.get("/requirement", async (c) => {
     readFileSafe(req.reviewPath),
   ])
   const impactAssessment = buildImpactAssessment(impactContent)
+  const codeReviewSnapshot = req.reqDir ? await readCodeReviewSnapshot(req.reqDir) : null
 
   // Branch scope: prefer the authoritative `branches.json`; fall back to a
   // best-effort parse of `branch.md` so pre-existing requirements still
@@ -2289,6 +2407,7 @@ app.get("/requirement", async (c) => {
       reviewContent={reviewContent}
       impactAssessment={impactAssessment}
       branchScope={branchScope}
+      codeReviewSnapshot={codeReviewSnapshot}
       state={state}
       recommendations={recommendations}
       extractHistory={extractHistory}
@@ -2657,6 +2776,73 @@ app.post("/api/requirement/status", async (c) => {
     return c.json({ ok: true, status })
   }
   return c.redirect(redirectBack, 303)
+})
+
+/**
+ * POST /api/requirement/code-review/scan
+ * Refreshes the production base branch in every scoped repo before building
+ * a persisted diff snapshot for human review.
+ */
+app.post("/api/requirement/code-review/scan", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const baseRef = String(form.get("baseRef") || DEFAULT_CODE_REVIEW_BASE_REF).trim() || DEFAULT_CODE_REVIEW_BASE_REF
+  if (!reqId) return c.text("Missing reqId", 400)
+  if (/\s/.test(baseRef) || baseRef.length > 120) return c.text("Invalid baseRef", 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+
+  let scope = await readBranchScope(req.reqDir)
+  if (!scope && req.branchPath && existsSync(req.branchPath)) {
+    const branchMd = await readFile(req.branchPath, "utf-8").catch(() => "")
+    const repos = fallbackFromBranchMd(branchMd)
+    if (repos.length > 0) scope = { version: 1, updatedAt: Date.now(), repos, fallback: true }
+  }
+  if (!scope || scope.repos.length === 0) {
+    return c.text("No branch scope found. Generate branches.json or fill branch.md first.", 400)
+  }
+
+  try {
+    await runCodeReviewScan(req.reqDir, req.id, scope, { baseRef })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to scan code review diff: ${msg}`, 500)
+  }
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+/**
+ * POST /api/requirement/code-review/verdict
+ * Saves the human review decision into code-review.json and mirrors a
+ * managed summary block into review.md for release-checklist consumption.
+ */
+app.post("/api/requirement/code-review/verdict", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const rawStatus = String(form.get("status") || "not_started")
+  if (!reqId) return c.text("Missing reqId", 400)
+  if (!CODE_REVIEW_STATUSES.includes(rawStatus as CodeReviewStatus)) {
+    return c.text(`Invalid review status: ${rawStatus}`, 400)
+  }
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+  const snapshot = await readCodeReviewSnapshot(req.reqDir)
+  if (!snapshot) return c.text("No code review snapshot. Run scan first.", 400)
+
+  const items = String(form.get("items") || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim().replace(/^[-*]\s+/, ""))
+    .filter(Boolean)
+  await saveCodeReviewVerdict(req.reqDir, snapshot, {
+    status: rawStatus as CodeReviewStatus,
+    reviewer: String(form.get("reviewer") || "").trim() || "未填写",
+    summary: String(form.get("summary") || "").trim(),
+    items,
+    updatedAt: Date.now(),
+  })
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
 /**
