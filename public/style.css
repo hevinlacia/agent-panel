@@ -2346,6 +2346,174 @@ form.req-session-inline-form {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Branch scope overview card (代码改动范围)                                  */
+/* Sourced from branches.json or a branch.md heuristic fallback. Scoped via  */
+/* .branch-scope-* so it never leaks into .release-checklist / .impact-card. */
+/* ------------------------------------------------------------------------- */
+.branch-scope {
+  margin: 14px 0 18px;
+  padding: 16px;
+  background: rgba(34, 211, 238, 0.05);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 4px;
+}
+
+.branch-scope-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.branch-scope-head .op-section-title {
+  margin: 0;
+}
+
+.branch-scope-summary {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.branch-scope-warn {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--amber);
+}
+
+.branch-scope-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.branch-scope-repo {
+  padding: 10px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.branch-scope-repo-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.branch-scope-repo-name {
+  font-size: 0.85rem;
+  color: var(--text-strong);
+  word-break: break-all;
+}
+
+.branch-scope-role {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+  border: 1px solid var(--cyan-soft);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.branch-scope-path {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.branch-scope-branches {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.branch-scope-branches li code {
+  font-size: 0.78rem;
+  color: var(--cyan);
+  word-break: break-all;
+}
+
+.branch-scope-no-branch {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.75rem;
+}
+
+.branch-scope-merge {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.branch-scope-merge-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft);
+}
+
+.branch-scope-merge-badge.is-merged {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.branch-scope-merge-badge.is-pending {
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.branch-scope-merge-badge.is-none {
+  color: var(--text-faint);
+}
+
+.branch-scope-merge-icon {
+  font-weight: 600;
+}
+
+.branch-scope-merge-label {
+  opacity: 0.85;
+}
+
+.branch-scope-meta {
+  margin-top: 6px;
+  font-size: 0.72rem;
+}
+
+/* Collapsed raw branch.md text under the overview card. */
+.req-branch-md-details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.req-branch-md-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .branch-scope-list {
+    grid-template-columns: 1fr;
+  }
+  .branch-scope-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+}
+
+/* ------------------------------------------------------------------------- */
 /* Auto-extract preview page                                                  */
 /* ------------------------------------------------------------------------- */
 

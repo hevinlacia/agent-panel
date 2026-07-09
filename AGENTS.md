@@ -59,7 +59,12 @@ Default port: `7331` (overridable via `PORT`).
 - `public/app.js` — page-scoped browser script: report confirm/reject UI.
 - `public/style.css` — single stylesheet, scoped by `.op-*` and `.report-*`
   class names so dashboard and report surfaces don't bleed into each other.
-- `tests/*.test.ts` — `node --test + tsx` unit tests for the pure modules.
+- `src/branchScope.ts` - reads the agent-authored `<req-dir>/branches.json`
+  (or falls back to a `branch.md` heuristic parse) to render the
+  "代码改动范围" overview card: which repos, which feature branches, and
+  test/uat/master merge state. Mirrors the `state.json` machine-friendly
+  pattern in `src/requirementState.ts`.
+- `tests/*.test.ts` - `node --test + tsx` unit tests for the pure modules.
 
 ## 3. Safety rules (do not weaken)
 

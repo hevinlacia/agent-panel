@@ -106,6 +106,12 @@ import {
   type ChecklistFiles,
 } from "./releaseChecklist.ts"
 import {
+  readBranchScope,
+  fallbackFromBranchMd,
+  type BranchScope,
+  type MergeState,
+} from "./branchScope.ts"
+import {
   ALIGNMENT_FILE,
   ALIGNMENT_TEMPLATE,
   PRD_FILE,
@@ -1174,6 +1180,73 @@ const ReleaseChecklistCard: FC<{ checklist: ReleaseChecklist }> = ({ checklist }
   )
 }
 
+const MERGE_ICON: Record<MergeState, string> = { merged: "✓", pending: "◯", none: "—" }
+
+const MergeBadge: FC<{ label: string; state?: MergeState }> = ({ label, state }) => {
+  const s = state ?? "none"
+  const tip = s === "merged" ? "已合并" : s === "pending" ? "待合并" : "未提及"
+  return (
+    <span class={`branch-scope-merge-badge is-${s}`} title={`${label}: ${tip}`}>
+      <span class="branch-scope-merge-label">{label}</span>
+      <span class="branch-scope-merge-icon">{MERGE_ICON[s]}</span>
+    </span>
+  )
+}
+
+/**
+ * Structured "代码改动范围" overview card - which repos the agent touched
+ * and which feature branches it created in each. Sourced from
+ * `branches.json` (authoritative) or a best-effort parse of `branch.md`
+ * (flagged `scope.fallback`). Rendered for every non-parent requirement
+ * with branch data, not only "待上线", so the change blast radius is
+ * visible during dev. `branch.md` raw text stays available below as a
+ * collapsed "完整分支记录".
+ */
+const BranchScopeCard: FC<{ scope: BranchScope }> = ({ scope }) => {
+  const repoCount = scope.repos.length
+  const branchCount = scope.repos.reduce((n, r) => n + r.branches.length, 0)
+  return (
+    <section class="branch-scope" aria-label="代码改动范围">
+      <div class="branch-scope-head">
+        <h2 class="op-section-title">🗂 代码改动范围</h2>
+        <span class="branch-scope-summary muted small">{repoCount} 仓库 · {branchCount} 分支</span>
+      </div>
+      {scope.fallback ? (
+        <p class="branch-scope-warn muted small">自动从 branch.md 提取，可能不精确。生成 <code>branches.json</code> 可获得精确的应用↔分支映射。</p>
+      ) : null}
+      <div class="branch-scope-list">
+        {scope.repos.map((r) => (
+          <div class="branch-scope-repo">
+            <div class="branch-scope-repo-head">
+              <code class="branch-scope-repo-name">{r.repoName || "未关联仓库"}</code>
+              {r.role ? <span class="branch-scope-role">{r.role}</span> : null}
+            </div>
+            {r.projectPath ? <div class="branch-scope-path muted small">{r.projectPath}</div> : null}
+            {r.branches.length > 0 ? (
+              <ul class="branch-scope-branches">
+                {r.branches.map((b) => <li><code>{b}</code></li>)}
+              </ul>
+            ) : (
+              <span class="muted small branch-scope-no-branch">无需求分支</span>
+            )}
+            <div class="branch-scope-merge">
+              <MergeBadge label="test" state={r.merge.test} />
+              <MergeBadge label={r.merge.uatBranch || "uat"} state={r.merge.uat} />
+              <MergeBadge label="master" state={r.merge.master} />
+            </div>
+            {(typeof r.commitCount === "number" || (r.changedFiles && r.changedFiles.length > 0)) ? (
+              <div class="branch-scope-meta muted small">
+                {typeof r.commitCount === "number" ? <span>{r.commitCount} commits</span> : null}
+                {r.changedFiles && r.changedFiles.length > 0 ? <span>· {r.changedFiles.length} 改动文件</span> : null}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 const ImpactAssessmentCard: FC<{ req: Requirement; assessment: ImpactAssessment }> = ({ req, assessment }) => {
   const missingText = assessment.missingSections.length > 0
     ? assessment.missingSections.join("、")
@@ -1269,10 +1342,11 @@ const RequirementDetailPage: FC<{
   memoryContent?: string
   reviewContent?: string
   impactAssessment: ImpactAssessment
+  branchScope?: BranchScope | null
   state?: RequirementState | null
   childReqs?: Requirement[]
   parentReq?: Requirement | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, state, childReqs, parentReq }) => {
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, state, childReqs, parentReq }) => {
   const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
@@ -1578,6 +1652,8 @@ const RequirementDetailPage: FC<{
 
       <ImpactAssessmentCard req={req} assessment={impactAssessment} />
 
+      {branchScope && branchScope.repos.length > 0 ? <BranchScopeCard scope={branchScope} /> : null}
+
       {req.status === "待上线" && req.reqDir ? (() => {
         const checklist = buildReleaseChecklist({
           meta: undefined,
@@ -1594,7 +1670,12 @@ const RequirementDetailPage: FC<{
       <HermesFileSection title="需求对齐" content={alignmentContent} />
       <HermesFileSection title="PRD 来源" content={prdContent} />
       <HermesFileSection title="需求背景" content={backgroundContent} />
-      <HermesFileSection title="分支信息" content={branchContent} />
+      {branchContent ? (
+        <details class="req-hermes-section req-branch-md-details">
+          <summary class="op-section-title">完整分支记录（branch.md）</summary>
+          <pre style="white-space: pre-wrap; max-height: 480px; overflow: auto; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{branchContent}</pre>
+        </details>
+      ) : null}
       <HermesFileSection title="开发笔记" content={notesContent} />
       <HermesFileSection title="影响面评估" content={impactContent} />
       <HermesFileSection title="测试范围" content={testContent} />
@@ -2124,6 +2205,24 @@ app.get("/requirement", async (c) => {
   ])
   const impactAssessment = buildImpactAssessment(impactContent)
 
+  // Branch scope: prefer the authoritative `branches.json`; fall back to a
+  // best-effort parse of `branch.md` so pre-existing requirements still
+  // get an overview. `fallback: true` flags the heuristic source to the UI.
+  let branchScope: BranchScope | null = null
+  if (req.reqDir) {
+    const fromJson = await readBranchScope(req.reqDir)
+    if (fromJson) {
+      branchScope = fromJson
+    } else if (branchContent) {
+      branchScope = {
+        version: 1,
+        updatedAt: req.updatedAt,
+        repos: fallbackFromBranchMd(branchContent),
+        fallback: true,
+      }
+    }
+  }
+
   const [sessions, associated] = await Promise.all([
     scanDashboardSessions(harness),
     req.sessionIds.length > 0 ? getDashboardSessionsByIds(harness, req.sessionIds) : Promise.resolve([]),
@@ -2179,6 +2278,7 @@ app.get("/requirement", async (c) => {
       memoryContent={memoryContent}
       reviewContent={reviewContent}
       impactAssessment={impactAssessment}
+      branchScope={branchScope}
       state={state}
       recommendations={recommendations}
       extractHistory={extractHistory}

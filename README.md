@@ -92,7 +92,8 @@ OpenCode 专属页面（`/reports` `/report` `/schedulers` `/env-vars` 及对应
 
 - `memory.md` — 新建 session 的首要记忆入口
 - `alignment.md` — 需求对齐阶段的标准业务说明
-- `branch.md` + `config-changes.md` — 上线包（分支 / DB / Apollo / Nacos / RocketMQ）
+- `branch.md` + `config-changes.md` - 上线包（分支 / DB / Apollo / Nacos / RocketMQ）
+- `branches.json` - 可选的结构化分支概览（仓库 ↔ 需求分支 ↔ test/uat/master 合并状态）；缺失时 dashboard 从 `branch.md` 兜底解析，agent 写入后为精确数据源
 - `test.md` / `review.md` / `impact.md` — 测试 / Review / 影响评估
 
 ## 目录结构
@@ -109,6 +110,7 @@ src/
   terminalUrl.ts          - 终端 WS URL + 自动注入门控
   requirements.ts         - Hermes 需求 + session 关联存储
   requirementState.ts     - 需求 state.json 读写
+  branchScope.ts          - branches.json 读写 + branch.md 兜底解析（代码改动范围卡片）
   paths.ts                - 路径安全边界
   navigation.ts           - 导航项
   notifications.ts        - 通知中心持久化
