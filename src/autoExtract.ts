@@ -251,12 +251,15 @@ function collectUntilDelimiter(
 /**
  * Whitelist of filenames the agent is allowed to modify.
  * meta.md is NOT in updates (only appends for non-Status content).
+ * branches.json is allowed so the "生成 branches.json" job can write the
+ * structured branch-scope file via the autoAdopt path.
  */
 export const ALLOWED_UPDATE_FILES = new Set([
   "memory.md",
   ALIGNMENT_FILE,
   PRD_FILE,
   "branch.md",
+  "branches.json",
   "config-changes.md",
   "impact.md",
   "test.md",

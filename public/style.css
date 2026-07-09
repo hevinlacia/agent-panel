@@ -2375,6 +2375,13 @@ form.req-session-inline-form {
   letter-spacing: 0.04em;
 }
 
+.branch-scope-gen-btn {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
 .branch-scope-warn {
   margin: 8px 0 0;
   font-size: 0.78rem;

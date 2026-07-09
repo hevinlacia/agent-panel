@@ -52,6 +52,7 @@ import {
 import {
   buildExtractPrompt,
   appendSummaryToNotes,
+  runExtractStandalone,
 } from "./sessionExtract.ts"
 import {
   createExtractJob,
@@ -111,6 +112,7 @@ import {
   type BranchScope,
   type MergeState,
 } from "./branchScope.ts"
+import { buildBranchScopePrompt } from "./branchScopeExtract.ts"
 import {
   ALIGNMENT_FILE,
   ALIGNMENT_TEMPLATE,
@@ -1202,7 +1204,7 @@ const MergeBadge: FC<{ label: string; state?: MergeState }> = ({ label, state })
  * visible during dev. `branch.md` raw text stays available below as a
  * collapsed "完整分支记录".
  */
-const BranchScopeCard: FC<{ scope: BranchScope }> = ({ scope }) => {
+const BranchScopeCard: FC<{ req: Requirement; scope: BranchScope }> = ({ req, scope }) => {
   const repoCount = scope.repos.length
   const branchCount = scope.repos.reduce((n, r) => n + r.branches.length, 0)
   return (
@@ -1210,6 +1212,14 @@ const BranchScopeCard: FC<{ scope: BranchScope }> = ({ scope }) => {
       <div class="branch-scope-head">
         <h2 class="op-section-title">🗂 代码改动范围</h2>
         <span class="branch-scope-summary muted small">{repoCount} 仓库 · {branchCount} 分支</span>
+        {req.reqDir ? (
+          <form method="post" action="/api/requirement/generate-branch-scope" class="req-extract-trigger-form" data-extract-trigger="">
+            <input type="hidden" name="reqId" value={req.id} />
+            <button type="submit" class="btn btn-secondary branch-scope-gen-btn" title="让后台 agent 读取 branch.md 生成精确的 branches.json">
+              {scope.fallback ? "🤖 生成 branches.json" : "🔄 重新生成"}
+            </button>
+          </form>
+        ) : null}
       </div>
       {scope.fallback ? (
         <p class="branch-scope-warn muted small">自动从 branch.md 提取，可能不精确。生成 <code>branches.json</code> 可获得精确的应用↔分支映射。</p>
@@ -1652,7 +1662,7 @@ const RequirementDetailPage: FC<{
 
       <ImpactAssessmentCard req={req} assessment={impactAssessment} />
 
-      {branchScope && branchScope.repos.length > 0 ? <BranchScopeCard scope={branchScope} /> : null}
+      {branchScope && branchScope.repos.length > 0 ? <BranchScopeCard req={req} scope={branchScope} /> : null}
 
       {req.status === "待上线" && req.reqDir ? (() => {
         const checklist = buildReleaseChecklist({
@@ -3417,6 +3427,62 @@ app.post("/api/requirement/auto-extract", async (c) => {
       queuePosition: result.queuePosition,
       sessionId,
     }, 202)
+  } catch (err) {
+    if (err instanceof JobConflictError) {
+      return c.json({ error: "conflict", jobId: err.existingJobId }, 409)
+    }
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to start job: ${msg}`, 500)
+  }
+})
+
+/**
+ * POST /api/requirement/generate-branch-scope
+ * Body: reqId
+ *
+ * Kicks off a background job that reads `branch.md` and asks the agent
+ * to emit a structured `branches.json`. Uses `runExtractStandalone`
+ * (no `--session`/`--fork`) so the agent sees only the prompt - a
+ * forked session's history would mislead it into "no update needed".
+ * The prompt uses the `===UPDATE: branches.json===` delimiter protocol,
+ * so finalizeJob's autoAdopt path writes the JSON straight to
+ * `<req-dir>/branches.json`. No sessionId needed: the synthetic id
+ * `branchscope-<reqId>` doubles as the per-requirement concurrency key.
+ * The detail page's existing `data-extract-trigger` toast handles polling.
+ */
+app.post("/api/requirement/generate-branch-scope", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("This requirement has no on-disk directory", 400)
+
+  const branchMd =
+    req.branchPath && existsSync(req.branchPath)
+      ? await readFile(req.branchPath, "utf-8")
+      : ""
+  if (!branchMd.trim()) {
+    return c.json(
+      { error: "no-branch-md", message: "需求没有 branch.md，无法生成 branches.json" },
+      400,
+    )
+  }
+
+  const prompt = buildBranchScopePrompt(req, branchMd)
+  const cfg = await getConfig()
+
+  try {
+    const job = createExtractJob({
+      reqId,
+      sessionId: `branchscope-${reqId}`,
+      prompt,
+      mode: "auto",
+      model: cfg.extractModel,
+      autoAdopt: true,
+      reqDir: req.reqDir,
+      runFn: runExtractStandalone,
+    })
+    return c.json({ jobId: job.id, state: "running" }, 202)
   } catch (err) {
     if (err instanceof JobConflictError) {
       return c.json({ error: "conflict", jobId: err.existingJobId }, 409)

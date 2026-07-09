@@ -30,6 +30,7 @@ import { spawn } from "node:child_process"
 import { appendFile, mkdir, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { dirname } from "node:path"
+import { tmpdir } from "node:os"
 
 import type { Requirement } from "./requirements.ts"
 import { runQueuedOpencodeProcess } from "./opencodeProcessQueue.ts"
@@ -159,6 +160,47 @@ export async function runExtractSummary(opts: RunExtractOptions): Promise<Extrac
     bin,
     args: ["run", "--session", opts.sessionId, "--fork", "-m", model, opts.prompt],
     spawnOptions: { stdio: ["ignore", "pipe", "pipe"] },
+    env,
+    timeoutMs,
+    spawnFn: opts.spawnFn,
+  }).then((result) => ({
+    stdout: result.stdout.length > MAX_STDOUT_BYTES ? result.stdout.slice(0, MAX_STDOUT_BYTES) : result.stdout,
+    stderr: result.stderr.length > MAX_STDERR_BYTES ? result.stderr.slice(0, MAX_STDERR_BYTES) : result.stderr,
+    exitCode: result.exitCode,
+    durationMs: Date.now() - startedAt,
+    timedOut: result.timedOut,
+  }))
+}
+
+/**
+ * Standalone extract: spawn `opencode run -m <model> <prompt>` WITHOUT
+ * `--session` / `--fork`, so the agent sees only the prompt with no
+ * forked session history. Used by the "generate branches.json" job,
+ * where the data source is `branch.md` (provided in the prompt), not a
+ * session transcript - a forked session's history would mislead the
+ * agent into "judging no update needed". Shares the same concurrency
+ * gate (`runQueuedOpencodeProcess`) and env (`buildManagedEnv`) as
+ * `runExtractSummary`. The `sessionId` field of `RunExtractOptions` is
+ * accepted but ignored.
+ */
+export async function runExtractStandalone(opts: RunExtractOptions): Promise<ExtractResult> {
+  const bin = opts.opencodeBin || "opencode"
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_EXTRACT_TIMEOUT_MS
+  const model = opts.model && opts.model.trim() ? opts.model.trim() : EXTRACT_MODEL
+  const startedAt = Date.now()
+  // Standalone jobs only read branch.md from the prompt; they don't need
+  // the managed env (DB/Kibana/MQ keys) extract jobs inject. Using plain
+  // process.env matches `opencode run` from the shell and avoids managed-
+  // env provider overrides that can route the model to a broken router.
+  const env = { ...process.env } as Record<string, string>
+  // Note: we intentionally do NOT pass `-m <model>`. Passing the bare
+  // model id (e.g. `glm-latest-auto`) makes opencode route it through a
+  // different provider config than the opencode.jsonc default and hits a
+  // 500; omitting `-m` uses the working default model (verified manually).
+  return runQueuedOpencodeProcess({
+    bin,
+    args: ["run", opts.prompt],
+    spawnOptions: { stdio: ["ignore", "pipe", "pipe"], cwd: tmpdir() },
     env,
     timeoutMs,
     spawnFn: opts.spawnFn,
