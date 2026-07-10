@@ -1,10 +1,20 @@
-/** @jsxImportSource hono/jsx */
-import { Hono, type Context } from "hono"
-import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH } from "./navigation.ts"
-import { type FC } from "hono/jsx"
-import { serve } from "@hono/node-server"
-import { upgradeWebSocket } from "@hono/node-server"
-import { WebSocketServer } from "ws"
+/** @jsxImportSource @kitajs/html */
+/**
+ * Role: wires Agent Panel pages, APIs, and browser assets into the Fastify server.
+ * Public surface: the HTTP routes started at the bottom of this module.
+ * Constraints: keep filesystem and session safety gates in their dedicated modules.
+ * Read-this-with: src/requirements.ts, src/requirementBoard.ts, src/fastify/context.ts, and public/style.css.
+ */
+import Fastify from "fastify"
+import fastifyStatic from "@fastify/static"
+import fastifyFormbody from "@fastify/formbody"
+import fastifyMultipart from "@fastify/multipart"
+import fastifyWebsocket from "@fastify/websocket"
+import fastifySwagger from "@fastify/swagger"
+import fastifySwaggerUi from "@fastify/swagger-ui"
+import { Type } from "@sinclair/typebox"
+import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH, DASHBOARD_PATH } from "./navigation.ts"
+import { type FC, type Ctx, createRouter } from "./fastify/context.ts"
 import { readFile, writeFile, appendFile, readdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
@@ -49,6 +59,12 @@ import {
   DEFAULT_REQ_ID,
   DEFAULT_PROJECT_NAME,
 } from "./requirements.ts"
+import {
+  buildRequirementBoardItems,
+  parseRequirementDateBoundary,
+  type RequirementBoardItem,
+} from "./requirementBoard.ts"
+import { buildRequirementStats, formatDuration } from "./dashboardStats.ts"
 import {
   buildExtractPrompt,
   appendSummaryToNotes,
@@ -110,7 +126,6 @@ import {
   readBranchScope,
   fallbackFromBranchMd,
   type BranchScope,
-  type MergeState,
 } from "./branchScope.ts"
 import { buildBranchScopePrompt } from "./branchScopeExtract.ts"
 import {
@@ -131,6 +146,9 @@ import {
   readCodeReviewSnapshot,
   runCodeReviewScan,
   saveCodeReviewVerdict,
+  parseUnifiedDiff,
+  type CodeReviewDiffLine,
+  type CodeReviewFileDiff,
   type CodeReviewSnapshot,
   type CodeReviewStatus,
 } from "./codeReview.ts"
@@ -196,6 +214,15 @@ import {
   getOpencodeProcessQueueStatus,
   runQueuedOpencodeProcess,
 } from "./opencodeProcessQueue.ts"
+import {
+  ATTACHMENTS_DIR_NAME,
+  listAttachments,
+  writeAttachment,
+  deleteAttachment,
+  readAttachmentBuffer,
+  resolveAttachmentPath,
+  type AttachmentInfo,
+} from "./requirementAttachments.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -207,10 +234,11 @@ const NODE_MODULES_DIR = join(PROJECT_ROOT, "node_modules")
 // Layout
 // ---------------------------------------------------------------------------
 
-type Tab = "sessions" | "reports" | "requirements" | "settings" | "schedulers" | "envvars"
+type Tab = "sessions" | "reports" | "requirements" | "dashboard" | "settings" | "schedulers" | "envvars"
 
 const NAV_ICONS: Record<Tab, string> = {
   requirements: "PR",
+  dashboard: "DB",
   sessions: "SE",
   reports: "RP",
   schedulers: "SC",
@@ -219,7 +247,8 @@ const NAV_ICONS: Record<Tab, string> = {
 }
 
 const NAV_LABELS: Record<Tab, string> = {
-  requirements: "Projects",
+  requirements: "需求看板",
+  dashboard: "状态看板",
   sessions: "Sessions",
   reports: "Reports",
   schedulers: "Schedulers",
@@ -231,13 +260,13 @@ const NAV_LABELS: Record<Tab, string> = {
  * Ark-router-inspired application shell: fixed sidebar for primary sections,
  * compact top command row, and unchanged page body contracts for each route.
  */
-const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, active, children }) => (
+const Layout: FC<{ title: string; active: Tab; children: any; wide?: boolean }> = ({ title, active, children, wide = false }) => (
   <html lang="zh-CN">
     <head>
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{title} — Agent Panel</title>
-      <link rel="stylesheet" href="/static/style.css" />
+      <link rel="stylesheet" href="/static/style.css?v=20260710-review-workspace-2" />
     </head>
     <body>
       <div class="op-shell">
@@ -294,7 +323,7 @@ const Layout: FC<{ title: string; active: Tab; children: any }> = ({ title, acti
               </div>
             </div>
           </header>
-          <main class={(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}>{children}</main>
+          <main class={`${(active === "sessions" || active === "requirements") ? "op-main op-main-sessions" : "op-main"}${wide ? " op-main-wide" : ""}`}>{children}</main>
         </div>
       </div>
       <div id="op-toast-host" class="op-toast-host" aria-live="polite" aria-atomic="false"></div>
@@ -703,9 +732,7 @@ const ReportDetailPage: FC<{ report: ParsedReport; reportPath: string; confirmat
       </div>
     )}
 
-    <script dangerouslySetInnerHTML={{
-      __html: `window.__REPORT_PATH__ = ${JSON.stringify(reportPath)}; window.__CONFIRMED_IDS__ = ${JSON.stringify(confirmation.confirmedIds)}; window.__REJECTED_IDS__ = ${JSON.stringify(confirmation.rejectedIds)};`,
-    }} />
+    <script>{`window.__REPORT_PATH__ = ${JSON.stringify(reportPath)}; window.__CONFIRMED_IDS__ = ${JSON.stringify(confirmation.confirmedIds)}; window.__REJECTED_IDS__ = ${JSON.stringify(confirmation.rejectedIds)};`}</script>
   </Layout>
   )
 }
@@ -797,14 +824,13 @@ const SessionTerminalPage: FC<{ session: SessionInfo; req?: Requirement | null; 
         </p>
       </section>
 
-      <script dangerouslySetInnerHTML={{ __html: initJs }} />
+      <script>{initJs}</script>
       <script
         type="module"
         src="/static/terminal.js"
         data-session-id={session.id}
         data-req-id={reqId}
         data-create-new={isNew ? "1" : ""}
-        dangerouslySetInnerHTML={undefined}
       />
     </Layout>
   )
@@ -847,56 +873,52 @@ function reqStatusBadgeClass(status: ReqStatus): string {
   return `req-status-badge req-status-${REQ_STATUS_SLUG[status]}`
 }
 
-function bucketByGroupPath(requirements: Requirement[]): { key: string; segments: string[]; reqs: Requirement[] }[] {
-  const buckets = new Map<string, { segments: string[]; reqs: Requirement[] }>()
-  for (const r of requirements) {
-    const segs = r.groupPath ?? []
-    const key = segs.join("/")
-    const cur = buckets.get(key)
-    if (cur) cur.reqs.push(r)
-    else buckets.set(key, { segments: segs, reqs: [r] })
-  }
-  // Sort: root group ("") first, then groups by their joined key.
-  const entries = [...buckets.entries()].sort((a, b) => {
-    if (a[0] === b[0]) return 0
-    if (a[0] === "") return -1
-    if (b[0] === "") return 1
-    return a[0].localeCompare(b[0])
-  })
-  return entries.map(([key, value]) => ({ key, segments: value.segments, reqs: value.reqs }))
-}
-
-const RequirementCard: FC<{ r: Requirement; childReqs?: Requirement[] }> = ({ r, childReqs }) => {
-  const snippet = (r.description || "").trim().slice(0, 120) || "暂无描述"
-  const isParent = !!(r.childIds && r.childIds.length > 0)
-  const childList = childReqs ?? []
-  if (isParent) {
-    return (
-      <details class="req-card req-card-parent" open={false}>
-        <summary class="req-card-header">
-          <span class="req-card-title">{r.title}</span>
-          <span class="req-card-child-count">{childList.length} 子需求</span>
-        </summary>
-        <div class="req-card-children">
-          <div class="req-list">
-            {childList.map((cr) => <RequirementCard r={cr} />)}
-          </div>
-        </div>
-      </details>
-    )
-  }
+/** Flat requirement card with dedicated review, detail, and release actions. */
+const RequirementBoardCard: FC<{ item: RequirementBoardItem }> = ({ item }) => {
+  const r = item.requirement
+  const snippet = (r.description || "").trim().slice(0, 180) || "暂无描述"
+  const relation = r.parentReqId
+    ? `子需求 · 上级 ${r.parentReqId}`
+    : r.childIds && r.childIds.length > 0
+      ? `父需求 · ${r.childIds.length} 个子需求`
+      : "独立需求"
+  const canOpenTools = !!r.reqDir && r.id !== DEFAULT_REQ_ID
+  const reviewHref = `/requirement/review?id=${encodeURIComponent(r.id)}`
+  const detailHref = `/requirement?id=${encodeURIComponent(r.id)}`
+  const releaseHref = `/requirement/release?id=${encodeURIComponent(r.id)}`
   return (
-    <a class="req-card" href={`/requirement?id=${encodeURIComponent(r.id)}`}>
-      <div class="req-card-header">
-        <span class="req-card-title">{r.title}</span>
-        <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+    <article class="req-board-card">
+      <div class="req-board-card-main">
+        <div class="req-board-card-head">
+          <div class="req-board-card-title-wrap">
+            <span class="req-board-card-id">{r.id}</span>
+            <h2 class="req-board-card-title">{r.title}</h2>
+          </div>
+          <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+        </div>
+        <div class="req-board-card-path">{item.hierarchy || DEFAULT_PROJECT_NAME}</div>
+        <p class="req-board-card-description">{snippet}</p>
+        <div class="req-board-card-meta">
+          <span>{relation}</span>
+          <span>创建 {new Date(r.createdAt).toLocaleDateString("zh-CN")}</span>
+          <span>{r.sessionIds.length} session(s)</span>
+          <span>更新于 {formatRelAgo(r.updatedAt)}</span>
+        </div>
       </div>
-      <div class="req-card-body">{snippet}</div>
-      <div class="req-card-footer">
-        <span>{r.sessionIds.length} session(s)</span>
-        <span>更新于 {formatRelAgo(r.updatedAt)}</span>
+      <div class="req-board-card-actions" aria-label={`${r.title} 操作`}>
+        {canOpenTools ? (
+          <a class="req-board-action req-board-action-review" href={reviewHref} title="查看 AI 相比生产分支的代码改动">代码差异</a>
+        ) : (
+          <span class="req-board-action req-board-action-disabled" title="该需求没有可读取的本地需求目录">代码差异</span>
+        )}
+        <a class="req-board-action req-board-action-detail" href={detailHref}>需求详情</a>
+        {canOpenTools ? (
+          <a class="req-board-action req-board-action-release" href={releaseHref}>发版注意</a>
+        ) : (
+          <span class="req-board-action req-board-action-disabled" title="该需求没有可读取的本地需求目录">发版注意</span>
+        )}
       </div>
-    </a>
+    </article>
   )
 }
 
@@ -931,163 +953,88 @@ const SessionPicker: FC<{ candidates: SessionInfo[]; listId: string; placeholder
 }
 
 const ProjectsPage: FC<{
-  groups: { project: string; requirements: Requirement[] }[]
+  items: RequirementBoardItem[]
   counts: Record<ReqStatus, number>
-  statusFilter: string
-  showCompleted: boolean
-}> = ({ groups, counts, statusFilter, showCompleted }) => {
-  const filterActive = statusFilter !== "" && (REQ_STATUSES as string[]).includes(statusFilter)
-  // Hide "已完成" requirements by default when no status filter is active.
-  const hideCompleted = !filterActive && !showCompleted
-  const filteredGroups = filterActive
-    ? groups
-        .map((g) => {
-          const matching = g.requirements.filter((r) => r.status === statusFilter)
-          // Include parents of matching children so they're not orphaned.
-          const parentIds = new Set(matching.filter((r) => r.parentReqId).map((r) => r.parentReqId!))
-          const matchingIds = new Set(matching.map((r) => r.id))
-          const needed = g.requirements.filter((r) => matchingIds.has(r.id) || parentIds.has(r.id))
-          return { ...g, requirements: needed }
-        })
-        .filter((g) => g.requirements.length > 0)
-    : groups
-        .map((g) => {
-            if (!hideCompleted) return g
-            // Filter out "已完成" requirements, then also remove parent
-            // requirements whose children are all "已完成" (empty containers).
-            const remaining = g.requirements.filter((r) => r.status !== "已完成")
-            const remainingIds = new Set(remaining.map((r) => r.id))
-            const filtered = remaining.filter((r) => {
-              if (r.childIds && r.childIds.length > 0) {
-                return r.childIds.some((cid) => remainingIds.has(cid))
-              }
-              return true
-            })
-            return { ...g, requirements: filtered }
-          })
-        .filter((g) => g.requirements.length > 0)
-  const totalReqs = filteredGroups.reduce(
-    (acc, g) => acc + g.requirements.filter((r) => !r.parentReqId).length,
-    0,
-  )
-  return (
-    <Layout title="Projects" active="requirements">
-      <section class="req-flow" aria-label="requirement flow">
-        {REQ_STATUSES.map((s) => {
-          const isActive = statusFilter === s
-          const href = isActive ? "/" : `/?status=${encodeURIComponent(s)}`
-          return (
-            <a
-              href={href}
-              class={`op-flow-cell req-flow-cell-${REQ_STATUS_SLUG[s]}${isActive ? " req-flow-cell-active" : ""}`}
-              title={isActive ? `取消筛选：${s}` : `筛选状态：${s}`}
-            >
-              <span class="op-flow-k">{s}</span>
-              <span class="op-flow-v">{counts[s]}</span>
-            </a>
-          )
-        })}
-      </section>
+  selectedStatuses: ReqStatus[]
+  projectFilter: string
+  subprojectFilter: string
+  createdFrom: string
+  createdTo: string
+  projectOptions: string[]
+  subprojectOptions: string[]
+}> = ({ items, counts, selectedStatuses, projectFilter, subprojectFilter, createdFrom, createdTo, projectOptions, subprojectOptions }) => (
+  <Layout title="需求进度看板" active="requirements">
+    <section class="req-board-filter-panel" aria-label="需求筛选">
+      <div class="req-board-filter-heading">
+        <div>
+          <span class="op-section-title">需求筛选</span>
+          <p class="muted small">按创建时间、需求状态和所属项目组合筛选。状态未选择时默认隐藏已完成需求。</p>
+        </div>
+        <a class="req-filter-clear" href="/">清空筛选</a>
+      </div>
+      <form method="get" action="/" class="req-board-filter-form" id="req-board-filter-form">
+        <label class="req-board-filter-field">
+          <span>创建时间起</span>
+          <input type="date" name="createdFrom" value={createdFrom} />
+        </label>
+        <label class="req-board-filter-field">
+          <span>创建时间止</span>
+          <input type="date" name="createdTo" value={createdTo} />
+        </label>
+        <label class="req-board-filter-field">
+          <span>一级项目</span>
+          <select name="project" id="req-board-project-filter">
+            <option value="">全部项目</option>
+            {projectOptions.map((project) => <option value={project} selected={project === projectFilter}>{project}</option>)}
+          </select>
+        </label>
+        <label class="req-board-filter-field">
+          <span>二级项目</span>
+          <select name="subproject" id="req-board-subproject-filter" disabled={!projectFilter}>
+            <option value="">{projectFilter ? "全部二级项目" : "请先选择一级项目"}</option>
+            {subprojectOptions.map((subproject) => <option value={subproject} selected={subproject === subprojectFilter}>{subproject}</option>)}
+          </select>
+        </label>
+        <fieldset class="req-board-status-filter">
+          <legend>需求状态（支持多选）</legend>
+          <div class="req-board-status-options">
+            {REQ_STATUSES.map((status) => (
+              <label class={`req-board-status-option req-board-status-${REQ_STATUS_SLUG[status]}`}>
+                <input type="checkbox" name="status" value={status} checked={selectedStatuses.includes(status)} />
+                <span>{status}</span>
+                <strong>{counts[status]}</strong>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <div class="req-board-filter-actions">
+          <button type="submit" class="btn btn-primary">应用筛选</button>
+          <a class="btn btn-secondary" href="/">重置</a>
+        </div>
+      </form>
+    </section>
 
-      <header class="op-section-head">
-        <h1 class="op-section-title">REQUIREMENT BACKLOG</h1>
-        <div class="op-section-meta">
-          <span class="op-section-meta-item">{totalReqs} TRACKED</span>
-          {filterActive ? (
-            <a class="op-section-meta-item req-filter-clear" href="/" title="清除状态筛选">
-              ✕ 筛选：{statusFilter}
-            </a>
-          ) : (
-            <>
-              {hideCompleted ? (
-                <a class="op-section-meta-item" href="/?showCompleted=1" title="显示已完成需求">
-                  + 显示已完成
-                </a>
-              ) : (
-                <a class="op-section-meta-item req-filter-clear" href="/" title="隐藏已完成需求">
-                  ✕ 隐藏已完成
-                </a>
-              )}
-              <span class="op-section-meta-item muted">via hermes req-tracker</span>
-            </>
-          )}
-        </div>
-      </header>
+    <header class="op-section-head req-board-section-head">
+      <div>
+        <h1 class="op-section-title">当前需求进度</h1>
+        <p class="muted small">父需求、子需求和普通需求统一平铺，按最近更新时间排序。</p>
+      </div>
+      <div class="op-section-meta"><span class="op-section-meta-item">{items.length} TRACKED</span></div>
+    </header>
 
-      {filteredGroups.length === 0 ? (
-        <div class="op-empty">
-          <p>{filterActive ? `没有状态为「${statusFilter}」的需求。` : "No projects yet."}</p>
-          {filterActive ? <p><a href="/">查看全部需求</a></p> : null}
-        </div>
-      ) : (
-        <div class="proj-list">
-          {filteredGroups.map(({ project, requirements }, i) => {
-            const isOpen = project === DEFAULT_PROJECT_NAME
-            const latest = requirements.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
-            // Top-level requirements only — children are rendered inside
-            // their parent's collapsible card via findChildren.
-            const topLevel = requirements.filter((r) => !r.parentReqId)
-            const buckets = bucketByGroupPath(topLevel)
-            // Helper: find children of a parent req within the same project.
-            const findChildren = (parentId: string): Requirement[] =>
-              requirements.filter((r) => r.parentReqId === parentId)
-            return (
-              <details class="proj-card" open={isOpen}>
-                <summary class="proj-card-header">
-                  <span class="proj-card-name">{project}</span>
-                  <span class="proj-card-meta">
-                    <span class="proj-card-count">{topLevel.length} 需求</span>
-                    {latest > 0 ? <span>更新于 {formatRelAgo(latest)}</span> : null}
-                  </span>
-                </summary>
-                <div class="proj-card-body">
-                  {requirements.length === 0 ? (
-                    <p class="muted small" style="padding: 8px 0">暂无需求</p>
-                  ) : (
-                    <div class="req-group-list">
-                      {buckets.map((bucket) => {
-                        if (bucket.segments.length === 0) {
-                          // Root group: render flat without an outer wrapper.
-                          return (
-                            <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} childReqs={r.childIds ? findChildren(r.id) : undefined} />)}
-                            </div>
-                          )
-                        }
-                        const bucketLatest = bucket.reqs.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), 0)
-                        return (
-                          <details class="req-subgroup" open={false}>
-                            <summary class="req-subgroup-header">
-                              <span class="req-subgroup-crumbs">
-                                {bucket.segments.map((seg, idx) => (
-                                  <>
-                                    {idx > 0 ? <span class="req-subgroup-sep"> / </span> : null}
-                                    <span class="req-subgroup-seg">{seg}</span>
-                                  </>
-                                ))}
-                              </span>
-                              <span class="req-subgroup-meta">
-                                <span class="req-subgroup-count">{bucket.reqs.length} 需求</span>
-                                {bucketLatest > 0 ? <span class="muted small">更新于 {formatRelAgo(bucketLatest)}</span> : null}
-                              </span>
-                            </summary>
-                            <div class="req-list">
-                              {bucket.reqs.map((r) => <RequirementCard r={r} childReqs={r.childIds ? findChildren(r.id) : undefined} />)}
-                            </div>
-                          </details>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </details>
-            )
-          })}
-        </div>
-      )}
-    </Layout>
-  )
-}
+    {items.length === 0 ? (
+      <div class="op-empty">
+        <p>没有符合当前筛选条件的需求。</p>
+        <p><a href="/">清空筛选并查看当前需求</a></p>
+      </div>
+    ) : (
+      <div class="req-board-list">
+        {items.map((item) => <RequirementBoardCard item={item} />)}
+      </div>
+    )}
+    <script src="/static/requirements-board.js" defer></script>
+  </Layout>
+)
 
 const HermesFileSection: FC<{ title: string; content?: string }> = ({ title, content }) => {
   if (!content) return null
@@ -1123,7 +1070,8 @@ const ReleaseChecklistCard: FC<{ checklist: ReleaseChecklist }> = ({ checklist }
     checklist.configChanges.length > 0 ||
     checklist.mqResources.length > 0 ||
     checklist.verificationChains.length > 0 ||
-    checklist.reviewItems.length > 0
+    checklist.reviewItems.length > 0 ||
+    checklist.releaseNotes.length > 0
   return (
     <section class="release-checklist" aria-label="上线检查">
       <h2 class="op-section-title">📋 上线检查清单</h2>
@@ -1191,19 +1139,6 @@ const ReleaseChecklistCard: FC<{ checklist: ReleaseChecklist }> = ({ checklist }
   )
 }
 
-const MERGE_ICON: Record<MergeState, string> = { merged: "✓", pending: "◯", none: "—" }
-
-const MergeBadge: FC<{ label: string; state?: MergeState }> = ({ label, state }) => {
-  const s = state ?? "none"
-  const tip = s === "merged" ? "已合并" : s === "pending" ? "待合并" : "未提及"
-  return (
-    <span class={`branch-scope-merge-badge is-${s}`} title={`${label}: ${tip}`}>
-      <span class="branch-scope-merge-label">{label}</span>
-      <span class="branch-scope-merge-icon">{MERGE_ICON[s]}</span>
-    </span>
-  )
-}
-
 /**
  * Structured "代码改动范围" overview card - which repos the agent touched
  * and which feature branches it created in each. Sourced from
@@ -1240,7 +1175,7 @@ const BranchScopeCard: FC<{ req: Requirement; scope: BranchScope }> = ({ req, sc
               <code class="branch-scope-repo-name">{r.repoName || "未关联仓库"}</code>
               {r.role ? <span class="branch-scope-role">{r.role}</span> : null}
             </div>
-            {r.projectPath ? <div class="branch-scope-path muted small">{r.projectPath}</div> : null}
+            {r.path ? <div class="branch-scope-path muted small">{r.path}</div> : null}
             {r.branches.length > 0 ? (
               <ul class="branch-scope-branches">
                 {r.branches.map((b) => <li><code>{b}</code></li>)}
@@ -1248,17 +1183,6 @@ const BranchScopeCard: FC<{ req: Requirement; scope: BranchScope }> = ({ req, sc
             ) : (
               <span class="muted small branch-scope-no-branch">无需求分支</span>
             )}
-            <div class="branch-scope-merge">
-              <MergeBadge label="test" state={r.merge.test} />
-              <MergeBadge label={r.merge.uatBranch || "uat"} state={r.merge.uat} />
-              <MergeBadge label="master" state={r.merge.master} />
-            </div>
-            {(typeof r.commitCount === "number" || (r.changedFiles && r.changedFiles.length > 0)) ? (
-              <div class="branch-scope-meta muted small">
-                {typeof r.commitCount === "number" ? <span>{r.commitCount} commits</span> : null}
-                {r.changedFiles && r.changedFiles.length > 0 ? <span>· {r.changedFiles.length} 改动文件</span> : null}
-              </div>
-            ) : null}
           </div>
         ))}
       </div>
@@ -1273,103 +1197,302 @@ const CODE_REVIEW_STATUS_LABELS: Record<CodeReviewStatus, string> = {
   blocked: "阻塞",
 }
 
-const CodeReviewCard: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null }> = ({ req, scope, snapshot }) => {
-  const files = snapshot?.repos.reduce((n, r) => n + r.files.length, 0) ?? 0
-  const additions = snapshot?.repos.reduce((n, r) => n + r.additions, 0) ?? 0
-  const deletions = snapshot?.repos.reduce((n, r) => n + r.deletions, 0) ?? 0
-  const verdict = snapshot?.verdict
+interface CodeReviewFileView {
+  key: string
+  repoIndex: number
+  fileIndex: number
+  repoName: string
+  projectPath?: string
+  branch: string
+  baseRef: string
+  status: string
+  path: string
+  additions: number
+  deletions: number
+  riskTags: string[]
+  diff?: CodeReviewFileDiff
+}
+
+const codeReviewFileName = (path: string): string => path.split("/").pop() || path
+const codeReviewFileDir = (path: string): string => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "."
+
+const CodeReviewDiffRow: FC<{ line: CodeReviewDiffLine }> = ({ line }) => {
+  const sign = line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : line.kind === "meta" ? "·" : ""
   return (
-    <section class="code-review-card" aria-label="代码人工 Review">
-      <div class="code-review-head">
+    <tr class={`code-review-line code-review-line-${line.kind}`}>
+      <td class="code-review-line-no">{line.oldLine ?? ""}</td>
+      <td class="code-review-line-no">{line.newLine ?? ""}</td>
+      <td class="code-review-line-sign">{sign}</td>
+      <td class="code-review-line-code"><code>{line.content || " "}</code></td>
+    </tr>
+  )
+}
+
+const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> = ({ file, selected }) => (
+  <article class="code-review-file-panel" data-review-file-panel={file.key} hidden={!selected}>
+    <header class="code-review-file-head">
+      <div class="code-review-file-title">
+        <span class={`code-review-file-status code-review-file-status-${file.status.charAt(0).toLowerCase()}`}>{file.status}</span>
         <div>
-          <h2 class="op-section-title">代码人工 Review</h2>
-          <p class="muted small">相较于生产基线的 Git diff 包。每次扫描都会先 fetch 并更新本地生产分支。</p>
+          <strong>{file.path}</strong>
+          <span>{file.repoName} · <code>{file.branch}</code> → <code>{file.baseRef}</code></span>
         </div>
-        <span class={`code-review-status code-review-status-${verdict?.status || "not_started"}`}>
-          {CODE_REVIEW_STATUS_LABELS[verdict?.status || "not_started"]}
-        </span>
       </div>
-      {scope?.fallback ? <p class="code-review-warn muted small">当前改动范围来自 branch.md 兜底解析，建议先生成 branches.json 再 Review。</p> : null}
-      <form method="post" action="/api/requirement/code-review/scan" class="code-review-scan-form">
-        <input type="hidden" name="reqId" value={req.id} />
-        <label class="field-label" for={`code-review-base-${req.id}`}>生产基线</label>
-        <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" />
-        <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
-        {!scope ? <span class="muted small">需要先补充分支范围（branches.json 或 branch.md）。</span> : null}
-      </form>
-      {snapshot ? (
-        <>
-          <div class="code-review-summary-grid">
-            <div><span class="field-label">更新时间</span><strong>{formatUpdated(snapshot.updatedAt)}</strong></div>
-            <div><span class="field-label">仓库/分支</span><strong>{snapshot.repos.length}</strong></div>
-            <div><span class="field-label">文件</span><strong>{files}</strong></div>
-            <div><span class="field-label">增删</span><strong>+{additions} / -{deletions}</strong></div>
-          </div>
-          <div class="code-review-repos">
-            {snapshot.repos.map((repo) => (
-              <details class="code-review-repo" open={!!repo.error || repo.warnings.length > 0}>
-                <summary>
-                  <span><code>{repo.repoName}</code> / <code>{repo.branch}</code></span>
-                  <span class="muted small">{repo.files.length} 文件 · +{repo.additions}/-{repo.deletions}</span>
-                  <span class={`code-review-base ${repo.baseUpdate.ok ? "is-ok" : "is-warn"}`}>{repo.baseUpdate.ok ? "基线已刷新" : "基线异常"}</span>
-                </summary>
-                <div class="code-review-repo-body">
-                  {repo.projectPath ? <div class="muted small code-review-path">{repo.projectPath}</div> : null}
-                  {repo.dirty ? <p class="code-review-warn muted small">工作区有未提交改动，请确认是否会影响 Review 视角。</p> : null}
-                  {repo.error ? <p class="code-review-error muted small">{repo.error}</p> : null}
-                  {repo.warnings.length > 0 ? <ul class="code-review-warnings">{repo.warnings.map((w) => <li>{w}</li>)}</ul> : null}
-                  {repo.baseUpdate.steps.length > 0 ? (
-                    <details class="code-review-steps">
-                      <summary>生产基线刷新步骤</summary>
-                      <ul>{repo.baseUpdate.steps.map((s) => <li><span class={s.ok ? "ok" : "fail"}>{s.ok ? "✓" : "✗"}</span> <code>{s.command}</code>{s.stderr ? <pre>{s.stderr}</pre> : null}</li>)}</ul>
-                    </details>
-                  ) : null}
-                  {repo.commits.length > 0 ? (
-                    <details class="code-review-commits">
-                      <summary>提交列表（{repo.commits.length}）</summary>
-                      <ul>{repo.commits.map((c) => <li><code>{c}</code></li>)}</ul>
-                    </details>
-                  ) : null}
-                  {repo.files.length > 0 ? (
-                    <div class="code-review-files">
-                      {repo.files.map((f) => (
-                        <div class="code-review-file">
-                          <code>{f.status}</code>
-                          <span class="code-review-file-path">{f.path}</span>
-                          <span class="muted small">+{f.additions}/-{f.deletions}</span>
-                          {f.riskTags.map((t) => <span class="code-review-risk-tag">{t}</span>)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : <p class="muted small">没有文件变更。</p>}
-                  {repo.diff ? (
-                    <details class="code-review-diff">
-                      <summary>展开 unified diff{repo.diffTruncated ? "（已截断）" : ""}</summary>
-                      <pre>{repo.diff}</pre>
-                    </details>
-                  ) : null}
-                </div>
-              </details>
-            ))}
-          </div>
-          <form method="post" action="/api/requirement/code-review/verdict" class="code-review-verdict-form">
-            <input type="hidden" name="reqId" value={req.id} />
-            <div class="code-review-verdict-row">
-              <label><span class="field-label">结论</span><select name="status">{CODE_REVIEW_STATUSES.map((s) => <option value={s} selected={(verdict?.status || "not_started") === s}>{CODE_REVIEW_STATUS_LABELS[s]}</option>)}</select></label>
-              <label><span class="field-label">Reviewer</span><input name="reviewer" value={verdict?.reviewer || ""} placeholder="你的名字" /></label>
+      <div class="code-review-file-metrics">
+        <span class="code-review-additions">+{file.additions}</span>
+        <span class="code-review-deletions">-{file.deletions}</span>
+        {file.riskTags.map((tag) => <span class="code-review-risk-tag">{tag}</span>)}
+      </div>
+    </header>
+    {file.diff && file.diff.hunks.length > 0 ? (
+      <div class="code-review-hunks">
+        {file.diff.hunks.map((hunk) => (
+          <section class="code-review-hunk">
+            <div class="code-review-hunk-head"><code>{hunk.header}</code></div>
+            <div class="code-review-table-wrap">
+              <table class="code-review-table"><tbody>{hunk.lines.map((line) => <CodeReviewDiffRow line={line} />)}</tbody></table>
             </div>
-            <label><span class="field-label">Review 摘要</span><textarea name="summary" rows={3}>{verdict?.summary || ""}</textarea></label>
-            <label><span class="field-label">待修复 / 关注项（每行一条）</span><textarea name="items" rows={4}>{verdict?.items.join("\n") || ""}</textarea></label>
-            <button type="submit" class="btn btn-primary">保存人工 Review 结论</button>
-            <span class="muted small">保存后会同步更新 code-review.json 和 review.md。</span>
-          </form>
-        </>
+          </section>
+        ))}
+      </div>
+    ) : (
+      <div class="code-review-no-diff">
+        <strong>当前快照没有该文件的逐行 Diff。</strong>
+        <span>可能是二进制文件、Diff 被截断，或扫描结果仅包含文件统计。可刷新 PRO Diff 后重试。</span>
+      </div>
+    )}
+  </article>
+)
+
+const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null; redirectPath: string }> = ({ req, scope, snapshot, redirectPath }) => {
+  const verdict = snapshot?.verdict
+  const repoViews = (snapshot?.repos || []).map((repo, repoIndex) => {
+    const parsed = parseUnifiedDiff(repo.diff)
+    const byPath = new Map<string, CodeReviewFileDiff>()
+    for (const file of parsed) {
+      byPath.set(file.path, file)
+      byPath.set(file.oldPath, file)
+      byPath.set(file.newPath, file)
+    }
+    return {
+      repo,
+      files: repo.files.map((file, fileIndex): CodeReviewFileView => ({
+        key: `review-file-${repoIndex}-${fileIndex}`,
+        repoIndex,
+        fileIndex,
+        repoName: repo.repoName,
+        projectPath: repo.projectPath,
+        branch: repo.branch,
+        baseRef: repo.baseRef,
+        status: file.status,
+        path: file.path,
+        additions: file.additions,
+        deletions: file.deletions,
+        riskTags: file.riskTags,
+        diff: byPath.get(file.path),
+      })),
+    }
+  })
+  const allFiles = repoViews.flatMap((view) => view.files)
+  const files = allFiles.length
+  const additions = snapshot?.repos.reduce((n, repo) => n + repo.additions, 0) ?? 0
+  const deletions = snapshot?.repos.reduce((n, repo) => n + repo.deletions, 0) ?? 0
+  const firstFile = allFiles[0]
+
+  return (
+    <section class="code-review-workspace" aria-label="代码差异审查工作区">
+      <header class="code-review-toolbar">
+        <div class="code-review-toolbar-copy">
+          <div class="code-review-toolbar-title">
+            <strong>生产分支差异</strong>
+            <span class={`code-review-status code-review-status-${verdict?.status || "not_started"}`}>{CODE_REVIEW_STATUS_LABELS[verdict?.status || "not_started"]}</span>
+          </div>
+          <span>{snapshot ? `${snapshot.repos.length} 个仓库/分支 · ${files} 个文件 · 更新于 ${formatUpdated(snapshot.updatedAt)}` : "尚未生成代码差异快照"}</span>
+        </div>
+        <form method="post" action="/api/requirement/code-review/scan" class="code-review-scan-form">
+          <input type="hidden" name="reqId" value={req.id} />
+          <input type="hidden" name="redirect" value={redirectPath} />
+          <label class="field-label" for={`code-review-base-${req.id}`}>生产基线</label>
+          <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" />
+          <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
+        </form>
+        <div class="code-review-total-metrics">
+          <span>{files} files</span>
+          <strong class="code-review-additions">+{additions}</strong>
+          <strong class="code-review-deletions">-{deletions}</strong>
+        </div>
+      </header>
+
+      {scope?.fallback ? <div class="code-review-banner is-warn">改动范围来自 branch.md 兜底解析，建议补充 branches.json 以准确标识项目和分支。</div> : null}
+      {!scope ? <div class="code-review-banner is-warn">需要先补充分支范围（branches.json 或 branch.md），才能生成生产分支差异。</div> : null}
+
+      {snapshot && allFiles.length > 0 ? (
+        <div class="code-review-layout">
+          <aside class="code-review-file-pane">
+            <div class="code-review-pane-head">
+              <strong>改动文件</strong>
+              <span>{files}</span>
+            </div>
+            <label class="code-review-file-search">
+              <span aria-hidden="true">⌕</span>
+              <input id="code-review-file-search" type="search" placeholder="搜索文件或项目" autocomplete="off" />
+            </label>
+            <div class="code-review-file-groups">
+              {repoViews.map(({ repo, files: repoFiles }) => (
+                <section class="code-review-file-group" data-review-file-group>
+                  <header>
+                    <strong>{req.project} / {repo.repoName}</strong>
+                    <span>{repoFiles.length}</span>
+                    <small><code>{repo.branch}</code></small>
+                    {repo.projectPath ? <small title={repo.projectPath}>{repo.projectPath}</small> : null}
+                  </header>
+                  <div>
+                    {repoFiles.map((file, index) => (
+                      <button
+                        type="button"
+                        class={`code-review-file-button${file.key === firstFile?.key ? " is-active" : ""}`}
+                        data-review-file-button={file.key}
+                        data-review-file-filter={`${req.project} ${file.repoName} ${file.path}`.toLowerCase()}
+                        data-review-file-path={file.path}
+                        data-review-file-repo={`${req.project} / ${file.repoName}`}
+                        aria-pressed={file.key === firstFile?.key ? "true" : "false"}
+                      >
+                        <span class={`code-review-file-status code-review-file-status-${file.status.charAt(0).toLowerCase()}`}>{file.status}</span>
+                        <span class="code-review-file-button-copy">
+                          <strong>{codeReviewFileName(file.path)}</strong>
+                          <small>{codeReviewFileDir(file.path)}</small>
+                        </span>
+                        <span class="code-review-file-button-metrics"><b>+{file.additions}</b><i>-{file.deletions}</i></span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              <div id="code-review-file-empty" class="code-review-file-empty" hidden>没有匹配的改动文件。</div>
+            </div>
+          </aside>
+
+          <main class="code-review-diff-pane">
+            <div class="code-review-pane-head code-review-diff-pane-head">
+              <div>
+                <strong id="code-review-current-file">{firstFile?.path}</strong>
+                <span id="code-review-current-repo">{firstFile ? `${req.project} / ${firstFile.repoName}` : ""}</span>
+              </div>
+              <span>与 {snapshot.baseRef} 对比</span>
+            </div>
+            <div class="code-review-file-panels">{allFiles.map((file) => <CodeReviewFilePanel file={file} selected={file.key === firstFile?.key} />)}</div>
+          </main>
+
+          <aside class="code-review-notes-pane">
+            <div class="code-review-pane-head">
+              <strong>代码备注</strong>
+              <span>{CODE_REVIEW_STATUS_LABELS[verdict?.status || "not_started"]}</span>
+            </div>
+            <div class="code-review-current-context">
+              <span>当前文件</span>
+              <strong id="code-review-note-file">{firstFile?.path}</strong>
+              <small id="code-review-note-repo">{firstFile ? `${req.project} / ${firstFile.repoName}` : ""}</small>
+            </div>
+            <form method="post" action="/api/requirement/code-review/verdict" class="code-review-verdict-form">
+              <input type="hidden" name="reqId" value={req.id} />
+              <input type="hidden" name="redirect" value={redirectPath} />
+              <label><span class="field-label">结论</span><select name="status">{CODE_REVIEW_STATUSES.map((status) => <option value={status} selected={(verdict?.status || "not_started") === status}>{CODE_REVIEW_STATUS_LABELS[status]}</option>)}</select></label>
+              <label><span class="field-label">Reviewer</span><input name="reviewer" value={verdict?.reviewer || ""} placeholder="你的名字" /></label>
+              <label><span class="field-label">Review 摘要</span><textarea name="summary" rows={"5"} placeholder="记录整体实现、风险和结论">{verdict?.summary || ""}</textarea></label>
+              <label><span class="field-label">待修复 / 关注项</span><textarea name="items" rows={"10"} placeholder="每行一条，例如：空库存时需保留原分配结果">{verdict?.items.join("\n") || ""}</textarea></label>
+              <button type="submit" class="btn btn-primary">保存代码备注</button>
+              <span class="muted small">同步写入 code-review.json 和 review.md。</span>
+            </form>
+            <details class="code-review-context-details">
+              <summary>扫描上下文与告警</summary>
+              {snapshot.repos.map((repo) => (
+                <div class="code-review-context-repo">
+                  <strong>{repo.repoName}</strong>
+                  <span class={repo.baseUpdate.ok ? "is-ok" : "is-warn"}>{repo.baseUpdate.ok ? "生产基线已刷新" : "生产基线异常"}</span>
+                  {repo.dirty ? <small class="is-warn">工作区有未提交改动</small> : null}
+                  {repo.error ? <small class="is-warn">{repo.error}</small> : null}
+                  {repo.warnings.map((warning) => <small class="is-warn">{warning}</small>)}
+                </div>
+              ))}
+            </details>
+          </aside>
+        </div>
       ) : (
-        <p class="muted small code-review-empty">尚未生成 Review 包。点击「刷新 PRO Diff」会先更新生产基线，再生成对比结果。</p>
+        <div class="code-review-empty-state">
+          <strong>{snapshot ? "本次扫描没有发现代码文件变更" : "尚未生成代码差异"}</strong>
+          <span>点击「刷新 PRO Diff」会先更新本地生产基线，再按需求分支生成逐文件差异。</span>
+        </div>
       )}
     </section>
   )
 }
+
+/** Dedicated review surface opened from the first action on each board card. */
+const RequirementReviewPage: FC<{
+  req: Requirement
+  scope?: BranchScope | null
+  snapshot?: CodeReviewSnapshot | null
+}> = ({ req, scope, snapshot }) => {
+  const redirectPath = `/requirement/review?id=${encodeURIComponent(req.id)}`
+  return (
+    <Layout title={`代码差异 — ${req.title}`} active="requirements" wide>
+      <section class="req-tool-page code-review-page">
+        <header class="req-tool-page-head code-review-page-head">
+          <div>
+            <a class="back-link" href="/projects">← 返回需求看板</a>
+            <h1>AI 相比生产分支的代码改动</h1>
+            <p class="muted">{req.project} · {req.title} · <code>{req.id}</code></p>
+          </div>
+          <nav class="req-tool-page-actions">
+            <a class="btn btn-secondary" href={`/requirement?id=${encodeURIComponent(req.id)}`}>需求详情</a>
+            <a class="btn btn-secondary" href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>发版注意</a>
+          </nav>
+        </header>
+        <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} redirectPath={redirectPath} />
+      </section>
+      <script src="/static/req-detail.js?v=20260710-review-workspace" defer></script>
+    </Layout>
+  )
+}
+
+/** Dedicated release-attention surface opened from the third board action. */
+const RequirementReleasePage: FC<{
+  req: Requirement
+  checklist: ReleaseChecklist
+  branchContent?: string
+  configContent?: string
+  testContent?: string
+  notesContent?: string
+  reviewContent?: string
+}> = ({ req, checklist, branchContent, configContent, testContent, notesContent, reviewContent }) => (
+  <Layout title={`发版注意 — ${req.title}`} active="requirements">
+    <section class="req-tool-page">
+      <header class="req-tool-page-head">
+        <div>
+          <a class="back-link" href="/">← 返回需求看板</a>
+          <h1>当前发版需要注意的事项</h1>
+          <p class="muted">{req.title} · <code>{req.id}</code> · <span class={reqStatusBadgeClass(req.status)}>{req.status}</span></p>
+        </div>
+        <nav class="req-tool-page-actions">
+          <a class="btn btn-secondary" href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>代码差异</a>
+          <a class="btn btn-secondary" href={`/requirement?id=${encodeURIComponent(req.id)}`}>需求详情</a>
+        </nav>
+      </header>
+      {req.status !== "待上线" ? (
+        <div class="req-release-stage-note">当前需求尚未处于「待上线」，这里展示的是已沉淀的发版信息，可提前检查并补齐。</div>
+      ) : null}
+      <ReleaseChecklistCard checklist={checklist} />
+      <details class="req-release-sources">
+        <summary>查看发版依据文件</summary>
+        <HermesFileSection title="分支记录" content={branchContent} />
+        <HermesFileSection title="配置变更" content={configContent} />
+        <HermesFileSection title="测试范围" content={testContent} />
+        <HermesFileSection title="开发笔记" content={notesContent} />
+        <HermesFileSection title="上线 Review" content={reviewContent} />
+      </details>
+    </section>
+  </Layout>
+)
 
 const ImpactAssessmentCard: FC<{ req: Requirement; assessment: ImpactAssessment }> = ({ req, assessment }) => {
   const missingText = assessment.missingSections.length > 0
@@ -1449,6 +1572,73 @@ const AlignmentCard: FC<{ req: Requirement; alignmentContent?: string; prdConten
   )
 }
 
+/**
+ * Format a byte count into a human-readable string (KB / MB).
+ * Used only by the attachment card.
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * Attachment card - lists files under `<reqDir>/attachments/` with
+ * download and delete actions, plus an upload form (multipart).
+ * Only rendered when the requirement has an on-disk directory.
+ */
+const AttachmentCard: FC<{ req: Requirement; attachments: AttachmentInfo[] }> = ({ req, attachments }) => {
+  return (
+    <section class="req-attachments" aria-label="附件文件">
+      <h2 class="op-section-title">📎 附件文件（{attachments.length}）</h2>
+      <p class="muted small" style="margin-bottom: 8px;">存放 SQL 数据、CSV 导出等需求相关文件。文件保存在 <code>{ATTACHMENTS_DIR_NAME}/</code> 子目录。</p>
+      {attachments.length > 0 ? (
+        <ul class="req-attachments-list">
+          {attachments.map((a) => (
+            <li class="req-attachments-item">
+              <span class="req-attachments-name">📎 {a.filename}</span>
+              <span class="req-attachments-size muted small">{formatFileSize(a.size)}</span>
+              <span class="req-attachments-time muted small">{new Date(a.mtime).toLocaleString("zh-CN", { hour12: false })}</span>
+              <a
+                class="btn btn-sm btn-secondary"
+                href={`/requirement/attachments/download?reqId=${encodeURIComponent(req.id)}&filename=${encodeURIComponent(a.filename)}`}
+                download={a.filename}
+              >
+                下载
+              </a>
+              <form
+                method="post"
+                action="/api/requirement/attachments/delete"
+                class="req-attachments-delete-form"
+                onsubmit="return confirm(`确认删除附件 ${a.filename}？`);"
+              >
+                <input type="hidden" name="reqId" value={req.id} />
+                <input type="hidden" name="filename" value={a.filename} />
+                <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
+                <button type="submit" class="btn btn-sm btn-reject" title="删除此附件">删除</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p class="muted small" style="margin-bottom: 10px;">暂无附件。</p>
+      )}
+      <form
+        method="post"
+        action="/api/requirement/attachments/upload"
+        enctype="multipart/form-data"
+        class="req-attachments-upload-form"
+      >
+        <input type="hidden" name="reqId" value={req.id} />
+        <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
+        <input type="file" name="file" required />
+        <button type="submit" class="btn btn-sm btn-primary">上传附件</button>
+        <span class="muted small">同名文件将被覆盖</span>
+      </form>
+    </section>
+  )
+}
+
 const RequirementDetailPage: FC<{
   req: Requirement
   associated: SessionInfo[]
@@ -1471,7 +1661,8 @@ const RequirementDetailPage: FC<{
   state?: RequirementState | null
   childReqs?: Requirement[]
   parentReq?: Requirement | null
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, codeReviewSnapshot, state, childReqs, parentReq }) => {
+  attachments?: AttachmentInfo[]
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, codeReviewSnapshot, state, childReqs, parentReq, attachments = [] }) => {
   const isParent = !!(req.childIds && req.childIds.length > 0)
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
@@ -1516,8 +1707,17 @@ const RequirementDetailPage: FC<{
 
           <section class="req-children-section" aria-label="子需求">
             <h2 class="op-section-title">子需求（{childReqs?.length ?? 0}）</h2>
-            <div class="req-list">
-              {(childReqs ?? []).map((cr) => <RequirementCard r={cr} />)}
+            <div class="req-board-list">
+              {(childReqs ?? []).map((cr) => (
+                <RequirementBoardCard
+                  item={{
+                    requirement: cr,
+                    project: cr.project,
+                    subproject: cr.groupPath[0] ?? "",
+                    hierarchy: [cr.project, ...cr.groupPath].filter(Boolean).join(" / "),
+                  }}
+                />
+              ))}
             </div>
           </section>
         </>
@@ -1779,19 +1979,12 @@ const RequirementDetailPage: FC<{
 
       {branchScope && branchScope.repos.length > 0 ? <BranchScopeCard req={req} scope={branchScope} /> : null}
 
-      {req.reqDir ? <CodeReviewCard req={req} scope={branchScope} snapshot={codeReviewSnapshot} /> : null}
-
-      {req.status === "待上线" && req.reqDir ? (() => {
-        const checklist = buildReleaseChecklist({
-          meta: undefined,
-          branch: branchContent,
-          config: configContent,
-          test: testContent,
-          notes: notesContent,
-          review: reviewContent,
-        })
-        return <ReleaseChecklistCard checklist={checklist} />
-      })() : null}
+      {req.reqDir ? (
+        <nav class="req-detail-tool-links" aria-label="需求专项视图">
+          <a class="btn btn-secondary" href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>查看代码差异</a>
+          <a class="btn btn-secondary" href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>查看发版注意事项</a>
+        </nav>
+      ) : null}
 
       <HermesFileSection title="需求记忆" content={memoryContent} />
       <HermesFileSection title="需求对齐" content={alignmentContent} />
@@ -1808,6 +2001,8 @@ const RequirementDetailPage: FC<{
       <HermesFileSection title="测试范围" content={testContent} />
       <HermesFileSection title="配置变更" content={configContent} />
       <HermesFileSection title="上线 Review" content={reviewContent} />
+
+      {req.reqDir ? <AttachmentCard req={req} attachments={attachments} /> : null}
 
       {extractHistory.length > 0 ? (
         <section class="req-extract-history" aria-label="上下文提取历史">
@@ -1986,7 +2181,7 @@ const RequirementExtractPreviewPage: FC<{
               <textarea
                 name="body"
                 class="req-extract-body"
-                rows={24}
+                rows={"24"}
                 spellcheck={false}
                 aria-label="摘要正文"
               >{job.stdout}</textarea>
@@ -2030,7 +2225,7 @@ const RequirementExtractPreviewPage: FC<{
                   <textarea
                     name="body"
                     class="req-extract-body"
-                    rows={18}
+                    rows={"18"}
                     spellcheck={false}
                     aria-label="抢救摘要正文"
                   >{job.stdout}</textarea>
@@ -2094,8 +2289,100 @@ const RequirementRecallPage: FC<{
 }
 
 // ---------------------------------------------------------------------------
-// Hono app
+// Fastify app + plugins
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Control-center dashboard page
+// ---------------------------------------------------------------------------
+
+const DashboardPage: FC<{ stats: ReturnType<typeof buildRequirementStats> }> = ({ stats }) => {
+  const statusColors: Record<string, string> = {
+    align: "var(--req-pending)", design: "var(--req-design)", dev: "var(--req-dev)",
+    selftest: "var(--req-selftest)", testing: "var(--req-testing)", deploy: "var(--req-deploy)",
+    done: "var(--req-done)",
+  }
+  return (
+    <Layout title="状态看板" active="dashboard">
+      <section class="dash-kpi-row" aria-label="关键指标">
+        <div class="dash-kpi-card">
+          <span class="dash-kpi-label">需求总数</span>
+          <span class="dash-kpi-value">{stats.total}</span>
+        </div>
+        <div class="dash-kpi-card dash-kpi-done">
+          <span class="dash-kpi-label">已完成</span>
+          <span class="dash-kpi-value">{stats.completedCount}</span>
+          <span class="dash-kpi-sub">{stats.total > 0 ? `${Math.round(stats.completedCount / stats.total * 100)}%` : "-"}</span>
+        </div>
+        <div class="dash-kpi-card dash-kpi-active">
+          <span class="dash-kpi-label">进行中</span>
+          <span class="dash-kpi-value">{stats.inProgressCount}</span>
+          <span class="dash-kpi-sub">{stats.total > 0 ? `${Math.round(stats.inProgressCount / stats.total * 100)}%` : "-"}</span>
+        </div>
+        <div class="dash-kpi-card dash-kpi-avg">
+          <span class="dash-kpi-label">平均交付时长</span>
+          <span class="dash-kpi-value">{formatDuration(stats.avgDeliveryMs) || "-"}</span>
+          <span class="dash-kpi-sub">中位数 {formatDuration(stats.medianDeliveryMs)} · 最长 {formatDuration(stats.maxDeliveryMs)}</span>
+        </div>
+      </section>
+
+      <section class="dash-status-section" aria-label="需求状态分布">
+        <h2 class="op-section-title">需求状态分布</h2>
+        <div class="dash-status-bars">
+          {stats.statusCounts.map((sc) => (
+            <div class="dash-status-bar" title={`${sc.status}: ${sc.count} (${sc.percent}%)`}>
+              <span class="dash-status-label">{sc.status}</span>
+              <div class="dash-status-track">
+                <div
+                  class="dash-status-fill"
+                  style={`width:${sc.percent}%;background:${statusColors[REQ_STATUS_SLUG[sc.status]] || "var(--text-muted)"}`}
+                />
+              </div>
+              <span class="dash-status-count">{sc.count}</span>
+              <span class="dash-status-percent">{sc.percent}%</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section class="dash-duration-section" aria-label="需求交付时长">
+        <h2 class="op-section-title">需求交付时长</h2>
+        {stats.durations.length === 0 ? (
+          <p class="muted small">暂无需求数据。</p>
+        ) : (
+          <table class="dash-duration-table">
+            <thead>
+              <tr>
+                <th>需求</th>
+                <th>状态</th>
+                <th>项目</th>
+                <th>创建时间</th>
+                <th class="dash-dur-col">交付时长</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.durations.map((d) => (
+                <tr>
+                  <td>
+                    <a href={`/requirement?id=${encodeURIComponent(d.req.id)}`}>{d.req.title}</a>
+                    <div class="dash-dur-id muted small">{d.req.id}</div>
+                  </td>
+                  <td><span class={reqStatusBadgeClass(d.req.status)}>{d.req.status}</span></td>
+                  <td class="muted small">{d.req.project}</td>
+                  <td class="muted small">{new Date(d.req.createdAt).toLocaleDateString("zh-CN")}</td>
+                  <td class="dash-dur-cell">
+                    <div class="dash-dur-bar" style={`width:${Math.min(100, (d.durationMs / Math.max(stats.maxDeliveryMs, 1)) * 100)}%`} />
+                    <span class="dash-dur-text">{formatDuration(d.durationMs)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </Layout>
+  )
+}
 
 /**
  * Parse the `days` query parameter for the sessions page time filter.
@@ -2110,57 +2397,68 @@ function parseDaysParam(raw: string | undefined): number {
   return Math.floor(n)
 }
 
-const app = new Hono()
+// ---------------------------------------------------------------------------
+// Fastify app + plugins
+// ---------------------------------------------------------------------------
 
-// Static files under /static/* (public/ dir).
-app.get("/static/*", async (c) => {
-  const path = c.req.path.replace("/static/", "")
-  // Refuse to escape public/ via "..".
-  if (path.includes("..") || path.startsWith("/")) return c.text("Forbidden", 403)
-  const filePath = join(PUBLIC_DIR, path)
-  try {
-    const content = await readFile(filePath)
-    const ext = path.split(".").pop()?.toLowerCase() ?? ""
-    const contentType =
-      ext === "css" ? "text/css" :
-      ext === "js" ? "application/javascript" :
-      ext === "mjs" ? "application/javascript" :
-      "text/plain"
-    return new Response(content, { headers: { "Content-Type": contentType, "Cache-Control": "no-cache" } })
-  } catch {
-    return c.text("Not found", 404)
-  }
+const fastify = await Fastify({
+  logger: { level: process.env.LOG_LEVEL || "info" },
+  bodyLimit: 100 * 1024 * 1024,
 })
 
-// Vendor xterm browser assets out of node_modules without copying.
-function vendorFile(pkg: string, rel: string, contentType: string) {
-  return async (c: any) => {
-    const safeRel = rel.replace(/^\/+/, "")
-    if (safeRel.includes("..") || safeRel.startsWith("/")) return c.text("Forbidden", 403)
-    const filePath = join(NODE_MODULES_DIR, pkg, safeRel)
-    if (!existsSync(filePath)) return c.text("Not found", 404)
+await fastify.register(fastifyFormbody)
+await fastify.register(fastifyMultipart, { attachFieldsToBody: "keyValues" })
+await fastify.register(fastifyStatic, {
+  root: PUBLIC_DIR,
+  prefix: "/static/",
+  cacheControl: false,
+})
+await fastify.register(fastifyWebsocket)
+await fastify.register(fastifySwagger, {
+  openapi: {
+    info: {
+      title: "Agent Panel API",
+      description: "Local web control panel for coding agent sessions and requirements.",
+      version: "0.2.0",
+    },
+  },
+})
+await fastify.register(fastifySwaggerUi, { routePrefix: "/docs" })
+
+// Native Fastify health route with TypeBox schema.
+fastify.get("/health", { schema: { response: { 200: Type.Object({ ok: Type.Boolean(), ts: Type.Number() }) } } }, async () => {
+  return { ok: true, ts: Date.now() }
+})
+
+// Vendor xterm assets from node_modules (hardcoded safe paths).
+for (const [route, pkg, rel, contentType] of [
+  ["/vendor/xterm/xterm.css", "@xterm/xterm", "css/xterm.css", "text/css"],
+  ["/vendor/xterm/xterm.js", "@xterm/xterm", "lib/xterm.js", "application/javascript"],
+  ["/vendor/xterm-addon-fit/addon-fit.js", "@xterm/addon-fit", "lib/addon-fit.js", "application/javascript"],
+] as const) {
+  fastify.get(route, async (_req, reply) => {
+    const filePath = join(NODE_MODULES_DIR, pkg, rel)
     try {
       const content = await readFile(filePath)
-      return new Response(content, {
-        headers: {
-          "Content-Type": contentType,
-          "Cache-Control": "public, max-age=3600",
-        },
-      })
+      reply.type(contentType).header("Cache-Control", "public, max-age=3600").send(content)
     } catch {
-      return c.text("Not found", 404)
+      reply.code(404).send("Not found")
     }
-  }
+  })
 }
 
-app.get("/vendor/xterm/xterm.css", vendorFile("@xterm/xterm", "css/xterm.css", "text/css"))
-app.get("/vendor/xterm/xterm.js", vendorFile("@xterm/xterm", "lib/xterm.js", "application/javascript"))
-app.get("/vendor/xterm-addon-fit/addon-fit.js", vendorFile("@xterm/addon-fit", "lib/addon-fit.js", "application/javascript"))
+const app = createRouter(fastify)
 
-// Projects (requirements) landing page — the site homepage.
-async function renderProjectsPage(c: Context) {
-  const statusFilter = c.req.query("status") || ""
-  const showCompleted = c.req.query("showCompleted") === "1"
+// Projects (requirements) page — available from the sidebar after the status dashboard.
+async function renderProjectsPage(c: Ctx) {
+  const url = new URL(c.req.url)
+  const selectedStatuses = url.searchParams
+    .getAll("status")
+    .filter((status): status is ReqStatus => (REQ_STATUSES as string[]).includes(status))
+  const projectFilter = (url.searchParams.get("project") || "").trim()
+  const subprojectFilter = (url.searchParams.get("subproject") || "").trim()
+  const createdFrom = url.searchParams.get("createdFrom") || ""
+  const createdTo = url.searchParams.get("createdTo") || ""
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
     "需求对齐": 0,
@@ -2174,10 +2472,46 @@ async function renderProjectsPage(c: Context) {
   for (const g of groups) {
     for (const r of g.requirements) counts[r.status] += 1
   }
-  return c.html(<ProjectsPage groups={groups} counts={counts} statusFilter={statusFilter} showCompleted={showCompleted} />)
+  const projectOptions = [...new Set(groups.flatMap((g) => g.requirements.map((r) => r.project)))].sort()
+  const subprojectOptions = projectFilter
+    ? [...new Set(groups
+        .flatMap((g) => g.requirements)
+        .filter((r) => r.project === projectFilter)
+        .map((r) => r.groupPath[0] || "")
+        .filter(Boolean))].sort()
+    : []
+  const normalizedSubproject = subprojectOptions.includes(subprojectFilter) ? subprojectFilter : ""
+  const items = buildRequirementBoardItems(groups, {
+    statuses: selectedStatuses,
+    project: projectFilter,
+    subproject: normalizedSubproject,
+    createdFrom: parseRequirementDateBoundary(createdFrom),
+    createdTo: parseRequirementDateBoundary(createdTo, true),
+  })
+  return c.html(
+    <ProjectsPage
+      items={items}
+      counts={counts}
+      selectedStatuses={selectedStatuses}
+      projectFilter={projectFilter}
+      subprojectFilter={normalizedSubproject}
+      createdFrom={createdFrom}
+      createdTo={createdTo}
+      projectOptions={projectOptions}
+      subprojectOptions={subprojectOptions}
+    />,
+  )
 }
 
-app.get("/", async (c) => renderProjectsPage(c))
+async function renderDashboardPage(c: Ctx) {
+  const groups = await listRequirementsByProject()
+  const requirements = groups.flatMap((g) => g.requirements)
+  const stats = buildRequirementStats(requirements)
+  return c.html(<DashboardPage stats={stats} />)
+}
+
+app.get(DASHBOARD_PATH, async (c) => renderDashboardPage(c))
+app.get("/", async (c) => renderDashboardPage(c))
 
 // Sessions landing page (was previously at "/")
 app.get("/sessions", async (c) => {
@@ -2297,6 +2631,70 @@ app.get("/projects", async (c) => renderProjectsPage(c))
 
 app.get("/requirements", (c) => c.redirect("/projects", 302))
 
+async function readOptionalRequirementFile(path?: string): Promise<string | undefined> {
+  if (!path || !existsSync(path)) return undefined
+  return readFile(path, "utf-8").catch(() => undefined)
+}
+
+async function loadRequirementBranchScope(req: Requirement, branchContent?: string): Promise<BranchScope | null> {
+  if (!req.reqDir) return null
+  const structured = await readBranchScope(req.reqDir)
+  if (structured) return structured
+  if (!branchContent) return null
+  const repos = fallbackFromBranchMd(branchContent)
+  if (repos.length === 0) return null
+  return { version: 1, updatedAt: req.updatedAt, repos, fallback: true }
+}
+
+app.get("/requirement/review", async (c) => {
+  const id = c.req.query("id")
+  if (!id) return c.text("Missing requirement id", 400)
+  const req = await getRequirement(id)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+  const branchContent = await readOptionalRequirementFile(req.branchPath)
+  const [scope, snapshot] = await Promise.all([
+    loadRequirementBranchScope(req, branchContent),
+    readCodeReviewSnapshot(req.reqDir),
+  ])
+  return c.html(<RequirementReviewPage req={req} scope={scope} snapshot={snapshot} />)
+})
+
+app.get("/requirement/release", async (c) => {
+  const id = c.req.query("id")
+  if (!id) return c.text("Missing requirement id", 400)
+  const req = await getRequirement(id)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
+  const [metaContent, branchContent, configContent, testContent, notesContent, reviewContent] = await Promise.all([
+    readOptionalRequirementFile(req.metaPath),
+    readOptionalRequirementFile(req.branchPath),
+    readOptionalRequirementFile(req.configPath),
+    readOptionalRequirementFile(req.testPath),
+    readOptionalRequirementFile(req.notesPath),
+    readOptionalRequirementFile(req.reviewPath),
+  ])
+  const checklist = buildReleaseChecklist({
+    meta: metaContent,
+    branch: branchContent,
+    config: configContent,
+    test: testContent,
+    notes: notesContent,
+    review: reviewContent,
+  })
+  return c.html(
+    <RequirementReleasePage
+      req={req}
+      checklist={checklist}
+      branchContent={branchContent}
+      configContent={configContent}
+      testContent={testContent}
+      notesContent={notesContent}
+      reviewContent={reviewContent}
+    />,
+  )
+})
+
 app.get("/requirement", async (c) => {
   const id = c.req.query("id")
   if (!id) return c.text("Missing requirement id", 400)
@@ -2332,6 +2730,7 @@ app.get("/requirement", async (c) => {
   ])
   const impactAssessment = buildImpactAssessment(impactContent)
   const codeReviewSnapshot = req.reqDir ? await readCodeReviewSnapshot(req.reqDir) : null
+  const attachments = req.reqDir ? await listAttachments(req.reqDir) : []
 
   // Branch scope: prefer the authoritative `branches.json`; fall back to a
   // best-effort parse of `branch.md` so pre-existing requirements still
@@ -2413,6 +2812,7 @@ app.get("/requirement", async (c) => {
       extractHistory={extractHistory}
       childReqs={childReqs}
       parentReq={parentReq}
+      attachments={attachments}
     />
   )
 })
@@ -2557,7 +2957,7 @@ app.post("/api/requirement/dissociate", async (c) => {
 /**
  * Shared validation for both job-start and preview routes.
  *
- * Returns either a ready-to-use {req, sessionId} pair or a Hono Response
+ * Returns either a ready-to-use {req, sessionId} pair or an HTTP error
  * carrying the appropriate 4xx text. The session must already be
  * associated with the requirement — otherwise any caller could spam any
  * requirement's notes.md with any session's summary.
@@ -2787,6 +3187,7 @@ app.post("/api/requirement/code-review/scan", async (c) => {
   const form = await c.req.formData()
   const reqId = String(form.get("reqId") || "")
   const baseRef = String(form.get("baseRef") || DEFAULT_CODE_REVIEW_BASE_REF).trim() || DEFAULT_CODE_REVIEW_BASE_REF
+  const redirectBack = String(form.get("redirect") || "") || `/requirement?id=${encodeURIComponent(reqId)}`
   if (!reqId) return c.text("Missing reqId", 400)
   if (/\s/.test(baseRef) || baseRef.length > 120) return c.text("Invalid baseRef", 400)
   const req = await getRequirement(reqId)
@@ -2809,7 +3210,7 @@ app.post("/api/requirement/code-review/scan", async (c) => {
     const msg = err instanceof Error ? err.message : String(err)
     return c.text(`Failed to scan code review diff: ${msg}`, 500)
   }
-  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+  return c.redirect(redirectBack, 303)
 })
 
 /**
@@ -2821,6 +3222,7 @@ app.post("/api/requirement/code-review/verdict", async (c) => {
   const form = await c.req.formData()
   const reqId = String(form.get("reqId") || "")
   const rawStatus = String(form.get("status") || "not_started")
+  const redirectBack = String(form.get("redirect") || "") || `/requirement?id=${encodeURIComponent(reqId)}`
   if (!reqId) return c.text("Missing reqId", 400)
   if (!CODE_REVIEW_STATUSES.includes(rawStatus as CodeReviewStatus)) {
     return c.text(`Invalid review status: ${rawStatus}`, 400)
@@ -2842,7 +3244,7 @@ app.post("/api/requirement/code-review/verdict", async (c) => {
     items,
     updatedAt: Date.now(),
   })
-  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+  return c.redirect(redirectBack, 303)
 })
 
 /**
@@ -3024,7 +3426,7 @@ const SchedulerConfigPanel: FC<{ config: AppConfig; githubRepos: { path: string;
             </label>
             <label class="settings-field sched-config-number">
               <span class="settings-label">最小消息增量</span>
-              <input type="number" id="cfg-min-change" name="minChangeMessages" value={config.minChangeMessages} min={1} max={100} class="settings-input settings-input-narrow" />
+              <input type="number" id="cfg-min-change" name="minChangeMessages" value={String(config.minChangeMessages)} min={"1"} max={"100"} class="settings-input settings-input-narrow" />
             </label>
           </div>
         </article>
@@ -3046,7 +3448,7 @@ const SchedulerConfigPanel: FC<{ config: AppConfig; githubRepos: { path: string;
           </label>
           <label class="settings-field sched-config-number">
             <span class="settings-label">价值评分阈值</span>
-            <input type="number" id="cfg-valuation-threshold" name="valuationThreshold" value={config.valuationThreshold} min={1} max={100} class="settings-input settings-input-narrow" />
+            <input type="number" id="cfg-valuation-threshold" name="valuationThreshold" value={String(config.valuationThreshold)} min={"1"} max={"100"} class="settings-input settings-input-narrow" />
           </label>
         </article>
       </div>
@@ -3319,7 +3721,7 @@ const EnvVarsPage: FC<{ groups: EnvFileGroup[] }> = ({ groups }) => {
           </div>
         </div>
         <div class="env-extract-form">
-          <textarea id="env-extract-curl" class="settings-input env-extract-textarea" placeholder="粘贴 curl 命令（含 Authorization header 和 Cookie）" rows={4} spellcheck={false}></textarea>
+          <textarea id="env-extract-curl" class="settings-input env-extract-textarea" placeholder="粘贴 curl 命令（含 Authorization header 和 Cookie）" rows={"4"} spellcheck={false}></textarea>
           <div class="env-extract-actions">
             <button type="button" id="env-extract-btn" class="btn btn-primary">提取 Token</button>
             <button type="button" id="env-extract-clear" class="btn btn-secondary">清空</button>
@@ -3761,7 +4163,7 @@ const AutoExtractPreviewPage: FC<{
                     <textarea
                       name={`update_content_${i}`}
                       class="req-extract-body auto-extract-textarea"
-                      rows={Math.min(24, u.content.split("\n").length + 2)}
+                      rows={String(Math.min(24, u.content.split("\n").length + 2))}
                       spellcheck={false}
                     >{u.content}</textarea>
                   </div>
@@ -3778,7 +4180,7 @@ const AutoExtractPreviewPage: FC<{
                     <textarea
                       name={`append_content_${i}`}
                       class="req-extract-body auto-extract-textarea"
-                      rows={Math.min(20, a.content.split("\n").length + 2)}
+                      rows={String(Math.min(20, a.content.split("\n").length + 2))}
                       spellcheck={false}
                     >{a.content}</textarea>
                   </div>
@@ -3855,6 +4257,113 @@ app.post("/api/requirement/auto-extract/commit", async (c) => {
     }
   }
 
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+// ---------------------------------------------------------------------------
+// Requirement attachments - list / upload / download / delete
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a reqId to a validated {req, reqDir} pair, or return an HTTP
+ * error response. Shared by the four attachment routes below.
+ */
+async function resolveAttachmentReq(
+  reqId: string,
+): Promise<{ ok: true; req: Requirement } | { ok: false; status: 400 | 404; message: string }> {
+  if (!reqId) return { ok: false, status: 400, message: "Missing reqId" }
+  const req = await getRequirement(reqId)
+  if (!req) return { ok: false, status: 404, message: "Requirement not found" }
+  if (!req.reqDir) return { ok: false, status: 400, message: "Requirement has no on-disk directory" }
+  return { ok: true, req }
+}
+
+/**
+ * GET /api/requirement/attachments?reqId=<id>
+ *
+ * Returns a JSON array of attachment metadata for the requirement.
+ */
+app.get("/api/requirement/attachments", async (c) => {
+  const reqId = String(c.req.query("reqId") || "")
+  const guard = await resolveAttachmentReq(reqId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+  const attachments = await listAttachments(guard.req.reqDir!)
+  return c.json({ attachments })
+})
+
+/**
+ * POST /api/requirement/attachments/upload
+ *
+ * Multipart form: reqId, redirect (optional), file.
+ * Writes the uploaded file into `<reqDir>/attachments/`. Unsafe filenames
+ * (path traversal, null bytes) are rejected with 400. Same-name files
+ * are overwritten.
+ */
+app.post("/api/requirement/attachments/upload", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const redirect = String(form.get("redirect") || "")
+  const guard = await resolveAttachmentReq(reqId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+
+  const file = form.get("file")
+  if (!(file instanceof File)) return c.text("Missing or invalid file", 400)
+
+  // Use the uploaded filename's basename; reject if it fails the safe-path
+  // gate (covers traversal, null bytes, path separators).
+  const filename = file.name || "upload"
+  const safePath = resolveAttachmentPath(guard.req.reqDir!, filename)
+  if (!safePath) return c.text(`Unsafe filename: ${filename}`, 400)
+
+  const buffer = Buffer.from(await file.arrayBuffer())
+  await writeAttachment(guard.req.reqDir!, filename, buffer)
+
+  if (redirect) return c.redirect(redirect, 303)
+  return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
+})
+
+/**
+ * GET /requirement/attachments/download?reqId=<id>&filename=<name>
+ *
+ * Streams the raw attachment bytes with a Content-Disposition header so
+ * the browser downloads it. Unsafe names are rejected with 400.
+ */
+fastify.get("/requirement/attachments/download", async (request, reply) => {
+  const reqId = String((request.query as Record<string, string>).reqId || "")
+  const filename = String((request.query as Record<string, string>).filename || "")
+  const guard = await resolveAttachmentReq(reqId)
+  if (!guard.ok) return reply.code(guard.status).send(guard.message)
+
+  const buffer = await readAttachmentBuffer(guard.req.reqDir!, filename)
+  if (!buffer) return reply.code(404).send("File not found")
+
+  const encoded = encodeURIComponent(filename)
+  reply
+    .type("application/octet-stream")
+    .header("Content-Disposition", `attachment; filename="${encoded}"; filename*=UTF-8''${encoded}`)
+    .header("Content-Length", String(buffer.length))
+    .send(buffer)
+})
+
+/**
+ * POST /api/requirement/attachments/delete
+ *
+ * Form body: reqId, filename, redirect (optional). Deletes the file from
+ * `<reqDir>/attachments/`. Unsafe names return 400 (not found = 400 too,
+ * to avoid leaking which names exist).
+ */
+app.post("/api/requirement/attachments/delete", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const filename = String(form.get("filename") || "")
+  const redirect = String(form.get("redirect") || "")
+  const guard = await resolveAttachmentReq(reqId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+
+  const deleted = await deleteAttachment(guard.req.reqDir!, filename)
+  if (!deleted) return c.text("File not found", 404)
+
+  if (redirect) return c.redirect(redirect, 303)
   return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
@@ -4026,7 +4535,7 @@ app.post("/api/valuation/poll", async (c) => {
 // for the confirmed candidate IDs so the user's accepted items get
 // implemented without leaving the dashboard.
 app.post("/api/confirm", async (c) => {
-  const body = await c.req.json<Confirmation>()
+  const body = await c.req.json() as Confirmation
   const reportPath = resolveHandoffPath(body.reportPath)
   if (!reportPath) {
     return c.json({ error: "Invalid reportPath" }, 400)
@@ -4098,165 +4607,123 @@ app.get("/api/session", async (c) => {
 // WebSocket: /ws/session-terminal?id=...
 // ---------------------------------------------------------------------------
 
-const wss = new WebSocketServer({ noServer: true })
+/**
+ * Terminal WebSocket handler. Attaches message/close/error listeners
+ * synchronously (per @fastify/websocket requirement) then runs async open
+ * logic. The socket is already connected when this handler is called.
+ */
+async function handleTerminalSocket(
+  ws: { send(data: string): void; close(code?: number, reason?: string): void },
+  query: Record<string, string>,
+  state: { session: TerminalSession | null; exited: boolean },
+): Promise<void> {
+  const { harness } = await getConfig()
+  const id = query.id ?? ""
+  const createNew = query.new === "1"
+  const reqId = query.req ?? ""
+  const autoInject = shouldAutoInjectRequirementContext(
+    new URL(`ws://localhost/ws?req=${encodeURIComponent(reqId)}&inject=${query.inject ?? ""}`),
+  )
 
-app.get(
-  "/ws/session-terminal",
-  upgradeWebSocket(() => {
-    let session: TerminalSession | null = null
-    let exited = false
-    return {
-      onOpen: async (_evt, ws) => {
-        try {
-          const { harness } = await getConfig()
-          const url = ws.url ? new URL(ws.url) : null
-          const id = url?.searchParams.get("id") ?? ""
-          const createNew = url?.searchParams.get("new") === "1"
-          const reqId = url?.searchParams.get("req") ?? ""
-          const autoInject = shouldAutoInjectRequirementContext(url)
+  let directory: string | null = null
+  let title: string | undefined
+  if (!createNew) {
+    const sessionInfo = await getDashboardSession(harness, id)
+    directory = sessionInfo?.directory ?? null
+  } else if (reqId) {
+    const req = await getRequirement(reqId)
+    if (req) title = req.title || undefined
+  }
 
-          // Resolve a working directory + optional title for the spawn.
-          // Non-new mode: trust the SessionInfo row we already have.
-          // New mode: use the requirement's working directory hint if
-          // present (via getRequirement); otherwise fall back to
-          // resolveCwd's default in startSession.
-          let directory: string | null = null
-          let title: string | undefined
-          if (!createNew) {
-            const sessionInfo = await getDashboardSession(harness, id)
-            directory = sessionInfo?.directory ?? null
-          } else if (reqId) {
-            const req = await getRequirement(reqId)
-            if (req) title = req.title || undefined
-          }
+  const startMs = Date.now()
+  const env = await buildManagedEnv()
+  const result = startSession(id, directory, {
+    onOutput: (chunk) => {
+      if (state.exited) return
+      try { ws.send(chunk) } catch { /* ignore */ }
+    },
+    onExit: (code, signal) => {
+      state.exited = true
+      try { ws.send(JSON.stringify({ type: "exit", code, signal: signal ?? null })) } catch { /* ignore */ }
+      try { ws.close(1000, "process exited") } catch { /* noop */ }
+    },
+    onError: (message) => {
+      try { ws.send(JSON.stringify({ type: "error", message })) } catch { /* ignore */ }
+      try { ws.close(1011, "spawn error") } catch { /* noop */ }
+    },
+  }, { createNew, title, env, harness })
 
-          const startMs = Date.now()
-          const env = await buildManagedEnv()
-          const result = startSession(id, directory, {
-            onOutput: (chunk) => {
-              if (exited) return
-              try {
-                ws.send(chunk)
-              } catch {
-                // ignore send failures (closed)
-              }
-            },
-            onExit: (code, signal) => {
-              exited = true
-              try {
-                ws.send(JSON.stringify({ type: "exit", code, signal: signal ?? null }))
-              } catch {
-                // ignore
-              }
-              try { ws.close(1000, "process exited") } catch { /* noop */ }
-            },
-            onError: (message) => {
-              try {
-                ws.send(JSON.stringify({ type: "error", message }))
-              } catch {
-                // ignore
-              }
-              try { ws.close(1011, "spawn error") } catch { /* noop */ }
-            },
-          }, { createNew, title, env, harness })
-          if ("error" in result) {
-            try {
-              ws.send(JSON.stringify({ type: "error", message: result.error }))
-            } catch { /* noop */ }
-            try { ws.close(1008, result.error) } catch { /* noop */ }
-            return
-          }
-          session = result
-          try {
-            ws.send(JSON.stringify({ type: "ready", id: result.id, cols: result.cols, rows: result.rows }))
-          } catch { /* noop */ }
+  if ("error" in result) {
+    try { ws.send(JSON.stringify({ type: "error", message: result.error })) } catch { /* noop */ }
+    try { ws.close(1008, result.error) } catch { /* noop */ }
+    return
+  }
+  state.session = result
+  try { ws.send(JSON.stringify({ type: "ready", id: result.id, cols: result.cols, rows: result.rows })) } catch { /* noop */ }
 
-          // In "new" mode opencode creates a real session row on startup.
-          // Poll the DB for ~10s to find the freshest session under our
-          // cwd that didn't exist before `startMs`, then push the real
-          // id back to the page and associate it with the requirement.
-          let discoveredId = ""
-          if (createNew) {
-            const cwd = result.cwd
-            const deadline = Date.now() + 10_000
-            while (!discoveredId && Date.now() < deadline && !exited) {
-              await new Promise((r) => setTimeout(r, 500))
-              clearDashboardSessionCache(harness)
-              const list = await scanDashboardSessions(harness, true)
-              const candidate = list.find(
-                (s) => s.directory === cwd && (s.created || 0) >= startMs,
-              )
-              if (candidate) {
-                discoveredId = candidate.id
-                break
-              }
-            }
-            if (discoveredId) {
-              if (reqId) {
-                try {
-                  await replaceAssociatedSession(reqId, id, discoveredId)
-                } catch { /* noop */ }
-              }
-              try {
-                ws.send(JSON.stringify({ type: "session", id: discoveredId }))
-              } catch { /* noop */ }
-            }
-          }
-
-          // If a requirement is associated, inject the context after a
-          // short delay so opencode's TUI has time to settle into its
-          // input prompt before we feed it text + Enter.
-          if (reqId && autoInject) {
-            try {
-              const req = await getRequirement(reqId)
-              if (req) {
-                const ctx = await buildInjectionContext(req.id)
-                setTimeout(() => {
-                  if (exited || !session) return
-                  try {
-                    writeToSession(session, ctx + "\r")
-                    ws.send(JSON.stringify({ type: "injected" }))
-                  } catch { /* noop */ }
-                }, 3000)
-              }
-            } catch { /* noop */ }
-          }
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err)
-          try {
-            ws.send(JSON.stringify({ type: "error", message }))
-          } catch { /* noop */ }
-          try { ws.close(1011, "open error") } catch { /* noop */ }
-        }
-      },
-      onMessage: (evt, ws) => {
-        if (!session) return
-        const data = typeof evt.data === "string" ? evt.data : ""
-        if (!data) return
-        const msg = parseClientMessage(data)
-        if (msg.kind === "input") {
-          writeToSession(session, msg.data)
-        } else if (msg.kind === "resize") {
-          resizeSession(session, msg.cols, msg.rows)
-        }
-      },
-      onClose: () => {
-        if (session) {
-          killSession(session)
-          session = null
-        }
-        exited = true
-      },
-      onError: () => {
-        if (session) {
-          killSession(session)
-          session = null
-        }
-        exited = true
-      },
+  let discoveredId = ""
+  if (createNew) {
+    const cwd = result.cwd
+    const deadline = Date.now() + 10_000
+    while (!discoveredId && Date.now() < deadline && !state.exited) {
+      await new Promise((r) => setTimeout(r, 500))
+      clearDashboardSessionCache(harness)
+      const list = await scanDashboardSessions(harness, true)
+      const candidate = list.find((s) => s.directory === cwd && (s.created || 0) >= startMs)
+      if (candidate) { discoveredId = candidate.id; break }
     }
+    if (discoveredId) {
+      if (reqId) {
+        try { await replaceAssociatedSession(reqId, id, discoveredId) } catch { /* noop */ }
+      }
+      try { ws.send(JSON.stringify({ type: "session", id: discoveredId })) } catch { /* noop */ }
+    }
+  }
+
+  if (reqId && autoInject) {
+    try {
+      const req = await getRequirement(reqId)
+      if (req) {
+        const ctx = await buildInjectionContext(req.id)
+        setTimeout(() => {
+          if (state.exited || !state.session) return
+          try { writeToSession(state.session!, ctx + "\r"); ws.send(JSON.stringify({ type: "injected" })) } catch { /* noop */ }
+        }, 3000)
+      }
+    } catch { /* noop */ }
+  }
+}
+
+fastify.get("/ws/session-terminal", { websocket: true }, (socket, request) => {
+  const state = { session: null as TerminalSession | null, exited: false }
+
+  // Attach listeners synchronously before async work (per @fastify/websocket).
+  socket.on("message", (data: unknown) => {
+    if (!state.session) return
+    const str = typeof data === "string" ? data : data instanceof Buffer ? data.toString() : ""
+    if (!str) return
+    const msg = parseClientMessage(str)
+    if (msg.kind === "input") writeToSession(state.session, msg.data)
+    else if (msg.kind === "resize") resizeSession(state.session, msg.cols, msg.rows)
   })
-)
+
+  socket.on("close", () => {
+    if (state.session) { killSession(state.session); state.session = null }
+    state.exited = true
+  })
+
+  socket.on("error", () => {
+    if (state.session) { killSession(state.session); state.session = null }
+    state.exited = true
+  })
+
+  const query = request.query as Record<string, string>
+  handleTerminalSocket(socket, query, state).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    try { socket.send(JSON.stringify({ type: "error", message })) } catch { /* noop */ }
+    try { socket.close(1011, "open error") } catch { /* noop */ }
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Server bootstrap
@@ -4264,32 +4731,14 @@ app.get(
 
 const port = parseInt(process.env.PORT || "7331", 10)
 
-// Load any persisted notifications before opening the port so the first
-// request to /api/notifications returns the saved state.
 await initNotifications()
 await initConfig()
 await initMarkers()
 
-// Start the background worker that polls for marked sessions and
-// triggers auto-summary forks once sessions are idle ≥1 hour.
 startAutoSummaryWorker()
-
-// Start the nightly scheduler for automated smart context extraction.
-// Fires at midnight (local time) each night; also runs a startup poll
-// 30 s after boot to catch missed runs. Controlled by the
-// `autoExtractSchedule` config toggle.
 startAutoExtractScheduler()
-
-// Start the background worker for session value discovery.
-// Polls every 10 min; scans sessions updated within 48h, scores them
-// using metadata + SQLite content, and auto-marks sessions above the
-// configured threshold (when autoValuation is enabled).
 startAutoValuationWorker()
-
-// Start the single retained automatic config sync mechanism: a daily
-// full sync at local 20:30, controlled by `fullSyncSchedule`.
 startFullSyncScheduler()
 
-serve({ fetch: app.fetch, websocket: { server: wss }, port }, (info) => {
-  console.log(`Agent Panel running at http://localhost:${info.port}`)
-})
+await fastify.listen({ port, host: "0.0.0.0" })
+console.log(`Agent Panel running at http://localhost:${port}`)

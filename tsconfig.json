@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx",
+    "jsxImportSource": "@kitajs/html",
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,

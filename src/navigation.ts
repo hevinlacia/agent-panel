@@ -4,19 +4,20 @@
  * `tests/navigation.test.ts` can assert the contract without booting Hono.
  *
  * The order of `NAV_ITEMS` is the visual top-to-bottom order in the sidebar.
- * `HOME_PATH === PROJECTS_PATH` because the projects view is the site home.
+ * The status dashboard is the site home; `/dashboard` remains a direct alias.
  */
 
 export const HOME_PATH = "/"
-export const PROJECTS_PATH = "/"
+export const PROJECTS_PATH = "/projects"
 export const PROJECTS_ALIAS_PATH = "/projects"
+export const DASHBOARD_PATH = "/dashboard"
 export const SESSIONS_PATH = "/sessions"
 export const REPORTS_PATH = "/reports"
 export const SCHEDULERS_PATH = "/schedulers"
 export const SETTINGS_PATH = "/settings"
 export const ENV_VARS_PATH = "/env-vars"
 
-export type NavKey = "requirements" | "sessions" | "reports" | "schedulers" | "settings" | "envvars"
+export type NavKey = "requirements" | "dashboard" | "sessions" | "reports" | "schedulers" | "settings" | "envvars"
 
 export interface NavItem {
   key: NavKey
@@ -25,6 +26,7 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
+  { key: "dashboard", label: "/dashboard", href: DASHBOARD_PATH },
   { key: "requirements", label: "/projects", href: PROJECTS_PATH },
   { key: "sessions", label: "/sessions", href: SESSIONS_PATH },
   { key: "reports", label: "/reports", href: REPORTS_PATH },

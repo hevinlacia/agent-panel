@@ -9,8 +9,7 @@
  *     tables, `## 仓库: <name>` sections, `| 仓库 | 分支 |` tables, and
  *     list-block `- 仓库：x` / `- 分支：y`).
  *
- * The fallback assertions are intentionally loose on merge-state
- * detection (it is heuristic) but strict on repo + branch pairing,
+ * The fallback assertions are strict on repo + branch pairing,
  * which is the user-facing "which app got which branch" guarantee.
  */
 
@@ -35,22 +34,19 @@ function findRepo(repos: BranchRepo[], name: string): BranchRepo | undefined {
 // readBranchScope
 // ---------------------------------------------------------------------------
 
-test("readBranchScope: parses a well-formed branches.json", async () => {
+test("readBranchScope: parses a well-formed branches.json (v2)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "bs-"))
   writeFileSync(
     join(dir, BRANCH_SCOPE_FILE),
     JSON.stringify({
-      version: 1,
+      version: 2,
       updatedAt: 1750000000000,
       repos: [
         {
           repoName: "yl-cwhsea-wms-api",
           role: "后端",
-          projectPath: "~/dev/yl-cwhsea-wms-api/",
+          path: "~/dev/yl-cwhsea-wms-api/",
           branches: ["hevin.yang/feature/x"],
-          merge: { test: "merged", uat: "pending", master: "none", uatBranch: "UAT-2607" },
-          commitCount: 3,
-          changedFiles: ["A.java", "B.java"],
         },
       ],
     }),
@@ -61,11 +57,31 @@ test("readBranchScope: parses a well-formed branches.json", async () => {
   const r = scope!.repos[0]
   assert.equal(r.repoName, "yl-cwhsea-wms-api")
   assert.equal(r.role, "后端")
+  assert.equal(r.path, "~/dev/yl-cwhsea-wms-api/")
   assert.deepEqual(r.branches, ["hevin.yang/feature/x"])
-  assert.equal(r.merge.test, "merged")
-  assert.equal(r.merge.uat, "pending")
-  assert.equal(r.merge.uatBranch, "UAT-2607")
-  assert.equal(r.commitCount, 3)
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test("readBranchScope: reads v1 projectPath as path (backwards compat)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bs-"))
+  writeFileSync(
+    join(dir, BRANCH_SCOPE_FILE),
+    JSON.stringify({
+      version: 1,
+      updatedAt: 1,
+      repos: [
+        {
+          repoName: "yl-cwhsea-wms-api",
+          projectPath: "~/dev/wms-api/",
+          branches: ["feature/x"],
+          merge: { test: "merged" },
+        },
+      ],
+    }),
+  )
+  const scope = await readBranchScope(dir)
+  assert.ok(scope)
+  assert.equal(scope!.repos[0].path, "~/dev/wms-api/")
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -139,8 +155,6 @@ test("fallback: WMS-018 multi-repo sections (后端/前端/BFF)", () => {
   assert.equal(findRepo(repos, "yl-cwhsea-wms-outbound-api")?.role, "后端")
   assert.equal(findRepo(repos, "yl-cwhsea-wms-web-front")?.role, "前端")
   assert.equal(findRepo(repos, "yl-cwhsea-wms-web")?.role, "BFF")
-  // test merge detected as merged for all three.
-  for (const r of repos) assert.equal(r.merge.test, "merged")
 })
 
 const WMS011 = `# WMS-011 Branches
@@ -167,7 +181,6 @@ test("fallback: WMS-011 single-repo flat Item|Value table", () => {
   assert.deepEqual(repos[0].branches, ["hevin.yang/feature/WMS-011-return-order-delay-rocketmq"])
   // master is a base branch and must not appear as a feature branch.
   assert.ok(!repos[0].branches.includes("master"))
-  assert.equal(repos[0].merge.test, "merged")
 })
 
 const WMS014 = `# Branch
@@ -290,5 +303,4 @@ test("fallback: WMS-016 single-repo with un-backticked branch value", () => {
   // Stray `/` between two backtick pairs (e3e374e2/e0df2950) must not
   // leak in as a bogus branch.
   assert.ok(!repos[0].branches.includes("/"))
-  assert.equal(repos[0].merge.master, "merged")
 })

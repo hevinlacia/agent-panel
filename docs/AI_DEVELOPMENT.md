@@ -12,8 +12,10 @@
 locally and point at the same machine's OpenCode data directory. It does
 two things:
 
-1. **Browse and drive requirements and OpenCode sessions.** `/` is the
-   Projects / Requirements backlog. `/sessions` is the Operator-styled
+1. **Browse and drive requirements and coding agent sessions.** `/` is the
+   flat requirement progress board with creation-date, multi-status, and
+   two-level project filters. Each requirement exposes dedicated code-diff,
+   detail, and release-attention actions. `/sessions` is the Operator-styled
    session dashboard. Click a lane to land on `/session?id=<ses_…>`, which spawns
    a real `opencode --session <id>` TUI inside a browser-embedded xterm.
 2. **Review experience-summary reports.** `/reports` lists Markdown
@@ -25,11 +27,13 @@ two things:
 
 | Path | Renders | Notes |
 | --- | --- | --- |
-| `GET /` | Projects / Requirements backlog | Reads Hermes `~/.agents/req/` |
+| `GET /` | Flat requirement progress board | Filters by creation time, multi-status, project, and subproject |
 | `GET /sessions` | Sessions dashboard (Operator console) | Source chip top-right (`SQLITE / CLI / FS`) |
 | `GET /session?id=<ses_…>` | Embedded terminal page | 404 page if id not in the current scan |
-| `GET /projects` | Projects / Requirements backlog | Same renderer as `/` |
-| `GET /requirement?id=<req_…>` | Requirement detail page | Shows memory, release package, tests, Code Review, and sessions |
+| `GET /projects` | Flat requirement progress board | Same renderer as `/` |
+| `GET /requirement?id=<req_…>` | Requirement detail page | Shows memory, tests, impact, sessions, and links to focused views |
+| `GET /requirement/review?id=<req_…>` | Focused production-diff review | Refreshes and displays the persisted Code Review package |
+| `GET /requirement/release?id=<req_…>` | Focused release-attention view | Summarizes branches, config, DB, MQ, tests, review, and release notes |
 | `GET /sessions/refresh` | Same dashboard, force-rescan | Bypasses the 4 s cache |
 | `GET /reports` | Experience report card grid | |
 | `GET /report?path=…` | Report detail with candidate checkboxes | Path is gated by `resolveHandoffPath` |
@@ -61,23 +65,25 @@ as ESM / classic scripts with `defer` and `type="module"` respectively.
 ```
 agent-panel/
 ├── src/
-│   ├── server.tsx          # Hono app, JSX, upgradeWebSocket, vendor + static routes
+│   ├── server.tsx          # Fastify app, JSX, websocket plugin, static + vendor routes
 │   ├── sessions.ts         # SQLite → CLI → fs scan, helpers, session-id guard
 │   ├── terminal.ts         # node-pty wrapper (start/write/resize/kill)
 │   ├── terminalProtocol.ts # PURE WS-frame parser; no native imports
 │   ├── codeReview.ts       # PRO diff scan + human review snapshot/verdict
+│   ├── requirementBoard.ts # pure flat-board filtering and hierarchy metadata
 │   ├── paths.ts            # resolveHandoffPath (single gate for report paths)
 │   ├── parser.ts           # experience-summary markdown → structured candidates
 │   ├── scanner.ts          # report scanner + saveConfirmation
 │   ├── experienceMarkers.ts # persistent marker store (mark/unmark/list/TTL)
 │   ├── experienceAutoSummary.ts # background worker (idle detect → fork → summarize → execute)
-│   ├── views/              # (placeholder for future view fragments)
+│   ├── fastify/
+│   │   └── context.ts      # Fastify request/reply -> Ctx adapter + createRouter
 │   ├── client/             # (placeholder; current client code lives in public/)
 │   └── public/             # (placeholder; real assets live in /public)
 ├── public/
 │   ├── app.js              # report confirm/reject UI (page-scoped)
+│   ├── requirements-board.js # requirement filter cascade + date guard
 │   ├── terminal.js         # xterm + WS bridge for /session?id=…
-│   └── style.css           # .op-* dashboard styles + .report-* / .candidate-*
 ├── tests/
 │   ├── paths.test.ts       # resolveHandoffPath (escape attempts, siblings, nulls)
 │   ├── sessions.test.ts    # parseModelString, deriveWorktree
@@ -333,14 +339,22 @@ selected checkboxes.
 
 ## 6. Test strategy and how to add tests
 
-### Run
+### Runtime and commands
+
+Node.js 22+ is the application runtime and test runner. Bun owns dependency
+installation, `bun.lock`, and script dispatch. Use the package scripts so the
+repository, local development, and CI all execute the same commands.
 
 ```bash
-mise list                # confirm node/npm are installed
-mise current             # see the active version
-mise exec -- bun test          # node --test --import tsx tests/*.test.ts
-mise exec -- bun run typecheck # tsc --noEmit
+bun install
+bun run typecheck # tsc --noEmit
+bun run test      # node --test --import tsx tests/*.test.ts
+bun run start     # tsx src/server.tsx
 ```
+
+Do **not** use `bun test`: it bypasses `package.json#scripts.test` and runs the
+suite with Bun's test runner, which is incompatible with parts of the current
+`node:test` suite.
 
 Tests are pure unit tests for the side-effect-free modules. They
 intentionally avoid:
@@ -510,7 +524,7 @@ that no overflow appears in either regime.
 - `lsof -i :7331` (or `ss -ltnp 'sport = :7331'`) to find the
   conflicting PID. Common offenders: a previous `bun start` whose
   parent shell was killed but the Node child survived, or a
-  long-running `mise exec -- bun run dev` from another terminal.
+  long-running `bun run dev` from another terminal.
 - Kill the owner with `kill <pid>`; do not blindly `pkill node`
   because the host may be running other OpenCode-related services.
 - Or run on another port: `PORT=7401 bun start`.

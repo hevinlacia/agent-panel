@@ -8,8 +8,10 @@ session」都按当前 harness 分派。
 
 ## 技术栈
 
-- **Hono** + **@hono/node-server**（HTTP + WebSocket）
-- **hono/jsx** SSR（无 Vite / React 构建链）
+- **Fastify** 5（HTTP + WebSocket + 插件生态）
+- **@kitajs/html** SSR（无 Vite / React 构建链，JSX 直接编译为字符串）
+- **@fastify/static** 静态资源、**@fastify/websocket** 终端 WS、**@fastify/swagger** OpenAPI
+- **TypeBox** 请求/响应 Schema 与自动 OpenAPI 文档
 - **tsx** 直接运行 TypeScript
 - **node-pty** 承载 agent TUI 子进程
 - **@xterm/xterm** + addon-fit 浏览器内嵌终端
@@ -58,8 +60,10 @@ spawn 终端。
 
 | 路径 | 说明 |
 | --- | --- |
-| `/` `/projects` | **Projects / Requirements** 需求管理（Hermes `~/.agents/req/`，按项目分组） |
-| `/requirement?id=<req>` | 需求详情：记忆 / 上线包 / 测试 / Code Review / 关联 session；「新建并绑定 session」按钮 |
+| `/` `/projects` | **需求进度看板**：需求平铺展示；按创建时间、状态多选、一级/二级项目组合筛选 |
+| `/requirement?id=<req>` | 需求详情：记忆 / 测试 / 影响评估 / 关联 session；提供代码差异与发版注意事项入口 |
+| `/requirement/review?id=<req>` | 独立代码 Review 页：查看 AI 相比生产分支的提交、文件和 unified diff，并保存人工结论 |
+| `/requirement/release?id=<req>` | 独立发版注意页：汇总分支、DB、配置、MQ、复验链路、Review 结论和上线注意事项 |
 | `/sessions` | **Sessions** 仪表盘（Operator 风格 lane），按 harness 列 session |
 | `/session?id=<id>` | 单 session 详情 + 内嵌 xterm 终端 |
 | `/api/sessions` `/api/session?id=` `/api/config` | JSON API |
@@ -101,7 +105,8 @@ OpenCode 专属页面（`/reports` `/report` `/schedulers` `/env-vars` 及对应
 
 ```
 src/
-  server.tsx              - Hono 路由、JSX 页面、WS upgrade、harness 分派
+  server.tsx              - Fastify 路由、JSX 页面、WS upgrade、插件注册
+  fastify/context.ts      - 请求上下文适配器（Fastify request/reply -> Ctx）
   config.ts               - AppConfig（含 harness 字段）+ env 管理
   piSessions.ts           - pi JSONL session 扫描器
   sessions.ts             - OpenCode SQLite/CLI/fs 扫描（保留，待清理）
@@ -110,6 +115,7 @@ src/
   terminalProtocol.ts     - 纯 WS 帧解析（无原生依赖）
   terminalUrl.ts          - 终端 WS URL + 自动注入门控
   requirements.ts         - Hermes 需求 + session 关联存储
+  requirementBoard.ts      - 需求看板纯筛选逻辑（时间、状态多选、一级/二级项目）
   requirementState.ts     - 需求 state.json 读写
   branchScope.ts          - branches.json 读写 + branch.md 兜底解析（代码改动范围卡片）
   codeReview.ts           - PRO diff 扫描、生产基线刷新、code-review.json 与 review.md 托管区块
@@ -125,15 +131,21 @@ public/
   harness-switch.js       - 右上角 OC/PI 切换
   terminal.js             - 内嵌终端客户端
   app.js / req-detail.js  - 报告页 / 需求页交互
+  requirements-board.js   - 需求看板项目级联筛选与日期校验
   style.css               - Operator 暗色主题
 ```
 
-## 验证
+## 开发工具链与验证
+
+- Node.js 22+ 负责应用运行和 `node:test` 测试。
+- Bun 负责依赖安装、`bun.lock` 和 `package.json` 脚本调度。
+- 不要直接执行 `bun test`，它会改用 Bun 测试运行器；本项目必须通过 `bun run test` 调用 Node 测试命令。
 
 ```bash
+bun install         # 安装依赖并维护 bun.lock
 bun run typecheck   # tsc --noEmit，覆盖 src 与 tests
-bun test            # node --test + tsx
-bun start           # 打开 http://localhost:7331
+bun run test        # node --test --import tsx tests/*.test.ts
+bun run start       # 打开 http://localhost:7331
 ```
 
 ## 安全约束

@@ -29,22 +29,14 @@
 import type { Requirement } from "./requirements.ts"
 
 const SCHEMA_EXAMPLE = `{
-  "version": 1,
+  "version": 2,
   "updatedAt": 0,  // 填 0 即可，系统自动补当前时间
   "repos": [
     {
       "repoName": "yl-cwhsea-wms-xxx-api",
-      "role": "后端",
-      "projectPath": "~/Developer/.../",
       "branches": ["hevin.yang/feature/xxx"],
-      "merge": {
-        "test": "merged",
-        "uat": "merged",
-        "master": "pending",
-        "uatBranch": "UAT-2607"
-      },
-      "commitCount": 4,
-      "changedFiles": ["A.java"]
+      "role": "后端",
+      "path": "~/Developer/.../"
     }
   ]
 }`
@@ -64,7 +56,7 @@ export function buildBranchScopePrompt(
 ): string {
   const title = (req.title || "").trim() || req.id
   return [
-    `你是需求分支信息结构化助手。请阅读需求《${title}》的 branch.md，把其中涉及的"仓库 ↔ 需求分支 ↔ 合并状态"提取成结构化 JSON。`,
+    `你是需求分支信息结构化助手。请阅读需求《${title}》的 branch.md，把其中涉及的"仓库 ↔ 需求分支"提取成结构化 JSON。`,
     "",
     "=== branch.md 原文 ===",
     branchMd.trim() || "(空)",
@@ -89,12 +81,11 @@ export function buildBranchScopePrompt(
     "1. 只输出 branches.json 一个文件，不要输出 branch.md 或其他文件",
     "2. repoName 必须用完整仓库名（如 yl-cwhsea-wms-outbound-api），短名（如 outbound-api）要补全成 yl-cwhsea-wms-<短名>",
     "3. branches 只收录本次需求创建的 feature/fix 分支（含 /，如 hevin.yang/feature/xxx、yhw/fix-xxx），绝不收录 master/test/uat/UAT-2607 等基准分支",
-    "4. merge.test/uat/master 用 merged（已合并/push）、pending（待合并）、none（未提及）",
-    "5. 同一仓库多个需求分支时，全部列入 branches 数组",
-    "6. 归档/历史/已失效分支不收录（除非它仍是当前发布路径）",
-    "7. 无法确定的字段省略，不要编造",
-    "8. JSON 必须合法（可被 JSON.parse 解析），不要有尾逗号",
-    "9. 不要执行任何 shell 命令或工具调用，直接输出 JSON 文本；updatedAt 填 0，系统会自动补当前时间",
+    "4. 同一仓库多个需求分支时，全部列入 branches 数组",
+    "5. 归档/历史/已失效分支不收录（除非它仍是当前发布路径）",
+    "6. 无法确定的字段省略，不要编造",
+    "7. JSON 必须合法（可被 JSON.parse 解析），不要有尾逗号",
+    "8. 不要执行任何 shell 命令或工具调用，直接输出 JSON 文本；updatedAt 填 0，系统会自动补当前时间",
     "",
     "不要写客套话，不要用 ```json 包裹 ===UPDATE 块内的内容。",
   ].join("\n")

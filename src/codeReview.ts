@@ -4,7 +4,8 @@
  * Role: turn a requirement's `branches.json` scope into a human-reviewable
  * PRO/base-branch diff package and persist the reviewer verdict.
  * Public surface: runCodeReviewScan, readCodeReviewSnapshot,
- * saveCodeReviewVerdict, upsertCodeReviewBlock, and exported types/constants.
+ * saveCodeReviewVerdict, parseUnifiedDiff, resolveCodeReviewProjectPath,
+ * upsertCodeReviewBlock, and exported types/constants.
  * Constraints / safety: fixed `git` argv only (no shell), reads only repo Git
  * metadata/diffs, and writes only `<req-dir>/code-review.json` + review.md.
  * Read-this-with: src/branchScope.ts and src/server.tsx CodeReviewCard.
@@ -91,6 +92,27 @@ export interface CodeReviewSnapshot {
   sourceFallback?: boolean
   repos: CodeReviewRepoSnapshot[]
   verdict?: CodeReviewVerdict
+}
+
+export type CodeReviewDiffLineKind = "context" | "addition" | "deletion" | "meta"
+
+export interface CodeReviewDiffLine {
+  kind: CodeReviewDiffLineKind
+  oldLine: number | null
+  newLine: number | null
+  content: string
+}
+
+export interface CodeReviewDiffHunk {
+  header: string
+  lines: CodeReviewDiffLine[]
+}
+
+export interface CodeReviewFileDiff {
+  oldPath: string
+  newPath: string
+  path: string
+  hunks: CodeReviewDiffHunk[]
 }
 
 interface GitCommandResult {
@@ -183,6 +205,69 @@ export function upsertCodeReviewBlock(existing: string, snapshot: CodeReviewSnap
   return existing.trimEnd() + (existing.trim() ? "\n\n" : "") + block + "\n"
 }
 
+/**
+ * Split a repository-level unified diff into file and hunk rows for the
+ * three-pane review UI. Git metadata outside hunks is intentionally omitted.
+ */
+export function parseUnifiedDiff(input: string): CodeReviewFileDiff[] {
+  const files: CodeReviewFileDiff[] = []
+  let currentFile: CodeReviewFileDiff | null = null
+  let currentHunk: CodeReviewDiffHunk | null = null
+  let oldLine = 0
+  let newLine = 0
+
+  for (const rawLine of input.split("\n")) {
+    const fileMatch = rawLine.match(/^diff --git a\/(.+) b\/(.+)$/)
+    if (fileMatch) {
+      currentFile = {
+        oldPath: fileMatch[1],
+        newPath: fileMatch[2],
+        path: fileMatch[2],
+        hunks: [],
+      }
+      files.push(currentFile)
+      currentHunk = null
+      continue
+    }
+    if (!currentFile) continue
+    if (rawLine.startsWith("--- ")) {
+      currentFile.oldPath = normalizeDiffPath(rawLine.slice(4))
+      continue
+    }
+    if (rawLine.startsWith("+++ ")) {
+      currentFile.newPath = normalizeDiffPath(rawLine.slice(4))
+      currentFile.path = currentFile.newPath === "/dev/null" ? currentFile.oldPath : currentFile.newPath
+      continue
+    }
+
+    const hunkMatch = rawLine.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/)
+    if (hunkMatch) {
+      oldLine = Number(hunkMatch[1])
+      newLine = Number(hunkMatch[2])
+      currentHunk = { header: rawLine, lines: [] }
+      currentFile.hunks.push(currentHunk)
+      continue
+    }
+    if (!currentHunk) continue
+
+    if (rawLine.startsWith("+")) {
+      currentHunk.lines.push({ kind: "addition", oldLine: null, newLine, content: rawLine.slice(1) })
+      newLine += 1
+    } else if (rawLine.startsWith("-")) {
+      currentHunk.lines.push({ kind: "deletion", oldLine, newLine: null, content: rawLine.slice(1) })
+      oldLine += 1
+    } else if (rawLine.startsWith(" ")) {
+      currentHunk.lines.push({ kind: "context", oldLine, newLine, content: rawLine.slice(1) })
+      oldLine += 1
+      newLine += 1
+    } else if (rawLine.startsWith("\\")) {
+      currentHunk.lines.push({ kind: "meta", oldLine: null, newLine: null, content: rawLine })
+    }
+  }
+
+  return files
+}
+
 /** Classify changed files into lightweight review-risk tags for the UI. */
 export function classifyCodeReviewRiskTags(path: string, status: string, additions = 0, deletions = 0): string[] {
   const p = path.toLowerCase()
@@ -208,7 +293,7 @@ async function writeCodeReviewSnapshot(reqDir: string, snapshot: CodeReviewSnaps
 
 async function scanRepoBranch(repo: BranchRepo, branch: string, baseInfo: BaseRefInfo): Promise<CodeReviewRepoSnapshot> {
   const warnings: string[] = []
-  const projectPath = resolveProjectPath(repo.projectPath)
+  const projectPath = resolveCodeReviewProjectPath(repo.path, repo.repoName)
   const emptyBaseUpdate: CodeReviewBaseUpdate = {
     ok: false,
     remote: baseInfo.remote,
@@ -217,7 +302,7 @@ async function scanRepoBranch(repo: BranchRepo, branch: string, baseInfo: BaseRe
     steps: [],
   }
   if (!projectPath) {
-    return emptyRepoSnapshot(repo, branch || "(未指定分支)", baseInfo.baseRef, emptyBaseUpdate, warnings, "branches.json 缺少 projectPath")
+    return emptyRepoSnapshot(repo, branch || "(未指定分支)", baseInfo.baseRef, emptyBaseUpdate, warnings, "branches.json 缺少 path")
   }
   if (!existsSync(projectPath)) {
     return emptyRepoSnapshot(repo, branch || "(未指定分支)", baseInfo.baseRef, emptyBaseUpdate, warnings, `仓库路径不存在：${projectPath}`)
@@ -286,7 +371,7 @@ function emptyRepoSnapshot(
 ): CodeReviewRepoSnapshot {
   return {
     repoName: repo.repoName,
-    projectPath: resolveProjectPath(repo.projectPath) || repo.projectPath,
+    projectPath: resolveCodeReviewProjectPath(repo.path, repo.repoName) || repo.path,
     branch,
     resolvedTargetRef: branch,
     baseRef,
@@ -303,11 +388,27 @@ function emptyRepoSnapshot(
   }
 }
 
-function resolveProjectPath(projectPath?: string): string | undefined {
+/**
+ * Resolve configured repository paths and transparently follow the WMS
+ * workspace migration into backend/frontend/pda/infra subdirectories.
+ */
+export function resolveCodeReviewProjectPath(projectPath?: string, repoName?: string): string | undefined {
   if (!projectPath || !projectPath.trim()) return undefined
   const raw = projectPath.trim()
   const expanded = raw === "~" ? homedir() : raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw
-  return isAbsolute(expanded) ? expanded : resolve(expanded)
+  const resolvedPath = isAbsolute(expanded) ? expanded : resolve(expanded)
+  if (existsSync(resolvedPath)) return resolvedPath
+
+  const leaf = (repoName || resolvedPath.split(/[\\/]/).filter(Boolean).pop() || "").trim()
+  if (!leaf) return resolvedPath
+  const roots = [dirname(resolvedPath), join(homedir(), "Developer", "company", "WMS")]
+  for (const root of [...new Set(roots)]) {
+    for (const area of ["backend", "frontend", "pda", "infra"]) {
+      const candidate = join(root, area, leaf)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return resolvedPath
 }
 
 function parseBaseRef(input: string): BaseRefInfo {
@@ -395,6 +496,12 @@ function normalizeNumstatPath(raw: string): string {
   // Rename lines can be `old => new`; the new path is what reviewers open.
   const arrow = raw.match(/=>\s*(.*)$/)
   return (arrow ? arrow[1] : raw).replace(/[{}]/g, "").trim()
+}
+
+function normalizeDiffPath(raw: string): string {
+  const path = raw.trim().split("\t", 1)[0]
+  if (path === "/dev/null") return path
+  return path.replace(/^[ab]\//, "")
 }
 
 function buildCodeReviewMarkdown(snapshot: CodeReviewSnapshot): string {

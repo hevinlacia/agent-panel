@@ -14,7 +14,8 @@
  *      the requirement's injection context; on success it renders a
  *      copyable `opencode -s <id>` command next to the button.
  *   5. Code-review forms get lightweight disabled labels while a PRO diff
- *      scan or verdict save is in-flight.
+ *      scan or verdict save is in-flight; the three-pane review workspace
+ *      supports file search, file switching, and current-file context.
  *
  * Why a separate file from public/app.js: app.js is a single-IIFE
  * report-page-only script that early-returns on other pages. Mixing
@@ -335,6 +336,61 @@
       btn.textContent = form.classList.contains("code-review-scan-form") ? "刷新中…" : "保存中…"
     })
   })
+
+  const reviewFileButtons = Array.from(document.querySelectorAll("[data-review-file-button]"))
+  const reviewFilePanels = Array.from(document.querySelectorAll("[data-review-file-panel]"))
+  const reviewFileSearch = document.getElementById("code-review-file-search")
+  const reviewFileEmpty = document.getElementById("code-review-file-empty")
+  const reviewCurrentFile = document.getElementById("code-review-current-file")
+  const reviewCurrentRepo = document.getElementById("code-review-current-repo")
+  const reviewNoteFile = document.getElementById("code-review-note-file")
+  const reviewNoteRepo = document.getElementById("code-review-note-repo")
+
+  function selectReviewFile(button) {
+    if (!button) return
+    const key = button.getAttribute("data-review-file-button") || ""
+    reviewFileButtons.forEach(function (candidate) {
+      const active = candidate === button
+      candidate.classList.toggle("is-active", active)
+      candidate.setAttribute("aria-pressed", active ? "true" : "false")
+    })
+    reviewFilePanels.forEach(function (panel) {
+      panel.hidden = panel.getAttribute("data-review-file-panel") !== key
+    })
+    const path = button.getAttribute("data-review-file-path") || ""
+    const repo = button.getAttribute("data-review-file-repo") || ""
+    if (reviewCurrentFile) reviewCurrentFile.textContent = path
+    if (reviewCurrentRepo) reviewCurrentRepo.textContent = repo
+    if (reviewNoteFile) reviewNoteFile.textContent = path
+    if (reviewNoteRepo) reviewNoteRepo.textContent = repo
+    const diffPane = document.querySelector(".code-review-diff-pane")
+    if (diffPane) diffPane.scrollTop = 0
+  }
+
+  reviewFileButtons.forEach(function (button) {
+    button.addEventListener("click", function () {
+      selectReviewFile(button)
+    })
+  })
+
+  if (reviewFileSearch) {
+    reviewFileSearch.addEventListener("input", function () {
+      const query = reviewFileSearch.value.trim().toLowerCase()
+      let visibleCount = 0
+      reviewFileButtons.forEach(function (button) {
+        const haystack = button.getAttribute("data-review-file-filter") || ""
+        const visible = !query || haystack.includes(query)
+        button.hidden = !visible
+        if (visible) visibleCount += 1
+      })
+      document.querySelectorAll("[data-review-file-group]").forEach(function (group) {
+        group.hidden = !group.querySelector("[data-review-file-button]:not([hidden])")
+      })
+      if (reviewFileEmpty) reviewFileEmpty.hidden = visibleCount > 0
+      const active = document.querySelector("[data-review-file-button].is-active:not([hidden])")
+      if (!active) selectReviewFile(document.querySelector("[data-review-file-button]:not([hidden])"))
+    })
+  }
 
   // ------------------------------------------------------------------
   // Clipboard copy: any element with `data-copy-cmd="..."` copies that

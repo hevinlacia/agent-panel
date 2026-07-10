@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Panel (Hono SSR)
+Description=Agent Panel (Fastify SSR)
 After=network.target
 
 [Service]

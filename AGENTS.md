@@ -201,35 +201,41 @@ Default port: `7331` (overridable via `PORT`).
     diff that adds a new `export` without a JSDoc above it is
     incomplete.
 
-## 5. Verification checklist (run before declaring done)
+## 5. Runtime, package manager, and verification
 
-Adjust toolchain calls to use the project's chosen runtime manager.
-`mise` is the global default; if the repo does not pin a version, run
-`mise list` then `mise current` to pick a Node + npm combination.
+This project uses a deliberately split toolchain:
+
+- **Runtime and test runner: Node.js 22+.** Application scripts run through
+  `tsx`, and tests use Node's `node:test` via the `test` package script.
+- **Package manager and script dispatcher: Bun.** Use Bun for dependency
+  installation, the lockfile, and invoking scripts declared in `package.json`.
+- **Do not run `bun test`.** That command bypasses `package.json#scripts.test`
+  and selects Bun's test runner, which is not compatible with this project's
+  `node:test` suite. Always run `bun run test` instead.
+- Use the project commands directly; mise shims select the configured local
+  tool versions. Only inspect `mise current` when diagnosing a version issue.
+
+Run before declaring code changes complete:
 
 ```bash
-# 0. Pick the right toolchain (skip if you already know the active version).
-mise list                  # confirm node/npm are installed
-mise current               # see the active version
-
 # 1. Compile-only check.
-mise exec -- bun run typecheck
+bun run typecheck
 
-# 2. Unit tests (paths, sessions, terminalProtocol).
-mise exec -- bun test
+# 2. Unit tests. This dispatches to:
+#    node --test --import tsx tests/*.test.ts
+bun run test
 
-# 3. Manual / visual check (only when the change touched UI, CSS, or the
-#    embedded terminal page).
-bun start &                 # serves on http://localhost:7331
+# 3. Start or visually verify UI changes.
+bun run start              # serves on http://localhost:7331
 # Use the browser-harness skill to:
 #   - screenshot /
-#   - assert laneCount, no horizontal overflow, MODEL + WORKTREE labels visible
-#   - open /session?id=<ses_…> and confirm xterm mounts + WS connects
-#   - open /reports and confirm cards still render
+#   - assert the changed page has no unintended overflow
+#   - exercise the affected interaction
+#   - confirm adjacent routes still render
 ```
 
-For docs-only changes, `typecheck` and `bun test` are not required; just
-re-read the created files for sanity (no broken links, no secrets).
+For docs-only changes, typecheck and tests are not required; re-read the
+updated files for sanity (no broken links, contradictory commands, or secrets).
 
 ## 6. House rules
 

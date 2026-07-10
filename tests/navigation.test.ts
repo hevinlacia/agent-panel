@@ -10,6 +10,7 @@ import { test } from "node:test"
 import { strict as assert } from "node:assert"
 
 import {
+  DASHBOARD_PATH,
   HOME_PATH,
   NAV_ITEMS,
   PROJECTS_ALIAS_PATH,
@@ -22,35 +23,36 @@ import {
   sessionsDaysPath,
 } from "../src/navigation.ts"
 
-test("NAV_ITEMS labels are projects, sessions, reports, schedulers, env-vars, settings in that order", () => {
+test("NAV_ITEMS labels are dashboard, projects, sessions, reports, schedulers, env-vars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.label),
-    ["/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
+    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
   )
 })
 
-test("NAV_ITEMS hrefs are /, /sessions, /reports, /schedulers, /env-vars, /settings in that order", () => {
+test("NAV_ITEMS hrefs start with dashboard and projects", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.href),
-    ["/", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
+    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
   )
 })
 
-test("NAV_ITEMS keys are requirements, sessions, reports, schedulers, envvars, settings in that order", () => {
+test("NAV_ITEMS keys are dashboard, requirements, sessions, reports, schedulers, envvars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.key),
-    ["requirements", "sessions", "reports", "schedulers", "envvars", "settings"],
+    ["dashboard", "requirements", "sessions", "reports", "schedulers", "envvars", "settings"],
   )
 })
 
-test("HOME_PATH equals PROJECTS_PATH (projects is the site home)", () => {
-  assert.equal(HOME_PATH, PROJECTS_PATH)
+test("HOME_PATH is the dashboard home", () => {
   assert.equal(HOME_PATH, "/")
+  assert.equal(DASHBOARD_PATH, "/dashboard")
 })
 
-test("PROJECTS_ALIAS_PATH is /projects and is distinct from HOME_PATH", () => {
-  assert.equal(PROJECTS_ALIAS_PATH, "/projects")
-  assert.notEqual(PROJECTS_ALIAS_PATH, HOME_PATH)
+test("projects uses /projects and is distinct from HOME_PATH", () => {
+  assert.equal(PROJECTS_PATH, "/projects")
+  assert.equal(PROJECTS_ALIAS_PATH, PROJECTS_PATH)
+  assert.notEqual(PROJECTS_PATH, HOME_PATH)
 })
 
 test("route path constants", () => {

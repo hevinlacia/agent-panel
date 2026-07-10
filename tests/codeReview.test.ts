@@ -6,6 +6,9 @@
  * behavior exercised through the dashboard route against real repos.
  */
 
+import { mkdtempSync, mkdirSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { test } from "node:test"
 import { strict as assert } from "node:assert"
 
@@ -13,6 +16,8 @@ import {
   CODE_REVIEW_BLOCK_END,
   CODE_REVIEW_BLOCK_START,
   classifyCodeReviewRiskTags,
+  parseUnifiedDiff,
+  resolveCodeReviewProjectPath,
   upsertCodeReviewBlock,
   type CodeReviewSnapshot,
 } from "../src/codeReview.ts"
@@ -64,6 +69,55 @@ function sampleSnapshot(summary = "人工确认通过"): CodeReviewSnapshot {
     },
   }
 }
+
+test("resolveCodeReviewProjectPath follows categorized workspace migration", () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-panel-review-path-"))
+  const repoPath = join(root, "backend", "demo-api")
+  mkdirSync(repoPath, { recursive: true })
+  assert.equal(resolveCodeReviewProjectPath(join(root, "demo-api"), "demo-api"), repoPath)
+})
+
+test("parseUnifiedDiff splits files, hunks, and line numbers", () => {
+  const parsed = parseUnifiedDiff([
+    "diff --git a/src/Old.java b/src/New.java",
+    "similarity index 90%",
+    "rename from src/Old.java",
+    "rename to src/New.java",
+    "--- a/src/Old.java",
+    "+++ b/src/New.java",
+    "@@ -10,3 +10,4 @@ class Demo {",
+    " context();",
+    "-removed();",
+    "+added();",
+    "+addedAgain();",
+    " unchanged();",
+    "\\ No newline at end of file",
+  ].join("\n"))
+
+  assert.equal(parsed.length, 1)
+  assert.equal(parsed[0].path, "src/New.java")
+  assert.equal(parsed[0].hunks.length, 1)
+  assert.deepEqual(parsed[0].hunks[0].lines, [
+    { kind: "context", oldLine: 10, newLine: 10, content: "context();" },
+    { kind: "deletion", oldLine: 11, newLine: null, content: "removed();" },
+    { kind: "addition", oldLine: null, newLine: 11, content: "added();" },
+    { kind: "addition", oldLine: null, newLine: 12, content: "addedAgain();" },
+    { kind: "context", oldLine: 12, newLine: 13, content: "unchanged();" },
+    { kind: "meta", oldLine: null, newLine: null, content: "\\ No newline at end of file" },
+  ])
+})
+
+test("parseUnifiedDiff handles deleted files", () => {
+  const parsed = parseUnifiedDiff([
+    "diff --git a/src/Removed.java b/src/Removed.java",
+    "--- a/src/Removed.java",
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-removed",
+  ].join("\n"))
+  assert.equal(parsed[0].path, "src/Removed.java")
+  assert.equal(parsed[0].hunks[0].lines[0].kind, "deletion")
+})
 
 test("classifyCodeReviewRiskTags detects common WMS risk surfaces", () => {
   assert.deepEqual(
