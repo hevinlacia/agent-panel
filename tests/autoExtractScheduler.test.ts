@@ -78,6 +78,7 @@ function makeRequirement(overrides: Partial<Requirement> = {}): Requirement {
     id: "WMS-001",
     title: "Test Req",
     status: "开发中",
+    projects: ["WMS"],
     project: "WMS",
     groupPath: [],
     description: "",

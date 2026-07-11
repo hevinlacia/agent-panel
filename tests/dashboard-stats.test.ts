@@ -14,6 +14,7 @@ function req(overrides: Partial<Requirement> & Pick<Requirement, "id" | "title">
     id: overrides.id,
     title: overrides.title,
     status: overrides.status ?? "开发中",
+    projects: overrides.projects ?? [overrides.project ?? "WMS"],
     project: overrides.project ?? "WMS",
     groupPath: overrides.groupPath ?? [],
     description: overrides.description ?? "",
@@ -82,6 +83,16 @@ test("buildRequirementStats: excludes synthetic default requirement", () => {
     req({ id: "real", title: "Real" }),
   ], NOW)
   assert.equal(stats.total, 1)
+})
+
+test("buildRequirementStats: counts each multi-project requirement once", () => {
+  const stats = buildRequirementStats([
+    req({ id: "child-a", title: "Child A", status: "测试中", projects: ["WMS", "WMS RabbitMQ 迁移 RocketMQ"] }),
+  ], NOW)
+
+  assert.equal(stats.total, 1)
+  assert.equal(stats.statusCounts.find((s) => s.status === "测试中")!.count, 1)
+  assert.deepEqual(stats.durations.map((d) => d.req.id), ["child-a"])
 })
 
 test("buildRequirementStats: empty input returns zeros", () => {

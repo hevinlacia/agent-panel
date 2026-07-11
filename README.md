@@ -9,7 +9,8 @@ session」都按当前 harness 分派。
 ## 技术栈
 
 - **Fastify** 5（HTTP + WebSocket + 插件生态）
-- **@kitajs/html** SSR（无 Vite / React 构建链，JSX 直接编译为字符串）
+- **@kitajs/html** SSR（服务端 shell 与历史页面，JSX 直接编译为字符串）
+- **Vite + React + Framer Motion**（`/dashboard` React island，负责现代化动效看板）
 - **@fastify/static** 静态资源、**@fastify/websocket** 终端 WS、**@fastify/swagger** OpenAPI
 - **TypeBox** 请求/响应 Schema 与自动 OpenAPI 文档
 - **tsx** 直接运行 TypeScript
@@ -27,6 +28,7 @@ bun start
 
 开发模式（文件变更自动重启）：`bun run dev`
 类型检查：`bun run typecheck`
+React dashboard 构建：`bun run build:dashboard`（`bun run start` / `bun run dev` 会自动先构建）
 
 后台常驻（Linux + systemd user service）：
 
@@ -60,7 +62,8 @@ spawn 终端。
 
 | 路径 | 说明 |
 | --- | --- |
-| `/` `/projects` | **需求进度看板**：需求平铺展示；按创建时间、状态多选、一级/二级项目组合筛选 |
+| `/` `/dashboard` | **React 状态看板**：需求 KPI、状态分布、交付时长，带 Framer Motion 动效 |
+| `/projects` | **需求进度看板**：需求平铺展示；按创建时间、状态多选、一级/二级项目组合筛选 |
 | `/requirement?id=<req>` | 需求详情：记忆 / 测试 / 影响评估 / 关联 session；提供代码差异与发版注意事项入口 |
 | `/requirement/review?id=<req>` | 独立代码 Review 页：查看 AI 相比生产分支的提交、文件和 unified diff，并保存人工结论 |
 | `/requirement/release?id=<req>` | 独立发版注意页：汇总分支、DB、配置、MQ、复验链路、Review 结论和上线注意事项 |
@@ -121,7 +124,13 @@ src/
   codeReview.ts           - PRO diff 扫描、生产基线刷新、code-review.json 与 review.md 托管区块
   paths.ts                - 路径安全边界
   navigation.ts           - 导航项
+  dashboardStats.ts        - React dashboard 的需求统计纯函数
   notifications.ts        - 通知中心持久化
+web/
+  src/App.tsx             - React 状态看板 UI 与 Framer Motion 动效
+  src/main.tsx            - React dashboard island 挂载入口
+  src/styles.css          - React dashboard 专属样式
+  tsconfig.json           - 前端类型检查配置
   # OpenCode 专属（保留，后续清理）：
   forkSalvage.ts experienceMarkers.ts experienceAutoSummary.ts
   sessionExtract.ts extractJobs.ts extractQueue.ts autoExtractScheduler.ts
@@ -143,9 +152,10 @@ public/
 
 ```bash
 bun install         # 安装依赖并维护 bun.lock
-bun run typecheck   # tsc --noEmit，覆盖 src 与 tests
-bun run test        # node --test --import tsx tests/*.test.ts
-bun run start       # 打开 http://localhost:7331
+bun run build:dashboard # Vite 构建 React dashboard 到 public/dashboard-react
+bun run typecheck       # server + web 双类型检查
+bun run test            # node --test --import tsx tests/*.test.ts
+bun run start           # 自动构建 dashboard 并打开 http://localhost:7331
 ```
 
 ## 安全约束

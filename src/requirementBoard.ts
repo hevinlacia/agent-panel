@@ -48,6 +48,7 @@ export function buildRequirementBoardItems(
   const explicitStatuses = filters.statuses.length > 0
   const allowedStatuses = new Set(filters.statuses)
   const items: RequirementBoardItem[] = []
+  const seen = new Set<string>()
 
   for (const group of groups) {
     for (const requirement of group.requirements) {
@@ -58,18 +59,22 @@ export function buildRequirementBoardItems(
       }
       if (filters.createdFrom !== undefined && requirement.createdAt < filters.createdFrom) continue
       if (filters.createdTo !== undefined && requirement.createdAt > filters.createdTo) continue
-      if (filters.project && requirement.project !== filters.project) continue
+      const requirementProjects = requirement.projects?.length ? requirement.projects : [requirement.project]
+      if (filters.project && !requirementProjects.includes(filters.project)) continue
+      if (seen.has(requirement.id)) continue
 
       const subproject = requirement.groupPath[0] ?? ""
       if (filters.subproject && subproject !== filters.subproject) continue
 
-      const hierarchyParts = [requirement.project, ...requirement.groupPath]
+      const displayProject = filters.project || requirementProjects[0] || requirement.project
+      const hierarchyParts = [displayProject, ...requirement.groupPath]
       items.push({
         requirement,
-        project: requirement.project,
+        project: displayProject,
         subproject,
         hierarchy: hierarchyParts.filter(Boolean).join(" / "),
       })
+      seen.add(requirement.id)
     }
   }
 

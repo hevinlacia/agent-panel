@@ -86,19 +86,17 @@ test("scanHermesRequirements: 4-level layout — sub-project + sub-module groups
   assert.deepEqual(byId["0622-db-a"].groupPath, ["disaster-recovery", "db-failover"])
 })
 
-test("scanHermesRequirements: parent with nested child — both discovered", async () => {
+test("scanHermesRequirements: container requirement becomes a project tag", async () => {
   const root = freshFixture()
-  // Parent has meta.md AND a child directory with another meta.md.
-  // Both should be discovered; child has parentReqId pointing to parent.
+  // A directory with meta.md AND nested requirement dirs is a project tag
+  // container, not a requirement record. Descendants inherit its title.
   writeMeta(join(root, "WMS", "outer-req"), { "req-id": "outer-req", title: "Outer" })
   writeMeta(join(root, "WMS", "outer-req", "inner-req"), { "req-id": "inner-req", title: "Inner" })
   const reqs = await scanHermesRequirements()
   const ids = reqs.map((r) => r.id).sort()
-  assert.deepEqual(ids, ["inner-req", "outer-req"])
-  const outer = reqs.find((r) => r.id === "outer-req")!
+  assert.deepEqual(ids, ["inner-req"])
   const inner = reqs.find((r) => r.id === "inner-req")!
-  assert.ok(outer.childIds && outer.childIds.includes("inner-req"), "parent should have childIds")
-  assert.equal(inner.parentReqId, "outer-req")
+  assert.deepEqual(inner.projects, ["WMS", "Outer"])
 })
 
 test("scanHermesRequirements: flat legacy layout — <req-id>/meta.md", async () => {
@@ -110,6 +108,34 @@ test("scanHermesRequirements: flat legacy layout — <req-id>/meta.md", async ()
   assert.deepEqual(reqs[0].groupPath, [])
   // Flat layout: no project frontmatter means DEFAULT project name.
   assert.equal(typeof reqs[0].project, "string")
+})
+
+test("scanHermesRequirements: project.json assigns flat requirement to a project", async () => {
+  const root = freshFixture()
+  const dir = join(root, "standalone-req")
+  writeMeta(dir, { "req-id": "standalone-req", title: "Standalone", status: "开发中" })
+  writeFileSync(
+    join(dir, "project.json"),
+    JSON.stringify({ project: "WMS", groupPath: ["mq", "consumer"] }, null, 2),
+    "utf-8",
+  )
+
+  const reqs = await scanHermesRequirements()
+  assert.equal(reqs.length, 1)
+  assert.equal(reqs[0].project, "WMS")
+  assert.deepEqual(reqs[0].groupPath, ["mq", "consumer"])
+})
+
+test("listRequirementsByProject: groups flat project.json requirements under their project", async () => {
+  const root = freshFixture()
+  const dir = join(root, "flat-wms-req")
+  writeMeta(dir, { "req-id": "flat-wms-req", title: "Flat WMS", status: "开发中" })
+  writeFileSync(join(dir, "project.json"), JSON.stringify({ project: "WMS" }), "utf-8")
+
+  const groups = await listRequirementsByProject()
+  const wms = groups.find((g) => g.project === "WMS")
+  assert.ok(wms, "expected WMS project group")
+  assert.deepEqual(wms!.requirements.map((r) => r.id), ["flat-wms-req"])
 })
 
 test("listRequirementsByProject: groups nested requirements under their project", async () => {

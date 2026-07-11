@@ -24,6 +24,8 @@ import { randomBytes } from "node:crypto"
 import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
 import { readRequirementState } from "./requirementState.ts"
 
+const REQUIREMENT_PROJECT_FILE = "project.json"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -114,6 +116,8 @@ export interface Requirement {
   id: string
   title: string
   status: ReqStatus
+  /** All projects this requirement belongs to. `project` mirrors the first item for legacy callers. */
+  projects: string[]
   project: string
   /**
    * Sub-path of intermediate grouping directories between the project
@@ -147,18 +151,6 @@ export interface Requirement {
    * path from project/groupPath/id.
    */
   reqDir?: string
-  /**
-   * If this requirement is a child of another requirement (nested inside
-   * its directory), the parent's req-id. Undefined for top-level or
-   * parent requirements.
-   */
-  parentReqId?: string
-  /**
-   * If this requirement has child requirements (sub-directories with
-   * their own meta.md), their req-ids. Undefined/empty for leaf
-   * requirements.
-   */
-  childIds?: string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -408,12 +400,90 @@ function parseStartDate(value: string | undefined): number | null {
   return ts
 }
 
+function normalizeProjectPath(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+  }
+  if (typeof value !== "string") return []
+  return value
+    .split(/[\/]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function normalizeProjectList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean)
+  }
+  if (typeof value !== "string") return []
+  return value
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    const clean = value.trim()
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    out.push(clean)
+  }
+  return out
+}
+
+async function readRequirementProjectFile(
+  dirPath: string,
+): Promise<{ projects?: string[]; groupPath?: string[] }> {
+  const path = join(dirPath, REQUIREMENT_PROJECT_FILE)
+  if (!existsSync(path)) return {}
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf-8")) as unknown
+    if (!parsed || typeof parsed !== "object") return {}
+    const obj = parsed as Record<string, unknown>
+    const projects = uniqueStrings([
+      ...normalizeProjectList(obj.projects),
+      ...normalizeProjectList(obj.project),
+    ])
+    const groupPath = normalizeProjectPath(obj.groupPath ?? obj.subproject ?? obj.path)
+    return { projects: projects.length > 0 ? projects : undefined, groupPath }
+  } catch {
+    return {}
+  }
+}
+
+async function readRequirementProjectTags(dirPath: string, fallbackName: string): Promise<string[]> {
+  const metaPath = join(dirPath, "meta.md")
+  if (!existsSync(metaPath)) return [fallbackName]
+  try {
+    const raw = await readFile(metaPath, "utf-8")
+    const fm = parseFrontmatter(raw)
+    const projects = uniqueStrings([
+      ...normalizeProjectList(fm.fields["projects"]),
+      ...normalizeProjectList(fm.fields["project"]),
+    ])
+    const title = fm.fields["title"]?.trim()
+    if (title) projects.push(title)
+    const titleMatch = raw.match(/^\s*-\s*Title\s*:\s*(.+?)\s*$/im)
+    if (titleMatch?.[1]?.trim()) projects.push(titleMatch[1].trim())
+    return uniqueStrings(projects.length > 0 ? projects : [fallbackName])
+  } catch {
+    // fall back to the directory name
+  }
+  return [fallbackName]
+}
+
 async function loadRequirementFromDir(
   dirPath: string,
   dirName: string,
-  parentProject: string,
+  parentProjects: string[],
   groupPath: string[] = [],
-  parentReqId?: string,
 ): Promise<Requirement | null> {
   let st
   try {
@@ -437,7 +507,7 @@ async function loadRequirementFromDir(
 
   let title = dirName
   let status: ReqStatus = "开发中"
-  let project = parentProject
+  let projects = uniqueStrings(parentProjects.length > 0 ? parentProjects : [DEFAULT_PROJECT_NAME])
   let description = ""
   let id = dirName
   let createdAt = st.mtimeMs
@@ -455,8 +525,10 @@ async function loadRequirementFromDir(
       const rawStatus = normalizeReqStatus(fields["status"])
       if (rawStatus) status = rawStatus
       if (fields["project"] && fields["project"].trim()) {
-        project = fields["project"].trim()
+        projects = uniqueStrings([fields["project"].trim(), ...projects])
       }
+      const frontmatterProjects = normalizeProjectList(fields["projects"])
+      if (frontmatterProjects.length > 0) projects = uniqueStrings([...frontmatterProjects, ...projects])
       const sd = parseStartDate(fields["start-date"])
       if (sd !== null) createdAt = sd
       const desc = firstParagraph(fm.body)
@@ -472,6 +544,11 @@ async function loadRequirementFromDir(
       // Keep defaults.
     }
   }
+
+  const projectFile = await readRequirementProjectFile(dirPath)
+  if (projectFile.projects) projects = uniqueStrings([...projectFile.projects, ...projects])
+  if (projectFile.groupPath) groupPath = projectFile.groupPath
+  const project = projects[0] ?? DEFAULT_PROJECT_NAME
 
   // state.json wins over both frontmatter and the markdown-list status.
   // readRequirementState also migrates `- Status: <english>` from
@@ -490,6 +567,7 @@ async function loadRequirementFromDir(
     id,
     title,
     status,
+    projects,
     project,
     groupPath,
     description,
@@ -508,7 +586,6 @@ async function loadRequirementFromDir(
     alignmentPath: existsSync(alignmentPath) ? alignmentPath : undefined,
     prdPath: existsSync(prdPath) ? prdPath : undefined,
     reqDir: dirPath,
-    parentReqId,
   }
 }
 
@@ -518,25 +595,19 @@ async function loadRequirementFromDir(
  * intermediate grouping directory and its segment name is appended to
  * `groupPath` for descendants.
  *
- * When a directory has meta.md, it is recorded as a requirement AND the
- * scan continues into its sub-directories to discover child requirements.
- * This supports the parent-child pattern where a top-level requirement
- * acts as a grouping container (e.g. WMS-003-rabbitmq-to-rocketmq/
- *   WMS-003-stock-diff-adjust/meta.md). Child requirements carry
- * `parentReqId` pointing back to the parent.
+ * A directory with meta.md and nested requirement directories is treated as
+ * a project tag container rather than a requirement record. Descendant
+ * requirements inherit its title as an additional project tag.
  *
  * Bounded recursion: max depth 6 to keep accidental symlink loops or
  * deeply nested test fixtures from spinning.
  */
 async function collectRequirementsRecursive(
   rootPath: string,
-  project: string,
+  projects: string[],
   groupPath: string[],
   out: Requirement[],
   depth = 0,
-  parentReqId?: string,
-  skipSelfMeta = false,
-  parentReqRef?: Requirement,
 ): Promise<void> {
   if (depth > 6) return
   let st
@@ -547,32 +618,10 @@ async function collectRequirementsRecursive(
   }
   if (!st.isDirectory()) return
 
-  let currentParent = parentReqId
   let currentGroupPath = groupPath
-  let parentReq: Requirement | null = null
-
-  // If skipSelfMeta is true, the caller already loaded this requirement
-  // and passed it as parentReqRef. Use it directly so childIds can be
-  // tracked on the already-pushed record.
-  if (skipSelfMeta && parentReqRef) {
-    parentReq = parentReqRef
-    currentParent = parentReqRef.id
-  }
-
-  // If this directory itself has a meta.md, it IS a requirement.
-  // Record it, then continue scanning sub-directories for children.
-  // skipSelfMeta is used when we recurse into a child requirement's
-  // directory to find grand-children — the child was already loaded by
-  // the caller, so we must not load it again.
-  if (!skipSelfMeta && existsSync(join(rootPath, "meta.md"))) {
-    const dirName = rootPath.split("/").filter(Boolean).pop() || rootPath
-    parentReq = await loadRequirementFromDir(rootPath, dirName, project, groupPath, parentReqId)
-    if (parentReq) {
-      out.push(parentReq)
-      currentParent = parentReq.id
-      currentGroupPath = groupPath
-    }
-  }
+  let currentProjects = projects
+  const hasOwnMeta = existsSync(join(rootPath, "meta.md"))
+  const childDirs: { name: string; path: string; hasMeta: boolean }[] = []
 
   let children: string[]
   try {
@@ -582,7 +631,6 @@ async function collectRequirementsRecursive(
   }
   for (const childName of children) {
     if (childName.startsWith(".") || childName === "README.md") continue
-    // Skip non-directory files (meta.md, branch.md, notes.md, etc.)
     const childPath = join(rootPath, childName)
     let childSt
     try {
@@ -591,30 +639,30 @@ async function collectRequirementsRecursive(
       continue
     }
     if (!childSt.isDirectory()) continue
+    childDirs.push({ name: childName, path: childPath, hasMeta: existsSync(join(childPath, "meta.md")) })
+  }
 
-    // If child has meta.md, load it as a child requirement. If not,
-    // recurse as an intermediate grouping directory.
-    if (existsSync(join(childPath, "meta.md"))) {
-      const req = await loadRequirementFromDir(childPath, childName, project, currentGroupPath, currentParent)
-      if (req) {
-        out.push(req)
-        if (parentReq) {
-          if (!parentReq.childIds) parentReq.childIds = []
-          parentReq.childIds.push(req.id)
-        }
-        // Continue scanning into the child for grand-children.
-        // skipSelfMeta=true so the child is not loaded a second time;
-        // pass req as parentReqRef so grand-children can be tracked.
-        await collectRequirementsRecursive(childPath, project, currentGroupPath, out, depth + 1, req.id, true, req)
-      }
+  const hasNestedRequirements = childDirs.some((child) => child.hasMeta)
+
+  if (hasOwnMeta && hasNestedRequirements) {
+    const dirName = rootPath.split("/").filter(Boolean).pop() || rootPath
+    currentProjects = uniqueStrings([...projects, ...(await readRequirementProjectTags(rootPath, dirName))])
+  } else if (hasOwnMeta) {
+    const dirName = rootPath.split("/").filter(Boolean).pop() || rootPath
+    const req = await loadRequirementFromDir(rootPath, dirName, currentProjects, groupPath)
+    if (req) out.push(req)
+  }
+
+  for (const child of childDirs) {
+    if (child.hasMeta) {
+      await collectRequirementsRecursive(child.path, currentProjects, currentGroupPath, out, depth + 1)
     } else {
       await collectRequirementsRecursive(
-        childPath,
-        project,
-        [...currentGroupPath, childName],
+        child.path,
+        currentProjects,
+        [...currentGroupPath, child.name],
         out,
         depth + 1,
-        currentParent,
       )
     }
   }
@@ -652,13 +700,13 @@ export async function scanHermesRequirements(): Promise<Requirement[]> {
       // Legacy flat layout: ~/.agents/req/<req-id>/meta.md
       // project comes from frontmatter or defaults to DEFAULT_PROJECT_NAME.
       // Use collectRequirementsRecursive so children are discovered too.
-      await collectRequirementsRecursive(topPath, DEFAULT_PROJECT_NAME, [], out)
+      await collectRequirementsRecursive(topPath, [DEFAULT_PROJECT_NAME], [], out)
       continue
     }
 
     // Project-level directory. Walk it recursively, accumulating the
     // intermediate grouping path under `groupPath` for each leaf.
-    await collectRequirementsRecursive(topPath, projectDisplay, [], out)
+    await collectRequirementsRecursive(topPath, [projectDisplay], [], out)
   }
   return out
 }
@@ -673,6 +721,7 @@ function buildDefaultRequirement(sessionIds: string[]): Requirement {
     id: DEFAULT_REQ_ID,
     title: "默认需求",
     status: "开发中",
+    projects: [DEFAULT_PROJECT_NAME],
     project: DEFAULT_PROJECT_NAME,
     groupPath: [],
     description:
@@ -747,17 +796,19 @@ export async function listRequirementsByProject(): Promise<
   ]
   const defaultReq = buildDefaultRequirement(defaultSessions)
 
-  // Group by project.
+  // Group by project tag; a requirement may appear under multiple projects.
   const groups = new Map<string, Requirement[]>()
   // Track the latest updatedAt per non-default project to drive sort order.
   const projectLatest = new Map<string, number>()
   for (const r of hermes) {
-    const proj = r.project || DEFAULT_PROJECT_NAME
-    const bucket = groups.get(proj) ?? []
-    bucket.push(r)
-    groups.set(proj, bucket)
-    const cur = projectLatest.get(proj) ?? 0
-    if (r.updatedAt > cur) projectLatest.set(proj, r.updatedAt)
+    const projects = r.projects?.length ? r.projects : [r.project || DEFAULT_PROJECT_NAME]
+    for (const proj of projects) {
+      const bucket = groups.get(proj) ?? []
+      bucket.push(r)
+      groups.set(proj, bucket)
+      const cur = projectLatest.get(proj) ?? 0
+      if (r.updatedAt > cur) projectLatest.set(proj, r.updatedAt)
+    }
   }
 
   // Always include the default project (even if empty, it carries the

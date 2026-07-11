@@ -1,8 +1,45 @@
-// public/app.js
-// Page-scoped: report confirm behavior only runs on /report?path=... detail pages.
+/**
+ * Role: shared browser polish for the Agent Panel shell and report detail page.
+ * Public surface: none; binds DOM events after SSR renders static markup.
+ * Constraints / safety: page-scoped only, no user input is shell-executed.
+ * Read-this-with: src/server.tsx for markup contracts and public/style.css for classes.
+ */
 
 (function () {
   "use strict"
+
+  document.documentElement.classList.add("op-js")
+
+  const animatedLinks = document.querySelectorAll('a[href]:not([target]):not([download])')
+  animatedLinks.forEach((link) => {
+    const href = link.getAttribute("href") || ""
+    if (!href || href.startsWith("#") || href.startsWith("javascript:") || href.startsWith("mailto:")) return
+    link.addEventListener("click", function () {
+      document.body.classList.add("op-page-leaving")
+    })
+  })
+
+  document.querySelectorAll(".dash-kpi-value").forEach((node) => {
+    const raw = (node.textContent || "").trim()
+    const value = Number(raw)
+    if (!Number.isFinite(value) || raw === "" || value > 9999) return
+    const start = performance.now()
+    const duration = 520
+    const tick = (now) => {
+      const progress = Math.min(1, (now - start) / duration)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      node.textContent = String(Math.round(value * eased))
+      if (progress < 1) requestAnimationFrame(tick)
+      else node.textContent = raw
+    }
+    requestAnimationFrame(tick)
+  })
+
+  document
+    .querySelectorAll(".op-lane, .req-board-card, .report-card, .candidate-card, .proj-card, .req-card, .settings-section, .terminal-wrap, .op-hints")
+    .forEach((node, index) => {
+      node.style.setProperty("--op-i", String(Math.min(index, 16)))
+    })
 
   const forceRefresh = document.getElementById("op-force-refresh")
   if (forceRefresh) {

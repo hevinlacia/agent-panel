@@ -15,14 +15,13 @@ function req(overrides: Partial<Requirement> & Pick<Requirement, "id" | "title">
     id: overrides.id,
     title: overrides.title,
     status: overrides.status ?? "开发中",
+    projects: overrides.projects ?? [overrides.project ?? "WMS"],
     project: overrides.project ?? "WMS",
     groupPath: overrides.groupPath ?? [],
     description: overrides.description ?? "",
     sessionIds: overrides.sessionIds ?? [],
     createdAt: overrides.createdAt ?? new Date("2026-07-01T12:00:00").getTime(),
     updatedAt: overrides.updatedAt ?? new Date("2026-07-02T12:00:00").getTime(),
-    parentReqId: overrides.parentReqId,
-    childIds: overrides.childIds,
   }
 }
 
@@ -65,6 +64,27 @@ test("board filters by first-level project and second-level group", () => {
   })
   assert.deepEqual(items.map((item) => item.requirement.id), ["dev"])
   assert.equal(items[0].hierarchy, "WMS / mq / consumer")
+})
+
+test("board filters requirements by any project tag", () => {
+  const items = buildRequirementBoardItems(groups, {
+    statuses: [],
+    project: "WMS RabbitMQ 迁移 RocketMQ",
+    subproject: "",
+  })
+  assert.deepEqual(items.map((item) => item.requirement.id), [])
+
+  const tagged = buildRequirementBoardItems([
+    { project: "WMS", requirements: [req({ id: "mq", title: "MQ", projects: ["WMS", "WMS RabbitMQ 迁移 RocketMQ"] })] },
+    { project: "WMS RabbitMQ 迁移 RocketMQ", requirements: [req({ id: "mq", title: "MQ", projects: ["WMS", "WMS RabbitMQ 迁移 RocketMQ"] })] },
+  ], {
+    statuses: [],
+    project: "WMS RabbitMQ 迁移 RocketMQ",
+    subproject: "",
+  })
+
+  assert.deepEqual(tagged.map((item) => item.requirement.id), ["mq"])
+  assert.equal(tagged[0].hierarchy, "WMS RabbitMQ 迁移 RocketMQ")
 })
 
 test("board filters by inclusive requirement creation dates", () => {

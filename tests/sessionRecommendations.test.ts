@@ -26,6 +26,7 @@ function makeReq(overrides: Partial<Requirement> = {}): Requirement {
     id: "WMS-001-log-refactor",
     title: "WMS 日志系统重构",
     status: "测试中",
+    projects: ["WMS"],
     project: "WMS",
     groupPath: [],
     description: "- Title: WMS 日志系统重构\n- Status: 测试中",

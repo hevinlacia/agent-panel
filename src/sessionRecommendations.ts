@@ -90,6 +90,7 @@ function collectKeywords(req: Requirement): Map<string, number> {
     req.id,
     req.title,
     req.project,
+    ...(req.projects ?? []),
     ...(req.groupPath ?? []),
     req.description,
   ].filter(Boolean)
@@ -158,11 +159,13 @@ export function scoreSessionForRequirement(
   }
   score += Math.min(70, keywordScore)
 
-  const project = normalize(req.project || "")
-  if (project && project !== "默认项目" && !ASCII_STOP_WORDS.has(project)) {
+  const projects = req.projects?.length ? req.projects : [req.project]
+  for (const projectName of projects) {
+    const project = normalize(projectName || "")
+    if (!project || project === "默认项目" || ASCII_STOP_WORDS.has(project)) continue
     if (title.includes(project) || meta.includes(project)) {
       score += 8
-      addReason(reasons, `命中项目 ${req.project}`)
+      addReason(reasons, `命中项目 ${projectName}`)
     }
   }
 

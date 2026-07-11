@@ -629,3 +629,24 @@ that no overflow appears in either regime.
 - The embedded terminal uses an absolute `/usr/bin/opencode`
   fallback first, then `PATH`. If you ship this to a different
   distro, update `OPENCODE_BIN_CANDIDATES` in `src/terminal.ts`.
+
+
+### React dashboard island
+
+`/dashboard` is now a Vite + React island mounted into the existing Fastify / @kitajs/html shell. The server owns layout, navigation, auth-local boundaries, and the `/api/dashboard/stats` JSON endpoint; React owns the animated KPI cards, pipeline bars, and delivery-duration table.
+
+Key files:
+
+- `web/src/App.tsx` — React dashboard UI, Framer Motion transitions, read-only fetch from `/api/dashboard/stats`.
+- `web/src/styles.css` — dashboard-island scoped styles under `.react-*`.
+- `vite.config.ts` — builds assets to `public/dashboard-react/` for Fastify static serving.
+- `src/dashboardStats.ts` — pure stats calculation shared by the API and tests.
+
+Verification additions:
+
+```bash
+bun run build:dashboard
+bun run typecheck:web
+```
+
+`bun run start` and `bun run dev` build the React dashboard before starting the server.

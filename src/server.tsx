@@ -877,11 +877,6 @@ function reqStatusBadgeClass(status: ReqStatus): string {
 const RequirementBoardCard: FC<{ item: RequirementBoardItem }> = ({ item }) => {
   const r = item.requirement
   const snippet = (r.description || "").trim().slice(0, 180) || "暂无描述"
-  const relation = r.parentReqId
-    ? `子需求 · 上级 ${r.parentReqId}`
-    : r.childIds && r.childIds.length > 0
-      ? `父需求 · ${r.childIds.length} 个子需求`
-      : "独立需求"
   const canOpenTools = !!r.reqDir && r.id !== DEFAULT_REQ_ID
   const reviewHref = `/requirement/review?id=${encodeURIComponent(r.id)}`
   const detailHref = `/requirement?id=${encodeURIComponent(r.id)}`
@@ -899,7 +894,7 @@ const RequirementBoardCard: FC<{ item: RequirementBoardItem }> = ({ item }) => {
         <div class="req-board-card-path">{item.hierarchy || DEFAULT_PROJECT_NAME}</div>
         <p class="req-board-card-description">{snippet}</p>
         <div class="req-board-card-meta">
-          <span>{relation}</span>
+          <span>需求</span>
           <span>创建 {new Date(r.createdAt).toLocaleDateString("zh-CN")}</span>
           <span>{r.sessionIds.length} session(s)</span>
           <span>更新于 {formatRelAgo(r.updatedAt)}</span>
@@ -970,9 +965,9 @@ const ProjectsPage: FC<{
           <span class="op-section-title">需求筛选</span>
           <p class="muted small">按创建时间、需求状态和所属项目组合筛选。状态未选择时默认隐藏已完成需求。</p>
         </div>
-        <a class="req-filter-clear" href="/">清空筛选</a>
+        <a class="req-filter-clear" href="/projects">清空筛选</a>
       </div>
-      <form method="get" action="/" class="req-board-filter-form" id="req-board-filter-form">
+      <form method="get" action="/projects" class="req-board-filter-form" id="req-board-filter-form">
         <label class="req-board-filter-field">
           <span>创建时间起</span>
           <input type="date" name="createdFrom" value={createdFrom} />
@@ -1009,7 +1004,7 @@ const ProjectsPage: FC<{
         </fieldset>
         <div class="req-board-filter-actions">
           <button type="submit" class="btn btn-primary">应用筛选</button>
-          <a class="btn btn-secondary" href="/">重置</a>
+          <a class="btn btn-secondary" href="/projects">重置</a>
         </div>
       </form>
     </section>
@@ -1025,7 +1020,7 @@ const ProjectsPage: FC<{
     {items.length === 0 ? (
       <div class="op-empty">
         <p>没有符合当前筛选条件的需求。</p>
-        <p><a href="/">清空筛选并查看当前需求</a></p>
+        <p><a href="/projects">清空筛选并查看当前需求</a></p>
       </div>
     ) : (
       <div class="req-board-list">
@@ -1659,14 +1654,11 @@ const RequirementDetailPage: FC<{
   branchScope?: BranchScope | null
   codeReviewSnapshot?: CodeReviewSnapshot | null
   state?: RequirementState | null
-  childReqs?: Requirement[]
-  parentReq?: Requirement | null
   attachments?: AttachmentInfo[]
-}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, codeReviewSnapshot, state, childReqs, parentReq, attachments = [] }) => {
-  const isParent = !!(req.childIds && req.childIds.length > 0)
+}> = ({ req, associated, unassociated, recommendations, extractHistory, backgroundContent, alignmentContent, prdContent, branchContent, notesContent, testContent, configContent, impactContent, memoryContent, reviewContent, impactAssessment, branchScope, codeReviewSnapshot, state, attachments = [] }) => {
   const currentIdx = REQ_STATUSES.indexOf(req.status)
   const description = (req.description || "").trim()
-  const canSwitch = !!req.reqDir && !isParent
+  const canSwitch = !!req.reqDir
   const next = nextStatus(req.status)
   const history = state?.history ?? []
   // Reverse-chronological display, but keep a stable copy.
@@ -1675,54 +1667,17 @@ const RequirementDetailPage: FC<{
     <Layout title={`Requirement ${req.title}`} active="requirements">
       <div class="req-detail">
       <div class="page-header">
-        {parentReq ? (
-          <a href={`/requirement?id=${encodeURIComponent(parentReq.id)}`} class="back-link">← {parentReq.title}</a>
-        ) : (
-          <a href="/projects" class="back-link">← All requirements</a>
-        )}
+        <a href="/projects" class="back-link">← All requirements</a>
         <h1>
           {req.title}
-          {isParent ? null : <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span>}
+          <span class={reqStatusBadgeClass(req.status)} style="margin-left: 8px;">{req.status}</span>
         </h1>
         <div class="meta-grid">
-          <div><span class="field-label">项目</span> {req.project}{req.groupPath && req.groupPath.length > 0 ? <span class="muted small"> / {req.groupPath.join(" / ")}</span> : null}</div>
+          <div><span class="field-label">项目</span> {(req.projects?.length ? req.projects : [req.project]).join(" / ")}{req.groupPath && req.groupPath.length > 0 ? <span class="muted small"> / {req.groupPath.join(" / ")}</span> : null}</div>
           <div><span class="field-label">Req ID</span> <code>{req.id}</code></div>
           <div><span class="field-label">更新于</span> {formatRelAgo(req.updatedAt)}</div>
-          {isParent ? <div><span class="field-label">子需求</span> {req.childIds!.length}</div> : null}
         </div>
       </div>
-
-      {isParent ? (
-        <>
-          {description ? (
-            <section class="req-hermes-section">
-              <h2 class="op-section-title">描述</h2>
-              <pre style="white-space: pre-wrap; padding: 10px; border: 1px solid var(--op-border, #2a2a2a); border-radius: 4px; background: var(--op-bg-soft, #181818);">{description}</pre>
-            </section>
-          ) : null}
-
-          <HermesFileSection title="需求背景" content={backgroundContent} />
-          <HermesFileSection title="需求对齐" content={alignmentContent} />
-          <HermesFileSection title="PRD 来源" content={prdContent} />
-
-          <section class="req-children-section" aria-label="子需求">
-            <h2 class="op-section-title">子需求（{childReqs?.length ?? 0}）</h2>
-            <div class="req-board-list">
-              {(childReqs ?? []).map((cr) => (
-                <RequirementBoardCard
-                  item={{
-                    requirement: cr,
-                    project: cr.project,
-                    subproject: cr.groupPath[0] ?? "",
-                    hierarchy: [cr.project, ...cr.groupPath].filter(Boolean).join(" / "),
-                  }}
-                />
-              ))}
-            </div>
-          </section>
-        </>
-      ) : (
-        <>
       {(() => {
         const orderedAssociated = sortByLastUsedDesc(associated)
         const recent = orderedAssociated[0] ?? null
@@ -2087,8 +2042,6 @@ const RequirementDetailPage: FC<{
           </form>
         ) : null}
       </section>
-      </>
-      )}
       </div>
       <script src="/static/req-detail.js" defer></script>
     </Layout>
@@ -2296,92 +2249,26 @@ const RequirementRecallPage: FC<{
 // Control-center dashboard page
 // ---------------------------------------------------------------------------
 
-const DashboardPage: FC<{ stats: ReturnType<typeof buildRequirementStats> }> = ({ stats }) => {
-  const statusColors: Record<string, string> = {
-    align: "var(--req-pending)", design: "var(--req-design)", dev: "var(--req-dev)",
-    selftest: "var(--req-selftest)", testing: "var(--req-testing)", deploy: "var(--req-deploy)",
-    done: "var(--req-done)",
-  }
-  return (
-    <Layout title="状态看板" active="dashboard">
-      <section class="dash-kpi-row" aria-label="关键指标">
-        <div class="dash-kpi-card">
-          <span class="dash-kpi-label">需求总数</span>
-          <span class="dash-kpi-value">{stats.total}</span>
-        </div>
-        <div class="dash-kpi-card dash-kpi-done">
-          <span class="dash-kpi-label">已完成</span>
-          <span class="dash-kpi-value">{stats.completedCount}</span>
-          <span class="dash-kpi-sub">{stats.total > 0 ? `${Math.round(stats.completedCount / stats.total * 100)}%` : "-"}</span>
-        </div>
-        <div class="dash-kpi-card dash-kpi-active">
-          <span class="dash-kpi-label">进行中</span>
-          <span class="dash-kpi-value">{stats.inProgressCount}</span>
-          <span class="dash-kpi-sub">{stats.total > 0 ? `${Math.round(stats.inProgressCount / stats.total * 100)}%` : "-"}</span>
-        </div>
-        <div class="dash-kpi-card dash-kpi-avg">
-          <span class="dash-kpi-label">平均交付时长</span>
-          <span class="dash-kpi-value">{formatDuration(stats.avgDeliveryMs) || "-"}</span>
-          <span class="dash-kpi-sub">中位数 {formatDuration(stats.medianDeliveryMs)} · 最长 {formatDuration(stats.maxDeliveryMs)}</span>
-        </div>
-      </section>
+const ReactAppPage: FC<{ title: string; active: Tab }> = ({ title, active }) => (
+  <Layout title={title} active={active}>
+    <div id="dashboard-root" data-api="/api/dashboard/stats">
+      <div class="react-dashboard-fallback">正在加载 React app…</div>
+    </div>
+    <link rel="stylesheet" href="/static/dashboard-react/dashboard.css?v=20260711-react-dashboard" />
+    <script type="module" src="/static/dashboard-react/dashboard.js?v=20260711-react-dashboard"></script>
+  </Layout>
+)
 
-      <section class="dash-status-section" aria-label="需求状态分布">
-        <h2 class="op-section-title">需求状态分布</h2>
-        <div class="dash-status-bars">
-          {stats.statusCounts.map((sc) => (
-            <div class="dash-status-bar" title={`${sc.status}: ${sc.count} (${sc.percent}%)`}>
-              <span class="dash-status-label">{sc.status}</span>
-              <div class="dash-status-track">
-                <div
-                  class="dash-status-fill"
-                  style={`width:${sc.percent}%;background:${statusColors[REQ_STATUS_SLUG[sc.status]] || "var(--text-muted)"}`}
-                />
-              </div>
-              <span class="dash-status-count">{sc.count}</span>
-              <span class="dash-status-percent">{sc.percent}%</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section class="dash-duration-section" aria-label="需求交付时长">
-        <h2 class="op-section-title">需求交付时长</h2>
-        {stats.durations.length === 0 ? (
-          <p class="muted small">暂无需求数据。</p>
-        ) : (
-          <table class="dash-duration-table">
-            <thead>
-              <tr>
-                <th>需求</th>
-                <th>状态</th>
-                <th>项目</th>
-                <th>创建时间</th>
-                <th class="dash-dur-col">交付时长</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.durations.map((d) => (
-                <tr>
-                  <td>
-                    <a href={`/requirement?id=${encodeURIComponent(d.req.id)}`}>{d.req.title}</a>
-                    <div class="dash-dur-id muted small">{d.req.id}</div>
-                  </td>
-                  <td><span class={reqStatusBadgeClass(d.req.status)}>{d.req.status}</span></td>
-                  <td class="muted small">{d.req.project}</td>
-                  <td class="muted small">{new Date(d.req.createdAt).toLocaleDateString("zh-CN")}</td>
-                  <td class="dash-dur-cell">
-                    <div class="dash-dur-bar" style={`width:${Math.min(100, (d.durationMs / Math.max(stats.maxDeliveryMs, 1)) * 100)}%`} />
-                    <span class="dash-dur-text">{formatDuration(d.durationMs)}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </Layout>
-  )
+function reactPageMeta(path: string): { title: string; active: Tab } | null {
+  if (path === "/" || path === DASHBOARD_PATH) return { title: "状态看板", active: "dashboard" }
+  if (path === "/projects" || path === "/requirements") return { title: "需求进度看板", active: "requirements" }
+  if (path === "/sessions" || path === "/sessions/refresh" || path === "/session") return { title: "Sessions", active: "sessions" }
+  if (path === "/reports" || path === "/report") return { title: "Reports", active: "reports" }
+  if (path === "/requirement" || path.startsWith("/requirement/")) return { title: "Requirement", active: "requirements" }
+  if (path === "/schedulers") return { title: "Schedulers", active: "schedulers" }
+  if (path === "/settings") return { title: "Settings", active: "settings" }
+  if (path === "/env-vars") return { title: "Env Vars", active: "envvars" }
+  return null
 }
 
 /**
@@ -2447,6 +2334,14 @@ for (const [route, pkg, rel, contentType] of [
   })
 }
 
+fastify.addHook("preHandler", async (request, reply) => {
+  if (request.method !== "GET") return
+  const path = request.url.split("?")[0] || "/"
+  const meta = reactPageMeta(path)
+  if (!meta) return
+  reply.type("text/html; charset=utf-8").send(<ReactAppPage title={meta.title} active={meta.active} />)
+})
+
 const app = createRouter(fastify)
 
 // Projects (requirements) page — available from the sidebar after the status dashboard.
@@ -2472,11 +2367,11 @@ async function renderProjectsPage(c: Ctx) {
   for (const g of groups) {
     for (const r of g.requirements) counts[r.status] += 1
   }
-  const projectOptions = [...new Set(groups.flatMap((g) => g.requirements.map((r) => r.project)))].sort()
+  const projectOptions = groups.map((g) => g.project).sort()
   const subprojectOptions = projectFilter
     ? [...new Set(groups
         .flatMap((g) => g.requirements)
-        .filter((r) => r.project === projectFilter)
+        .filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(projectFilter))
         .map((r) => r.groupPath[0] || "")
         .filter(Boolean))].sort()
     : []
@@ -2503,13 +2398,17 @@ async function renderProjectsPage(c: Ctx) {
   )
 }
 
-async function renderDashboardPage(c: Ctx) {
+async function readDashboardStatsPayload() {
   const groups = await listRequirementsByProject()
-  const requirements = groups.flatMap((g) => g.requirements)
-  const stats = buildRequirementStats(requirements)
-  return c.html(<DashboardPage stats={stats} />)
+  const requirements = [...new Map(groups.flatMap((g) => g.requirements).map((r) => [r.id, r])).values()]
+  return { generatedAt: Date.now(), stats: buildRequirementStats(requirements) }
 }
 
+async function renderDashboardPage(c: Ctx) {
+  return c.html(<ReactAppPage title="状态看板" active="dashboard" />)
+}
+
+app.get("/api/dashboard/stats", async (c) => c.json(await readDashboardStatsPayload()))
 app.get(DASHBOARD_PATH, async (c) => renderDashboardPage(c))
 app.get("/", async (c) => renderDashboardPage(c))
 
@@ -2771,24 +2670,6 @@ app.get("/requirement", async (c) => {
     ? await getExtractHistoryForRequirement(req.id, 6)
     : []
 
-  // If this is a parent requirement, load its children for the detail page.
-  let childReqs: Requirement[] = []
-  if (req.childIds && req.childIds.length > 0) {
-    const allReqs = await scanHermesRequirements()
-    childReqs = allReqs.filter((r) => req.childIds!.includes(r.id))
-    // Attach session counts.
-    const store = await loadAssociations()
-    for (const cr of childReqs) {
-      cr.sessionIds = store.associations[cr.id] ?? []
-    }
-  }
-
-  // If this is a child requirement, load the parent for a back-link.
-  let parentReq: Requirement | null = null
-  if (req.parentReqId) {
-    parentReq = await getRequirement(req.parentReqId)
-  }
-
   return c.html(
     <RequirementDetailPage
       req={req}
@@ -2810,8 +2691,6 @@ app.get("/requirement", async (c) => {
       state={state}
       recommendations={recommendations}
       extractHistory={extractHistory}
-      childReqs={childReqs}
-      parentReq={parentReq}
       attachments={attachments}
     />
   )
@@ -4589,8 +4468,10 @@ app.get("/api/report", async (c) => {
 // API: list sessions (JSON)
 app.get("/api/sessions", async (c) => {
   const { harness } = await getConfig()
-  const sessions = await scanDashboardSessions(harness)
-  return c.json({ summary: summarizeSessions(sessions), sessions })
+  const days = parseDaysParam(c.req.query("days"))
+  const maxAgeMs = days > 0 ? days * 24 * 60 * 60 * 1000 : undefined
+  const sessions = await scanDashboardSessions(harness, false, maxAgeMs)
+  return c.json({ summary: summarizeSessions(sessions), sessions, harness, days })
 })
 
 // API: get a single session
