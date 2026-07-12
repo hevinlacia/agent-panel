@@ -101,13 +101,20 @@ test("env vars persist normalized names and redacted safe previews", async () =>
 test("safeEnvVars always shows Ylops token requirement", async () => {
   const p = newTmpPath()
   _resetForTest(p)
-  const cfg = await getConfig()
-  const vars = await safeEnvVars(cfg)
-  const ylops = vars.find((entry) => entry.name === "YLOPS_TOKEN")
-  assert.equal(ylops?.requiredBy, "Ylops CI/CD Deploy")
-  assert.equal(ylops?.source, "missing")
-  assert.equal(ylops?.hasValue, false)
-  assert.equal(ylops?.file, "secrets")
+  const original = process.env.YLOPS_TOKEN
+  delete process.env.YLOPS_TOKEN
+  try {
+    const cfg = await getConfig()
+    const vars = await safeEnvVars(cfg)
+    const ylops = vars.find((entry) => entry.name === "YLOPS_TOKEN")
+    assert.equal(ylops?.requiredBy, "Ylops CI/CD Deploy")
+    assert.equal(ylops?.source, "missing")
+    assert.equal(ylops?.hasValue, false)
+    assert.equal(ylops?.file, "secrets")
+  } finally {
+    if (original === undefined) delete process.env.YLOPS_TOKEN
+    else process.env.YLOPS_TOKEN = original
+  }
 })
 
 test("buildManagedEnv overlays dashboard-managed values", async () => {

@@ -285,6 +285,18 @@
 .react-card-id { color: var(--react-cyan); font: 800 0.68rem var(--react-mono); letter-spacing: 0.08em; }
 .react-card-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; color: var(--react-faint); font: 0.72rem var(--react-mono); }
 .react-card-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; justify-content: center; }
+.react-req-card { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
+.react-card-select { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--react-muted); font: 800 .62rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-card-select input,
+.react-check-inline input { accent-color: var(--react-cyan); }
+.react-drive-blocked-card { border-color: rgba(239,68,68,.42); box-shadow: 0 22px 64px rgba(127,29,29,.22), inset 0 1px 0 rgba(255,255,255,.04); }
+.react-drive-badge { display: inline-flex; align-items: center; border: 1px solid rgba(148,163,184,.22); border-radius: 999px; padding: 2px 8px; font: 800 .66rem var(--react-mono); }
+.react-drive-queued { color: var(--react-muted); background: rgba(148,163,184,.1); }
+.react-drive-running { color: var(--react-cyan); background: rgba(34,211,238,.12); border-color: rgba(34,211,238,.34); }
+.react-drive-blocked,
+.react-drive-failed { color: #fca5a5; background: rgba(239,68,68,.13); border-color: rgba(239,68,68,.36); }
+.react-drive-done { color: var(--react-green); background: rgba(34,197,94,.12); border-color: rgba(34,197,94,.32); }
+.react-drive-blocker { color: #fca5a5; }
 .react-tab-row { display: flex; flex-wrap: wrap; gap: 9px; margin: 16px 0; }
 .react-tab-row a.active { border-color: var(--react-border-strong); background: rgba(34,211,238,0.14); color: #fff; }
 .react-detail-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 18px; }
@@ -298,6 +310,29 @@
 .react-command { display: block; margin-top: 12px; padding: 10px 12px; border-radius: 12px; word-break: break-all; }
 .react-check-card { grid-template-columns: auto 1fr; align-items: flex-start; }
 .react-check-card input { margin-top: 5px; accent-color: var(--react-cyan); }
+.react-drive-toolbar,
+.react-drive-panel { border-color: rgba(34,211,238,.2); }
+.react-drive-controls,
+.react-drive-summary { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.react-drive-controls button { border: 1px solid rgba(34,211,238,0.28); border-radius: 999px; padding: 9px 13px; background: rgba(34,211,238,0.08); color: var(--react-text); font: 800 0.76rem var(--react-mono); cursor: pointer; }
+.react-drive-controls button:disabled { opacity: .45; cursor: not-allowed; }
+.react-check-inline { display: inline-flex; align-items: center; gap: 8px; color: var(--react-muted); font: 800 .72rem var(--react-mono); }
+.react-drive-hint { margin: 10px 0 0; color: var(--react-cyan); font: 800 .76rem var(--react-mono); }
+.react-drive-summary span { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; color: var(--react-muted); background: rgba(255,255,255,.035); font: .72rem var(--react-mono); }
+.react-drive-job-list { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.react-drive-job { border: 1px solid var(--react-border); border-radius: 18px; background: rgba(255,255,255,.035); overflow: hidden; }
+.react-drive-job-blocked,
+.react-drive-job-failed { border-color: rgba(239,68,68,.34); }
+.react-drive-job-running { border-color: rgba(34,211,238,.32); }
+.react-drive-job summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; cursor: pointer; color: var(--react-text); }
+.react-drive-job summary span { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.react-drive-job summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-drive-job summary em { color: var(--react-faint); font: .68rem var(--react-mono); font-style: normal; white-space: nowrap; }
+.react-drive-job-body { padding: 0 14px 14px; }
+.react-drive-job-body p { color: var(--react-muted); line-height: 1.55; }
+.react-drive-blockers { border: 1px solid rgba(239,68,68,.26); border-radius: 14px; padding: 10px 12px; background: rgba(127,29,29,.12); color: #fecaca; }
+.react-drive-blockers strong { display: block; margin-bottom: 7px; color: #fee2e2; font: 800 .75rem var(--react-mono); }
+.react-drive-blockers ul { margin: 0; padding-left: 18px; }
 .react-json-preview { max-height: 60vh; overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; padding: 16px; background: #080c13; color: var(--react-text); font: 0.82rem/1.55 var(--react-mono); }
 .react-terminal { border: 1px solid var(--react-border); border-radius: 23px; overflow: hidden; background: #080c13; box-shadow: 0 28px 80px rgba(0,0,0,.36); }
 .react-terminal-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--react-border); background: rgba(10,14,21,.96); }
@@ -308,5 +343,22 @@
 .react-terminal-host { height: 60vh; min-height: 360px; padding: 8px; }
 .react-switch { flex-direction: row !important; align-items: center; text-transform: none !important; font-size: 0.82rem !important; }
 .react-switch input { width: auto; accent-color: var(--react-cyan); }
+.react-settings-layout { display: flex; flex-direction: column; gap: 18px; }
+.react-editor-label { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; color: var(--react-muted); font: 800 0.68rem var(--react-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.react-editor-label textarea,
+.react-code-textarea { width: 100%; border: 1px solid var(--react-border); border-radius: 16px; padding: 12px 13px; background: rgba(4,8,14,0.72); color: var(--react-text); outline: none; font: 0.82rem/1.55 var(--react-mono); resize: vertical; }
+.react-code-textarea { min-height: 46vh; margin-top: 12px; tab-size: 2; white-space: pre; }
+.react-file-tabs { display: flex; flex-wrap: wrap; gap: 9px; margin: 4px 0 12px; }
+.react-file-tabs button { border: 1px solid var(--react-border); border-radius: 999px; padding: 8px 12px; background: rgba(255,255,255,.04); color: var(--react-muted); font: 800 .72rem var(--react-mono); cursor: pointer; }
+.react-file-tabs button.active { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.13); color: #fff; }
+.react-model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+.react-model-card { border: 1px solid var(--react-border); border-radius: 16px; padding: 13px; background: rgba(255,255,255,.035); }
+.react-model-card strong { display: block; color: #fff; font: 850 .84rem var(--react-mono); margin-bottom: 5px; }
+.react-model-card span { display: block; color: var(--react-faint); font: .7rem var(--react-mono); margin-bottom: 7px; }
+.react-model-card p,
+.react-save-hint,
+.react-muted { color: var(--react-muted); font-size: .84rem; line-height: 1.55; }
+.react-config-editor code,
+.react-save-hint code { color: var(--react-cyan); }
 @media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-meta-grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }

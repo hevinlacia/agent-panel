@@ -89,6 +89,8 @@ import {
   dismissNotification,
   dismissAll,
   markAllRead,
+  createNotification,
+  updateNotification,
 } from "./notifications.ts"
 import {
   buildManagedEnv,
@@ -105,6 +107,13 @@ import {
   type EnvVarEntry,
   upsertEnvVar,
 } from "./config.ts"
+import {
+  getPiConfigFile,
+  isPiConfigFileKey,
+  readPiConfigSummary,
+  savePiConfigFile,
+  updatePiSettings,
+} from "./piConfig.ts"
 import {
   scanDashboardSessions,
   getDashboardSession,
@@ -214,6 +223,17 @@ import {
   getOpencodeProcessQueueStatus,
   runQueuedOpencodeProcess,
 } from "./opencodeProcessQueue.ts"
+import {
+  buildAutoDriveJobName,
+  buildAutoDrivePrompt,
+  createAutoDriveJob,
+  finalizeAutoDriveJobFromResult,
+  getAutoDriveJobs,
+  getLatestAutoDriveJobForRequirement,
+  initAutoDriveJobs,
+  updateAutoDriveJob,
+  type AutoDriveJob,
+} from "./requirementAutoDrive.ts"
 import {
   ATTACHMENTS_DIR_NAME,
   listAttachments,
@@ -2264,9 +2284,7 @@ function reactPageMeta(path: string): { title: string; active: Tab } | null {
   if (path === "/projects" || path === "/requirements") return { title: "需求进度看板", active: "requirements" }
   if (path === "/sessions" || path === "/sessions/refresh" || path === "/session") return { title: "Sessions", active: "sessions" }
   if (path === "/reports" || path === "/report") return { title: "Reports", active: "reports" }
-  if (path === "/requirement" || path.startsWith("/requirement/")) return { title: "Requirement", active: "requirements" }
-  if (path === "/schedulers") return { title: "Schedulers", active: "schedulers" }
-  if (path === "/settings") return { title: "Settings", active: "settings" }
+  if (path === "/requirement") return { title: "Requirement", active: "requirements" }
   if (path === "/env-vars") return { title: "Env Vars", active: "envvars" }
   return null
 }
@@ -2696,6 +2714,88 @@ app.get("/requirement", async (c) => {
   )
 })
 
+const AUTO_DRIVE_TIMEOUT_MS = 60 * 60 * 1000
+
+async function launchRequirementAutoDrive(req: Requirement): Promise<AutoDriveJob> {
+  if (!req.reqDir) throw new Error("Requirement has no on-disk directory")
+  const sessionId = randomUUID()
+  const actionHref = `/requirement?id=${encodeURIComponent(req.id)}`
+  const name = buildAutoDriveJobName(req)
+  const ctx = await buildInjectionContext(req.id)
+  const ctxFile = await writeInjectionContext(sessionId, ctx)
+  try { await associateSession(req.id, sessionId) } catch { /* best effort */ }
+
+  const notificationId = createNotification({
+    type: "system",
+    title: `自动推进：${req.title}`,
+    subtitle: "已加入 pi agent 自动推进队列。",
+    state: "running",
+    reqId: req.id,
+    sessionId,
+    actionHref,
+  })
+  const job = createAutoDriveJob(req, sessionId, notificationId)
+  const env = await buildManagedEnv()
+
+  void runQueuedOpencodeProcess({
+    bin: "pi",
+    args: ["--session-id", sessionId, "--name", name, "--append-system-prompt", ctxFile, "-p", buildAutoDrivePrompt(req)],
+    spawnOptions: { stdio: ["ignore", "pipe", "pipe"], cwd: req.reqDir },
+    env,
+    timeoutMs: AUTO_DRIVE_TIMEOUT_MS,
+    onQueued: (position) => {
+      updateAutoDriveJob(job.id, { state: "queued", summary: `等待 pi agent 执行（队列位置 ${position}）。` })
+      updateNotification(notificationId, { subtitle: `等待 pi agent 执行（队列位置 ${position}）`, actionHref })
+    },
+    onSpawn: () => {
+      updateAutoDriveJob(job.id, { state: "running", startedAt: Date.now(), summary: "pi agent 正在自动推进需求。" })
+      updateNotification(notificationId, { subtitle: "pi agent 正在自动推进需求。", actionHref })
+    },
+  }).then((result) => {
+    const final = finalizeAutoDriveJobFromResult(job.id, result)
+    if (!final) return
+    if (final.state === "blocked") {
+      updateNotification(notificationId, {
+        title: `自动推进需要人工确认：${req.title}`,
+        subtitle: final.blockers.slice(0, 3).join("；") || final.summary,
+        state: "failed",
+        actionHref,
+      })
+    } else if (final.state === "failed") {
+      updateNotification(notificationId, {
+        title: `自动推进失败：${req.title}`,
+        subtitle: final.summary,
+        state: "failed",
+        actionHref,
+      })
+    } else {
+      updateNotification(notificationId, {
+        title: `自动推进完成：${req.title}`,
+        subtitle: final.summary,
+        state: "done",
+        actionHref,
+      })
+    }
+  }).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    updateAutoDriveJob(job.id, {
+      state: "failed",
+      summary: `启动或运行 pi agent 失败：${message}`,
+      blockers: ["自动推进进程启动失败，请检查 pi 命令和模型配置。"],
+      stderr: message,
+      doneAt: Date.now(),
+    })
+    updateNotification(notificationId, {
+      title: `自动推进失败：${req.title}`,
+      subtitle: message,
+      state: "failed",
+      actionHref,
+    })
+  })
+
+  return job
+}
+
 /**
  * POST /api/requirement/new-session
  *
@@ -2788,6 +2888,60 @@ app.post("/api/requirement/new-session", async (c) => {
   } catch { /* noop */ }
 
   return c.json({ sessionId, command: buildResumeCommand(harness, sessionId) })
+})
+
+app.get("/api/requirement/auto-drive", async (c) => {
+  const reqId = String(c.req.query("reqId") || "")
+  const jobs = getAutoDriveJobs(reqId && reqId !== DEFAULT_REQ_ID ? { reqId } : {})
+  return c.json({
+    jobs,
+    active: jobs.filter((job) => job.state === "queued" || job.state === "running").length,
+    blocked: jobs.filter((job) => job.state === "blocked" || job.state === "failed").length,
+    queue: getOpencodeProcessQueueStatus(),
+  })
+})
+
+app.post("/api/requirement/auto-drive", async (c) => {
+  const contentType = c.req.header("content-type") || ""
+  let reqIds: string[] = []
+  if (contentType.includes("application/json")) {
+    const body = await c.req.json().catch(() => null) as Record<string, unknown> | null
+    const raw = body?.reqIds
+    reqIds = Array.isArray(raw) ? raw.map((x) => String(x)) : []
+  } else {
+    const form = await c.req.formData()
+    reqIds = form.getAll("reqIds").map((x) => String(x))
+    const single = String(form.get("reqId") || "")
+    if (single) reqIds.push(single)
+  }
+  reqIds = [...new Set(reqIds.map((x) => x.trim()).filter(Boolean))]
+  if (reqIds.length === 0) return c.json({ error: "Missing reqIds" }, 400)
+
+  const jobs: AutoDriveJob[] = []
+  const errors: Array<{ reqId: string; error: string }> = []
+  for (const reqId of reqIds) {
+    const req = await getRequirement(reqId)
+    if (!req) {
+      errors.push({ reqId, error: "Requirement not found" })
+      continue
+    }
+    if (!req.reqDir || req.id === DEFAULT_REQ_ID) {
+      errors.push({ reqId, error: "Requirement has no on-disk directory" })
+      continue
+    }
+    const existing = getLatestAutoDriveJobForRequirement(req.id)
+    if (existing && (existing.state === "queued" || existing.state === "running")) {
+      jobs.push(existing)
+      continue
+    }
+    try {
+      jobs.push(await launchRequirementAutoDrive(req))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      errors.push({ reqId, error: message })
+    }
+  }
+  return c.json({ ok: errors.length === 0, jobs, errors })
 })
 
 app.post("/api/requirement/associate", async (c) => {
@@ -3769,6 +3923,50 @@ app.post("/api/config", async (c) => {
   return c.json({ ...next, envVars: await safeEnvVars(next) })
 })
 
+app.get("/api/pi-config", async (c) => {
+  try {
+    return c.json(await readPiConfigSummary())
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 500)
+  }
+})
+
+app.post("/api/pi-config/settings", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  try {
+    return c.json(await updatePiSettings({
+      defaultProvider: typeof body.defaultProvider === "string" ? body.defaultProvider : undefined,
+      defaultModel: typeof body.defaultModel === "string" ? body.defaultModel : undefined,
+      defaultThinkingLevel: typeof body.defaultThinkingLevel === "string" ? body.defaultThinkingLevel : undefined,
+      enabledModels: Array.isArray(body.enabledModels) ? body.enabledModels : undefined,
+      theme: typeof body.theme === "string" ? body.theme : undefined,
+    }))
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400)
+  }
+})
+
+app.get("/api/pi-config/file", async (c) => {
+  const file = c.req.query("file")
+  if (!isPiConfigFileKey(file)) return c.json({ error: "Invalid Pi config file" }, 400)
+  try {
+    return c.json(await getPiConfigFile(file))
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 500)
+  }
+})
+
+app.post("/api/pi-config/file", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  if (!isPiConfigFileKey(body.file)) return c.json({ error: "Invalid Pi config file" }, 400)
+  if (typeof body.content !== "string") return c.json({ error: "Missing config content" }, 400)
+  try {
+    return c.json(await savePiConfigFile(body.file, body.content))
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 400)
+  }
+})
+
 app.post("/api/config/env", async (c) => {
   const body = await c.req.json().catch(() => null) ?? {}
   const action = typeof body.action === "string" ? body.action : "upsert"
@@ -4614,6 +4812,7 @@ const port = parseInt(process.env.PORT || "7331", 10)
 
 await initNotifications()
 await initConfig()
+await initAutoDriveJobs()
 await initMarkers()
 
 startAutoSummaryWorker()

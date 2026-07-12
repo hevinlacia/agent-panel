@@ -81,6 +81,39 @@ interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]
 interface ReportListItem { path: string; meta?: { session?: string; date?: string }; confirmedCount?: number; rejectedCount?: number; [key: string]: unknown }
 interface EnvGroup { file: string; variables: Array<Record<string, any>> }
 interface ConfigPayload { [key: string]: any }
+type PiConfigFileKey = "settings" | "models" | "agents"
+interface PiModelOption { providerId: string; modelId: string; label: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; thinkingLevels: string[] }
+interface PiProviderSummary { id: string; api?: string; baseUrl?: string; modelCount: number; hasApiKey: boolean; models: PiModelOption[] }
+interface PiSettingsSummary { path: string; exists: boolean; defaultProvider: string; defaultModel: string; defaultThinkingLevel: string; enabledModels: string[]; theme: string }
+interface PiConfigFileMeta { file: PiConfigFileKey; label: string; path: string; sensitive: boolean; description: string }
+interface PiConfigSummary { settings: PiSettingsSummary; providers: PiProviderSummary[]; files: PiConfigFileMeta[]; thinkingLevels: string[] }
+interface PiConfigFileSnapshot extends PiConfigFileMeta { content: string; updatedAt: number | null }
+interface PiSettingsDraft { defaultProvider: string; defaultModel: string; defaultThinkingLevel: string; theme: string; enabledModelsText: string }
+type AutoDriveState = "queued" | "running" | "blocked" | "done" | "failed"
+interface AutoDriveJob {
+  id: string
+  reqId: string
+  reqTitle: string
+  reqStatus: ReqStatus
+  reqDir: string | null
+  state: AutoDriveState
+  phase: ReqStatus
+  sessionId: string | null
+  notificationId: string | null
+  summary: string
+  blockers: string[]
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  timedOut: boolean
+  queuedMs: number
+  durationMs: number
+  createdAt: number
+  updatedAt: number
+  startedAt: number | null
+  doneAt: number | null
+}
+interface AutoDrivePayload { jobs: AutoDriveJob[]; active: number; blocked: number; queue: { active: number; queued: number } }
 
 const cardVariants = {
   hidden: { opacity: 0, y: 18, scale: 0.98 },
@@ -177,6 +210,26 @@ function statusPill(status: string) {
 
 function projectsOf(req: Requirement): string {
   return (req.projects?.length ? req.projects : [req.project]).filter(Boolean).join(" / ") || "-"
+}
+
+const driveStateLabel: Record<AutoDriveState, string> = {
+  queued: "排队中",
+  running: "推进中",
+  blocked: "有阻塞",
+  done: "已完成",
+  failed: "失败",
+}
+
+function driveStateBadge(job: AutoDriveJob) {
+  return <span className={`react-drive-badge react-drive-${job.state}`}>{driveStateLabel[job.state]}</span>
+}
+
+function latestDriveJobsByReq(jobs: AutoDriveJob[]): Map<string, AutoDriveJob> {
+  const map = new Map<string, AutoDriveJob>()
+  for (const job of [...jobs].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    if (!map.has(job.reqId)) map.set(job.reqId, job)
+  }
+  return map
 }
 
 function PageChrome({ icon, eyebrow, title, description, actions, children }: { icon: React.ReactNode; eyebrow: string; title: string; description?: string; actions?: React.ReactNode; children: React.ReactNode }) {
@@ -290,13 +343,18 @@ function DurationTable({ durations, max }: { durations: RequirementDuration[]; m
 
 function ProjectsPage() {
   const { data, error, loading } = useFetch<{ requirements: Requirement[] }>("/api/requirements")
+  const drive = useFetch<AutoDrivePayload>("/api/requirement/auto-drive")
   const params = new URLSearchParams(window.location.search)
   const [project, setProject] = useState(params.get("project") || "")
   const [subproject, setSubproject] = useState(params.get("subproject") || "")
   const [createdFrom, setCreatedFrom] = useState(params.get("createdFrom") || "")
   const [createdTo, setCreatedTo] = useState(params.get("createdTo") || "")
   const [statuses, setStatuses] = useState<string[]>(params.getAll("status"))
+  const [selectedReqIds, setSelectedReqIds] = useState<string[]>([])
+  const [driving, setDriving] = useState(false)
+  const [driveHint, setDriveHint] = useState<string | null>(null)
   const reqs = data?.requirements || []
+  const driveByReq = useMemo(() => latestDriveJobsByReq(drive.data?.jobs || []), [drive.data])
   const projects = useMemo(() => [...new Set(reqs.flatMap((r) => r.projects?.length ? r.projects : [r.project]).filter(Boolean))].sort(), [reqs])
   const subprojects = useMemo(() => [...new Set(reqs.filter((r) => !project || (r.projects?.length ? r.projects : [r.project]).includes(project)).map((r) => r.groupPath?.[0] || "").filter(Boolean))].sort(), [reqs, project])
   const counts = useMemo(() => Object.fromEntries(REQ_STATUSES.map((s) => [s, reqs.filter((r) => r.status === s).length])), [reqs]) as Record<string, number>
@@ -309,6 +367,8 @@ function ProjectsPage() {
     if (createdTo && r.createdAt > new Date(`${createdTo}T23:59:59`).getTime()) return false
     return true
   }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, project, subproject, createdFrom, createdTo])
+  const selectableIds = useMemo(() => filtered.filter((r) => r.reqDir && r.id !== "__default__").map((r) => r.id), [filtered])
+  const allVisibleSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedReqIds.includes(id))
   const apply = () => {
     const q = new URLSearchParams()
     if (createdFrom) q.set("createdFrom", createdFrom)
@@ -318,20 +378,46 @@ function ProjectsPage() {
     statuses.forEach((s) => q.append("status", s))
     window.location.href = `/projects${q.toString() ? `?${q}` : ""}`
   }
-  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 session 和最近更新。">
+  const toggleSelected = (reqId: string, checked: boolean) => setSelectedReqIds((cur) => checked ? [...new Set([...cur, reqId])] : cur.filter((id) => id !== reqId))
+  const toggleAllVisible = (checked: boolean) => setSelectedReqIds((cur) => checked ? [...new Set([...cur, ...selectableIds])] : cur.filter((id) => !selectableIds.includes(id)))
+  const autoDriveSelected = async () => {
+    if (selectedReqIds.length === 0) return
+    setDriving(true)
+    setDriveHint(null)
+    try {
+      const res = await postJson<{ jobs: AutoDriveJob[]; errors: Array<{ reqId: string; error: string }> }>("/api/requirement/auto-drive", { reqIds: selectedReqIds })
+      setDriveHint(`已派发 ${res.jobs.length} 个需求${res.errors?.length ? `，${res.errors.length} 个失败` : ""}`)
+      setSelectedReqIds([])
+      drive.refresh()
+    } catch (err) {
+      setDriveHint(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDriving(false)
+    }
+  }
+  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 session 和最近更新。" actions={<><button onClick={drive.refresh}><RefreshCw size={15} />刷新自动推进</button>{drive.data?.blocked ? <a href="/requirement?id=__default__"><AlertTriangle size={15} />{drive.data.blocked} 个阻塞</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>
       <section className="react-panel react-filter-panel"><PanelHead kicker="Filter" title="需求筛选" chip={`${filtered.length} tracked`} />
         <div className="react-filter-grid"><label>创建时间起<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建时间止<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label>一级项目<select value={project} onChange={(e) => { setProject(e.target.value); setSubproject("") }}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>二级项目<select value={subproject} onChange={(e) => setSubproject(e.target.value)} disabled={!project}><option value="">{project ? "全部二级项目" : "请先选择一级项目"}</option>{subprojects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label></div>
         <div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
         <div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a></div>
       </section>
-      <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>没有符合当前筛选条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} />)}</div>
+      <section className="react-panel react-drive-toolbar"><PanelHead kicker="Auto Drive" title="批量自动推进" chip={`${selectedReqIds.length} selected`} />
+        <div className="react-drive-controls"><label className="react-check-inline"><input type="checkbox" checked={allVisibleSelected} disabled={selectableIds.length === 0} onChange={(e) => toggleAllVisible(e.target.checked)} />选择当前筛选可推进需求</label><button onClick={autoDriveSelected} disabled={selectedReqIds.length === 0 || driving}>{driving ? "派发中…" : "自动推进需求"}</button><button onClick={() => setSelectedReqIds([])} disabled={!selectedReqIds.length}>清空选择</button></div>
+        <p className="react-muted">自动推进会创建 pi agent 任务；遇到需求对齐、测试覆盖、上线风险等人工门禁会停止，并在通知中心与需求卡片标记阻塞。</p>
+        {driveHint ? <p className="react-drive-hint">{driveHint}</p> : null}
+        {drive.error ? <ErrorCard error={drive.error} /> : null}
+        {drive.data ? <div className="react-drive-summary"><span>运行/排队 {drive.data.active}</span><span>阻塞/失败 {drive.data.blocked}</span><span>进程队列 active {drive.data.queue.active} · queued {drive.data.queue.queued}</span></div> : null}
+      </section>
+      <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>没有符合当前筛选条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} driveJob={driveByReq.get(req.id)} selected={selectedReqIds.includes(req.id)} onToggle={toggleSelected} />)}</div>
     </>}
   </PageChrome>
 }
 
-function RequirementCard({ req, index }: { req: Requirement; index: number }) {
-  return <motion.article className="react-list-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span></div></div><div className="react-card-side">{statusPill(req.status)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
+function RequirementCard({ req, index, driveJob, selected, onToggle }: { req: Requirement; index: number; driveJob?: AutoDriveJob; selected: boolean; onToggle: (reqId: string, checked: boolean) => void }) {
+  const selectable = Boolean(req.reqDir && req.id !== "__default__")
+  const blocked = driveJob?.state === "blocked" || driveJob?.state === "failed"
+  return <motion.article className={`react-list-card react-req-card ${blocked ? "react-drive-blocked-card" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><label className="react-card-select"><input type="checkbox" checked={selected} disabled={!selectable} onChange={(e) => onToggle(req.id, e.target.checked)} /><span>选择</span></label><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span>{driveJob ? driveStateBadge(driveJob) : null}{driveJob?.blockers?.length ? <span className="react-drive-blocker">阻塞 {driveJob.blockers.length}</span> : null}</div></div><div className="react-card-side">{statusPill(req.status)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
 }
 
 function SessionsPage() {
@@ -430,6 +516,39 @@ function RequirementsData() {
   return useFetch<{ requirements: Requirement[] }>("/api/requirements")
 }
 
+function AutoDrivePanel({ req }: { req: Requirement }) {
+  const url = req.id === "__default__" ? "/api/requirement/auto-drive" : `/api/requirement/auto-drive?reqId=${encodeURIComponent(req.id)}`
+  const drive = useFetch<AutoDrivePayload>(url, [req.id])
+  const [busy, setBusy] = useState(false)
+  const [hint, setHint] = useState<string | null>(null)
+  const canStart = Boolean(req.reqDir && req.id !== "__default__")
+  const start = async () => {
+    if (!canStart) return
+    setBusy(true)
+    setHint(null)
+    try {
+      const res = await postJson<{ jobs: AutoDriveJob[]; errors: Array<{ reqId: string; error: string }> }>("/api/requirement/auto-drive", { reqIds: [req.id] })
+      setHint(res.errors?.length ? res.errors.map((e) => `${e.reqId}: ${e.error}`).join("；") : "已派发自动推进 agent")
+      drive.refresh()
+    } catch (err) {
+      setHint(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const jobs = drive.data?.jobs || []
+  return <section className="react-panel react-drive-panel"><PanelHead kicker="Auto Drive" title="自动推进 agent 状态" chip={drive.data ? `${drive.data.active} active / ${drive.data.blocked} blocked` : undefined} />
+    <div className="react-actions"><button onClick={start} disabled={!canStart || busy}>{busy ? "派发中…" : "自动推进本需求"}</button><button onClick={drive.refresh}><RefreshCw size={15} />刷新状态</button></div>
+    {!canStart ? <p className="react-muted">当前是默认/虚拟需求或没有磁盘目录，只展示全部自动推进任务状态。</p> : null}
+    {hint ? <p className="react-drive-hint">{hint}</p> : null}
+    {drive.error ? <ErrorCard error={drive.error} /> : drive.loading ? <LoadingCard label="正在读取自动推进状态…" /> : jobs.length === 0 ? <p className="react-muted">暂无自动推进任务。</p> : <div className="react-drive-job-list">{jobs.map((job) => <AutoDriveJobCard key={job.id} job={job} />)}</div>}
+  </section>
+}
+
+function AutoDriveJobCard({ job }: { job: AutoDriveJob }) {
+  return <details className={`react-drive-job react-drive-job-${job.state}`} open={job.state === "blocked" || job.state === "failed" || job.state === "running"}><summary><span>{driveStateBadge(job)}<strong>{job.reqTitle}</strong></span><em>{relAge(job.updatedAt)}</em></summary><div className="react-drive-job-body"><div className="react-meta-grid"><span>Job <code>{job.id}</code></span><span>Req <code>{job.reqId}</code></span><span>Session {job.sessionId ? <a href={`/session?id=${encodeURIComponent(job.sessionId)}`}>{job.sessionId}</a> : "-"}</span><span>耗时 {job.durationMs ? formatDuration(job.durationMs) : "-"}</span></div><p>{job.summary}</p>{job.blockers?.length ? <div className="react-drive-blockers"><strong>阻塞 / 待人工确认</strong><ul>{job.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul></div> : null}{job.stdout || job.stderr ? <pre className="react-json-preview">{[job.stdout, job.stderr].filter(Boolean).join("\n\n--- stderr ---\n")}</pre> : null}</div></details>
+}
+
 function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "recall" | "auto-extract" }) {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const sessionId = new URLSearchParams(window.location.search).get("sessionId") || ""
@@ -440,7 +559,7 @@ function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "
   const [command, setCommand] = useState("")
   const submitStatus = async () => { if (!req || !status) return; await postForm("/api/requirement/status", { reqId: req.id, status, note }); refresh() }
   const newSession = async () => { if (!req) return; const res = await postForm<any>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command || JSON.stringify(res)) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement?id=${req.id}`}>详情</a><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status}>保存状态</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <div className="react-chip-list">{req.sessionIds.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}</div> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section>{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement?id=${req.id}`}>详情</a><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status}>保存状态</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <div className="react-chip-list">{req.sessionIds.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}</div> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
 }
 
 function ToolPanel({ tool, req, sessionId }: { tool: string; req: Requirement; sessionId: string }) {
@@ -455,11 +574,72 @@ function ToolPanel({ tool, req, sessionId }: { tool: string; req: Requirement; s
 }
 
 function SettingsPage() {
-  const { data, error, loading, refresh } = useFetch<ConfigPayload>("/api/config")
+  const dashboard = useFetch<ConfigPayload>("/api/config")
+  const piConfig = useFetch<PiConfigSummary>("/api/pi-config")
   const [draft, setDraft] = useState<ConfigPayload>({})
-  useEffect(() => { if (data) setDraft(data) }, [data])
-  const save = async () => { await postJson("/api/config", draft); refresh(); alert("已保存") }
-  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置同步、智能提取、价值发现与模型参数。">{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <section className="react-panel"><PanelHead kicker="Config" title="运行配置" /><div className="react-settings-grid">{["autoExtract", "autoExtractSchedule", "fullSyncSchedule", "autoValuation"].map((key) => <label key={key} className="react-switch"><input type="checkbox" checked={Boolean(draft[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} /><span>{key}</span></label>)}<label>提取模型<input value={draft.extractModel || ""} onChange={(e) => setDraft({ ...draft, extractModel: e.target.value })} /></label><label>最小消息增量<input type="number" value={draft.minChangeMessages || 0} onChange={(e) => setDraft({ ...draft, minChangeMessages: Number(e.target.value) })} /></label><label>价值评分阈值<input type="number" value={draft.valuationThreshold || 0} onChange={(e) => setDraft({ ...draft, valuationThreshold: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={save}>保存配置</button></div></section>}</PageChrome>
+  const [piDraft, setPiDraft] = useState<PiSettingsDraft>({ defaultProvider: "", defaultModel: "", defaultThinkingLevel: "", theme: "", enabledModelsText: "" })
+  const [selectedFile, setSelectedFile] = useState<PiConfigFileKey>("settings")
+  const [fileSnapshot, setFileSnapshot] = useState<PiConfigFileSnapshot | null>(null)
+  const [fileContent, setFileContent] = useState("")
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [savingFile, setSavingFile] = useState(false)
+  const [savedHint, setSavedHint] = useState<string | null>(null)
+
+  useEffect(() => { if (dashboard.data) setDraft(dashboard.data) }, [dashboard.data])
+  useEffect(() => {
+    const s = piConfig.data?.settings
+    if (!s) return
+    setPiDraft({
+      defaultProvider: s.defaultProvider,
+      defaultModel: s.defaultModel,
+      defaultThinkingLevel: s.defaultThinkingLevel || "off",
+      theme: s.theme,
+      enabledModelsText: s.enabledModels.join("\n"),
+    })
+  }, [piConfig.data])
+  useEffect(() => {
+    let cancelled = false
+    setFileError(null)
+    fetchJson<PiConfigFileSnapshot>(`/api/pi-config/file?file=${encodeURIComponent(selectedFile)}`)
+      .then((snapshot) => { if (!cancelled) { setFileSnapshot(snapshot); setFileContent(snapshot.content) } })
+      .catch((err: Error) => { if (!cancelled) setFileError(err.message) })
+    return () => { cancelled = true }
+  }, [selectedFile, savedHint])
+
+  const saveDashboard = async () => { await postJson("/api/config", draft); dashboard.refresh(); setSavedHint("Dashboard 配置已保存") }
+  const savePiSettings = async () => {
+    await postJson("/api/pi-config/settings", {
+      defaultProvider: piDraft.defaultProvider,
+      defaultModel: piDraft.defaultModel,
+      defaultThinkingLevel: piDraft.defaultThinkingLevel,
+      theme: piDraft.theme,
+      enabledModels: piDraft.enabledModelsText.split(/[\n,]/).map((v) => v.trim()).filter(Boolean),
+    })
+    piConfig.refresh()
+    setSavedHint("Pi 默认模型配置已保存")
+  }
+  const savePiFile = async () => {
+    setSavingFile(true)
+    setFileError(null)
+    try {
+      const next = await postJson<PiConfigFileSnapshot>("/api/pi-config/file", { file: selectedFile, content: fileContent })
+      setFileSnapshot(next)
+      setFileContent(next.content)
+      piConfig.refresh()
+      setSavedHint(`${next.label} 已保存`)
+    } catch (err) {
+      setFileError((err as Error).message)
+    } finally {
+      setSavingFile(false)
+    }
+  }
+
+  const providers = piConfig.data?.providers || []
+  const selectedProvider = providers.find((p) => p.id === piDraft.defaultProvider) || providers[0]
+  const modelOptions = selectedProvider?.models || []
+  const fileMeta = piConfig.data?.files || []
+
+  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置同步、智能提取、价值发现、Pi 默认模型和 Pi 配置文件。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Dashboard" title="运行配置" chip={savedHint || undefined} /><div className="react-settings-grid">{["autoExtract", "autoExtractSchedule", "fullSyncSchedule", "autoValuation"].map((key) => <label key={key} className="react-switch"><input type="checkbox" checked={Boolean(draft[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} /><span>{key}</span></label>)}<label>提取模型<input value={draft.extractModel || ""} onChange={(e) => setDraft({ ...draft, extractModel: e.target.value })} /></label><label>最小消息增量<input type="number" value={draft.minChangeMessages || 0} onChange={(e) => setDraft({ ...draft, minChangeMessages: Number(e.target.value) })} /></label><label>价值评分阈值<input type="number" value={draft.valuationThreshold || 0} onChange={(e) => setDraft({ ...draft, valuationThreshold: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveDashboard}>保存 Dashboard 配置</button></div></section><section className="react-panel"><PanelHead kicker="Pi Model" title="Pi 默认模型" chip={piConfig.loading ? "loading" : piConfig.error || `${providers.length} providers`} />{piConfig.error ? <ErrorCard error={piConfig.error} /> : <><div className="react-settings-grid"><label>Provider<select value={piDraft.defaultProvider} onChange={(e) => { const provider = providers.find((p) => p.id === e.target.value); setPiDraft({ ...piDraft, defaultProvider: e.target.value, defaultModel: provider?.models[0]?.modelId || piDraft.defaultModel }) }}><option value="">手动 / 内置 provider</option>{providers.map((p) => <option key={p.id} value={p.id}>{p.id} ({p.modelCount})</option>)}</select></label><label>Model<select value={piDraft.defaultModel} onChange={(e) => setPiDraft({ ...piDraft, defaultModel: e.target.value })}><option value={piDraft.defaultModel}>{piDraft.defaultModel || "选择模型"}</option>{modelOptions.map((m) => <option key={`${m.providerId}/${m.modelId}`} value={m.modelId}>{m.modelId}</option>)}</select></label><label>Thinking<select value={piDraft.defaultThinkingLevel} onChange={(e) => setPiDraft({ ...piDraft, defaultThinkingLevel: e.target.value })}>{(piConfig.data?.thinkingLevels || ["off", "minimal", "low", "medium", "high", "xhigh", "max"]).map((level) => <option key={level} value={level}>{level}</option>)}</select></label><label>Theme<input value={piDraft.theme} onChange={(e) => setPiDraft({ ...piDraft, theme: e.target.value })} placeholder="high-contrast" /></label></div><label className="react-editor-label">Enabled models<textarea value={piDraft.enabledModelsText} onChange={(e) => setPiDraft({ ...piDraft, enabledModelsText: e.target.value })} rows={4} placeholder="每行一个模型 pattern，例如 llm-provider-router/*" /></label><div className="react-actions"><button onClick={savePiSettings}>保存 Pi 默认模型</button><a href="/session?new=1">打开新 Pi session 测试</a></div><div className="react-model-list">{providers.map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.api || "api n/a"} · {p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 4).map((m) => m.modelId).join(" / ")}{p.models.length > 4 ? " …" : ""}</p></div>)}</div></>}</section><section className="react-panel react-config-editor"><PanelHead kicker="Pi Files" title="配置文件编辑器" chip={fileSnapshot?.sensitive ? "secret placeholders" : fileSnapshot?.label} /><div className="react-file-tabs">{fileMeta.map((file) => <button key={file.file} className={file.file === selectedFile ? "active" : ""} onClick={() => setSelectedFile(file.file)}>{file.label}</button>)}</div>{fileSnapshot ? <p className="react-muted"><code>{fileSnapshot.path}</code> · {fileSnapshot.description}</p> : null}{fileError ? <ErrorCard error={fileError} /> : null}<textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile} disabled={savingFile}>{savingFile ? "保存中…" : `保存 ${fileSnapshot?.label || selectedFile}`}</button><button onClick={() => setFileContent(fileSnapshot?.content || "")} disabled={!fileSnapshot}>恢复未保存修改</button></div>{fileSnapshot?.sensitive ? <p className="react-save-hint">敏感字段会显示为 <code>__AGENT_PANEL_SECRET__</code>；保存时后端会自动恢复原值，除非你手动改成新值。</p> : null}</section></div>}</PageChrome>
 }
 
 function EnvVarsPage() {
