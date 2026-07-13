@@ -1,0 +1,41 @@
+src/fullSyncScheduler.ts
+  4d6f339a1db3103a 14-15,17,31,86-88,91,117-119,122,159-164,179-194
+tests/fullSyncScheduler.test.ts
+  4d6f339a1db3103a 9,65,73,77-84,88,93-98
+src/server.tsx
+  4d6f339a1db3103a 3627,3632,3638
+  10bf0ff5abed1f86 289,1392,1396-1404,1474,1477
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9c1d1fc1ac560af55494d0b62227859433129ddd",
+  "prompts": {
+    "10bf0ff5abed1f86": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f598b-661c-7749-96cb-49f6eecde80f",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 122,
+      "total_deletions": 7,
+      "accepted_lines": 122,
+      "overriden_lines": 0
+    },
+    "4d6f339a1db3103a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f5a49-78ac-7189-be0c-44bd33d7c038",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 77,
+      "total_deletions": 66,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
