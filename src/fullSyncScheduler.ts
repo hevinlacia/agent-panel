@@ -11,11 +11,10 @@
  */
 
 import { spawn } from "node:child_process"
-import { existsSync, writeFileSync } from "node:fs"
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { execFileSync } from "node:child_process"
+import { existsSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, join } from "node:path"
 
 import { getConfig } from "./config.ts"
 
@@ -29,18 +28,7 @@ export const FULL_SYNC_SCRIPT = join(
   "infra",
   "workstation-bootstrap",
   "scripts",
-  "opencode-cron-sync.sh",
-)
-
-export const GITHUB_PROJECTS_SYNC_SCRIPT = join(
-  homedir(),
-  "Developer",
-  "infra",
-  "workstation-bootstrap",
-  "hermes-config",
-  "hermes",
-  "scripts",
-  "sync-github-projects.sh",
+  "sync-all-to-github.sh",
 )
 
 export const POLL_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -95,26 +83,19 @@ function msUntilNextConfiguredTime(times: readonly string[], now: Date = new Dat
   }))
 }
 
-function writeGithubProjectsConfig(repoPaths: readonly string[]): string | null {
-  if (repoPaths.length === 0) return null
-  const dir = mkdtempSync(join(tmpdir(), "agent-panel-github-sync-"))
-  const path = join(dir, "github-projects-sync.json")
-  const projects = repoPaths.map((repoPath) => ({ name: basename(repoPath), path: repoPath }))
-  const projectsDir = repoPaths.length === 1 ? dirname(repoPaths[0]) : join(homedir(), "Developer", "github")
-  writeFileSync(path, JSON.stringify({ projects_dir: projectsDir, projects }, null, 2), "utf-8")
-  return path
+function writeGithubProjectsConfig(_repoPaths: readonly string[]): string | null {
+  // Deprecated: sync-all-to-github.sh handles all personal repos automatically.
+  return null
 }
 
-/** Run one full sync via the fixed workstation-bootstrap script. */
+/** Run one full sync via sync-all-to-github.sh, then optionally pull selected GitHub repos. */
 export function triggerFullSync(opts?: {
   syncScript?: string
-  githubSyncScript?: string
   githubRepos?: readonly string[]
   spawnFn?: typeof spawn
   nowFn?: () => number
 }): Promise<FullSyncResult> {
   const syncScript = opts?.syncScript ?? FULL_SYNC_SCRIPT
-  const githubSyncScript = opts?.githubSyncScript ?? GITHUB_PROJECTS_SYNC_SCRIPT
   const sp = opts?.spawnFn ?? spawn
   const startedAt = opts?.nowFn ? opts.nowFn() : Date.now()
 
@@ -133,20 +114,16 @@ export function triggerFullSync(opts?: {
       return
     }
 
-    const githubRepos = opts?.githubRepos ?? []
-    const githubConfigPath = writeGithubProjectsConfig(githubRepos)
-    const argv = ["--full"]
-    if (githubRepos.length > 0) argv.push("--github-projects")
-
+    // sync-all-to-github.sh needs no special flags for default full sync.
+    // It self-updates workstation-bootstrap, syncs Developer + ai-code-config +
+    // all simple repos (personal/playground/tools), and pushes to GitHub.
     let child: ReturnType<typeof spawn>
     try {
-      child = sp(syncScript, argv, {
+      child = sp(syncScript, [], {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
           OPENCODE_SYNC_SOURCE: "dashboard-full-sync",
-          GITHUB_PROJECTS_CONFIG: githubConfigPath ?? process.env.GITHUB_PROJECTS_CONFIG,
-          GITHUB_PROJECTS_SYNC_SCRIPT: githubSyncScript,
         },
       })
     } catch (err) {
@@ -179,6 +156,12 @@ export function triggerFullSync(opts?: {
       stderr += (stderr ? "\n" : "") + (err instanceof Error ? err.message : String(err))
     })
     child.on("close", (code) => {
+      // After sync-all completes, optionally pull selected third-party GitHub repos.
+      const githubRepos = opts?.githubRepos ?? []
+      if (githubRepos.length > 0) {
+        const pullSummary = pullGithubRepos(githubRepos, sp)
+        stdout += (stdout ? "\n" : "") + pullSummary
+      }
       const result = {
         ok: code === 0,
         exitCode: code,
@@ -191,6 +174,24 @@ export function triggerFullSync(opts?: {
       resolve(result)
     })
   })
+}
+
+/** Run git pull --ff-only on selected repos, returning a summary string. */
+function pullGithubRepos(repoPaths: readonly string[], _sp: typeof spawn): string {
+  const lines: string[] = ["\n--- GitHub repos pull ---"]
+  for (const repoPath of repoPaths) {
+    if (!existsSync(join(repoPath, ".git"))) continue
+    try {
+      const out = execFileSync("git", ["-C", repoPath, "pull", "--ff-only"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      }).toString("utf-8").trim()
+      lines.push(`${basename(repoPath)}: ${out || "up to date"}`)
+    } catch (err) {
+      lines.push(`${basename(repoPath)}: ERROR ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return lines.join("\n")
 }
 
 /** Start the configured full-sync scheduler. */

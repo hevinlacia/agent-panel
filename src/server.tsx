@@ -286,7 +286,7 @@ const Layout: FC<{ title: string; active: Tab; children: any; wide?: boolean }> 
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{title} — Agent Panel</title>
-      <link rel="stylesheet" href="/static/style.css?v=20260710-review-workspace-2" />
+      <link rel="stylesheet" href="/static/style.css?v=20260713-review-fontsize" />
     </head>
     <body>
       <div class="op-shell">
@@ -1389,11 +1389,19 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
 
           <main class="code-review-diff-pane">
             <div class="code-review-pane-head code-review-diff-pane-head">
-              <div>
+              <div class="code-review-diff-file-info">
                 <strong id="code-review-current-file">{firstFile?.path}</strong>
                 <span id="code-review-current-repo">{firstFile ? `${req.project} / ${firstFile.repoName}` : ""}</span>
               </div>
-              <span>与 {snapshot.baseRef} 对比</span>
+              <div class="code-review-diff-head-right">
+                <span>与 {snapshot.baseRef} 对比</span>
+                <div class="code-review-fontsize" role="group" aria-label="代码字体大小">
+                  <button type="button" class="code-review-fontsize-btn" data-fontsize="down" aria-label="缩小代码字体" title="缩小字体">A−</button>
+                  <span class="code-review-fontsize-label" id="code-review-fontsize-label">100%</span>
+                  <button type="button" class="code-review-fontsize-btn" data-fontsize="up" aria-label="放大代码字体" title="放大字体">A+</button>
+                  <button type="button" class="code-review-fontsize-btn code-review-fontsize-reset" data-fontsize="reset" aria-label="恢复默认字体大小" title="恢复默认">↺</button>
+                </div>
+              </div>
             </div>
             <div class="code-review-file-panels">{allFiles.map((file) => <CodeReviewFilePanel file={file} selected={file.key === firstFile?.key} />)}</div>
           </main>
@@ -1463,9 +1471,10 @@ const RequirementReviewPage: FC<{
             <a class="btn btn-secondary" href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>发版注意</a>
           </nav>
         </header>
+        <script>{`(function(){try{var v=parseFloat(localStorage.getItem('agent-panel:code-review:font-scale'));if(isFinite(v)){document.documentElement.style.setProperty('--code-review-font-scale',String(Math.min(2,Math.max(0.6,v))))}}catch(e){}})();`}</script>
         <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} redirectPath={redirectPath} />
       </section>
-      <script src="/static/req-detail.js?v=20260710-review-workspace" defer></script>
+      <script src="/static/req-detail.js?v=20260713-review-fontsize" defer></script>
     </Layout>
   )
 }
@@ -3615,18 +3624,18 @@ app.get("/schedulers", async (c) => {
 
   const schedulers = [
     {
-      name: "OpenCode 全量同步",
+      name: "Developer 全量同步",
       running: isFullSyncSchedulerRunning(),
       pollIntervalMs: FULL_SYNC_POLL_MS,
       pollIntervalLabel: (cfg.fullSyncTimes?.length ? cfg.fullSyncTimes : [...DEFAULT_FULL_SYNC_TIMES]).join(", "),
       enabled: cfg.fullSyncSchedule,
-      description: "按配置时间触发配置全量同步；可追加同步选中的 ~/Developer GitHub 仓库。",
+      description: "按配置时间触发全量同步：自更新脚本 -> sync-all-to-github.sh（Developer + ai-code-config + workstation-bootstrap + 所有自有仓库），选中仓库追加 git pull。",
       details: (() => {
         const last = getLastFullSyncResult()
         return [
           { label: "配置开关", value: cfg.fullSyncSchedule ? "✅ fullSyncSchedule = true" : "❌ fullSyncSchedule = false" },
           { label: "同步时间", value: (cfg.fullSyncTimes?.length ? cfg.fullSyncTimes : [...DEFAULT_FULL_SYNC_TIMES]).join(", ") },
-          { label: "GitHub 仓库", value: cfg.fullSyncGithubRepos.length > 0 ? `${cfg.fullSyncGithubRepos.length} 个已选择` : "未选择（仅同步配置）" },
+          { label: "GitHub 仓库", value: cfg.fullSyncGithubRepos.length > 0 ? `${cfg.fullSyncGithubRepos.length} 个已选择（同步后 pull）` : "未选择（仅同步自有仓库）" },
           { label: "上次结果", value: last ? (last.ok ? "success" : `failed: ${last.stderr || last.exitCode}`) : "本进程尚未执行" },
         ]
       })(),

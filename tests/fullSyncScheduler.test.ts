@@ -6,7 +6,7 @@ import { test } from "node:test"
 import { strict as assert } from "node:assert"
 import { EventEmitter } from "node:events"
 import { PassThrough, type Readable } from "node:stream"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -62,7 +62,7 @@ test("normalizeFullSyncTimes: keeps valid HH:mm values and falls back to default
   assert.deepEqual(normalizeFullSyncTimes([]), ["12:00", "18:00", "20:30", "23:30"])
 })
 
-test("triggerFullSync: runs fixed full-sync command", async () => {
+test("triggerFullSync: runs sync-all-to-github.sh with no special flags", async () => {
   const captured: { argv?: string[]; env?: NodeJS.ProcessEnv } = {}
   const result = await triggerFullSync({
     syncScript: fakeScriptPath(),
@@ -70,22 +70,32 @@ test("triggerFullSync: runs fixed full-sync command", async () => {
     nowFn: () => 1000,
   })
   assert.equal(result.ok, true)
-  assert.deepEqual(captured.argv, ["--full"])
+  assert.deepEqual(captured.argv, [])
   assert.equal(captured.env?.OPENCODE_SYNC_SOURCE, "dashboard-full-sync")
 })
 
-test("triggerFullSync: adds GitHub projects sync when repos are selected", async () => {
+test("triggerFullSync: pulls selected GitHub repos after sync", async () => {
+  // Create a fake git repo dir so existsSync(.git) passes
+  const fakeRepo = mkdtempSync(join(tmpdir(), "fake-repo-"))
+  const fakeGitDir = join(fakeRepo, ".git")
+  mkdirSync(fakeGitDir, { recursive: true })
+  writeFileSync(join(fakeGitDir, "HEAD"), "ref: refs/heads/main")
+  // Note: execFileSync will fail because it's not a real repo, but the test
+  // verifies that sync-all runs with no --github-projects flag and the result is ok.
   const captured: { argv?: string[]; env?: NodeJS.ProcessEnv } = {}
   const result = await triggerFullSync({
     syncScript: fakeScriptPath(),
-    githubRepos: ["/home/hevin/Developer/github/browser-harness"],
+    githubRepos: [fakeRepo],
     spawnFn: fakeSpawn({ code: 0, stdout: "ok", captured }),
     nowFn: () => 1000,
   })
   assert.equal(result.ok, true)
-  assert.deepEqual(captured.argv, ["--full", "--github-projects"])
-  assert.ok(captured.env?.GITHUB_PROJECTS_CONFIG)
-  assert.ok(captured.env?.GITHUB_PROJECTS_SYNC_SCRIPT)
+  assert.deepEqual(captured.argv, [])
+  // No more GITHUB_PROJECTS_CONFIG or GITHUB_PROJECTS_SYNC_SCRIPT env vars
+  assert.ok(!captured.env?.GITHUB_PROJECTS_CONFIG)
+  assert.ok(!captured.env?.GITHUB_PROJECTS_SYNC_SCRIPT)
+  // The pull attempt should appear in stdout
+  assert.match(result.stdout, /GitHub repos pull/)
 })
 
 test("triggerFullSync: returns failure when script is missing", async () => {
