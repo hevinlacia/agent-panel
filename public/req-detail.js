@@ -15,7 +15,8 @@
  *      copyable `opencode -s <id>` command next to the button.
  *   5. Code-review forms get lightweight disabled labels while a PRO diff
  *      scan or verdict save is in-flight; the three-pane review workspace
- *      supports file search, file switching, and current-file context.
+ *      supports file search, file switching, current-file context, and a
+ *      persistent diff font-size control (A− / A+ / reset).
  *
  * Why a separate file from public/app.js: app.js is a single-IIFE
  * report-page-only script that early-returns on other pages. Mixing
@@ -389,6 +390,59 @@
       if (reviewFileEmpty) reviewFileEmpty.hidden = visibleCount > 0
       const active = document.querySelector("[data-review-file-button].is-active:not([hidden])")
       if (!active) selectReviewFile(document.querySelector("[data-review-file-button]:not([hidden])"))
+    })
+  }
+
+  // ------------------------------------------------------------------
+  // Code review diff font size: A− / A+ / reset buttons in the diff pane
+  // head. The scale is persisted in localStorage and applied as the CSS
+  // custom property --code-review-font-scale, consumed only by
+  // .code-review-table. An inline script on the review page restores the
+  // value before the table paints (no flash); here we wire the buttons,
+  // re-apply on load to sync the SSR "100%" label, and clamp 0.6–2.0.
+  // ------------------------------------------------------------------
+
+  var FONT_SCALE_KEY = "agent-panel:code-review:font-scale"
+  var FONT_SCALE_MIN = 0.6
+  var FONT_SCALE_MAX = 2.0
+  var FONT_SCALE_STEP = 0.1
+  var fontScaleLabel = document.getElementById("code-review-fontsize-label")
+  var fontScaleGroup = document.querySelector(".code-review-fontsize")
+
+  function clampFontScale(n) {
+    if (!isFinite(n)) return 1
+    return Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n))
+  }
+
+  function readFontScale() {
+    var raw = null
+    try { raw = localStorage.getItem(FONT_SCALE_KEY) } catch (e) {}
+    return clampFontScale(parseFloat(raw))
+  }
+
+  function applyFontScale(scale) {
+    document.documentElement.style.setProperty("--code-review-font-scale", String(scale))
+    if (fontScaleLabel) fontScaleLabel.textContent = Math.round(scale * 100) + "%"
+  }
+
+  // Re-apply on load so the SSR label ("100%") matches a stored preference.
+  applyFontScale(readFontScale())
+
+  if (fontScaleGroup) {
+    fontScaleGroup.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest("[data-fontsize]") : null
+      if (!btn) return
+      var action = btn.getAttribute("data-fontsize")
+      var next
+      if (action === "up") {
+        next = clampFontScale(+(readFontScale() + FONT_SCALE_STEP).toFixed(2))
+      } else if (action === "down") {
+        next = clampFontScale(+(readFontScale() - FONT_SCALE_STEP).toFixed(2))
+      } else {
+        next = 1
+      }
+      try { localStorage.setItem(FONT_SCALE_KEY, String(next)) } catch (e) {}
+      applyFontScale(next)
     })
   }
 

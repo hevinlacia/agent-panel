@@ -162,6 +162,10 @@ import {
   type CodeReviewStatus,
 } from "./codeReview.ts"
 import {
+  detectHighlightLanguage,
+  highlightDiffLines,
+} from "./codeHighlight.ts"
+import {
   buildAutoExtractPrompt,
   parseAutoExtractOutput,
   filterAllowed,
@@ -286,7 +290,7 @@ const Layout: FC<{ title: string; active: Tab; children: any; wide?: boolean }> 
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{title} — Agent Panel</title>
-      <link rel="stylesheet" href="/static/style.css?v=20260713-review-fontsize" />
+      <link rel="stylesheet" href="/static/style.css?v=20260713-review-blackbg" />
     </head>
     <body>
       <div class="op-shell">
@@ -1231,19 +1235,25 @@ interface CodeReviewFileView {
 const codeReviewFileName = (path: string): string => path.split("/").pop() || path
 const codeReviewFileDir = (path: string): string => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "."
 
-const CodeReviewDiffRow: FC<{ line: CodeReviewDiffLine }> = ({ line }) => {
+const CodeReviewDiffRow: FC<{ line: CodeReviewDiffLine; innerHtml: string }> = ({ line, innerHtml }) => {
   const sign = line.kind === "addition" ? "+" : line.kind === "deletion" ? "−" : line.kind === "meta" ? "·" : ""
   return (
     <tr class={`code-review-line code-review-line-${line.kind}`}>
       <td class="code-review-line-no">{line.oldLine ?? ""}</td>
       <td class="code-review-line-no">{line.newLine ?? ""}</td>
       <td class="code-review-line-sign">{sign}</td>
-      <td class="code-review-line-code"><code>{line.content || " "}</code></td>
+      {/* innerHtml is pre-built by highlightDiffLines: highlight.js escapes
+          every text fragment, so it is safe to inject raw here. */}
+      <td class="code-review-line-code"><code>{innerHtml}</code></td>
     </tr>
   )
 }
 
-const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> = ({ file, selected }) => (
+const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> = ({ file, selected }) => {
+  // One language per file; hunks share it. Determined by extension so short
+  // diff snippets are never mis-detected by auto-guessing.
+  const lang = detectHighlightLanguage(file.path)
+  return (
   <article class="code-review-file-panel" data-review-file-panel={file.key} hidden={!selected}>
     <header class="code-review-file-head">
       <div class="code-review-file-title">
@@ -1261,14 +1271,19 @@ const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> =
     </header>
     {file.diff && file.diff.hunks.length > 0 ? (
       <div class="code-review-hunks">
-        {file.diff.hunks.map((hunk) => (
+        {file.diff.hunks.map((hunk) => {
+          // Tokenize the whole hunk at once so multi-line comments and
+          // text blocks stay colored across line boundaries.
+          const highlighted = highlightDiffLines(hunk.lines, lang)
+          return (
           <section class="code-review-hunk">
             <div class="code-review-hunk-head"><code>{hunk.header}</code></div>
             <div class="code-review-table-wrap">
-              <table class="code-review-table"><tbody>{hunk.lines.map((line) => <CodeReviewDiffRow line={line} />)}</tbody></table>
+              <table class="code-review-table"><tbody>{hunk.lines.map((line, i) => <CodeReviewDiffRow line={line} innerHtml={highlighted[i]} />)}</tbody></table>
             </div>
           </section>
-        ))}
+          )
+        })}
       </div>
     ) : (
       <div class="code-review-no-diff">
@@ -1277,7 +1292,8 @@ const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> =
       </div>
     )}
   </article>
-)
+  )
+}
 
 const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null; redirectPath: string }> = ({ req, scope, snapshot, redirectPath }) => {
   const verdict = snapshot?.verdict

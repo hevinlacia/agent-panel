@@ -2878,11 +2878,63 @@ form.req-session-inline-form {
   font-size: 0.68rem;
 }
 
-.code-review-diff-pane-head > div {
+.code-review-diff-pane-head > .code-review-diff-file-info {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: 2px;
+}
+
+/* Right side of the diff pane head: base-ref label + font-size control.
+   Scoped under .code-review-diff-pane-head so it outranks the generic
+   `> div` rule above for the file-info column. */
+.code-review-diff-pane-head .code-review-diff-head-right {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* A− / A+ / reset control. --code-review-font-scale is consumed only by
+   .code-review-table, so setting it on :root (via the inline + defer
+   scripts) cannot leak to other surfaces. */
+.code-review-fontsize {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 5px;
+  background: #0b0e12;
+}
+
+.code-review-fontsize-btn {
+  min-width: 28px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  color: var(--text-muted);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.code-review-fontsize-btn:hover { color: var(--text-strong); background: rgba(148, 163, 184, 0.14); }
+.code-review-fontsize-btn:active { background: rgba(148, 163, 184, 0.24); }
+.code-review-fontsize-reset { font-size: 0.82rem; }
+
+/* Inherits muted/mono from `.code-review-diff-pane-head span`; we only
+   add sizing + centering so the percentage stays readable and stable. */
+.code-review-fontsize-label {
+  min-width: 40px;
+  text-align: center;
+  user-select: none;
 }
 
 .code-review-file-search {
@@ -3025,7 +3077,7 @@ form.req-session-inline-form {
   font-size: 0.68rem;
 }
 .code-review-table-wrap { overflow: visible; }
-.code-review-table { width: 100%; border-collapse: collapse; table-layout: auto; font-family: var(--mono); font-size: 0.72rem; line-height: 1.55; }
+.code-review-table { width: 100%; border-collapse: collapse; table-layout: auto; font-family: var(--mono); font-size: calc(0.72rem * var(--code-review-font-scale, 1)); line-height: 1.55; background: #000; }
 .code-review-table td { padding: 0; vertical-align: top; }
 .code-review-line-no {
   width: 42px;
@@ -3033,13 +3085,52 @@ form.req-session-inline-form {
   padding: 1px 8px !important;
   border-right: 1px solid rgba(148, 163, 184, 0.1);
   color: #5f6975;
-  background: #0f1317;
+  background: #000;
   text-align: right;
   user-select: none;
 }
 .code-review-line-sign { width: 25px; min-width: 25px; padding: 1px 7px !important; text-align: center; user-select: none; }
 .code-review-line-code { min-width: 580px; padding: 1px 12px !important; white-space: pre; }
-.code-review-line-code code { color: #c9d1d9; font-family: inherit; }
+/* Base code color uses IntelliJ Darcula's default identifier text (#a9b7c6);
+   token colors below are scoped to the diff view so they never leak. */
+.code-review-line-code code { color: #a9b7c6; font-family: inherit; }
+/* IntelliJ Darcula token palette (scoped to the diff code cells). */
+.code-review-line-code code .hljs-keyword,
+.code-review-line-code code .hljs-selector-tag,
+.code-review-line-code code .hljs-doctag { color: #cc7832; }
+.code-review-line-code code .hljs-literal,
+.code-review-line-code code .hljs-built_in { color: #cc7832; }
+.code-review-line-code code .hljs-number,
+.code-review-line-code code .hljs-meta .hljs-number { color: #6897bb; }
+.code-review-line-code code .hljs-string,
+.code-review-line-code code .hljs-regexp,
+.code-review-line-code code .hljs-meta .hljs-string,
+.code-review-line-code code .hljs-symbol,
+.code-review-line-code code .hljs-addition { color: #6a8759; }
+.code-review-line-code code .hljs-comment,
+.code-review-line-code code .hljs-quote { color: #808080; font-style: italic; }
+/* Class / type names — purple. */
+.code-review-line-code code .hljs-title.class_,
+.code-review-line-code code .hljs-class .hljs-title,
+.code-review-line-code code .hljs-type { color: #9876aa; }
+/* Function / method names — warm yellow. */
+.code-review-line-code code .hljs-title.function_,
+.code-review-line-code code .hljs-function .hljs-title { color: #ffc66d; }
+/* Annotations / metadata — yellow-green. */
+.code-review-line-code code .hljs-meta { color: #bbb529; }
+/* Constants, properties, enum-like identifiers — purple. */
+.code-review-line-code code .hljs-constant,
+.code-review-line-code code .hljs-property,
+.code-review-line-code code .hljs-attr,
+.code-review-line-code code .hljs-variable.constant_ { color: #9876aa; }
+/* XML / markup tag names — gold. */
+.code-review-line-code code .hljs-name,
+.code-review-line-code code .hljs-selector-id,
+.code-review-line-code code .hljs-selector-class,
+.code-review-line-code code .hljs-section { color: #e8bf6a; }
+/* Operators / punctuation keep the default text color. */
+.code-review-line-code code .hljs-operator,
+.code-review-line-code code .hljs-punctuation { color: #a9b7c6; }
 .code-review-line-addition { background: rgba(20, 126, 58, 0.28); }
 .code-review-line-addition .code-review-line-no,
 .code-review-line-addition .code-review-line-sign { color: #72e39b; background: rgba(20, 126, 58, 0.25); }
