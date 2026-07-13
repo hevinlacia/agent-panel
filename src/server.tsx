@@ -3404,13 +3404,13 @@ const SchedulerConfigPanel: FC<{ config: AppConfig; githubRepos: { path: string;
             <span class="sched-config-pill">SYNC</span>
             <div>
               <h3>配置 / GitHub 全量同步</h3>
-              <p class="muted small">按配置时间运行全量同步，可额外同步选中的 <code>~/Developer</code> GitHub 仓库。</p>
+              <p class="muted small">按配置时间运行 <code>sync-all-to-github.sh</code>，同步所有自有仓库到 GitHub；选中的第三方仓库追加 <code>git pull</code>。</p>
             </div>
           </div>
           <label class="sched-switch-row">
             <span>
               <strong>启用全量同步</strong>
-              <small>执行 <code>opencode-cron-sync.sh --full</code>，选中仓库时追加 GitHub projects sync。</small>
+              <small>执行 <code>sync-all-to-github.sh</code>，自更新脚本后同步所有自有仓库（Developer、ai-code-config、workstation-bootstrap、personal/playground/tools）。选中仓库追加 <code>git pull</code>。</small>
             </span>
             <input type="checkbox" name="fullSyncSchedule" id="cfg-full-sync-schedule" checked={config.fullSyncSchedule} />
           </label>
@@ -3420,7 +3420,7 @@ const SchedulerConfigPanel: FC<{ config: AppConfig; githubRepos: { path: string;
           </label>
           <div class="sched-github-repos">
             <span class="settings-label">同步 GitHub 仓库</span>
-            <p class="muted small">留空则只同步配置；勾选后在全量同步中同步对应 GitHub 仓库。</p>
+            <p class="muted small">勾选后在全量同步完成后对对应仓库执行 <code>git pull --ff-only</code>。</p>
             <div class="sched-repo-list">
               {githubRepos.length === 0 ? (
                 <div class="sched-repo-empty muted small">未发现 <code>~/Developer</code> 下的 GitHub remote 仓库。</div>
