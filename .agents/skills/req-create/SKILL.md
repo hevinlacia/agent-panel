@@ -1,7 +1,7 @@
 ---
 name: req-create
 description: 创建和更新需求文件（meta.md/background.md/branch.md/notes.md/test.md/config-changes.md/state.json），确保目录结构、frontmatter 格式、父子关系和状态值符合 Agent Panel 解析规范。
-allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
+allowed-tools: ["bash", "read", "write", "edit", "glob", "grep", "get_session_info"]
 ---
 
 # Requirement File Create & Update
@@ -15,7 +15,8 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 
 不适用：
 - 需求开发到上线的全流程跟踪和发布预检（走 `req-tracker` skill）
-- session 绑定（用 `req-session-bind`）；状态/API 调用细节（用 `agent-panel-requirement-api`）
+- 将已有 session 绑定到已有需求（用 `req-session-bind`）；创建需求时的自动绑定由本 skill 负责
+- 状态/API 调用细节（用 `agent-panel-requirement-api`）
 - 代码实现、仓库探索、调用链分析
 
 ## Directory Layout
@@ -297,6 +298,8 @@ plan-release: unknown
 6. 生成 Agent Panel 维护的需求事实文件：`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`、`review.md`
 7. 文件可先写空模板或占位内容，但不要写真实 token、密码、Cookie、私钥、完整敏感 header
 8. 不要创建 `state.json`，Agent Panel 会在首次状态切换时自动生成
+9. **绑定当前 session 到需求**（详见下方「Session 绑定」）
+10. **向用户输出需求文件维护提示**（详见下方「需求文件维护提示」）
 
 ### 创建子需求
 
@@ -323,7 +326,71 @@ curl -sS -H 'Accept: application/json' \
 
 直接编辑对应文件即可。`background.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`、`review.md` 都是普通 Markdown，无特殊解析要求；Agent Panel 智能提取会读取并维护这些文件。`state.json` 由 Agent Panel 管理，不要手写。
 
-## Required Checks
+## Session 绑定
+
+创建需求后，必须立即将当前 session 绑定到该需求，让 Agent Panel 能追踪关联关系，并为后续新 session 自动注入需求上下文。
+
+### 1. 获取当前 Session ID
+
+优先调用 `get_session_info` 工具，读取返回的 `sessionId`（UUID 格式）。
+
+工具不可用时回退：
+
+```bash
+bash ~/Developer/tools/agent-panel/.agents/skills/req-session-bind/scripts/current-session.sh
+```
+
+### 2. 调用 Agent Panel 绑定接口
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" \
+  -X POST http://localhost:7331/api/requirement/associate \
+  -H "Accept: application/json" \
+  -d "reqId=<req-id>" \
+  -d "sessionId=<sessionID>"
+```
+
+- `200`（JSON `{"ok":true}`）或 `303` = 成功
+- `400` = sessionId 格式不合法
+- `404` = 需求不存在
+- 连接失败 = Agent Panel 未运行，告知用户但不阻塞需求创建
+
+### 3. 验证
+
+```bash
+curl -sf http://localhost:7331/api/requirements | python3 -c '
+import sys, json
+sid = sys.argv[1]
+rid = sys.argv[2]
+data = json.load(sys.stdin)
+for r in data.get("requirements", []):
+    if r["id"] == rid and sid in r.get("sessionIds", []):
+        print("BOUND")
+        break
+else:
+    print("NOT_BOUND")
+' "<sessionID>" "<req-id>"
+```
+
+## 需求文件维护提示
+
+绑定 session 后，必须向用户输出以下维护要求，让 agent 在整个开发过程中持续更新需求文件：
+
+```text
+📋 需求已创建并绑定当前 session。
+
+在后续开发过程中，以下事件发生后必须立即更新对应需求文件：
+- 完成 PRD/需求口径澄清 → memory.md（记忆索引）+ background.md（背景）
+- 代码 push 或 merge 成功 → branch.md（分支名、commit、合并状态）
+- 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md
+- 明确测试场景或回归范围 → test.md
+- 编码前或影响面变化 → impact.md（核心链路风险）
+- 完成阶段性进展、关键决策、踩坑 → notes.md
+
+重要：更新需求文件是任务的一部分。代码 push 完成但需求文件未更新 = 任务未完成。
+```
+
+不修改 `meta.md` 的 status 字段（由 Agent Panel 管理）。
 
 - `req-id` 只用 ASCII 字母数字和连字符，不含空格、中文、路径分隔符、`..`
 - `meta.md` frontmatter 的 `status` 严格匹配 7 个值之一
@@ -342,7 +409,10 @@ curl -sS -H 'Accept: application/json' \
 - 状态: <status>
 - 已生成: <文件列表>
 - 待补: <哪些文件还需要用户填>
+- Session 绑定: <已绑定 / 未绑定（Agent Panel 未运行）>
 ```
+
+绑定成功后，紧接着输出「需求文件维护提示」中的维护要求。
 
 更新完成：
 

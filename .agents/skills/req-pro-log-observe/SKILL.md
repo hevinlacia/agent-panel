@@ -30,7 +30,7 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 ### 2. 运行观测脚本
 
 ```bash
-uv run python ~/Developer/tools/agent-panel/skills/req-pro-log-observe/scripts/observe_req_logs.py \
+uv run python scripts/observe_req_logs.py \
   --req-ids WMS-003,WMS-009 \
   --start-time "2026-06-30 21:09:00"
 ```

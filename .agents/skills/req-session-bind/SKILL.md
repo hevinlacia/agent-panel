@@ -60,7 +60,7 @@ systemctl --user status opencode-dashboard.service --no-pager
 工具不可用时回退：
 
 ```bash
-bash ~/Developer/tools/agent-panel/skills/req-session-bind/scripts/current-session.sh
+bash scripts/current-session.sh
 ```
 
 脚本输出 session id 字符串或 `UNKNOWN`。
@@ -125,6 +125,24 @@ else:
 ' "<sessionId>"
 ```
 
+## 需求文件维护提示
+
+绑定 session 后，必须向用户输出以下维护要求，让 agent 在整个开发过程中持续更新需求文件：
+
+```text
+📋 当前 session 已关联到需求。后续开发中，以下事件发生后必须立即更新对应需求文件：
+- 完成 PRD/需求口径澄清 -> memory.md + background.md
+- 代码 push 或 merge 成功 -> branch.md
+- 新增/修改 DB / Apollo / Nacos 配置 -> config-changes.md
+- 明确测试场景或回归范围 -> test.md
+- 编码前或影响面变化 -> impact.md
+- 完成阶段性进展、关键决策、踩坑 -> notes.md
+
+重要：更新需求文件是任务的一部分。代码 push 完成但需求文件未更新 = 任务未完成。
+```
+
+不修改 `meta.md` 的 status 字段（由 Agent Panel 管理）。
+
 ## Required Checks
 
 - Agent Panel 必须在运行。
@@ -143,3 +161,5 @@ else:
 
 可以在 Agent Panel 查看详情：http://localhost:7331/requirement?id=<id>
 ```
+
+绑定成功后，紧接着输出「需求文件维护提示」中的维护要求。
