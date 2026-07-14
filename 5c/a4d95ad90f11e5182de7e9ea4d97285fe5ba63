@@ -1,0 +1,35 @@
+src/server.tsx
+  07b4a7799d784936 144,1697-1703,4154-4155,4469-4535,4784-4797,4815-4862
+src/config.ts
+  07b4a7799d784936 78-86,257-258,303-304,334,347-348
+src/effortEstimation.ts
+  07b4a7799d784936 1-271
+web/src/styles.css
+  07b4a7799d784936 312-342
+src/requirements.ts
+  07b4a7799d784936 26,29,167-171,601-614,638
+web/src/App.tsx
+  07b4a7799d784936 53-64,78,452,584-625,659,712-713,753
+public/style.css
+  07b4a7799d784936 3541-3556
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5ca4d95ad90f11e5182de7e9ea4d97285fe5ba63",
+  "prompts": {
+    "07b4a7799d784936": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f5f4e-3314-79b4-ab7c-c35ca53d1be1",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 557,
+      "total_deletions": 5,
+      "accepted_lines": 556,
+      "overriden_lines": 0
+    }
+  }
+}
