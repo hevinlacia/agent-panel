@@ -10,6 +10,7 @@
  *   {
  *     "version": 1,
  *     "status": "<one of REQ_STATUSES>",
+ *     "category": "<one of REQ_CATEGORIES>",  // optional, absent = "需求"
  *     "updatedAt": <epoch ms>,
  *     "history": [
  *       { "status": "<new>", "from": "<old|null>", "at": <epoch ms>, "note": "<optional>" },
@@ -29,7 +30,7 @@ import { readFile, writeFile, rename, mkdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-import { REQ_STATUSES, type ReqStatus } from "./requirements.ts"
+import { REQ_STATUSES, type ReqStatus, REQ_CATEGORIES, type ReqCategory, PRE_DEV_STATUSES } from "./requirements.ts"
 
 export const STATE_FILE = "state.json"
 const STATE_VERSION = 1
@@ -45,6 +46,8 @@ export interface StateTransition {
 export interface RequirementState {
   version: number
   status: ReqStatus
+  /** Requirement category ("需求" | "线上问题"). Absent = not yet set (treated as "需求"). */
+  category?: ReqCategory
   updatedAt: number
   history: StateTransition[]
 }
@@ -122,6 +125,12 @@ function isReqStatus(v: unknown): v is ReqStatus {
   return normalizeReqStatus(v) === v
 }
 
+/** Validate and normalize a raw category value; returns null for unknown values. */
+export function normalizeReqCategory(v: unknown): ReqCategory | null {
+  if (typeof v === "string" && (REQ_CATEGORIES as string[]).includes(v)) return v as ReqCategory
+  return null
+}
+
 function statePath(reqDir: string): string {
   return join(reqDir, STATE_FILE)
 }
@@ -180,6 +189,7 @@ export async function readRequirementState(reqDir: string): Promise<RequirementS
           return {
             version: STATE_VERSION,
             status,
+            category: normalizeReqCategory(o.category) ?? undefined,
             updatedAt,
             history,
           }
@@ -265,4 +275,51 @@ export function nextStatus(current: ReqStatus): ReqStatus | null {
   const i = REQ_STATUSES.indexOf(current)
   if (i < 0 || i >= REQ_STATUSES.length - 1) return null
   return REQ_STATUSES[i + 1]
+}
+
+/**
+ * Set the requirement's category. Writes state.json atomically, preserving
+ * the existing status and history. When the category is switched to
+ * "线上问题" and the current status is a pre-development phase
+ * (需求对齐 / 方案设计), the status is auto-advanced to "开发中" because
+ * production issues skip alignment/design gating. Returns the new state.
+ */
+export async function writeRequirementCategory(
+  reqDir: string,
+  newCategory: ReqCategory,
+): Promise<RequirementState> {
+  const validated = normalizeReqCategory(newCategory)
+  if (!validated) {
+    throw new Error(`Invalid category: ${String(newCategory)}`)
+  }
+  const previous = await readRequirementState(reqDir)
+  const now = Date.now()
+  const prevStatus = previous?.status ?? "开发中"
+  const prevHistory = previous?.history ? [...previous.history] : []
+  let status = prevStatus
+  let history = prevHistory
+
+  // Auto-advance past pre-dev phases when switching to "线上问题".
+  if (validated === "线上问题" && PRE_DEV_STATUSES.includes(prevStatus)) {
+    status = "开发中"
+    history.push({
+      status: "开发中",
+      from: prevStatus,
+      at: now,
+      note: `线上问题自动跳转开发中`,
+    })
+    if (history.length > MAX_HISTORY) {
+      history = history.slice(history.length - MAX_HISTORY)
+    }
+  }
+
+  const next: RequirementState = {
+    version: STATE_VERSION,
+    status,
+    category: validated,
+    updatedAt: now,
+    history,
+  }
+  await atomicWrite(statePath(reqDir), JSON.stringify(next, null, 2) + "\n")
+  return next
 }

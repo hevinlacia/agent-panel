@@ -491,6 +491,45 @@
   }
 
   // ------------------------------------------------------------------
+  // AI branches.json extraction: the "提取 branches.json" button on the
+  // code-diff page POSTs to /api/requirement/extract-branch-scope-ai with
+  // the requirement id. The model reads branch.md and returns a structured
+  // JSON that the server persists to <req-dir>/branches.json. On success
+  // the page reloads so the new branch scope is reflected.
+  // ------------------------------------------------------------------
+  var bsBtn = document.getElementById("branch-scope-ai-btn")
+  var bsStatus = document.getElementById("branch-scope-ai-status")
+  if (bsBtn) {
+    bsBtn.addEventListener("click", function () {
+      var reqId = bsBtn.getAttribute("data-req-id") || ""
+      if (!reqId) return
+      bsBtn.disabled = true
+      bsBtn.textContent = "提取中…"
+      if (bsStatus) { bsStatus.textContent = "正在调用模型读取 branch.md，可能需要 10-30 秒…"; bsStatus.classList.remove("is-warn") }
+      fetch("/api/requirement/extract-branch-scope-ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reqId: reqId }),
+      }).then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data } }) })
+        .then(function (envelope) {
+          var data = envelope.data || {}
+          if (data.ok) {
+            if (bsStatus) bsStatus.textContent = "✓ 已生成 branches.json：" + data.repoCount + " 个仓库，" + data.branchCount + " 个分支。刷新中…"
+            // Reload after a short delay so the user sees the success message.
+            setTimeout(function () { window.location.reload() }, 800)
+          } else {
+            if (bsStatus) { bsStatus.textContent = "✗ " + (data.error || "未知错误"); bsStatus.classList.add("is-warn") }
+          }
+        }).catch(function (err) {
+          if (bsStatus) { bsStatus.textContent = "请求失败：" + (err && err.message ? err.message : err); bsStatus.classList.add("is-warn") }
+        }).finally(function () {
+          bsBtn.disabled = false
+          bsBtn.textContent = "🤖 提取 branches.json"
+        })
+    })
+  }
+
+  // ------------------------------------------------------------------
   // Clipboard copy: any element with `data-copy-cmd="..."` copies that
   // string when clicked, briefly swapping its label to "✓ 已复制".
   // ------------------------------------------------------------------

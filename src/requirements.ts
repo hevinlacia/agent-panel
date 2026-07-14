@@ -43,6 +43,21 @@ export const REQ_STATUSES: ReqStatus[] = [
 ]
 
 /**
+ * Requirement category - a classification orthogonal to status. "线上问题"
+ * (production/online issue) skips the early alignment/design phases and
+ * defaults to "开发中"; "需求" is the normal product-requirement default.
+ */
+export type ReqCategory = "需求" | "线上问题"
+
+export const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题"]
+
+/**
+ * Statuses considered "pre-development". A requirement switched to the
+ * "线上问题" category is auto-advanced past these into "开发中" because
+ * production issues don't go through alignment/design gating.
+ */
+export const PRE_DEV_STATUSES: ReqStatus[] = ["需求对齐", "方案设计"]
+/**
  * Status-specific execution contract injected into requirement-bound sessions.
  * The current requirement status acts as a lightweight role switch so each
  * phase gets different required context, prohibitions, and completion criteria.
@@ -130,6 +145,8 @@ export interface Requirement {
   groupPath: string[]
   description: string
   sessionIds: string[]
+  /** Requirement category ("需求" | "线上问题"). Defaults to "需求" when unset. */
+  category?: ReqCategory
   createdAt: number
   updatedAt: number
   metaPath?: string
@@ -216,6 +233,12 @@ function emptyAssociations(): AssociationStore {
 function normalizeReqStatus(v: unknown): ReqStatus | null {
   if (v === "待开发") return "方案设计"
   if (typeof v === "string" && (REQ_STATUSES as string[]).includes(v)) return v as ReqStatus
+  return null
+}
+
+/** Validate and normalize a raw category value; returns null for unknown values. */
+function normalizeReqCategory(v: unknown): ReqCategory | null {
+  if (typeof v === "string" && (REQ_CATEGORIES as string[]).includes(v)) return v as ReqCategory
   return null
 }
 
@@ -507,6 +530,7 @@ async function loadRequirementFromDir(
 
   let title = dirName
   let status: ReqStatus = "开发中"
+  let category: ReqCategory = "需求"
   let projects = uniqueStrings(parentProjects.length > 0 ? parentProjects : [DEFAULT_PROJECT_NAME])
   let description = ""
   let id = dirName
@@ -524,6 +548,8 @@ async function loadRequirementFromDir(
       if (fields["title"]) title = fields["title"]
       const rawStatus = normalizeReqStatus(fields["status"])
       if (rawStatus) status = rawStatus
+      const rawCategory = normalizeReqCategory(fields["category"])
+      if (rawCategory) category = rawCategory
       if (fields["project"] && fields["project"].trim()) {
         projects = uniqueStrings([fields["project"].trim(), ...projects])
       }
@@ -558,6 +584,8 @@ async function loadRequirementFromDir(
     if (state) {
       status = state.status
       updatedAt = Math.max(updatedAt, state.updatedAt)
+      // state.json category wins over frontmatter when present.
+      if (state.category) category = state.category
     }
   } catch {
     // ignore; fall back to whatever we already have.
@@ -567,6 +595,7 @@ async function loadRequirementFromDir(
     id,
     title,
     status,
+    category,
     projects,
     project,
     groupPath,

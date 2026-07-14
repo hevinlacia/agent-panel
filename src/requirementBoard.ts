@@ -6,13 +6,17 @@
  * Read-this-with: src/requirements.ts and src/server.tsx.
  */
 
-import type { Requirement, ReqStatus } from "./requirements.ts"
+import type { Requirement, ReqStatus, ReqCategory } from "./requirements.ts"
 
 /** Query-backed filters accepted by the requirement board. */
 export interface RequirementBoardFilters {
   statuses: ReqStatus[]
   project: string
   subproject: string
+  /** When set, only requirements with this category are shown. */
+  category?: ReqCategory
+  /** Case-insensitive keyword matched against id, title, description, and project path. */
+  keyword?: string
   createdFrom?: number
   createdTo?: number
 }
@@ -47,6 +51,7 @@ export function buildRequirementBoardItems(
 ): RequirementBoardItem[] {
   const explicitStatuses = filters.statuses.length > 0
   const allowedStatuses = new Set(filters.statuses)
+  const keyword = (filters.keyword || "").trim().toLowerCase()
   const items: RequirementBoardItem[] = []
   const seen = new Set<string>()
 
@@ -56,6 +61,12 @@ export function buildRequirementBoardItems(
         if (!allowedStatuses.has(requirement.status)) continue
       } else if (requirement.status === "已完成") {
         continue
+      }
+      // Category filter: undefined / "需求" are treated the same so legacy
+      // requirements without an explicit category match the default.
+      if (filters.category) {
+        const reqCategory = requirement.category ?? "需求"
+        if (reqCategory !== filters.category) continue
       }
       if (filters.createdFrom !== undefined && requirement.createdAt < filters.createdFrom) continue
       if (filters.createdTo !== undefined && requirement.createdAt > filters.createdTo) continue
@@ -68,11 +79,24 @@ export function buildRequirementBoardItems(
 
       const displayProject = filters.project || requirementProjects[0] || requirement.project
       const hierarchyParts = [displayProject, ...requirement.groupPath]
+      const hierarchy = hierarchyParts.filter(Boolean).join(" / ")
+
+      // Keyword search: match id, title, description, and the full hierarchy path.
+      if (keyword) {
+        const haystack = [
+          requirement.id,
+          requirement.title,
+          requirement.description,
+          hierarchy,
+        ].join(" ").toLowerCase()
+        if (!haystack.includes(keyword)) continue
+      }
+
       items.push({
         requirement,
         project: displayProject,
         subproject,
-        hierarchy: hierarchyParts.filter(Boolean).join(" / "),
+        hierarchy,
       })
       seen.add(requirement.id)
     }

@@ -15,7 +15,7 @@ import fastifySwaggerUi from "@fastify/swagger-ui"
 import { Type } from "@sinclair/typebox"
 import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH, DASHBOARD_PATH } from "./navigation.ts"
 import { type FC, type Ctx, createRouter } from "./fastify/context.ts"
-import { readFile, writeFile, appendFile, readdir } from "node:fs/promises"
+import { readFile, writeFile, appendFile, readdir, rename, mkdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -40,10 +40,12 @@ import {
 } from "./terminal.ts"
 import { resolveHandoffPath } from "./paths.ts"
 import { shouldAutoInjectRequirementContext } from "./terminalUrl.ts"
-import { writeRequirementStatus, nextStatus, readRequirementState, type RequirementState } from "./requirementState.ts"
+import { writeRequirementStatus, writeRequirementCategory, nextStatus, readRequirementState, type RequirementState } from "./requirementState.ts"
 import {
   REQ_STATUSES,
+  REQ_CATEGORIES,
   type ReqStatus,
+  type ReqCategory,
   type Requirement,
   listRequirementsByProject,
   getRequirement,
@@ -135,9 +137,10 @@ import {
 import {
   readBranchScope,
   fallbackFromBranchMd,
+  BRANCH_SCOPE_FILE,
   type BranchScope,
 } from "./branchScope.ts"
-import { buildBranchScopePrompt } from "./branchScopeExtract.ts"
+import { buildBranchScopePrompt, runAiBranchScopeExtraction } from "./branchScopeExtract.ts"
 import {
   ALIGNMENT_FILE,
   ALIGNMENT_TEMPLATE,
@@ -300,7 +303,7 @@ const Layout: FC<{ title: string; active: Tab; children: any; wide?: boolean }> 
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>{title} — Agent Panel</title>
-      <link rel="stylesheet" href="/static/style.css?v=20260713-review-blackbg" />
+      <link rel="stylesheet" href="/static/style.css?v=20260714-category-search" />
     </head>
     <body>
       <div class="op-shell">
@@ -923,7 +926,10 @@ const RequirementBoardCard: FC<{ item: RequirementBoardItem }> = ({ item }) => {
             <span class="req-board-card-id">{r.id}</span>
             <h2 class="req-board-card-title">{r.title}</h2>
           </div>
-          <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+          <div class="req-board-card-badges">
+            {r.category === "线上问题" ? <span class="req-category-badge req-category-incident">线上问题</span> : null}
+            <span class={reqStatusBadgeClass(r.status)}>{r.status}</span>
+          </div>
         </div>
         <div class="req-board-card-path">{item.hierarchy || DEFAULT_PROJECT_NAME}</div>
         <p class="req-board-card-description">{snippet}</p>
@@ -991,17 +997,30 @@ const ProjectsPage: FC<{
   createdTo: string
   projectOptions: string[]
   subprojectOptions: string[]
-}> = ({ items, counts, selectedStatuses, projectFilter, subprojectFilter, createdFrom, createdTo, projectOptions, subprojectOptions }) => (
+  categoryFilter: string
+  keyword: string
+}> = ({ items, counts, selectedStatuses, projectFilter, subprojectFilter, createdFrom, createdTo, projectOptions, subprojectOptions, categoryFilter, keyword }) => (
   <Layout title="需求进度看板" active="requirements">
     <section class="req-board-filter-panel" aria-label="需求筛选">
       <div class="req-board-filter-heading">
         <div>
           <span class="op-section-title">需求筛选</span>
-          <p class="muted small">按创建时间、需求状态和所属项目组合筛选。状态未选择时默认隐藏已完成需求。</p>
+          <p class="muted small">按关键词、类别、创建时间、需求状态和所属项目组合筛选。状态未选择时默认隐藏已完成需求。</p>
         </div>
         <a class="req-filter-clear" href="/projects">清空筛选</a>
       </div>
       <form method="get" action="/projects" class="req-board-filter-form" id="req-board-filter-form">
+        <label class="req-board-filter-field req-board-filter-field-grow">
+          <span>关键词搜索</span>
+          <input type="search" name="q" value={keyword} placeholder="搜索需求 ID、标题、描述或项目路径…" autocomplete="off" />
+        </label>
+        <label class="req-board-filter-field">
+          <span>类别</span>
+          <select name="category" id="req-board-category-filter">
+            <option value="" selected={!categoryFilter}>全部类别</option>
+            {REQ_CATEGORIES.map((cat) => <option value={cat} selected={cat === categoryFilter}>{cat}</option>)}
+          </select>
+        </label>
         <label class="req-board-filter-field">
           <span>创建时间起</span>
           <input type="date" name="createdFrom" value={createdFrom} />
@@ -1357,6 +1376,8 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
           <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" />
           <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
         </form>
+        <button type="button" id="branch-scope-ai-btn" class="btn btn-secondary" data-req-id={req.id} title="调用 AI 读取 branch.md 生成精确的 branches.json">🤖 提取 branches.json</button>
+        <span id="branch-scope-ai-status" class="branch-scope-ai-status muted small"></span>
         <div class="code-review-total-metrics">
           <span>{files} files</span>
           <strong class="code-review-additions">+{additions}</strong>
@@ -1523,7 +1544,7 @@ const RequirementReviewPage: FC<{
         <script>{`(function(){try{var v=parseFloat(localStorage.getItem('agent-panel:code-review:font-scale'));if(isFinite(v)){document.documentElement.style.setProperty('--code-review-font-scale',String(Math.min(2,Math.max(0.6,v))))}}catch(e){}})();`}</script>
         <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} redirectPath={redirectPath} />
       </section>
-      <script src="/static/req-detail.js?v=20260714-ai-review" defer></script>
+      <script src="/static/req-detail.js?v=20260714-branch-scope-ai" defer></script>
     </Layout>
   )
 }
@@ -1956,6 +1977,17 @@ const RequirementDetailPage: FC<{
       {canSwitch ? (
         <section class="req-status-switcher" aria-label="切换需求状态">
           <div class="req-status-switcher-row">
+            <form method="post" action="/api/requirement/category" class="req-status-form req-category-form">
+              <input type="hidden" name="reqId" value={req.id} />
+              <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
+              <label class="field-label" for={`req-category-select-${req.id}`}>类别</label>
+              <select id={`req-category-select-${req.id}`} name="category" required>
+                {REQ_CATEGORIES.map((cat) => (
+                  <option value={cat} selected={cat === (req.category ?? "需求")}>{cat}</option>
+                ))}
+              </select>
+              <button type="submit" class="btn btn-secondary">应用</button>
+            </form>
             <form method="post" action="/api/requirement/status" class="req-status-form">
               <input type="hidden" name="reqId" value={req.id} />
               <input type="hidden" name="redirect" value={`/requirement?id=${encodeURIComponent(req.id)}`} />
@@ -2332,8 +2364,8 @@ const ReactAppPage: FC<{ title: string; active: Tab }> = ({ title, active }) => 
     <div id="dashboard-root" data-api="/api/dashboard/stats">
       <div class="react-dashboard-fallback">正在加载 React app…</div>
     </div>
-    <link rel="stylesheet" href="/static/dashboard-react/dashboard.css?v=20260711-react-dashboard" />
-    <script type="module" src="/static/dashboard-react/dashboard.js?v=20260711-react-dashboard"></script>
+    <link rel="stylesheet" href="/static/dashboard-react/dashboard.css?v=20260714-category-search" />
+    <script type="module" src="/static/dashboard-react/dashboard.js?v=20260714-category-search"></script>
   </Layout>
 )
 
@@ -2430,6 +2462,9 @@ async function renderProjectsPage(c: Ctx) {
   const subprojectFilter = (url.searchParams.get("subproject") || "").trim()
   const createdFrom = url.searchParams.get("createdFrom") || ""
   const createdTo = url.searchParams.get("createdTo") || ""
+  const rawCategory = (url.searchParams.get("category") || "").trim()
+  const categoryFilter = (REQ_CATEGORIES as string[]).includes(rawCategory) ? (rawCategory as ReqCategory) : ""
+  const keyword = (url.searchParams.get("q") || "").trim()
   const groups = await listRequirementsByProject()
   const counts: Record<ReqStatus, number> = {
     "需求对齐": 0,
@@ -2456,6 +2491,8 @@ async function renderProjectsPage(c: Ctx) {
     statuses: selectedStatuses,
     project: projectFilter,
     subproject: normalizedSubproject,
+    category: categoryFilter || undefined,
+    keyword: keyword || undefined,
     createdFrom: parseRequirementDateBoundary(createdFrom),
     createdTo: parseRequirementDateBoundary(createdTo, true),
   })
@@ -2470,6 +2507,8 @@ async function renderProjectsPage(c: Ctx) {
       createdTo={createdTo}
       projectOptions={projectOptions}
       subprojectOptions={subprojectOptions}
+      categoryFilter={categoryFilter}
+      keyword={keyword}
     />,
   )
 }
@@ -3019,6 +3058,11 @@ app.post("/api/requirement/associate", async (c) => {
   const exists = await getRequirement(reqId)
   if (!exists) return c.text("Requirement not found", 404)
   await associateSession(reqId, sessionId)
+  // Support React/XHR callers that prefer JSON over a redirect.
+  const accept = c.req.header("accept") || ""
+  if (accept.includes("application/json")) {
+    return c.json({ ok: true, reqId, sessionId })
+  }
   return c.redirect(`/requirement?id=${encodeURIComponent(reqId)}`, 303)
 })
 
@@ -3267,6 +3311,40 @@ app.post("/api/requirement/status", async (c) => {
     return c.json({ ok: true, status })
   }
   return c.redirect(redirectBack, 303)
+})
+
+/**
+ * POST /api/requirement/category
+ * Sets the requirement category ("需求" | "线上问题"). When switched to
+ * "线上问题", pre-development statuses are auto-advanced to "开发中".
+ * Mirrors the status endpoint's JSON/redirect dual-response contract.
+ */
+app.post("/api/requirement/category", async (c) => {
+  const form = await c.req.formData()
+  const reqId = String(form.get("reqId") || "")
+  const rawCategory = String(form.get("category") || "")
+  const redirectBack = String(form.get("redirect") || "") || `/requirement?id=${encodeURIComponent(reqId)}`
+  if (!reqId) return c.text("Missing reqId", 400)
+  if (!(REQ_CATEGORIES as readonly string[]).includes(rawCategory)) {
+    return c.text(`Invalid category: ${rawCategory}`, 400)
+  }
+  const category = rawCategory as ReqCategory
+  const req = await getRequirement(reqId)
+  if (!req) return c.text("Requirement not found", 404)
+  if (!req.reqDir) {
+    return c.text("Requirement has no on-disk directory (synthetic default cannot be updated)", 400)
+  }
+  try {
+    const state = await writeRequirementCategory(req.reqDir, category)
+    const accept = c.req.header("accept") || ""
+    if (accept.includes("application/json")) {
+      return c.json({ ok: true, category: state.category, status: state.status })
+    }
+    return c.redirect(redirectBack, 303)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return c.text(`Failed to write category: ${message}`, 500)
+  }
 })
 
 /**
@@ -3837,6 +3915,10 @@ const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boo
             <span class="settings-label">API Key {config.codeReviewApiKeySet ? <span class="settings-saved">✓ 已设置</span> : <span class="is-warn">未设置</span>}</span>
             <input type="password" id="cfg-code-review-key" name="codeReviewApiKey" class="settings-input" placeholder={config.codeReviewApiKeySet ? "已设置，输入新值覆盖（留空保持不变）" : "粘贴 API Key"} autocomplete="off" spellcheck={false} />
           </label>
+          <label class="settings-field">
+            <span class="settings-label">branches.json 提取模型 <span class="muted small">（留空则复用上方 Model）</span></span>
+            <input type="text" id="cfg-branch-scope-model" name="branchScopeModel" value={config.branchScopeModel} class="settings-input" placeholder="留空复用 code review Model" spellcheck={false} autocomplete="off" />
+          </label>
         </article>
       </div>
       <div class="sched-config-actions">
@@ -4060,6 +4142,7 @@ app.post("/api/config", async (c) => {
   // AI code review: empty apiKey means "keep existing" (handled in setConfig).
   if (typeof body.codeReviewBaseUrl === "string") partial.codeReviewBaseUrl = body.codeReviewBaseUrl.trim()
   if (typeof body.codeReviewModel === "string") partial.codeReviewModel = body.codeReviewModel.trim()
+  if (typeof body.branchScopeModel === "string") partial.branchScopeModel = body.branchScopeModel.trim()
   if (typeof body.codeReviewApiKey === "string" && body.codeReviewApiKey.trim()) partial.codeReviewApiKey = body.codeReviewApiKey.trim()
   const next = await setConfig(partial)
   if (shouldRestartFullSyncScheduler) {
@@ -4302,6 +4385,75 @@ app.post("/api/requirement/generate-branch-scope", async (c) => {
     const msg = err instanceof Error ? err.message : String(err)
     return c.text(`Failed to start job: ${msg}`, 500)
   }
+})
+
+/**
+ * POST /api/requirement/extract-branch-scope-ai
+ * Body (JSON): { reqId }
+ *
+ * Direct LLM call that reads `branch.md`, asks an OpenAI-compatible model
+ * to produce a structured `branches.json`, and persists it to
+ * `<req-dir>/branches.json`. Unlike the background fork-job endpoint
+ * above, this runs synchronously and returns the result as JSON so the
+ * code-diff page button can show immediate feedback. Reuses the code-review
+ * base URL / API key; the model defaults to branchScopeModel, falling
+ * back to codeReviewModel.
+ */
+app.post("/api/requirement/extract-branch-scope-ai", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const reqId = String(body.reqId || "")
+  if (!reqId) return c.json({ ok: false, error: "Missing reqId" }, 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.json({ ok: false, error: "Requirement not found" }, 404)
+  if (!req.reqDir) return c.json({ ok: false, error: "Requirement has no on-disk directory" }, 400)
+
+  const branchMd =
+    req.branchPath && existsSync(req.branchPath)
+      ? await readFile(req.branchPath, "utf-8").catch(() => "")
+      : ""
+  if (!branchMd.trim()) {
+    return c.json({ ok: false, error: "需求没有 branch.md，无法提取分支信息" }, 400)
+  }
+
+  const cfg = await getConfig()
+  if (!cfg.codeReviewBaseUrl.trim() || !cfg.codeReviewApiKey.trim()) {
+    return c.json({ ok: false, error: "尚未配置 AI 模型接入（Base URL / API Key），请在 Settings 页面填写。" }, 400)
+  }
+
+  const result = await runAiBranchScopeExtraction(req, branchMd, {
+    baseUrl: cfg.codeReviewBaseUrl,
+    apiKey: cfg.codeReviewApiKey,
+    model: cfg.branchScopeModel,
+    fallbackModel: cfg.codeReviewModel,
+  })
+  if (result.error) {
+    return c.json({ ok: false, error: result.error, model: result.model }, 200)
+  }
+
+  // Persist branches.json atomically.
+  const scope = {
+    version: 2,
+    updatedAt: Date.now(),
+    repos: result.repos,
+  }
+  const branchesPath = join(req.reqDir, BRANCH_SCOPE_FILE)
+  const tmp = `${branchesPath}.tmp.${process.pid}.${Date.now()}`
+  try {
+    const dir = dirname(branchesPath)
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true })
+    await writeFile(tmp, JSON.stringify(scope, null, 2) + "\n", "utf-8")
+    await rename(tmp, branchesPath)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.json({ ok: false, error: `写入 branches.json 失败：${msg}`, model: result.model }, 500)
+  }
+
+  return c.json({
+    ok: true,
+    model: result.model,
+    repoCount: result.repos.length,
+    branchCount: result.repos.reduce((n, r) => n + r.branches.length, 0),
+  })
 })
 
 /**
@@ -4595,6 +4747,42 @@ app.get("/api/requirements", async (c) => {
   const groups = await listRequirementsByProject()
   const requirements = groups.flatMap((g) => g.requirements)
   return c.json({ requirements })
+})
+
+/**
+ * GET /api/requirement/recommendations?id=<reqId>
+ *
+ * Scores unbound sessions against the requirement and returns the top
+ * matches with score + reasons, so the React detail page can surface
+ * "疑似相关 Session" without duplicating the server-side scoring logic.
+ */
+app.get("/api/requirement/recommendations", async (c) => {
+  const id = c.req.query("id")
+  if (!id) return c.json({ error: "Missing id" }, 400)
+  const req = await getRequirement(id)
+  if (!req) return c.json({ error: "Requirement not found" }, 404)
+  if (req.id === DEFAULT_REQ_ID) return c.json({ recommendations: [] })
+
+  const { harness } = await getConfig()
+  const [sessions, associatedAll] = await Promise.all([
+    scanDashboardSessions(harness),
+    getAllAssociatedSessionIds(),
+  ])
+  const unassociated = sessions.filter(
+    (s) =>
+      !s.parentId &&
+      !FORK_TITLE_RE.test(s.title || "") &&
+      !associatedAll.has(s.id) &&
+      !req.sessionIds.includes(s.id)
+  )
+  const recommendations = recommendSessionsForRequirement(req, unassociated, 6)
+  return c.json({
+    recommendations: recommendations.map((reco) => ({
+      session: reco.session,
+      score: reco.score,
+      reasons: reco.reasons,
+    })),
+  })
 })
 
 // ---------------------------------------------------------------------------

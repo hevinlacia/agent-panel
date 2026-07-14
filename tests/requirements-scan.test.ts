@@ -200,3 +200,38 @@ test("replaceAssociatedSession: detaches the real id from any other requirement 
   // REQ-NEW owns exactly the real id.
   assert.deepEqual(store.associations["REQ-NEW"], ["ses_real"])
 })
+
+test("scanHermesRequirements: reads category from meta.md frontmatter", async () => {
+  const root = freshFixture()
+  writeMeta(join(root, "WMS", "0622-incident"), {
+    "req-id": "0622-incident",
+    title: "Prod Order Issue",
+    status: "开发中",
+    category: "线上问题",
+  })
+  writeMeta(join(root, "WMS", "0622-normal"), {
+    "req-id": "0622-normal",
+    title: "Normal Feature",
+    status: "开发中",
+  })
+  const reqs = await scanHermesRequirements()
+  const incident = reqs.find((r) => r.id === "0622-incident")
+  const normal = reqs.find((r) => r.id === "0622-normal")
+  assert.equal(incident!.category, "线上问题")
+  assert.equal(normal!.category, "需求")
+})
+
+test("scanHermesRequirements: state.json category overrides frontmatter", async () => {
+  const root = freshFixture()
+  const reqDir = join(root, "WMS", "0622-cat-override")
+  writeMeta(reqDir, { "req-id": "0622-cat-override", title: "Cat Override", status: "开发中", category: "需求" })
+  // state.json with category 线上问题 should win over frontmatter.
+  writeFileSync(
+    join(reqDir, "state.json"),
+    JSON.stringify({ version: 1, status: "开发中", category: "线上问题", updatedAt: Date.now(), history: [] }) + "\n",
+    "utf-8",
+  )
+  const reqs = await scanHermesRequirements()
+  const r = reqs.find((x) => x.id === "0622-cat-override")
+  assert.equal(r!.category, "线上问题")
+})

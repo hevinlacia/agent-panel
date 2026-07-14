@@ -1509,6 +1509,9 @@ form.req-session-inline-form {
 }
 .req-status-note { min-width: 180px; }
 .req-status-next { margin-left: auto; }
+.req-category-form { margin-right: auto; }
+.branch-scope-ai-status.is-warn { color: #f87171; }
+.branch-scope-ai-status { margin-left: 8px; }
 .req-status-history { margin-top: 10px; }
 .req-status-history > summary {
   cursor: pointer;
@@ -5273,6 +5276,31 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+.req-board-card-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.req-category-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+}
+.req-category-incident {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.req-board-filter-field-grow {
+  flex: 1 1 200px;
+  min-width: 180px;
 }
 .req-board-card-title-wrap { min-width: 0; }
 .req-board-card-id {

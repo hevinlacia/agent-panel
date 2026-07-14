@@ -25,6 +25,10 @@ import {
   BRANCH_SCOPE_FILE,
   type BranchRepo,
 } from "../src/branchScope.ts"
+import {
+  parseBranchScopeAiJson,
+  normalizeBranchScopeRepos,
+} from "../src/branchScopeExtract.ts"
 
 function findRepo(repos: BranchRepo[], name: string): BranchRepo | undefined {
   return repos.find((r) => r.repoName === name)
@@ -303,4 +307,44 @@ test("fallback: WMS-016 single-repo with un-backticked branch value", () => {
   // Stray `/` between two backtick pairs (e3e374e2/e0df2950) must not
   // leak in as a bogus branch.
   assert.ok(!repos[0].branches.includes("/"))
+})
+
+test("parseBranchScopeAiJson: parses bare JSON", () => {
+  const parsed = parseBranchScopeAiJson('{"version":2,"repos":[]}')
+  assert.ok(parsed)
+  assert.deepEqual((parsed as { repos: unknown[] }).repos, [])
+})
+
+test("parseBranchScopeAiJson: strips markdown code fences", () => {
+  const raw = "Sure!\n```json\n{\"version\":2,\"repos\":[{\"repoName\":\"app\",\"branches\":[]}]}```\nDone!"
+  const parsed = parseBranchScopeAiJson(raw) as { repos: { repoName: string }[] }
+  assert.ok(parsed)
+  assert.equal(parsed.repos.length, 1)
+  assert.equal(parsed.repos[0].repoName, "app")
+})
+
+test("parseBranchScopeAiJson: extracts from ===UPDATE wrapper", () => {
+  const raw = "===UPDATE: branches.json===\n{\"repos\":[{\"repoName\":\"x\",\"branches\":[]}]}\n===SUMMARY===\ndone"
+  const parsed = parseBranchScopeAiJson(raw) as { repos: { repoName: string }[] }
+  assert.ok(parsed)
+  assert.equal(parsed.repos[0].repoName, "x")
+})
+
+test("parseBranchScopeAiJson: returns null for non-JSON", () => {
+  assert.equal(parseBranchScopeAiJson("no json here"), null)
+  assert.equal(parseBranchScopeAiJson(""), null)
+})
+
+test("normalizeBranchScopeRepos: skips entries without repoName", () => {
+  const parsed = { repos: [{ repoName: "app-a", branches: ["feat/x"] }, { branches: [] }, { repoName: "", branches: [] }] }
+  const repos = normalizeBranchScopeRepos(parsed)
+  assert.equal(repos.length, 1)
+  assert.equal(repos[0].repoName, "app-a")
+  assert.deepEqual(repos[0].branches, ["feat/x"])
+})
+
+test("normalizeBranchScopeRepos: returns empty for non-object input", () => {
+  assert.deepEqual(normalizeBranchScopeRepos(null), [])
+  assert.deepEqual(normalizeBranchScopeRepos("string"), [])
+  assert.deepEqual(normalizeBranchScopeRepos({}), [])
 })

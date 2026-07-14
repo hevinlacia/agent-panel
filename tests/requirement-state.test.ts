@@ -26,6 +26,7 @@ import {
 import {
   readRequirementState,
   writeRequirementStatus,
+  writeRequirementCategory,
   nextStatus,
   extractHermesStatus,
   mapHermesStatusToReqStatus,
@@ -165,4 +166,49 @@ test("scanHermesRequirements: state.json overrides meta.md `- Status:`", async (
   assert.equal(target!.status, "测试中")
   assert.deepEqual(target!.groupPath, ["disaster-recovery", "mq-migration"])
   assert.equal(target!.reqDir, reqDir)
+})
+
+test("writeRequirementCategory: persists category and preserves status", async () => {
+  const root = freshFixture()
+  const reqDir = join(root, "0622-cat")
+  writeMetaMd(reqDir, ["- Status: 开发中"])
+  await readRequirementState(reqDir) // migrate
+  const state = await writeRequirementCategory(reqDir, "线上问题")
+  assert.equal(state.category, "线上问题")
+  assert.equal(state.status, "开发中")
+  // Re-read to confirm persistence.
+  const reloaded = await readRequirementState(reqDir)
+  assert.equal(reloaded!.category, "线上问题")
+  assert.equal(reloaded!.status, "开发中")
+})
+
+test("writeRequirementCategory: auto-advances pre-dev status to 开发中 for 线上问题", async () => {
+  const root = freshFixture()
+  const reqDir = join(root, "0622-cat-adv")
+  writeMetaMd(reqDir, ["- Status: ready"]) // maps to 方案设计
+  await readRequirementState(reqDir) // migrate -> 方案设计
+  const state = await writeRequirementCategory(reqDir, "线上问题")
+  assert.equal(state.category, "线上问题")
+  assert.equal(state.status, "开发中")
+  // History should record the auto-advance transition.
+  const last = state.history[state.history.length - 1]
+  assert.equal(last.status, "开发中")
+  assert.equal(last.from, "方案设计")
+})
+
+test("writeRequirementCategory: does not change status when already past pre-dev", async () => {
+  const root = freshFixture()
+  const reqDir = join(root, "0622-cat-noop")
+  mkdirSync(reqDir, { recursive: true })
+  await writeRequirementStatus(reqDir, "测试中")
+  const state = await writeRequirementCategory(reqDir, "线上问题")
+  assert.equal(state.category, "线上问题")
+  assert.equal(state.status, "测试中")
+})
+
+test("writeRequirementCategory: rejects invalid category", async () => {
+  const root = freshFixture()
+  const reqDir = join(root, "0622-cat-invalid")
+  mkdirSync(reqDir, { recursive: true })
+  await assert.rejects(() => writeRequirementCategory(reqDir, "无效类别" as never))
 })

@@ -34,7 +34,11 @@ interface AppProps { apiPath: string }
 
 type ReqStatus = "需求对齐" | "方案设计" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
 
+type ReqCategory = "需求" | "线上问题"
+
 const REQ_STATUSES: ReqStatus[] = ["需求对齐", "方案设计", "开发中", "自测中", "测试中", "待上线", "已完成"]
+
+const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题"]
 
 const statusMeta: Record<string, { slug: string; color: string; soft: string }> = {
   需求对齐: { slug: "align", color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
@@ -51,6 +55,7 @@ interface Requirement {
   title: string
   description?: string
   status: ReqStatus
+  category?: ReqCategory
   project: string
   projects?: string[]
   groupPath?: string[]
@@ -350,6 +355,8 @@ function ProjectsPage() {
   const [createdFrom, setCreatedFrom] = useState(params.get("createdFrom") || "")
   const [createdTo, setCreatedTo] = useState(params.get("createdTo") || "")
   const [statuses, setStatuses] = useState<string[]>(params.getAll("status"))
+  const [category, setCategory] = useState<string>(params.get("category") || "")
+  const [keyword, setKeyword] = useState(params.get("q") || "")
   const [selectedReqIds, setSelectedReqIds] = useState<string[]>([])
   const [driving, setDriving] = useState(false)
   const [driveHint, setDriveHint] = useState<string | null>(null)
@@ -361,12 +368,18 @@ function ProjectsPage() {
   const filtered = useMemo(() => reqs.filter((r) => {
     if (statuses.length === 0 && r.status === "已完成") return false
     if (statuses.length && !statuses.includes(r.status)) return false
+    if (category && (r.category ?? "需求") !== category) return false
     if (project && !(r.projects?.length ? r.projects : [r.project]).includes(project)) return false
     if (subproject && r.groupPath?.[0] !== subproject) return false
     if (createdFrom && r.createdAt < new Date(`${createdFrom}T00:00:00`).getTime()) return false
     if (createdTo && r.createdAt > new Date(`${createdTo}T23:59:59`).getTime()) return false
+    if (keyword.trim()) {
+      const kw = keyword.trim().toLowerCase()
+      const haystack = [r.id, r.title, r.description || "", projectsOf(r)].join(" ").toLowerCase()
+      if (!haystack.includes(kw)) return false
+    }
     return true
-  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, project, subproject, createdFrom, createdTo])
+  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, category, project, subproject, createdFrom, createdTo, keyword])
   const selectableIds = useMemo(() => filtered.filter((r) => r.reqDir && r.id !== "__default__").map((r) => r.id), [filtered])
   const allVisibleSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedReqIds.includes(id))
   const apply = () => {
@@ -375,6 +388,8 @@ function ProjectsPage() {
     if (createdTo) q.set("createdTo", createdTo)
     if (project) q.set("project", project)
     if (subproject) q.set("subproject", subproject)
+    if (category) q.set("category", category)
+    if (keyword.trim()) q.set("q", keyword.trim())
     statuses.forEach((s) => q.append("status", s))
     window.location.href = `/projects${q.toString() ? `?${q}` : ""}`
   }
@@ -398,7 +413,11 @@ function ProjectsPage() {
   return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 session 和最近更新。" actions={<><button onClick={drive.refresh}><RefreshCw size={15} />刷新自动推进</button>{drive.data?.blocked ? <a href="/requirement?id=__default__"><AlertTriangle size={15} />{drive.data.blocked} 个阻塞</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>
       <section className="react-panel react-filter-panel"><PanelHead kicker="Filter" title="需求筛选" chip={`${filtered.length} tracked`} />
-        <div className="react-filter-grid"><label>创建时间起<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建时间止<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label>一级项目<select value={project} onChange={(e) => { setProject(e.target.value); setSubproject("") }}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>二级项目<select value={subproject} onChange={(e) => setSubproject(e.target.value)} disabled={!project}><option value="">{project ? "全部二级项目" : "请先选择一级项目"}</option>{subprojects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label></div>
+        <div className="react-filter-grid">
+          <label className="react-filter-grow">关键词搜索<input type="search" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") apply() }} placeholder="搜索 ID、标题、描述或项目…" /></label>
+          <label>类别<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
+          <label>创建时间起<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建时间止<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label>一级项目<select value={project} onChange={(e) => { setProject(e.target.value); setSubproject("") }}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>二级项目<select value={subproject} onChange={(e) => setSubproject(e.target.value)} disabled={!project}><option value="">{project ? "全部二级项目" : "请先选择一级项目"}</option>{subprojects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        </div>
         <div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
         <div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a></div>
       </section>
@@ -417,7 +436,7 @@ function ProjectsPage() {
 function RequirementCard({ req, index, driveJob, selected, onToggle }: { req: Requirement; index: number; driveJob?: AutoDriveJob; selected: boolean; onToggle: (reqId: string, checked: boolean) => void }) {
   const selectable = Boolean(req.reqDir && req.id !== "__default__")
   const blocked = driveJob?.state === "blocked" || driveJob?.state === "failed"
-  return <motion.article className={`react-list-card react-req-card ${blocked ? "react-drive-blocked-card" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><label className="react-card-select"><input type="checkbox" checked={selected} disabled={!selectable} onChange={(e) => onToggle(req.id, e.target.checked)} /><span>选择</span></label><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span>{driveJob ? driveStateBadge(driveJob) : null}{driveJob?.blockers?.length ? <span className="react-drive-blocker">阻塞 {driveJob.blockers.length}</span> : null}</div></div><div className="react-card-side">{statusPill(req.status)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
+  return <motion.article className={`react-list-card react-req-card ${blocked ? "react-drive-blocked-card" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><label className="react-card-select"><input type="checkbox" checked={selected} disabled={!selectable} onChange={(e) => onToggle(req.id, e.target.checked)} /><span>选择</span></label><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span>{driveJob ? driveStateBadge(driveJob) : null}{driveJob?.blockers?.length ? <span className="react-drive-blocker">阻塞 {driveJob.blockers.length}</span> : null}</div></div><div className="react-card-side">{req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}{statusPill(req.status)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
 }
 
 function SessionsPage() {
@@ -549,6 +568,27 @@ function AutoDriveJobCard({ job }: { job: AutoDriveJob }) {
   return <details className={`react-drive-job react-drive-job-${job.state}`} open={job.state === "blocked" || job.state === "failed" || job.state === "running"}><summary><span>{driveStateBadge(job)}<strong>{job.reqTitle}</strong></span><em>{relAge(job.updatedAt)}</em></summary><div className="react-drive-job-body"><div className="react-meta-grid"><span>Job <code>{job.id}</code></span><span>Req <code>{job.reqId}</code></span><span>Session {job.sessionId ? <a href={`/session?id=${encodeURIComponent(job.sessionId)}`}>{job.sessionId}</a> : "-"}</span><span>耗时 {job.durationMs ? formatDuration(job.durationMs) : "-"}</span></div><p>{job.summary}</p>{job.blockers?.length ? <div className="react-drive-blockers"><strong>阻塞 / 待人工确认</strong><ul>{job.blockers.map((b, i) => <li key={i}>{b}</li>)}</ul></div> : null}{job.stdout || job.stderr ? <pre className="react-json-preview">{[job.stdout, job.stderr].filter(Boolean).join("\n\n--- stderr ---\n")}</pre> : null}</div></details>
 }
 
+function RecommendationPanel({ req, onBound }: { req: Requirement; onBound: () => void }) {
+  const { data, error, loading } = useFetch<{ recommendations: Array<{ session: SessionInfo; score: number; reasons: string[] }> }>(`/api/requirement/recommendations?id=${encodeURIComponent(req.id)}`, [req.id])
+  const recos = data?.recommendations || []
+  const [binding, setBinding] = useState<string | null>(null)
+  const bind = async (sessionId: string) => {
+    setBinding(sessionId)
+    try {
+      await fetch("/api/requirement/associate", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({ reqId: req.id, sessionId }),
+      })
+      onBound()
+    } finally {
+      setBinding(null)
+    }
+  }
+  if (loading || error || recos.length === 0) return null
+  return <section className="react-panel react-reco-panel"><PanelHead kicker="Recommend" title="疑似相关 Session" chip={`${recos.length}`} /><p className="react-muted">根据标题、路径和关键词匹配推荐，点击绑定关联到当前需求。</p><div className="react-reco-list">{recos.map((reco) => <div key={reco.session.id} className="react-reco-item"><div className="react-reco-info"><a href={`/session?id=${encodeURIComponent(reco.session.id)}`}><code>{reco.session.id.slice(0, 20)}…</code></a><span className="react-reco-title">{reco.session.title || ""}</span><span className="react-muted">{relAge(reco.session.updated || reco.session.created)}</span></div><div className="react-reco-meta"><span className="react-reco-score">{reco.score} 分</span><span className="react-muted react-reco-reasons">{reco.reasons.slice(0, 3).join(" · ")}</span><button onClick={() => bind(reco.session.id)} disabled={binding === reco.session.id}>{binding === reco.session.id ? "绑定中…" : "绑定"}</button></div></div>)}</div></section>
+}
+
 function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "recall" | "auto-extract" }) {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const sessionId = new URLSearchParams(window.location.search).get("sessionId") || ""
@@ -556,10 +596,12 @@ function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "
   const req = data?.requirements.find((r) => r.id === id)
   const [note, setNote] = useState("")
   const [status, setStatus] = useState<ReqStatus | "">("")
+  const [category, setCategory] = useState<ReqCategory | "">("")
   const [command, setCommand] = useState("")
   const submitStatus = async () => { if (!req || !status) return; await postForm("/api/requirement/status", { reqId: req.id, status, note }); refresh() }
+  const submitCategory = async () => { if (!req || !category) return; await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() }
   const newSession = async () => { if (!req) return; const res = await postForm<any>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command || JSON.stringify(res)) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement?id=${req.id}`}>详情</a><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status}>保存状态</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <div className="react-chip-list">{req.sessionIds.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}</div> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement?id=${req.id}`}>详情</a><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status}>保存状态</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category}>保存类别</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <div className="react-chip-list">{req.sessionIds.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}</div> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><RecommendationPanel req={req} onBound={refresh} /><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
 }
 
 function ToolPanel({ tool, req, sessionId }: { tool: string; req: Requirement; sessionId: string }) {
@@ -607,6 +649,18 @@ function SettingsPage() {
   }, [selectedFile, savedHint])
 
   const saveDashboard = async () => { await postJson("/api/config", draft); dashboard.refresh(); setSavedHint("Dashboard 配置已保存") }
+  const saveAiModel = async () => {
+    await postJson("/api/config", {
+      codeReviewBaseUrl: draft.codeReviewBaseUrl || "",
+      codeReviewModel: draft.codeReviewModel || "",
+      branchScopeModel: draft.branchScopeModel || "",
+      codeReviewApiKey: aiApiKey,
+    })
+    dashboard.refresh()
+    setAiApiKey("")
+    setSavedHint("AI 模型配置已保存")
+  }
+  const [aiApiKey, setAiApiKey] = useState("")
   const savePiSettings = async () => {
     await postJson("/api/pi-config/settings", {
       defaultProvider: piDraft.defaultProvider,
@@ -639,7 +693,7 @@ function SettingsPage() {
   const modelOptions = selectedProvider?.models || []
   const fileMeta = piConfig.data?.files || []
 
-  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置同步、智能提取、价值发现、Pi 默认模型和 Pi 配置文件。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Dashboard" title="运行配置" chip={savedHint || undefined} /><div className="react-settings-grid">{["autoExtract", "autoExtractSchedule", "fullSyncSchedule", "autoValuation"].map((key) => <label key={key} className="react-switch"><input type="checkbox" checked={Boolean(draft[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} /><span>{key}</span></label>)}<label>提取模型<input value={draft.extractModel || ""} onChange={(e) => setDraft({ ...draft, extractModel: e.target.value })} /></label><label>最小消息增量<input type="number" value={draft.minChangeMessages || 0} onChange={(e) => setDraft({ ...draft, minChangeMessages: Number(e.target.value) })} /></label><label>价值评分阈值<input type="number" value={draft.valuationThreshold || 0} onChange={(e) => setDraft({ ...draft, valuationThreshold: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveDashboard}>保存 Dashboard 配置</button></div></section><section className="react-panel"><PanelHead kicker="Pi Model" title="Pi 默认模型" chip={piConfig.loading ? "loading" : piConfig.error || `${providers.length} providers`} />{piConfig.error ? <ErrorCard error={piConfig.error} /> : <><div className="react-settings-grid"><label>Provider<select value={piDraft.defaultProvider} onChange={(e) => { const provider = providers.find((p) => p.id === e.target.value); setPiDraft({ ...piDraft, defaultProvider: e.target.value, defaultModel: provider?.models[0]?.modelId || piDraft.defaultModel }) }}><option value="">手动 / 内置 provider</option>{providers.map((p) => <option key={p.id} value={p.id}>{p.id} ({p.modelCount})</option>)}</select></label><label>Model<select value={piDraft.defaultModel} onChange={(e) => setPiDraft({ ...piDraft, defaultModel: e.target.value })}><option value={piDraft.defaultModel}>{piDraft.defaultModel || "选择模型"}</option>{modelOptions.map((m) => <option key={`${m.providerId}/${m.modelId}`} value={m.modelId}>{m.modelId}</option>)}</select></label><label>Thinking<select value={piDraft.defaultThinkingLevel} onChange={(e) => setPiDraft({ ...piDraft, defaultThinkingLevel: e.target.value })}>{(piConfig.data?.thinkingLevels || ["off", "minimal", "low", "medium", "high", "xhigh", "max"]).map((level) => <option key={level} value={level}>{level}</option>)}</select></label><label>Theme<input value={piDraft.theme} onChange={(e) => setPiDraft({ ...piDraft, theme: e.target.value })} placeholder="high-contrast" /></label></div><label className="react-editor-label">Enabled models<textarea value={piDraft.enabledModelsText} onChange={(e) => setPiDraft({ ...piDraft, enabledModelsText: e.target.value })} rows={4} placeholder="每行一个模型 pattern，例如 llm-provider-router/*" /></label><div className="react-actions"><button onClick={savePiSettings}>保存 Pi 默认模型</button><a href="/session?new=1">打开新 Pi session 测试</a></div><div className="react-model-list">{providers.map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.api || "api n/a"} · {p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 4).map((m) => m.modelId).join(" / ")}{p.models.length > 4 ? " …" : ""}</p></div>)}</div></>}</section><section className="react-panel react-config-editor"><PanelHead kicker="Pi Files" title="配置文件编辑器" chip={fileSnapshot?.sensitive ? "secret placeholders" : fileSnapshot?.label} /><div className="react-file-tabs">{fileMeta.map((file) => <button key={file.file} className={file.file === selectedFile ? "active" : ""} onClick={() => setSelectedFile(file.file)}>{file.label}</button>)}</div>{fileSnapshot ? <p className="react-muted"><code>{fileSnapshot.path}</code> · {fileSnapshot.description}</p> : null}{fileError ? <ErrorCard error={fileError} /> : null}<textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile} disabled={savingFile}>{savingFile ? "保存中…" : `保存 ${fileSnapshot?.label || selectedFile}`}</button><button onClick={() => setFileContent(fileSnapshot?.content || "")} disabled={!fileSnapshot}>恢复未保存修改</button></div>{fileSnapshot?.sensitive ? <p className="react-save-hint">敏感字段会显示为 <code>__AGENT_PANEL_SECRET__</code>；保存时后端会自动恢复原值，除非你手动改成新值。</p> : null}</section></div>}</PageChrome>
+  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置同步、智能提取、价值发现、Pi 默认模型和 Pi 配置文件。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Dashboard" title="运行配置" chip={savedHint || undefined} /><div className="react-settings-grid">{["autoExtract", "autoExtractSchedule", "fullSyncSchedule", "autoValuation"].map((key) => <label key={key} className="react-switch"><input type="checkbox" checked={Boolean(draft[key])} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} /><span>{key}</span></label>)}<label>提取模型<input value={draft.extractModel || ""} onChange={(e) => setDraft({ ...draft, extractModel: e.target.value })} /></label><label>最小消息增量<input type="number" value={draft.minChangeMessages || 0} onChange={(e) => setDraft({ ...draft, minChangeMessages: Number(e.target.value) })} /></label><label>价值评分阈值<input type="number" value={draft.valuationThreshold || 0} onChange={(e) => setDraft({ ...draft, valuationThreshold: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveDashboard}>保存 Dashboard 配置</button></div></section><section className="react-panel"><PanelHead kicker="AI Model" title="AI 模型接入" chip={savedHint || undefined} /><p className="react-muted">配置 OpenAI 兼容接口，用于代码差异页面的「提取 branches.json」和「AI 审查代码」。API Key 仅保存在本地，不回显。</p><div className="react-settings-grid"><label>Base URL<input value={draft.codeReviewBaseUrl || ""} onChange={(e) => setDraft({ ...draft, codeReviewBaseUrl: e.target.value })} placeholder="https://api.deepseek.com/v1" /></label><label>Model (代码审查)<input value={draft.codeReviewModel || ""} onChange={(e) => setDraft({ ...draft, codeReviewModel: e.target.value })} placeholder="deepseek-chat" /></label><label>branches.json 提取模型<input value={draft.branchScopeModel || ""} onChange={(e) => setDraft({ ...draft, branchScopeModel: e.target.value })} placeholder="留空复用代码审查 Model" /></label></div><label>API Key {dashboard.data?.codeReviewApiKeySet ? <span className="react-saved-pill">✓ 已设置</span> : <span className="react-warn-pill">未设置</span>}<input type="password" value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} placeholder={dashboard.data?.codeReviewApiKeySet ? "已设置，输入新值覆盖（留空保持不变）" : "粘贴 API Key"} /></label><div className="react-actions"><button onClick={saveAiModel}>保存 AI 模型配置</button></div></section><section className="react-panel"><PanelHead kicker="Pi Model" title="Pi 默认模型" chip={piConfig.loading ? "loading" : piConfig.error || `${providers.length} providers`} />{piConfig.error ? <ErrorCard error={piConfig.error} /> : <><div className="react-settings-grid"><label>Provider<select value={piDraft.defaultProvider} onChange={(e) => { const provider = providers.find((p) => p.id === e.target.value); setPiDraft({ ...piDraft, defaultProvider: e.target.value, defaultModel: provider?.models[0]?.modelId || piDraft.defaultModel }) }}><option value="">手动 / 内置 provider</option>{providers.map((p) => <option key={p.id} value={p.id}>{p.id} ({p.modelCount})</option>)}</select></label><label>Model<select value={piDraft.defaultModel} onChange={(e) => setPiDraft({ ...piDraft, defaultModel: e.target.value })}><option value={piDraft.defaultModel}>{piDraft.defaultModel || "选择模型"}</option>{modelOptions.map((m) => <option key={`${m.providerId}/${m.modelId}`} value={m.modelId}>{m.modelId}</option>)}</select></label><label>Thinking<select value={piDraft.defaultThinkingLevel} onChange={(e) => setPiDraft({ ...piDraft, defaultThinkingLevel: e.target.value })}>{(piConfig.data?.thinkingLevels || ["off", "minimal", "low", "medium", "high", "xhigh", "max"]).map((level) => <option key={level} value={level}>{level}</option>)}</select></label><label>Theme<input value={piDraft.theme} onChange={(e) => setPiDraft({ ...piDraft, theme: e.target.value })} placeholder="high-contrast" /></label></div><label className="react-editor-label">Enabled models<textarea value={piDraft.enabledModelsText} onChange={(e) => setPiDraft({ ...piDraft, enabledModelsText: e.target.value })} rows={4} placeholder="每行一个模型 pattern，例如 llm-provider-router/*" /></label><div className="react-actions"><button onClick={savePiSettings}>保存 Pi 默认模型</button><a href="/session?new=1">打开新 Pi session 测试</a></div><div className="react-model-list">{providers.map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.api || "api n/a"} · {p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 4).map((m) => m.modelId).join(" / ")}{p.models.length > 4 ? " …" : ""}</p></div>)}</div></>}</section><section className="react-panel react-config-editor"><PanelHead kicker="Pi Files" title="配置文件编辑器" chip={fileSnapshot?.sensitive ? "secret placeholders" : fileSnapshot?.label} /><div className="react-file-tabs">{fileMeta.map((file) => <button key={file.file} className={file.file === selectedFile ? "active" : ""} onClick={() => setSelectedFile(file.file)}>{file.label}</button>)}</div>{fileSnapshot ? <p className="react-muted"><code>{fileSnapshot.path}</code> · {fileSnapshot.description}</p> : null}{fileError ? <ErrorCard error={fileError} /> : null}<textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile} disabled={savingFile}>{savingFile ? "保存中…" : `保存 ${fileSnapshot?.label || selectedFile}`}</button><button onClick={() => setFileContent(fileSnapshot?.content || "")} disabled={!fileSnapshot}>恢复未保存修改</button></div>{fileSnapshot?.sensitive ? <p className="react-save-hint">敏感字段会显示为 <code>__AGENT_PANEL_SECRET__</code>；保存时后端会自动恢复原值，除非你手动改成新值。</p> : null}</section></div>}</PageChrome>
 }
 
 function EnvVarsPage() {

@@ -69,6 +69,24 @@ test("setConfig merges partial updates", async () => {
   assert.equal(cfg.fullSyncSchedule, true)
 })
 
+test("branchScopeModel persists and defaults to empty", async () => {
+  const p = newTmpPath()
+  _resetForTest(p)
+  // Default value before any write.
+  let cfg = await getConfig()
+  assert.equal(cfg.branchScopeModel, "")
+  // Write a value and reload.
+  await setConfig({ branchScopeModel: "deepseek-chat" })
+  _resetForTest(p)
+  await initConfig()
+  cfg = await getConfig()
+  assert.equal(cfg.branchScopeModel, "deepseek-chat")
+  // Clear it back to empty.
+  await setConfig({ branchScopeModel: "" })
+  cfg = await getConfig()
+  assert.equal(cfg.branchScopeModel, "")
+})
+
 test("env vars persist normalized names and redacted safe previews", async () => {
   const p = newTmpPath()
   _resetForTest(p)

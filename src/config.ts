@@ -69,6 +69,12 @@ export interface AppConfig {
    * Model name passed to the code review chat completion, e.g. `deepseek-chat`. */
   codeReviewModel: string
   /**
+   * Model name for the AI-powered branches.json extraction on the code-diff
+   * page. Reuses codeReviewBaseUrl/codeReviewApiKey. Falls back to
+   * codeReviewModel when empty so the user only configures one endpoint.
+   */
+  branchScopeModel: string
+  /**
    * Minimum number of new messages since the last extract for the
    * auto-trigger to fire. Prevents wasting tokens on trivial changes.
    */
@@ -237,6 +243,7 @@ const DEFAULTS: AppConfig = {
   codeReviewBaseUrl: "",
   codeReviewApiKey: "",
   codeReviewModel: "",
+  branchScopeModel: "",
   minChangeMessages: 5,
   autoValuation: false,
   valuationThreshold: 25,
@@ -280,6 +287,7 @@ async function load(): Promise<AppConfig> {
       codeReviewBaseUrl: typeof parsed.codeReviewBaseUrl === "string" ? parsed.codeReviewBaseUrl : DEFAULTS.codeReviewBaseUrl,
       codeReviewApiKey: typeof parsed.codeReviewApiKey === "string" ? parsed.codeReviewApiKey : DEFAULTS.codeReviewApiKey,
       codeReviewModel: typeof parsed.codeReviewModel === "string" ? parsed.codeReviewModel : DEFAULTS.codeReviewModel,
+      branchScopeModel: typeof parsed.branchScopeModel === "string" ? parsed.branchScopeModel : DEFAULTS.branchScopeModel,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
       autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
       valuationThreshold: parsed.valuationThreshold ?? DEFAULTS.valuationThreshold,
@@ -309,7 +317,7 @@ export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "branchScopeModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -321,6 +329,7 @@ export async function setConfig(
     // Empty string means "keep existing key"; a non-empty value overwrites.
     codeReviewApiKey: partial.codeReviewApiKey && partial.codeReviewApiKey.trim() ? partial.codeReviewApiKey : cur.codeReviewApiKey,
     codeReviewModel: partial.codeReviewModel ?? cur.codeReviewModel,
+    branchScopeModel: partial.branchScopeModel ?? cur.branchScopeModel,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
     autoValuation: partial.autoValuation ?? cur.autoValuation,
     valuationThreshold: partial.valuationThreshold ?? cur.valuationThreshold,

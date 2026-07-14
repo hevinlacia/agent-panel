@@ -79,6 +79,7 @@
         codeReviewModel: model,
         // Only send the key when the user typed a new value.
         codeReviewApiKey: key,
+        branchScopeModel: (document.getElementById("cfg-branch-scope-model") || {}).value || "",
       }
       var btn = form.querySelector("button[type=\"submit\"]")
       if (btn) { btn.disabled = true; btn.textContent = "保存中…" }

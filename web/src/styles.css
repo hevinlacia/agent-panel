@@ -307,6 +307,21 @@
 .react-chip-list { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
 .react-chip-list a { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; background: rgba(255,255,255,.04); font: 0.76rem var(--react-mono); }
 .react-inline-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.react-category-form { margin-top: 10px; align-items: center; }
+.react-category-form label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-reco-panel { border-color: rgba(34,211,238,.18); }
+.react-reco-list { flex-direction: column; gap: 10px; margin-top: 14px; display: flex; }
+.react-reco-item { border: 1px solid var(--react-border); border-radius: 16px; padding: 12px 14px; background: rgba(255,255,255,.03); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.react-reco-info { min-width: 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.react-reco-info code { color: var(--react-cyan); font: .72rem var(--react-mono); }
+.react-reco-title { color: var(--react-text); font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.react-reco-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.react-reco-score { color: var(--react-cyan); font: 800 .72rem var(--react-mono); border: 1px solid rgba(34,211,238,.3); border-radius: 999px; padding: 3px 8px; }
+.react-reco-reasons { font-size: .76rem; }
+.react-filter-grow { grid-column: span 2; }
+.react-filter-grow input { min-width: 200px; }
+.react-saved-pill { color: var(--react-green); font: 800 .68rem var(--react-mono); }
+.react-warn-pill { color: #fca5a5; font: 800 .68rem var(--react-mono); }
 .react-command { display: block; margin-top: 12px; padding: 10px 12px; border-radius: 12px; word-break: break-all; }
 .react-check-card { grid-template-columns: auto 1fr; align-items: flex-start; }
 .react-check-card input { margin-top: 5px; accent-color: var(--react-cyan); }
