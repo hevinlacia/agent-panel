@@ -1,5 +1,5 @@
 /**
- * Spawn a local agent TUI (`opencode --session <id>` or `pi --session <id>`)
+ * Spawn a local agent TUI (`pi --session <id>`)
  * in a node-pty pseudo-terminal and pipe bytes to/from a WebSocket. The WS
  * layer is owned by Hono; this module only owns the PTY and the message
  * contract.
@@ -20,7 +20,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { spawn as nodePtySpawn, type IPty } from "node-pty"
 
-import { isValidSessionId, resolveCwd } from "./sessions.ts"
+import { resolveCwd } from "./sessions.ts"
 import { isValidPiSessionId } from "./piSessions.ts"
 import { parseClientMessage } from "./terminalProtocol.ts"
 
@@ -50,26 +50,11 @@ export type StartSessionOptions = {
   createNew?: boolean
   title?: string
   env?: Record<string, string>
-  /** Which agent harness to spawn. Defaults to "opencode". */
-  harness?: "opencode" | "pi"
 }
 
-const OPENCODE_BIN_CANDIDATES = ["/usr/bin/opencode", "opencode"]
 const PI_BIN_CANDIDATES = [join(homedir(), ".bun", "bin", "pi"), "pi"]
 const DEFAULT_COLS = 100
 const DEFAULT_ROWS = 28
-
-function pickOpencodeBin(): string {
-  for (const candidate of OPENCODE_BIN_CANDIDATES) {
-    if (candidate.startsWith("/")) {
-      if (existsSync(candidate)) return candidate
-    } else {
-      // Rely on PATH; if it does not exist, spawn will fail and we will report.
-      return candidate
-    }
-  }
-  return "opencode"
-}
 
 function pickPiBin(): string {
   for (const candidate of PI_BIN_CANDIDATES) {
@@ -89,8 +74,7 @@ export function startSession(
   options: StartSessionOptions = {}
 ): TerminalSession | { error: string } {
   const createNew = options.createNew === true
-  const harness = options.harness === "pi" ? "pi" : "opencode"
-  const validId = harness === "pi" ? isValidPiSessionId(id) : isValidSessionId(id)
+  const validId = isValidPiSessionId(id)
   if (!createNew && !validId) {
     return { error: "Invalid session id" }
   }
@@ -98,23 +82,13 @@ export function startSession(
     return { error: "Invalid session id" }
   }
 
-  let bin: string
-  let args: string[]
-  if (harness === "pi") {
-    bin = pickPiBin()
-    // `pi` with no session arg starts an interactive new session. With a
-    // title, pass `--name`. Resume uses `--session <uuid>` (pi also accepts
-    // partial UUIDs, but the dashboard always carries the full id).
-    args = createNew ? [] : ["--session", id]
-    if (createNew && options.title) {
-      args.push("--name", options.title)
-    }
-  } else {
-    bin = pickOpencodeBin()
-    args = createNew ? ["run", "-i"] : ["--session", id]
-    if (createNew && options.title) {
-      args.push("--title", options.title)
-    }
+  const bin = pickPiBin()
+  // `pi` with no session arg starts an interactive new session. With a
+  // title, pass `--name`. Resume uses `--session <uuid>` (pi also accepts
+  // partial UUIDs, but the dashboard always carries the full id).
+  const args: string[] = createNew ? [] : ["--session", id]
+  if (createNew && options.title) {
+    args.push("--name", options.title)
   }
   const cwd = resolveCwd(directory)
 

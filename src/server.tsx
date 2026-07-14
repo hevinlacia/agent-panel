@@ -4877,7 +4877,7 @@ async function handleTerminalSocket(
       try { ws.send(JSON.stringify({ type: "error", message })) } catch { /* ignore */ }
       try { ws.close(1011, "spawn error") } catch { /* noop */ }
     },
-  }, { createNew, title, env, harness })
+  }, { createNew, title, env })
 
   if ("error" in result) {
     try { ws.send(JSON.stringify({ type: "error", message: result.error })) } catch { /* noop */ }
