@@ -23,8 +23,10 @@ import { randomBytes } from "node:crypto"
 
 import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
 import { readRequirementState } from "./requirementState.ts"
+import type { EffortEstimate } from "./effortEstimation.ts"
 
 const REQUIREMENT_PROJECT_FILE = "project.json"
+const EFFORT_ESTIMATE_FILE = "effort-estimate.json"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -162,6 +164,11 @@ export interface Requirement {
   alignmentPath?: string
   /** Raw or semi-raw PRD source trace; not a primary context file after alignment. */
   prdPath?: string
+  /**
+   * AI-powered relative effort estimate, persisted in `effort-estimate.json`.
+   * Absent when no estimate has been run yet.
+   */
+  effortEstimate?: EffortEstimate
   /**
    * Directory holding this requirement's files. Stored on the record so
    * the status-write API can locate `state.json` without re-deriving the
@@ -591,6 +598,20 @@ async function loadRequirementFromDir(
     // ignore; fall back to whatever we already have.
   }
 
+  // Read AI effort estimate if it exists (best-effort, never blocks scanning).
+  let effortEstimate: EffortEstimate | undefined
+  try {
+    const ep = join(dirPath, EFFORT_ESTIMATE_FILE)
+    if (existsSync(ep)) {
+      const parsed = JSON.parse(await readFile(ep, "utf-8")) as unknown
+      if (parsed && typeof parsed === "object" && typeof (parsed as EffortEstimate).coefficient === "number") {
+        effortEstimate = parsed as EffortEstimate
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return {
     id,
     title,
@@ -614,6 +635,7 @@ async function loadRequirementFromDir(
     reviewPath: existsSync(reviewPath) ? reviewPath : undefined,
     alignmentPath: existsSync(alignmentPath) ? alignmentPath : undefined,
     prdPath: existsSync(prdPath) ? prdPath : undefined,
+    effortEstimate,
     reqDir: dirPath,
   }
 }

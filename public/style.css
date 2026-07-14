@@ -3538,6 +3538,22 @@ form.req-session-inline-form {
 .req-attachments-delete-form {
   display: inline;
 }
+
+/* Attachment view page */
+.req-attachment-view { max-width: 1200px; margin: 0 auto; }
+.req-attachment-view-head { margin-bottom: 16px; }
+.req-attachment-view-head h1 { font-size: 1.2rem; margin: 8px 0 4px; word-break: break-all; }
+.req-attachment-view-text {
+  white-space: pre-wrap; word-break: break-word;
+  font: 0.82rem/1.6 var(--mono, monospace);
+  max-height: 75vh; overflow: auto;
+  padding: 16px; border: 1px solid var(--border-soft); border-radius: 6px;
+  background: var(--bg-soft, #181818);
+}
+.req-attachment-view-image { text-align: center; }
+.req-attachment-view-image img { max-width: 100%; border-radius: 6px; }
+.req-attachment-view-binary { text-align: center; padding: 40px; }
+}
 .req-attachments-upload-form {
   display: flex;
   align-items: center;

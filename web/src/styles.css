@@ -309,6 +309,37 @@
 .react-inline-form { display: flex; gap: 10px; flex-wrap: wrap; }
 .react-category-form { margin-top: 10px; align-items: center; }
 .react-category-form label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-effort-panel { border-color: rgba(34,211,238,.18); }
+.react-effort-badge { color: var(--react-cyan); font: 800 .72rem var(--react-mono); border: 1px solid rgba(34,211,238,.3); border-radius: 999px; padding: 3px 8px; }
+.react-effort-result { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.react-effort-headline { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+.react-effort-coeff { display: flex; flex-direction: column; align-items: center; }
+.react-effort-coeff strong { color: var(--react-cyan); font: 900 2rem/1 var(--react-mono); }
+.react-effort-coeff span { color: var(--react-muted); font: .68rem var(--react-mono); }
+.react-effort-hours { display: flex; flex-direction: column; align-items: center; }
+.react-effort-hours strong { color: #fff; font: 900 2rem/1 var(--react-mono); }
+.react-effort-hours span { color: var(--react-muted); font: .68rem var(--react-mono); }
+.react-effort-base { color: var(--react-muted); font: .76rem var(--react-mono); padding-bottom: 4px; }
+.react-effort-factors { display: flex; flex-direction: column; gap: 8px; }
+.react-effort-factor { border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,.02); }
+.react-effort-factor-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.react-effort-factor-head span:first-child { color: var(--react-text); font-size: .84rem; }
+.react-effort-score { font-size: .76rem; }
+.react-effort-score-1 { color: #22c55e; }
+.react-effort-score-2 { color: #84cc16; }
+.react-effort-score-3 { color: #eab308; }
+.react-effort-score-4 { color: #f59e0b; }
+.react-effort-score-5 { color: #ef4444; }
+.react-effort-meta { display: flex; gap: 14px; flex-wrap: wrap; }
+.react-effort-meta span { color: var(--react-faint); font: .72rem var(--react-mono); }
+.react-effort-error { color: #fca5a5; font-size: .84rem; margin-top: 10px; }
+.react-attach-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.react-attach-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,.02); }
+.react-attach-name { color: var(--react-text); font-size: .86rem; flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-attach-size { font: .72rem var(--react-mono); white-space: nowrap; }
+.react-attach-time { font: .72rem var(--react-mono); white-space: nowrap; }
+.react-attach-actions { display: flex; gap: 6px; }
+.react-attach-actions a { color: var(--react-text); font: 800 .72rem var(--react-mono); border: 1px solid #22d3ee47; background: #22d3ee14; border-radius: 999px; padding: 5px 10px; text-decoration: none; }
 .react-reco-panel { border-color: rgba(34,211,238,.18); }
 .react-reco-list { flex-direction: column; gap: 10px; margin-top: 14px; display: flex; }
 .react-reco-item { border: 1px solid var(--react-border); border-radius: 16px; padding: 12px 14px; background: rgba(255,255,255,.03); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }

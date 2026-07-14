@@ -141,6 +141,7 @@ import {
   type BranchScope,
 } from "./branchScope.ts"
 import { buildBranchScopePrompt, runAiBranchScopeExtraction } from "./branchScopeExtract.ts"
+import { runAiEffortEstimation, type EffortEstimate } from "./effortEstimation.ts"
 import {
   ALIGNMENT_FILE,
   ALIGNMENT_TEMPLATE,
@@ -1693,6 +1694,13 @@ const AttachmentCard: FC<{ req: Requirement; attachments: AttachmentInfo[] }> = 
               <span class="req-attachments-name">📎 {a.filename}</span>
               <span class="req-attachments-size muted small">{formatFileSize(a.size)}</span>
               <span class="req-attachments-time muted small">{new Date(a.mtime).toLocaleString("zh-CN", { hour12: false })}</span>
+              <a
+                class="btn btn-sm btn-secondary"
+                href={`/requirement/attachments/view?reqId=${encodeURIComponent(req.id)}&filename=${encodeURIComponent(a.filename)}`}
+                title="在线预览附件内容"
+              >
+                查看
+              </a>
               <a
                 class="btn btn-sm btn-secondary"
                 href={`/requirement/attachments/download?reqId=${encodeURIComponent(req.id)}&filename=${encodeURIComponent(a.filename)}`}
@@ -4143,6 +4151,8 @@ app.post("/api/config", async (c) => {
   if (typeof body.codeReviewBaseUrl === "string") partial.codeReviewBaseUrl = body.codeReviewBaseUrl.trim()
   if (typeof body.codeReviewModel === "string") partial.codeReviewModel = body.codeReviewModel.trim()
   if (typeof body.branchScopeModel === "string") partial.branchScopeModel = body.branchScopeModel.trim()
+  if (typeof body.effortEstimateModel === "string") partial.effortEstimateModel = body.effortEstimateModel.trim()
+  if (typeof body.effortEstimateBaseHours === "number" && body.effortEstimateBaseHours > 0) partial.effortEstimateBaseHours = body.effortEstimateBaseHours
   if (typeof body.codeReviewApiKey === "string" && body.codeReviewApiKey.trim()) partial.codeReviewApiKey = body.codeReviewApiKey.trim()
   const next = await setConfig(partial)
   if (shouldRestartFullSyncScheduler) {
@@ -4457,6 +4467,73 @@ app.post("/api/requirement/extract-branch-scope-ai", async (c) => {
 })
 
 /**
+ * POST /api/requirement/effort-estimate
+ * Body (JSON): { reqId }
+ *
+ * Calls an OpenAI-compatible model to evaluate a relative effort coefficient
+ * for the requirement, persists the result to `<req-dir>/effort-estimate.json`,
+ * and returns it as JSON. The coefficient × baseHours (from config) = estimated
+ * hours. Reuses the code-review base URL / API key; the model defaults to
+ * effortEstimateModel, falling back to codeReviewModel.
+ */
+app.post("/api/requirement/effort-estimate", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const reqId = String(body.reqId || "")
+  if (!reqId) return c.json({ ok: false, error: "Missing reqId" }, 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.json({ ok: false, error: "Requirement not found" }, 404)
+  if (!req.reqDir) return c.json({ ok: false, error: "Requirement has no on-disk directory" }, 400)
+
+  const cfg = await getConfig()
+  if (!cfg.codeReviewBaseUrl.trim() || !cfg.codeReviewApiKey.trim()) {
+    return c.json({ ok: false, error: "尚未配置 AI 模型接入（Base URL / API Key），请在 Settings 页面填写。" }, 400)
+  }
+
+  // Gather requirement context files for the prompt.
+  const contextFiles: Record<string, string> = {}
+  const fileFields: Array<[string, string | undefined]> = [
+    ["meta.md", req.metaPath],
+    ["background.md", req.backgroundPath],
+    ["impact.md", req.impactPath],
+    ["branch.md", req.branchPath],
+    ["test.md", req.testPath],
+    ["config-changes.md", req.configPath],
+    ["notes.md", req.notesPath],
+  ]
+  for (const [name, path] of fileFields) {
+    if (path && existsSync(path)) {
+      contextFiles[name] = await readFile(path, "utf-8").catch(() => "")
+    }
+  }
+
+  const result = await runAiEffortEstimation(req, contextFiles, {
+    baseUrl: cfg.codeReviewBaseUrl,
+    apiKey: cfg.codeReviewApiKey,
+    model: cfg.effortEstimateModel,
+    fallbackModel: cfg.codeReviewModel,
+    baseHours: cfg.effortEstimateBaseHours,
+  })
+  if (result.error || !result.estimate) {
+    return c.json({ ok: false, error: result.error, model: result.model }, 200)
+  }
+
+  // Persist effort-estimate.json atomically.
+  const estimatePath = join(req.reqDir, "effort-estimate.json")
+  try {
+    const dir = dirname(estimatePath)
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true })
+    const tmp = `${estimatePath}.tmp.${process.pid}.${Date.now()}`
+    await writeFile(tmp, JSON.stringify(result.estimate, null, 2) + "\n", "utf-8")
+    await rename(tmp, estimatePath)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return c.json({ ok: false, error: `写入 effort-estimate.json 失败：${msg}`, model: result.model }, 500)
+  }
+
+  return c.json({ ok: true, estimate: result.estimate })
+})
+
+/**
  * GET /requirement/auto-extract?jobId=<id>
  *
  * Preview page for auto-extract results. Shows per-file diffs with
@@ -4704,6 +4781,20 @@ app.post("/api/requirement/attachments/upload", async (c) => {
  * Streams the raw attachment bytes with a Content-Disposition header so
  * the browser downloads it. Unsafe names are rejected with 400.
  */
+const TEXT_PREVIEW_EXTS = new Set(["txt", "md", "markdown", "sql", "csv", "json", "yaml", "yml", "xml", "html", "htm", "js", "ts", "jsx", "tsx", "css", "scss", "py", "java", "go", "rs", "c", "cpp", "h", "sh", "bash", "env", "conf", "ini", "log", "diff", "patch", "properties", "toml"])
+const IMAGE_PREVIEW_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"])
+
+function guessAttachmentContentType(ext: string): string {
+  const map: Record<string, string> = {
+    txt: "text/plain", md: "text/markdown", sql: "application/sql", csv: "text/csv",
+    json: "application/json", yaml: "text/yaml", yml: "text/yaml", xml: "application/xml",
+    html: "text/html", js: "text/javascript", ts: "text/typescript", css: "text/css",
+    py: "text/x-python", java: "text/x-java", png: "image/png", jpg: "image/jpeg",
+    jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+    pdf: "application/pdf", zip: "application/zip", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  }
+  return map[ext] || "application/octet-stream"
+}
 fastify.get("/requirement/attachments/download", async (request, reply) => {
   const reqId = String((request.query as Record<string, string>).reqId || "")
   const filename = String((request.query as Record<string, string>).filename || "")
@@ -4719,6 +4810,54 @@ fastify.get("/requirement/attachments/download", async (request, reply) => {
     .header("Content-Disposition", `attachment; filename="${encoded}"; filename*=UTF-8''${encoded}`)
     .header("Content-Length", String(buffer.length))
     .send(buffer)
+})
+
+/**
+ * GET /requirement/attachments/view?reqId=<id>&filename=<name>
+ *
+ * Renders a readable preview of the attachment inline (no forced download).
+ * Text files are rendered as <pre>; images are shown inline; everything
+ * else falls back to a download link. Unsafe names are rejected with 400.
+ */
+app.get("/requirement/attachments/view", async (c) => {
+  const reqId = String(c.req.query("reqId") || "")
+  const filename = String(c.req.query("filename") || "")
+  const guard = await resolveAttachmentReq(reqId)
+  if (!guard.ok) return c.text(guard.message, guard.status)
+
+  const buffer = await readAttachmentBuffer(guard.req.reqDir!, filename)
+  if (!buffer) return c.text("File not found", 404)
+
+  const ext = filename.toLowerCase().split(".").pop() || ""
+  const contentType = guessAttachmentContentType(ext)
+  const isText = TEXT_PREVIEW_EXTS.has(ext)
+  const isImage = IMAGE_PREVIEW_EXTS.has(ext)
+
+  return c.html(
+    <Layout title={`附件 - ${filename}`} active="requirements">
+      <section class="req-attachment-view">
+        <header class="req-attachment-view-head">
+          <div>
+            <a class="back-link" href={`/requirement?id=${encodeURIComponent(reqId)}`}>← 返回需求详情</a>
+            <h1>📎 {filename}</h1>
+            <p class="muted small">{formatFileSize(buffer.length)} · {contentType} · <a href={`/requirement/attachments/download?reqId=${encodeURIComponent(reqId)}&filename=${encodeURIComponent(filename)}`} download={filename}>下载</a></p>
+          </div>
+        </header>
+        {isText ? (
+          <pre class="req-attachment-view-text">{buffer.toString("utf-8")}</pre>
+        ) : isImage ? (
+          <div class="req-attachment-view-image">
+            <img src={`/requirement/attachments/download?reqId=${encodeURIComponent(reqId)}&filename=${encodeURIComponent(filename)}`} alt={filename} />
+          </div>
+        ) : (
+          <div class="req-attachment-view-binary">
+            <p class="muted">该文件类型不支持在线预览。</p>
+            <a class="btn btn-primary" href={`/requirement/attachments/download?reqId=${encodeURIComponent(reqId)}&filename=${encodeURIComponent(filename)}`} download={filename}>下载文件</a>
+          </div>
+        )}
+      </section>
+    </Layout>,
+  )
 })
 
 /**

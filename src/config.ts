@@ -75,6 +75,16 @@ export interface AppConfig {
    */
   branchScopeModel: string
   /**
+   * Model name for AI effort estimation. Falls back to codeReviewModel when
+   * empty (reuses the same code-review base URL / API key).
+   */
+  effortEstimateModel: string
+  /**
+   * Base hours for effort estimation. The final estimate = baseHours × coefficient.
+   * Default 4 (a standard small feature takes ~4h).
+   */
+  effortEstimateBaseHours: number
+  /**
    * Minimum number of new messages since the last extract for the
    * auto-trigger to fire. Prevents wasting tokens on trivial changes.
    */
@@ -244,6 +254,8 @@ const DEFAULTS: AppConfig = {
   codeReviewApiKey: "",
   codeReviewModel: "",
   branchScopeModel: "",
+  effortEstimateModel: "",
+  effortEstimateBaseHours: 4,
   minChangeMessages: 5,
   autoValuation: false,
   valuationThreshold: 25,
@@ -288,6 +300,8 @@ async function load(): Promise<AppConfig> {
       codeReviewApiKey: typeof parsed.codeReviewApiKey === "string" ? parsed.codeReviewApiKey : DEFAULTS.codeReviewApiKey,
       codeReviewModel: typeof parsed.codeReviewModel === "string" ? parsed.codeReviewModel : DEFAULTS.codeReviewModel,
       branchScopeModel: typeof parsed.branchScopeModel === "string" ? parsed.branchScopeModel : DEFAULTS.branchScopeModel,
+      effortEstimateModel: typeof parsed.effortEstimateModel === "string" ? parsed.effortEstimateModel : DEFAULTS.effortEstimateModel,
+      effortEstimateBaseHours: typeof parsed.effortEstimateBaseHours === "number" && parsed.effortEstimateBaseHours > 0 ? parsed.effortEstimateBaseHours : DEFAULTS.effortEstimateBaseHours,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
       autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
       valuationThreshold: parsed.valuationThreshold ?? DEFAULTS.valuationThreshold,
@@ -317,7 +331,7 @@ export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "branchScopeModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -330,6 +344,8 @@ export async function setConfig(
     codeReviewApiKey: partial.codeReviewApiKey && partial.codeReviewApiKey.trim() ? partial.codeReviewApiKey : cur.codeReviewApiKey,
     codeReviewModel: partial.codeReviewModel ?? cur.codeReviewModel,
     branchScopeModel: partial.branchScopeModel ?? cur.branchScopeModel,
+    effortEstimateModel: partial.effortEstimateModel ?? cur.effortEstimateModel,
+    effortEstimateBaseHours: partial.effortEstimateBaseHours ?? cur.effortEstimateBaseHours,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
     autoValuation: partial.autoValuation ?? cur.autoValuation,
     valuationThreshold: partial.valuationThreshold ?? cur.valuationThreshold,
