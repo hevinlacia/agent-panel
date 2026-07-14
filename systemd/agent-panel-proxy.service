@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent Panel hot-deploy front proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hevin/Developer/tools/agent-panel
+Environment=AGENT_PANEL_PROXY_PORT=7331
+Environment=AGENT_PANEL_BLUE_URL=http://127.0.0.1:7332
+Environment=AGENT_PANEL_GREEN_URL=http://127.0.0.1:7333
+Environment=AGENT_PANEL_ACTIVE_BACKEND_FILE=/home/hevin/.local/state/agent-panel/active-backend.json
+ExecSearchPath=/home/hevin/.local/share/mise/installs/bun/latest/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/hevin/.local/share/mise/installs/bun/latest/bin/bun run proxy
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=60
+
+[Install]
+WantedBy=default.target

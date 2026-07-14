@@ -447,6 +447,50 @@
   }
 
   // ------------------------------------------------------------------
+  // AI code review: the "AI 审查代码" button on the code-diff page POSTs
+  // to /api/requirement/code-review/ai with the requirement id. The model
+  // may take tens of seconds, so we show a loading state and render the
+  // Markdown suggestions into the read-only textarea below the button.
+  // ------------------------------------------------------------------
+  var aiBtn = document.getElementById("code-review-ai-btn")
+  var aiStatus = document.getElementById("code-review-ai-status")
+  var aiResult = document.getElementById("code-review-ai-result")
+  if (aiBtn && aiResult) {
+    aiBtn.addEventListener("click", function () {
+      var reqId = aiBtn.getAttribute("data-req-id") || ""
+      if (!reqId) return
+      aiBtn.disabled = true
+      aiBtn.textContent = "AI 审查中…"
+      if (aiStatus) { aiStatus.textContent = "正在调用模型，可能需要 10-60 秒…"; aiStatus.classList.remove("is-warn") }
+      fetch("/api/requirement/code-review/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reqId: reqId }),
+      }).then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data } }) })
+        .then(function (envelope) {
+          var data = envelope.data || {}
+          var review = data.aiReview || {}
+          if (review.content) aiResult.value = review.content
+          if (data.ok) {
+            if (aiStatus) aiStatus.textContent = "完成 · " + (review.model || "") + (review.updatedAt ? " · " + formatReviewTime(review.updatedAt) : "")
+          } else {
+            if (aiStatus) { aiStatus.textContent = "失败：" + (data.error || "未知错误"); aiStatus.classList.add("is-warn") }
+          }
+        }).catch(function (err) {
+          if (aiStatus) { aiStatus.textContent = "请求失败：" + (err && err.message ? err.message : err); aiStatus.classList.add("is-warn") }
+        }).finally(function () {
+          aiBtn.disabled = false
+          aiBtn.textContent = "🤖 AI 审查代码"
+        })
+    })
+  }
+
+  function formatReviewTime(ts) {
+    if (!ts) return ""
+    try { return new Date(ts).toLocaleString("zh-CN") } catch (e) { return "" }
+  }
+
+  // ------------------------------------------------------------------
   // Clipboard copy: any element with `data-copy-cmd="..."` copies that
   // string when clicked, briefly swapping its label to "✓ 已复制".
   // ------------------------------------------------------------------

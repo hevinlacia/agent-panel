@@ -6,6 +6,7 @@
  *
  * Public surface:
  *   - getConfig()/setConfig(): read and persist dashboard behavior toggles
+ *   - getSafeConfig(): UI/API-safe copy with the code-review API key redacted
  *   - safeEnvVars()/safeEnvVarsByFile(): redacted variable list for UI/API
  *   - getEnvFileMeta(): env file metadata for UI display
  *   - upsertEnvVar/deleteEnvVar: mutate OpenCode env files safely
@@ -54,6 +55,19 @@ export interface AppConfig {
    * `litellm-local/deepseek-v4-flash-auto` when empty.
    */
   extractModel: string
+  /**
+   * OpenAI-compatible base URL for AI code review, e.g. `https://api.deepseek.com/v1`.
+   * Empty until the user configures it on the Settings page.
+   */
+  codeReviewBaseUrl: string
+  /**
+   * API key for the AI code review endpoint. Stored locally in config.json
+   * (never committed); redacted in every UI/API response via getSafeConfig().
+   */
+  codeReviewApiKey: string
+  /**
+   * Model name passed to the code review chat completion, e.g. `deepseek-chat`. */
+  codeReviewModel: string
   /**
    * Minimum number of new messages since the last extract for the
    * auto-trigger to fire. Prevents wasting tokens on trivial changes.
@@ -220,6 +234,9 @@ const DEFAULTS: AppConfig = {
   autoExtract: false,
   autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
+  codeReviewBaseUrl: "",
+  codeReviewApiKey: "",
+  codeReviewModel: "",
   minChangeMessages: 5,
   autoValuation: false,
   valuationThreshold: 25,
@@ -260,6 +277,9 @@ async function load(): Promise<AppConfig> {
       autoExtract: parsed.autoExtract ?? DEFAULTS.autoExtract,
       autoExtractSchedule: parsed.autoExtractSchedule ?? DEFAULTS.autoExtractSchedule,
       extractModel: parsed.extractModel || DEFAULTS.extractModel,
+      codeReviewBaseUrl: typeof parsed.codeReviewBaseUrl === "string" ? parsed.codeReviewBaseUrl : DEFAULTS.codeReviewBaseUrl,
+      codeReviewApiKey: typeof parsed.codeReviewApiKey === "string" ? parsed.codeReviewApiKey : DEFAULTS.codeReviewApiKey,
+      codeReviewModel: typeof parsed.codeReviewModel === "string" ? parsed.codeReviewModel : DEFAULTS.codeReviewModel,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
       autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
       valuationThreshold: parsed.valuationThreshold ?? DEFAULTS.valuationThreshold,
@@ -278,8 +298,18 @@ export async function getConfig(): Promise<AppConfig> {
   return load()
 }
 
+/**
+ * Return a UI/API-safe copy of the config with the code-review API key
+ * redacted. Server-side callers that need the real key (the AI review
+ * endpoint) must use getConfig() directly, never this helper.
+ */
+export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet: boolean }> {
+  const cfg = await load()
+  return { ...cfg, codeReviewApiKey: "", codeReviewApiKeySet: cfg.codeReviewApiKey.trim() !== "" }
+}
+
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -287,6 +317,10 @@ export async function setConfig(
     autoExtract: partial.autoExtract ?? cur.autoExtract,
     autoExtractSchedule: partial.autoExtractSchedule ?? cur.autoExtractSchedule,
     extractModel: partial.extractModel ?? cur.extractModel,
+    codeReviewBaseUrl: partial.codeReviewBaseUrl ?? cur.codeReviewBaseUrl,
+    // Empty string means "keep existing key"; a non-empty value overwrites.
+    codeReviewApiKey: partial.codeReviewApiKey && partial.codeReviewApiKey.trim() ? partial.codeReviewApiKey : cur.codeReviewApiKey,
+    codeReviewModel: partial.codeReviewModel ?? cur.codeReviewModel,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
     autoValuation: partial.autoValuation ?? cur.autoValuation,
     valuationThreshold: partial.valuationThreshold ?? cur.valuationThreshold,

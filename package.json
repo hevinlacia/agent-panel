@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "bun run build:dashboard && tsx watch src/server.tsx",
     "start": "bun run build:dashboard && tsx src/server.tsx",
+    "start:backend": "tsx src/server.tsx",
+    "proxy": "tsx src/proxy.ts",
     "typecheck": "bun run typecheck:server && bun run typecheck:web",
     "test": "node --test --import tsx tests/*.test.ts",
     "build:dashboard": "vite build",
@@ -36,6 +38,7 @@
     "@types/node": "^22.19.20",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.3",
     "tsx": "^4.22.3",
     "typescript": "^5.9.3",

@@ -766,6 +766,14 @@ export async function getRequirement(id: string): Promise<Requirement | null> {
   return found
 }
 
+/**
+ * List all real (Hermes-backed) requirements grouped by project, sorted by
+ * updatedAt desc. The synthetic default requirement (DEFAULT_REQ_ID) is
+ * deliberately excluded - it is not a real requirement and only exists as a
+ * fallback bucket for unassociated/orphaned sessions. Associations remain
+ * preserved in the store; use getRequirement(DEFAULT_REQ_ID) or
+ * getRequirementForSession() for direct lookups.
+ */
 export async function listRequirementsByProject(): Promise<
   { project: string; requirements: Requirement[] }[]
 > {
@@ -775,26 +783,9 @@ export async function listRequirementsByProject(): Promise<
   ])
 
   // Attach sessionIds from associations.
-  const hermesIds = new Set(hermes.map((r) => r.id))
   for (const r of hermes) {
     r.sessionIds = store.associations[r.id] ?? []
   }
-
-  // Build the synthetic default requirement: it owns sessions under
-  // DEFAULT_REQ_ID *and* any sessions associated with reqIds that no
-  // longer exist in Hermes (orphaned associations).
-  const orphanSessions: string[] = []
-  for (const [reqId, sids] of Object.entries(store.associations)) {
-    if (reqId === DEFAULT_REQ_ID) continue
-    if (!hermesIds.has(reqId)) {
-      for (const s of sids) orphanSessions.push(s)
-    }
-  }
-  const defaultSessions = [
-    ...(store.associations[DEFAULT_REQ_ID] ?? []),
-    ...orphanSessions,
-  ]
-  const defaultReq = buildDefaultRequirement(defaultSessions)
 
   // Group by project tag; a requirement may appear under multiple projects.
   const groups = new Map<string, Requirement[]>()
@@ -811,17 +802,19 @@ export async function listRequirementsByProject(): Promise<
     }
   }
 
-  // Always include the default project (even if empty, it carries the
-  // synthetic default requirement and any orphan sessions).
-  const defaultBucket = groups.get(DEFAULT_PROJECT_NAME) ?? []
-  defaultBucket.push(defaultReq)
-  groups.set(DEFAULT_PROJECT_NAME, defaultBucket)
-
-  // Sort: non-default projects by updatedAt desc, default project last.
+  // The synthetic default requirement (__default__) is intentionally excluded
+  // from the board: it is not a real requirement, only a bucket for
+  // unassociated/orphaned sessions. Associations stay preserved in the store;
+  // getRequirement(DEFAULT_REQ_ID) / getRequirementForSession() keep working
+  // for direct lookups (e.g. resolving a session's requirement title).
+  // Sort: non-default projects by updatedAt desc, default project last
+  // (only when a real requirement carries the default project tag).
   const nonDefault = [...groups.keys()]
     .filter((p) => p !== DEFAULT_PROJECT_NAME)
     .sort((a, b) => (projectLatest.get(b) ?? 0) - (projectLatest.get(a) ?? 0))
-  const ordered = [...nonDefault, DEFAULT_PROJECT_NAME]
+  const ordered = groups.has(DEFAULT_PROJECT_NAME)
+    ? [...nonDefault, DEFAULT_PROJECT_NAME]
+    : nonDefault
 
   return ordered.map((p) => {
     const reqs = (groups.get(p) ?? [])

@@ -6,7 +6,7 @@
  * behavior exercised through the dashboard route against real repos.
  */
 
-import { mkdtempSync, mkdirSync } from "node:fs"
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
@@ -18,6 +18,9 @@ import {
   classifyCodeReviewRiskTags,
   parseUnifiedDiff,
   resolveCodeReviewProjectPath,
+  runAiCodeReview,
+  readCodeReviewSnapshot,
+  saveCodeReviewAiResult,
   upsertCodeReviewBlock,
   type CodeReviewSnapshot,
 } from "../src/codeReview.ts"
@@ -157,4 +160,88 @@ test("upsertCodeReviewBlock replaces only the managed block", () => {
   assert.ok(out.includes("保留在后面"))
   assert.ok(out.includes("新的 Review 摘要"))
   assert.ok(!out.includes("旧 block"))
+})
+
+// ---------------------------------------------------------------------------
+// AI code review: runAiCodeReview talks to an OpenAI-compatible endpoint.
+// We stub global fetch and a temp requirement dir so the prompt building,
+// response parsing, and error handling stay deterministic and offline.
+// ---------------------------------------------------------------------------
+
+function withFetch(stub: (url: string, init: RequestInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }>, fn: () => Promise<void>): Promise<void> {
+  const original = globalThis.fetch
+  // @ts-expect-error - test stub is intentionally narrower than the real fetch type
+  globalThis.fetch = (url: string, init: RequestInit) => stub(url, init)
+  return fn().finally(() => { globalThis.fetch = original })
+}
+
+test("runAiCodeReview returns missing-config error without calling fetch", async () => {
+  let called = false
+  await withFetch(async () => { called = true; return { ok: true, status: 200, json: async () => ({}), text: async () => "" } }, async () => {
+    const result = await runAiCodeReview(mkdtempSync(join(tmpdir(), "req-")), sampleSnapshot(), { baseUrl: "", apiKey: "", model: "" })
+    assert.equal(result.error, "missing-config")
+    assert.equal(result.content, "")
+  })
+  assert.equal(called, false)
+})
+
+test("runAiCodeReview extracts model content from a successful chat completion", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "req-"))
+  writeFileSync(join(dir, "background.md"), "需求：整单分配库存，避免拆单。", "utf-8")
+  let capturedUrl = ""
+  let capturedBody: any
+  await withFetch(async (url, init) => {
+    capturedUrl = url
+    capturedBody = JSON.parse(String(init.body))
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: "## 严重问题\n\n无" } }] }),
+      text: async () => "",
+    }
+  }, async () => {
+    const result = await runAiCodeReview(dir, sampleSnapshot(), { baseUrl: "https://api.deepseek.com/v1", apiKey: "sk-test", model: "deepseek-chat" })
+    assert.equal(result.error, undefined)
+    assert.equal(result.content, "## 严重问题\n\n无")
+    assert.equal(result.model, "deepseek-chat")
+  })
+  // Endpoint must be the OpenAI-compatible chat completions path under /v1.
+  assert.equal(capturedUrl, "https://api.deepseek.com/v1/chat/completions")
+  assert.equal(capturedBody.model, "deepseek-chat")
+  assert.equal(capturedBody.stream, false)
+  // The requirement context and the diff must be wired into the prompt.
+  const userContent = capturedBody.messages[1].content
+  assert.ok(userContent.includes("整单分配库存"))
+  assert.ok(userContent.includes("diff --git a/x b/x"))
+})
+
+test("runAiCodeReview captures HTTP errors without throwing", async () => {
+  await withFetch(async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({}),
+    text: async () => "invalid api key",
+  }), async () => {
+    const result = await runAiCodeReview(mkdtempSync(join(tmpdir(), "req-")), sampleSnapshot(), { baseUrl: "https://api.deepseek.com/v1", apiKey: "sk-bad", model: "deepseek-chat" })
+    assert.ok(result.error?.includes("HTTP 401"))
+    assert.equal(result.content, "")
+  })
+})
+
+test("saveCodeReviewAiResult persists suggestions into code-review.json", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "req-"))
+  const snap = sampleSnapshot()
+  const next = await saveCodeReviewAiResult(dir, snap, {
+    content: "## 严重问题\n\n- 空指针风险",
+    model: "deepseek-chat",
+    baseUrl: "https://api.deepseek.com/v1",
+    updatedAt: 1800000000001,
+  })
+  const reloaded = await readCodeReviewSnapshot(dir)
+  assert.ok(reloaded)
+  assert.equal(reloaded!.aiReview?.content, "## 严重问题\n\n- 空指针风险")
+  assert.equal(reloaded!.aiReview?.model, "deepseek-chat")
+  // The verdict must survive the AI result write (separate fields).
+  assert.equal(reloaded!.verdict?.status, "approved")
+  assert.equal(next.aiReview?.content, reloaded!.aiReview?.content)
 })

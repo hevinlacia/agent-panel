@@ -1,22 +1,22 @@
 /**
  * public/config.js
  *
- * Role: page-scoped script for pages containing the dashboard config form.
- * Handles scheduler config saves (extract, valuation, sync toggles).
+ * Role: page-scoped script for the Settings page. Handles saves for the
+ * scheduler config form (extract, valuation, sync toggles) and the AI
+ * code-review config form (base URL / model / API key).
  *
  * Constraints / safety:
  *   - No external deps; vanilla DOM only.
+ *   - The API key is type=password and intentionally left blank on load;
+ *     an empty value tells the server to keep the existing key.
  *
  * Read-this-with:
  *   - src/config.ts (the store this script writes to)
- *   - src/server.tsx (/schedulers route + /api/config)
+ *   - src/server.tsx (/settings route + /api/config)
  */
 
 (function () {
   "use strict"
-
-  var form = document.getElementById("config-form")
-  var saved = document.getElementById("config-saved")
 
   function showSaved(el) {
     if (!el) return
@@ -35,7 +35,10 @@
     })
   }
 
-  if (form) {
+  function bindSchedulerForm() {
+    var form = document.getElementById("config-form")
+    var saved = document.getElementById("config-saved")
+    if (!form) return
     form.addEventListener("submit", function (ev) {
       ev.preventDefault()
 
@@ -59,4 +62,41 @@
         })
     })
   }
+
+  // AI code-review config form. The API key is type=password and intentionally
+  // empty on load; an empty value tells the server to keep the existing key.
+  function bindCodeReviewForm() {
+    var form = document.getElementById("code-review-config-form")
+    var saved = document.getElementById("code-review-config-saved")
+    if (!form) return
+    form.addEventListener("submit", function (ev) {
+      ev.preventDefault()
+      var baseUrl = document.getElementById("cfg-code-review-base").value.trim()
+      var model = document.getElementById("cfg-code-review-model").value.trim()
+      var key = document.getElementById("cfg-code-review-key").value
+      var data = {
+        codeReviewBaseUrl: baseUrl,
+        codeReviewModel: model,
+        // Only send the key when the user typed a new value.
+        codeReviewApiKey: key,
+      }
+      var btn = form.querySelector("button[type=\"submit\"]")
+      if (btn) { btn.disabled = true; btn.textContent = "保存中…" }
+      requestJson("/api/config", data)
+        .then(function () {
+          // Clear the password field so the placeholder re-appears.
+          document.getElementById("cfg-code-review-key").value = ""
+          showSaved(saved)
+        })
+        .catch(function (err) {
+          alert("保存失败：" + (err && err.message ? err.message : err))
+        })
+        .finally(function () {
+          if (btn) { btn.disabled = false; btn.textContent = "保存 AI 代码审查设置" }
+        })
+    })
+  }
+
+  bindSchedulerForm()
+  bindCodeReviewForm()
 })()

@@ -2,12 +2,17 @@
  * Requirement code-review snapshot builder.
  *
  * Role: turn a requirement's `branches.json` scope into a human-reviewable
- * PRO/base-branch diff package and persist the reviewer verdict.
+ * PRO/base-branch diff package, persist the reviewer verdict, and run an
+ * AI code review (diff + requirement files -> Markdown suggestions) against
+ * an OpenAI-compatible endpoint configured on the Settings page.
  * Public surface: runCodeReviewScan, readCodeReviewSnapshot,
- * saveCodeReviewVerdict, parseUnifiedDiff, resolveCodeReviewProjectPath,
- * upsertCodeReviewBlock, and exported types/constants.
+ * saveCodeReviewVerdict, saveCodeReviewAiResult, runAiCodeReview,
+ * parseUnifiedDiff, resolveCodeReviewProjectPath, upsertCodeReviewBlock,
+ * and exported types/constants.
  * Constraints / safety: fixed `git` argv only (no shell), reads only repo Git
  * metadata/diffs, and writes only `<req-dir>/code-review.json` + review.md.
+ * The AI review reads the API key from server-side config only (never echoed
+ * to the browser) and never throws - failures land in CodeReviewAiResult.error.
  * Read-this-with: src/branchScope.ts and src/server.tsx CodeReviewCard.
  */
 
@@ -84,6 +89,19 @@ export interface CodeReviewVerdict {
   updatedAt: number
 }
 
+/** AI-generated review suggestions produced by runAiCodeReview(). */
+export interface CodeReviewAiResult {
+  /** Markdown review written by the model. */
+  content: string
+  /** Model name actually used for the call. */
+  model: string
+  /** Base URL used for the call (for the UI badge). */
+  baseUrl: string
+  updatedAt: number
+  /** Populated when the call failed; content holds a human message. */
+  error?: string
+}
+
 export interface CodeReviewSnapshot {
   version: 1
   reqId: string
@@ -92,6 +110,8 @@ export interface CodeReviewSnapshot {
   sourceFallback?: boolean
   repos: CodeReviewRepoSnapshot[]
   verdict?: CodeReviewVerdict
+  /** AI code-review suggestions, persisted so they survive page reloads. */
+  aiReview?: CodeReviewAiResult
 }
 
 export type CodeReviewDiffLineKind = "context" | "addition" | "deletion" | "meta"
@@ -191,6 +211,167 @@ export async function saveCodeReviewVerdict(
   const existing = existsSync(reviewPath) ? await readFile(reviewPath, "utf-8").catch(() => "") : ""
   await writeFile(reviewPath, upsertCodeReviewBlock(existing, next), "utf-8")
   return next
+}
+
+/** Persist AI review suggestions into code-review.json (no review.md mirror). */
+export async function saveCodeReviewAiResult(
+  reqDir: string,
+  snapshot: CodeReviewSnapshot,
+  aiReview: CodeReviewAiResult,
+): Promise<CodeReviewSnapshot> {
+  const next: CodeReviewSnapshot = { ...snapshot, aiReview, updatedAt: Date.now() }
+  await writeCodeReviewSnapshot(reqDir, next)
+  return next
+}
+
+/**
+ * Options for an AI code-review run. All three come from dashboard config;
+ * callers must validate presence before invoking and surface a clear error.
+ */
+export interface AiCodeReviewOptions {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
+/**
+ * Run an AI code review against an existing diff snapshot plus the
+ * requirement's on-disk context files. Calls an OpenAI-compatible
+ * /chat/completions endpoint and returns the model's Markdown review.
+ * Never throws - failures are returned as a CodeReviewAiResult with
+ * `error` set so the UI can render them inline.
+ */
+export async function runAiCodeReview(
+  reqDir: string,
+  snapshot: CodeReviewSnapshot,
+  opts: AiCodeReviewOptions,
+): Promise<CodeReviewAiResult> {
+  const updatedAt = Date.now()
+  const base = (opts.baseUrl || "").trim().replace(/\/+$/, "")
+  const model = (opts.model || "").trim()
+  const key = (opts.apiKey || "").trim()
+  if (!base || !model || !key) {
+    return { content: "", model, baseUrl: base, updatedAt, error: "missing-config" }
+  }
+
+  const requirementContext = await readRequirementContextForReview(reqDir)
+  const diffContext = buildReviewDiffContext(snapshot)
+  const messages = buildReviewMessages(requirementContext, diffContext, snapshot)
+
+  let endpoint: string
+  try {
+    endpoint = new URL("chat/completions", base + "/").href
+  } catch {
+    return { content: "", model, baseUrl: base, updatedAt, error: `invalid baseUrl: ${base}` }
+  }
+
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 180_000)
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ model, messages, temperature: 0.2, stream: false }),
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "")
+      return { content: "", model, baseUrl: base, updatedAt, error: `HTTP ${res.status}: ${detail.slice(0, 500)}` }
+    }
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    const content = data.choices?.[0]?.message?.content?.trim() || ""
+    if (!content) {
+      return { content: "", model, baseUrl: base, updatedAt, error: "empty response from model" }
+    }
+    return { content, model, baseUrl: base, updatedAt }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { content: "", model, baseUrl: base, updatedAt, error: msg }
+  }
+}
+
+/** Requirement files fed to the model as business context, in priority order. */
+const REVIEW_CONTEXT_FILES = [
+  "meta.md",
+  "background.md",
+  "branch.md",
+  "impact.md",
+  "test.md",
+  "config-changes.md",
+  "notes.md",
+] as const
+
+const REVIEW_FILE_CHAR_LIMIT = 12_000
+const REVIEW_DIFF_CHAR_LIMIT = 120_000
+
+/** Read the curated set of requirement files, each capped to stay prompt-safe. */
+async function readRequirementContextForReview(reqDir: string): Promise<string> {
+  const parts: string[] = []
+  for (const name of REVIEW_CONTEXT_FILES) {
+    const p = join(reqDir, name)
+    if (!existsSync(p)) continue
+    const raw = await readFile(p, "utf-8").catch(() => "")
+    const text = raw.trim()
+    if (!text) continue
+    const trimmed = text.length > REVIEW_FILE_CHAR_LIMIT ? text.slice(0, REVIEW_FILE_CHAR_LIMIT) + "\n…(截断)" : text
+    parts.push(`### ${name}\n\n${trimmed}`)
+  }
+  return parts.join("\n\n")
+}
+
+/** Concatenate per-repo unified diffs with headers, capped to a prompt budget. */
+function buildReviewDiffContext(snapshot: CodeReviewSnapshot): string {
+  const blocks: string[] = []
+  let used = 0
+  for (const repo of snapshot.repos) {
+    if (!repo.diff) continue
+    const header = `\n===== ${repo.repoName} / ${repo.branch} (base: ${repo.baseRef}) =====\n`
+    let body = repo.diff
+    if (used + header.length + body.length > REVIEW_DIFF_CHAR_LIMIT) {
+      const room = REVIEW_DIFF_CHAR_LIMIT - used - header.length
+      body = room > 200 ? body.slice(0, room) + "\n…(diff 截断)" : "…(diff 超出预算已省略)"
+    }
+    blocks.push(header + body)
+    used += header.length + body.length
+    if (used >= REVIEW_DIFF_CHAR_LIMIT) break
+  }
+  return blocks.join("\n")
+}
+
+function buildReviewMessages(requirementContext: string, diffContext: string, snapshot: CodeReviewSnapshot): { role: string; content: string }[] {
+  const system = [
+    "你是一名资深代码审查工程师。请基于「需求上下文」和「代码差异」做一次严格的 code review。",
+    "关注：逻辑错误、边界与空值、并发与事务、资源泄漏、与需求不符的实现、安全与配置风险、可维护性。",
+    "输出 Markdown，包含以下小节：",
+    "## 严重问题（必须修复）",
+    "## 改进建议",
+    "## 测试验收要点",
+    "## 亮点",
+    "要求：具体到文件与代码片段，不要泛泛而谈；若某小节无内容可写「无」。",
+  ].join("\n")
+  const stats = snapshot.repos
+    .map((r) => `- ${r.repoName} / ${r.branch}：${r.files.length} 文件，+${r.additions}/-${r.deletions}`)
+    .join("\n")
+  const user = [
+    `# 需求信息`,
+    `需求 ID：${snapshot.reqId}`,
+    `对比基线：${snapshot.baseRef}`,
+    `变更规模：\n${stats}`,
+    ``,
+    `# 需求上下文`,
+    requirementContext || "（未找到需求文件）",
+    ``,
+    `# 代码差异（unified diff）`,
+    diffContext || "（无差异内容，可能尚未生成 diff 快照）",
+  ].join("\n")
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ]
 }
 
 /** Replace or append the managed code-review block inside review.md. */

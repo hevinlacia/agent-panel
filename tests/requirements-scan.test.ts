@@ -25,6 +25,8 @@ import {
   replaceAssociatedSession,
   associateSession,
   loadAssociations,
+  DEFAULT_REQ_ID,
+  DEFAULT_PROJECT_NAME,
 } from "../src/requirements.ts"
 
 function freshFixture(): string {
@@ -153,6 +155,29 @@ test("listRequirementsByProject: groups nested requirements under their project"
   assert.ok(wms, "expected WMS project group")
   const ids = wms!.requirements.map((r) => r.id).sort()
   assert.deepEqual(ids, ["0622-flat-under-wms", "0622-mq-x"])
+})
+
+test("listRequirementsByProject: excludes the synthetic default requirement", async () => {
+  const root = freshFixture()
+  // A real requirement under WMS so the list is non-empty.
+  writeMeta(join(root, "WMS", "real-req"), { "req-id": "real-req", title: "Real", status: "开发中" })
+  // An orphan association (reqId has no Hermes dir) plus a session tied
+  // directly to DEFAULT_REQ_ID - both would previously be folded into the
+  // synthetic default requirement.
+  await associateSession("orphan-req", "ses_orphan")
+  await associateSession(DEFAULT_REQ_ID, "ses_default")
+
+  const groups = await listRequirementsByProject()
+  const allIds = groups.flatMap((g) => g.requirements.map((r) => r.id))
+  // The synthetic default requirement must NOT appear in the board.
+  assert.equal(allIds.includes(DEFAULT_REQ_ID), false)
+  // The synthetic default project must NOT appear either (no real req
+  // carries it), even though orphan/default associations exist in the store.
+  assert.equal(groups.some((g) => g.project === DEFAULT_PROJECT_NAME), false)
+  // The real requirement is still listed under WMS.
+  const wms = groups.find((g) => g.project === "WMS")
+  assert.ok(wms, "expected WMS project group")
+  assert.deepEqual(wms!.requirements.map((r) => r.id), ["real-req"])
 })
 
 test("replaceAssociatedSession: swaps placeholder id for the real one", async () => {

@@ -95,6 +95,7 @@ import {
 import {
   buildManagedEnv,
   getConfig,
+  getSafeConfig,
   setConfig,
   initConfig,
   safeEnvVars,
@@ -155,11 +156,14 @@ import {
   readCodeReviewSnapshot,
   runCodeReviewScan,
   saveCodeReviewVerdict,
+  saveCodeReviewAiResult,
+  runAiCodeReview,
   parseUnifiedDiff,
   type CodeReviewDiffLine,
   type CodeReviewFileDiff,
   type CodeReviewSnapshot,
   type CodeReviewStatus,
+  type CodeReviewAiResult,
 } from "./codeReview.ts"
 import {
   detectHighlightLanguage,
@@ -193,11 +197,13 @@ import {
 } from "./experienceMarkers.ts"
 import {
   startAutoSummaryWorker,
+  stopAutoSummaryWorker,
   triggerExecutionForMarker,
   isAutoSummaryWorkerRunning,
 } from "./experienceAutoSummary.ts"
 import {
   startAutoExtractScheduler,
+  stopAutoExtractScheduler,
   isAutoExtractSchedulerRunning,
   POLL_INTERVAL_MS as AUTO_EXTRACT_POLL_MS,
 } from "./autoExtractScheduler.ts"
@@ -223,6 +229,10 @@ import {
   startFullSyncScheduler,
   stopFullSyncScheduler,
 } from "./fullSyncScheduler.ts"
+import {
+  acquireSchedulerLock,
+  releaseSchedulerLock,
+} from "./schedulerLock.ts"
 import {
   getOpencodeProcessQueueStatus,
   runQueuedOpencodeProcess,
@@ -1462,6 +1472,29 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
           <span>点击「刷新 PRO Diff」会先更新本地生产基线，再按需求分支生成逐文件差异。</span>
         </div>
       )}
+
+      <section class="code-review-ai-panel" aria-label="AI 代码审查">
+        <header class="code-review-ai-head">
+          <div class="code-review-ai-head-copy">
+            <h3>AI 代码审查</h3>
+            <p class="muted small">基于代码差异 + 需求文件让 AI 给出 review 建议；模型在 <a href="/settings">Settings</a> 配置。人工 review 后可直接点下方按钮让 AI 再 review 一次。</p>
+          </div>
+          <div class="code-review-ai-head-meta">
+            {snapshot?.aiReview ? (
+              <>
+                <span class="code-review-ai-model"><code>{snapshot.aiReview.model || "未知模型"}</code></span>
+                <span class="muted small">更新于 {formatUpdated(snapshot.aiReview.updatedAt)}</span>
+              </>
+            ) : null}
+          </div>
+        </header>
+        <div class="code-review-ai-actions">
+          <button type="button" id="code-review-ai-btn" class="btn btn-primary" data-req-id={req.id} disabled={!snapshot || allFiles.length === 0} title={!snapshot || allFiles.length === 0 ? "请先生成代码差异" : "让 AI 根据差异和需求文件审查代码"}>🤖 AI 审查代码</button>
+          <span id="code-review-ai-status" class="code-review-ai-status muted small"></span>
+        </div>
+        <textarea id="code-review-ai-result" class="code-review-ai-result" rows={"16"} readonly placeholder="点击「AI 审查代码」后，AI 给出的 review 建议会显示在这里。" spellcheck={false}>{snapshot?.aiReview?.content || ""}</textarea>
+        {snapshot?.aiReview?.error ? <div class="code-review-ai-error">上次审查失败：{snapshot.aiReview.error}</div> : null}
+      </section>
     </section>
   )
 }
@@ -1490,7 +1523,7 @@ const RequirementReviewPage: FC<{
         <script>{`(function(){try{var v=parseFloat(localStorage.getItem('agent-panel:code-review:font-scale'));if(isFinite(v)){document.documentElement.style.setProperty('--code-review-font-scale',String(Math.min(2,Math.max(0.6,v))))}}catch(e){}})();`}</script>
         <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} redirectPath={redirectPath} />
       </section>
-      <script src="/static/req-detail.js?v=20260713-review-fontsize" defer></script>
+      <script src="/static/req-detail.js?v=20260714-ai-review" defer></script>
     </Layout>
   )
 }
@@ -3306,6 +3339,46 @@ app.post("/api/requirement/code-review/verdict", async (c) => {
 })
 
 /**
+ * POST /api/requirement/code-review/ai
+ * Runs an AI code review against the existing diff snapshot + requirement
+ * files, persists the Markdown suggestions into code-review.json, and
+ * returns them as JSON for the review-page button. The model/endpoint/key
+ * come from dashboard config (Settings page); the key is read server-side
+ * only and never echoed back.
+ */
+app.post("/api/requirement/code-review/ai", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const reqId = String(body.reqId || "")
+  if (!reqId) return c.json({ ok: false, error: "Missing reqId" }, 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.json({ ok: false, error: "Requirement not found" }, 404)
+  if (!req.reqDir) return c.json({ ok: false, error: "Requirement has no on-disk directory" }, 400)
+  const snapshot = await readCodeReviewSnapshot(req.reqDir)
+  if (!snapshot) return c.json({ ok: false, error: "请先点击「刷新 PRO Diff」生成代码差异，再进行 AI 审查。" }, 400)
+  if (snapshot.repos.every((r) => !r.diff && r.files.length === 0)) {
+    return c.json({ ok: false, error: "当前代码差异为空，无可审查内容。" }, 400)
+  }
+
+  const cfg = await getConfig()
+  if (!cfg.codeReviewBaseUrl.trim() || !cfg.codeReviewModel.trim() || !cfg.codeReviewApiKey.trim()) {
+    return c.json({ ok: false, error: "尚未配置 AI 代码审查模型，请在 Settings 页面填写 Base URL / API Key / Model。" }, 400)
+  }
+
+  const aiReview = await runAiCodeReview(req.reqDir, snapshot, {
+    baseUrl: cfg.codeReviewBaseUrl,
+    apiKey: cfg.codeReviewApiKey,
+    model: cfg.codeReviewModel,
+  })
+  if (aiReview.error) {
+    // Still persist a failed attempt so the UI can surface the error.
+    await saveCodeReviewAiResult(req.reqDir, snapshot, aiReview)
+    return c.json({ ok: false, error: aiReview.error, aiReview }, 200)
+  }
+  const next = await saveCodeReviewAiResult(req.reqDir, snapshot, aiReview)
+  return c.json({ ok: true, aiReview: next.aiReview })
+})
+
+/**
  * POST /api/requirement/impact-template
  * Creates `impact.md` with the standard pre-coding safety template.
  * Existing files are preserved by appending only missing template sections.
@@ -3731,7 +3804,50 @@ app.get("/schedulers", async (c) => {
 // Settings page + config API
 // ---------------------------------------------------------------------------
 
-const SettingsPage: FC<{ config: AppConfig; githubRepos: { path: string; label: string; remote: string }[] }> = ({ config, githubRepos }) => {
+const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean } }> = ({ config }) => (
+  <section class="sched-config-panel code-review-config-panel" aria-label="AI 代码审查配置">
+    <div class="sched-config-panel-head">
+      <div>
+        <p class="sched-eyebrow">AI CODE REVIEW</p>
+        <h2 class="op-section-title">AI 代码审查</h2>
+        <p class="muted small">配置需求代码差异页面「AI 审查代码」使用的 OpenAI 兼容接口。API Key 仅保存在本地 config.json，不会回显到页面。</p>
+      </div>
+    </div>
+    <form id="code-review-config-form" class="sched-config-form">
+      <div class="sched-config-grid">
+        <article class="sched-config-card sched-config-card-wide">
+          <div class="sched-config-card-top">
+            <span class="sched-config-pill">LLM</span>
+            <div>
+              <h3>模型接入</h3>
+              <p class="muted small">Base URL 需为 OpenAI 兼容的 <code>/v1</code> 端点，例如 <code>https://api.deepseek.com/v1</code>；代码差异页面会调用 <code>{`{baseUrl}/chat/completions`}</code>。</p>
+            </div>
+          </div>
+          <div class="sched-config-controls">
+            <label class="settings-field">
+              <span class="settings-label">Base URL</span>
+              <input type="text" id="cfg-code-review-base" name="codeReviewBaseUrl" value={config.codeReviewBaseUrl} class="settings-input" placeholder="https://api.deepseek.com/v1" spellcheck={false} autocomplete="off" />
+            </label>
+            <label class="settings-field">
+              <span class="settings-label">Model</span>
+              <input type="text" id="cfg-code-review-model" name="codeReviewModel" value={config.codeReviewModel} class="settings-input" placeholder="deepseek-chat" spellcheck={false} autocomplete="off" />
+            </label>
+          </div>
+          <label class="settings-field">
+            <span class="settings-label">API Key {config.codeReviewApiKeySet ? <span class="settings-saved">✓ 已设置</span> : <span class="is-warn">未设置</span>}</span>
+            <input type="password" id="cfg-code-review-key" name="codeReviewApiKey" class="settings-input" placeholder={config.codeReviewApiKeySet ? "已设置，输入新值覆盖（留空保持不变）" : "粘贴 API Key"} autocomplete="off" spellcheck={false} />
+          </label>
+        </article>
+      </div>
+      <div class="sched-config-actions">
+        <button type="submit" class="btn btn-primary">保存 AI 代码审查设置</button>
+        <span id="code-review-config-saved" class="settings-saved muted small" hidden>✓ 已保存</span>
+      </div>
+    </form>
+  </section>
+)
+
+const SettingsPage: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; githubRepos: { path: string; label: string; remote: string }[] }> = ({ config, githubRepos }) => {
   return (
   <Layout title="Settings" active="settings">
     <div class="settings-page">
@@ -3742,6 +3858,7 @@ const SettingsPage: FC<{ config: AppConfig; githubRepos: { path: string; label: 
       </div>
 
       <SchedulerConfigPanel config={config} githubRepos={githubRepos} />
+      <CodeReviewConfigPanel config={config} />
     </div>
     <script src="/static/config.js" defer></script>
   </Layout>
@@ -3749,7 +3866,7 @@ const SettingsPage: FC<{ config: AppConfig; githubRepos: { path: string; label: 
 }
 
 app.get("/settings", async (c) => {
-  const [cfg, githubRepos] = await Promise.all([getConfig(), listDeveloperGithubRepos()])
+  const [cfg, githubRepos] = await Promise.all([getSafeConfig(), listDeveloperGithubRepos()])
   return c.html(<SettingsPage config={cfg} githubRepos={githubRepos} />)
 })
 
@@ -3922,7 +4039,7 @@ app.post("/api/env-vars/extract-tokens", async (c) => {
 })
 
 app.get("/api/config", async (c) => {
-  const config = await getConfig()
+  const config = await getSafeConfig()
   return c.json({ ...config, envVars: await safeEnvVars(config) })
 })
 
@@ -3940,12 +4057,17 @@ app.post("/api/config", async (c) => {
   if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
   if (typeof body.autoValuation === "boolean") partial.autoValuation = body.autoValuation
   if (typeof body.valuationThreshold === "number" && body.valuationThreshold > 0) partial.valuationThreshold = Math.floor(body.valuationThreshold)
+  // AI code review: empty apiKey means "keep existing" (handled in setConfig).
+  if (typeof body.codeReviewBaseUrl === "string") partial.codeReviewBaseUrl = body.codeReviewBaseUrl.trim()
+  if (typeof body.codeReviewModel === "string") partial.codeReviewModel = body.codeReviewModel.trim()
+  if (typeof body.codeReviewApiKey === "string" && body.codeReviewApiKey.trim()) partial.codeReviewApiKey = body.codeReviewApiKey.trim()
   const next = await setConfig(partial)
   if (shouldRestartFullSyncScheduler) {
     stopFullSyncScheduler()
     startFullSyncScheduler()
   }
-  return c.json({ ...next, envVars: await safeEnvVars(next) })
+  const safe = await getSafeConfig()
+  return c.json({ ...safe, envVars: await safeEnvVars(next) })
 })
 
 app.get("/api/pi-config", async (c) => {
@@ -4798,7 +4920,11 @@ async function handleTerminalSocket(
   }
 }
 
+// Track live terminal WebSockets for graceful drain during hot-deploy shutdown.
+const liveTerminals = new Set<unknown>()
+
 fastify.get("/ws/session-terminal", { websocket: true }, (socket, request) => {
+  liveTerminals.add(socket)
   const state = { session: null as TerminalSession | null, exited: false }
 
   // Attach listeners synchronously before async work (per @fastify/websocket).
@@ -4812,11 +4938,13 @@ fastify.get("/ws/session-terminal", { websocket: true }, (socket, request) => {
   })
 
   socket.on("close", () => {
+    liveTerminals.delete(socket)
     if (state.session) { killSession(state.session); state.session = null }
     state.exited = true
   })
 
   socket.on("error", () => {
+    liveTerminals.delete(socket)
     if (state.session) { killSession(state.session); state.session = null }
     state.exited = true
   })
@@ -4840,10 +4968,71 @@ await initConfig()
 await initAutoDriveJobs()
 await initMarkers()
 
-startAutoSummaryWorker()
-startAutoExtractScheduler()
-startAutoValuationWorker()
-startFullSyncScheduler()
+// Blue/green: only the backend holding the scheduler lock runs background
+// workers. The inactive slot serves HTTP/WS only and polls until it can
+// acquire the lock (the old backend releases it during a deploy's drain).
+let ownsScheduler = false
+let schedulerLockRetry: ReturnType<typeof setInterval> | null = null
+
+function startSchedulersIfOwned(): void {
+  if (ownsScheduler) return
+  if (acquireSchedulerLock()) {
+    ownsScheduler = true
+    startAutoSummaryWorker()
+    startAutoExtractScheduler()
+    startAutoValuationWorker()
+    startFullSyncScheduler()
+    console.log("[scheduler] lock acquired, schedulers started")
+  }
+}
+
+function stopSchedulers(): void {
+  if (!ownsScheduler) return
+  stopAutoSummaryWorker()
+  stopAutoExtractScheduler()
+  stopAutoValuationWorker()
+  stopFullSyncScheduler()
+  releaseSchedulerLock()
+  ownsScheduler = false
+  console.log("[scheduler] lock released, schedulers stopped")
+}
+
+startSchedulersIfOwned()
+schedulerLockRetry = setInterval(startSchedulersIfOwned, 2000)
+if (typeof schedulerLockRetry.unref === "function") schedulerLockRetry.unref()
 
 await fastify.listen({ port, host: "0.0.0.0" })
-console.log(`Agent Panel running at http://localhost:${port}`)
+console.log(`Agent Panel backend running at http://localhost:${port}`)
+
+// Graceful shutdown (SIGTERM from systemd stop / hot-deploy). Drain live
+// terminal WebSockets up to 5 min, then force-close and exit.
+let shuttingDown = false
+const DRAIN_TIMEOUT_MS = 5 * 60 * 1000
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] received ${signal}, draining...`)
+  if (schedulerLockRetry) clearInterval(schedulerLockRetry)
+  stopSchedulers()
+
+  const deadline = Date.now() + DRAIN_TIMEOUT_MS
+  while (liveTerminals.size > 0 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  for (const ws of liveTerminals) {
+    try {
+      ;(ws as { close: (code?: number, reason?: string) => void }).close(1001, "server shutting down")
+    } catch {
+      // already closed
+    }
+  }
+  liveTerminals.clear()
+
+  await fastify.close()
+  console.log("[shutdown] complete")
+  process.exit(0)
+}
+
+process.on("SIGTERM", () => { void gracefulShutdown("SIGTERM") })
+process.on("SIGINT", () => { void gracefulShutdown("SIGINT") })

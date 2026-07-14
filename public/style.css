@@ -3193,6 +3193,70 @@ form.req-session-inline-form {
 .code-review-context-repo .is-ok { color: var(--green); }
 .code-review-context-repo .is-warn { padding: 0; background: transparent; }
 
+/* AI code-review panel: full-width section below the three-pane diff workspace. */
+.code-review-ai-panel {
+  margin-top: 16px;
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: 8px;
+  background: rgba(34, 211, 238, 0.035);
+  padding: 14px 16px;
+}
+.code-review-ai-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.code-review-ai-head-copy h3 { margin: 0 0 2px; font-size: 0.92rem; color: var(--text-strong); }
+.code-review-ai-head-copy .muted.small { margin: 0; max-width: 640px; }
+.code-review-ai-head-copy .muted.small a { color: var(--cyan); }
+.code-review-ai-head-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.code-review-ai-model code { font-size: 0.72rem; color: var(--cyan); }
+.code-review-ai-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.code-review-ai-status.is-warn { color: var(--red, #f87171); }
+.code-review-ai-result {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.code-review-ai-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: var(--red, #f87171);
+  font-size: 0.76rem;
+}
+
+/* Settings: AI code-review config panel reuses .sched-config-* shells. */
+.code-review-config-panel { margin-top: 20px; }
+.code-review-config-panel .sched-config-card-wide .settings-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.code-review-config-panel .sched-config-actions { margin-top: 8px; }
+
 @media (max-width: 1450px) {
   .code-review-layout { grid-template-columns: 250px minmax(430px, 1fr) 285px; }
   .code-review-toolbar { grid-template-columns: minmax(180px, 1fr) auto; }

@@ -83,11 +83,6 @@ function msUntilNextConfiguredTime(times: readonly string[], now: Date = new Dat
   }))
 }
 
-function writeGithubProjectsConfig(_repoPaths: readonly string[]): string | null {
-  // Deprecated: sync-all-to-github.sh handles all personal repos automatically.
-  return null
-}
-
 /** Run one full sync via sync-all-to-github.sh, then optionally pull selected GitHub repos. */
 export function triggerFullSync(opts?: {
   syncScript?: string
