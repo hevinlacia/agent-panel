@@ -1,0 +1,58 @@
+src/server.tsx
+  41798521152150ce 119,253-264,1338,1372-1376,1391-1392,1395,1461,1518,1521,1523-1524,1530-1531,1534-1538,1549-1551,1568,1570,2700,2703,2705-2706,2847,3454-3460,3476-3478,3481-3539,3969-3971,3977,3982-4006,4011-4012,4021,4030-4031,4041-4042,4044,4055,4063-4068,4261,5405
+src/branchScope.ts
+  41798521152150ce 16,55-61,123-124
+tests/codeReview.test.ts
+  41798521152150ce 19,249-256
+web/src/App.tsx
+  07b4a7799d784936 647-655,668
+public/req-detail.js
+  41798521152150ce 450-452,457-468,473-474,483,485,496-527
+web/src/styles.css
+  07b4a7799d784936 309
+src/codeReview.ts
+  41798521152150ce 11,171-187,192-199,207,211-215,224,718-724,738,751
+public/config.js
+  41798521152150ce 77,81
+src/codeReviewJob.ts
+  41798521152150ce 1-247
+src/config.ts
+  41798521152150ce 72-77,263,310,343,355
+public/style.css
+  41798521152150ce 3236-3237,3246-3251,3255-3262
+.agents/skills/req-branches-update/SKILL.md
+  41798521152150ce 53,107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "fe75916ece9800adbb6d3f635a9a04eadccdfe44",
+  "prompts": {
+    "07b4a7799d784936": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f5f4e-3314-79b4-ab7c-c35ca53d1be1",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 1,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    },
+    "41798521152150ce": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f63ac-e788-7d78-a957-f11a31a8128e",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 555,
+      "total_deletions": 68,
+      "accepted_lines": 555,
+      "overriden_lines": 0
+    }
+  }
+}
