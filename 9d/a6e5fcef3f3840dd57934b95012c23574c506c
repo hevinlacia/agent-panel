@@ -1,0 +1,27 @@
+src/codeReview.ts
+  41798521152150ce 110-113,179-180,182,184-187,190-192,194,204-205,207-209,215,217-218,222-223,232-234
+src/server.tsx
+  41798521152150ce 1390-1393,3391-3392,3395-3397,3413
+tests/codeReview.test.ts
+  41798521152150ce 258-265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9da6e5fcef3f3840dd57934b95012c23574c506c",
+  "prompts": {
+    "41798521152150ce": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f63ac-e788-7d78-a957-f11a31a8128e",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 25,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
