@@ -112,6 +112,21 @@ test("scanHermesRequirements: flat legacy layout — <req-id>/meta.md", async ()
   assert.equal(typeof reqs[0].project, "string")
 })
 
+test("scanHermesRequirements: flat requirement with frontmatter project is not tagged 默认项目", async () => {
+  const root = freshFixture()
+  writeMeta(join(root, "flat-wms"), { "req-id": "flat-wms", title: "Flat WMS", status: "开发中", project: "WMS" })
+  const reqs = await scanHermesRequirements()
+  const r = reqs.find((x) => x.id === "flat-wms")!
+  assert.ok(r, "expected flat-wms in scan output")
+  // Explicit frontmatter project wins; the DEFAULT_PROJECT_NAME fallback
+  // must NOT be injected as a second project tag (would duplicate the
+  // requirement across WMS and 默认项目 board groups).
+  assert.deepEqual(r.projects, ["WMS"])
+  assert.equal(r.project, "WMS")
+  const groups = await listRequirementsByProject()
+  assert.equal(groups.some((g) => g.project === DEFAULT_PROJECT_NAME), false)
+})
+
 test("scanHermesRequirements: project.json assigns flat requirement to a project", async () => {
   const root = freshFixture()
   const dir = join(root, "standalone-req")

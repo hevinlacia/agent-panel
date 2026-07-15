@@ -120,6 +120,13 @@ export interface AppConfig {
   /** Developer workspace GitHub repositories to include in the full sync, as absolute paths or ~/Developer-relative paths. */
   fullSyncGithubRepos: string[]
   /**
+   * Requirement scan roots. Each root is searched for a `.agents/req/` or
+   * `req/` subdirectory; requirements found there are loaded by the
+   * dashboard. Absolute paths, `~/`-prefixed paths, or names relative to
+   * `~/Developer` are all accepted. Replaces the old `~/.agents/req/` scan.
+   */
+  requirementScanRoots: string[]
+  /**
    * Legacy dashboard-managed variables from older versions. New writes go
    * to OpenCode env files so the SOPS-backed workstation sync can persist
    * them. These are still read for migration/fallback compatibility.
@@ -270,6 +277,7 @@ const DEFAULTS: AppConfig = {
   fullSyncSchedule: true,
   fullSyncTimes: ["12:00", "18:00", "20:30", "23:30"],
   fullSyncGithubRepos: [],
+  requirementScanRoots: [],
   envVars: [],
 }
 
@@ -317,6 +325,7 @@ async function load(): Promise<AppConfig> {
       fullSyncSchedule: parsed.fullSyncSchedule ?? DEFAULTS.fullSyncSchedule,
       fullSyncTimes: normalizeSyncTimes(parsed.fullSyncTimes),
       fullSyncGithubRepos: normalizeDeveloperRepoPaths(parsed.fullSyncGithubRepos),
+      requirementScanRoots: normalizeRequirementScanRoots(parsed.requirementScanRoots),
       envVars: normalizeEnvVars(parsed.envVars),
     }
   } catch {
@@ -340,7 +349,7 @@ export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "codeReviewPiModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "codeReviewPiModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "requirementScanRoots" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -362,6 +371,7 @@ export async function setConfig(
     fullSyncSchedule: partial.fullSyncSchedule ?? cur.fullSyncSchedule,
     fullSyncTimes: partial.fullSyncTimes ? normalizeSyncTimes(partial.fullSyncTimes) : cur.fullSyncTimes,
     fullSyncGithubRepos: partial.fullSyncGithubRepos ? normalizeDeveloperRepoPaths(partial.fullSyncGithubRepos) : cur.fullSyncGithubRepos,
+    requirementScanRoots: partial.requirementScanRoots ? normalizeRequirementScanRoots(partial.requirementScanRoots) : cur.requirementScanRoots,
     envVars: partial.envVars ? normalizeEnvVars(partial.envVars) : cur.envVars,
   }
   _cache = next
@@ -586,6 +596,19 @@ function normalizeDeveloperRepoPaths(value: unknown): string[] {
     const normalized = resolve(expanded)
     if (normalized === developerRoot || !normalized.startsWith(`${developerRoot}/`)) continue
     seen.add(normalized)
+  }
+  return [...seen].sort()
+}
+
+function normalizeRequirementScanRoots(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  for (const raw of value) {
+    if (typeof raw !== "string") continue
+    const trimmed = raw.trim()
+    if (!trimmed || trimmed.includes("\0")) continue
+    const expanded = trimmed.startsWith("~/") ? join(homedir(), trimmed.slice(2)) : trimmed.startsWith("/") ? trimmed : join(homedir(), "Developer", trimmed)
+    seen.add(resolve(expanded))
   }
   return [...seen].sort()
 }

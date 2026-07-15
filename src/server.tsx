@@ -4254,6 +4254,7 @@ app.post("/api/config", async (c) => {
   if (typeof body.fullSyncSchedule === "boolean") partial.fullSyncSchedule = body.fullSyncSchedule
   if (Array.isArray(body.fullSyncTimes)) partial.fullSyncTimes = body.fullSyncTimes
   if (Array.isArray(body.fullSyncGithubRepos)) partial.fullSyncGithubRepos = body.fullSyncGithubRepos
+  if (Array.isArray(body.requirementScanRoots)) partial.requirementScanRoots = body.requirementScanRoots
   if (typeof body.extractModel === "string" && body.extractModel.trim()) partial.extractModel = body.extractModel.trim()
   if (typeof body.minChangeMessages === "number" && body.minChangeMessages > 0) partial.minChangeMessages = Math.floor(body.minChangeMessages)
   if (typeof body.autoValuation === "boolean") partial.autoValuation = body.autoValuation

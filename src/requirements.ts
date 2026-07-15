@@ -1,9 +1,10 @@
 /**
  * Requirement (需求) data layer — Hermes-backed.
  *
- * Requirement records live as Markdown directories under `~/.agents/req/`,
- * managed by the Hermes `req-tracker` skill. The dashboard owns only
- * session associations, persisted at
+ * Requirement records live as Markdown directories discovered under the
+ * configured `requirementScanRoots` (each root's `.agents/req/` or `req/`
+ * subdirectory), managed by the Hermes `req-tracker` skill. The dashboard
+ * owns only session associations, persisted at
  * `~/.local/share/agent-panel/associations.json`.
  * `alignment.md` is the product/business alignment brief for the first
  * requirement phase; `prd.md` is kept as the original-source trace.
@@ -24,6 +25,7 @@ import { randomBytes } from "node:crypto"
 import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
 import { readRequirementState } from "./requirementState.ts"
 import type { EffortEstimate } from "./effortEstimation.ts"
+import { getConfig } from "./config.ts"
 
 const REQUIREMENT_PROJECT_FILE = "project.json"
 const EFFORT_ESTIMATE_FILE = "effort-estimate.json"
@@ -184,18 +186,21 @@ export interface Requirement {
 export const DEFAULT_REQ_ID = "__default__"
 export const DEFAULT_PROJECT_NAME = "默认项目"
 
-const DEFAULT_REQ_DIR = join(homedir(), ".agents", "req")
-let _reqDir: string = DEFAULT_REQ_DIR
-
 /**
- * Override the Hermes requirement scan root. Test-only — production code
- * relies on the default `~/.agents/req/` path. Mirrors `_setStorePath`.
+ * When set (by tests via `_setReqDir`), scanning is confined to this single
+ * requirement directory and ignores the configured scan roots. `null` in
+ * production, where `scanHermesRequirements` derives requirement directories
+ * from `requirementScanRoots` in the dashboard config. Mirrors `_setStorePath`.
  */
-export function _setReqDir(path: string): void {
+let _reqDir: string | null = null
+
+/** Override the requirement scan directory for tests; pass `null` to restore
+ * config-driven scanning. */
+export function _setReqDir(path: string | null): void {
   _reqDir = path
 }
 
-export function _getReqDir(): string {
+export function _getReqDir(): string | null {
   return _reqDir
 }
 
@@ -538,7 +543,11 @@ async function loadRequirementFromDir(
   let title = dirName
   let status: ReqStatus = "开发中"
   let category: ReqCategory = "需求"
-  let projects = uniqueStrings(parentProjects.length > 0 ? parentProjects : [DEFAULT_PROJECT_NAME])
+  // Explicit project sources (frontmatter + project.json) are collected
+  // first; they take precedence over inherited parentProjects / the
+  // DEFAULT_PROJECT_NAME fallback, so a flat requirement that declares its
+  // own `project:` is not also tagged 默认项目.
+  let frontmatterProjects: string[] = []
   let description = ""
   let id = dirName
   let createdAt = st.mtimeMs
@@ -558,10 +567,9 @@ async function loadRequirementFromDir(
       const rawCategory = normalizeReqCategory(fields["category"])
       if (rawCategory) category = rawCategory
       if (fields["project"] && fields["project"].trim()) {
-        projects = uniqueStrings([fields["project"].trim(), ...projects])
+        frontmatterProjects.push(fields["project"].trim())
       }
-      const frontmatterProjects = normalizeProjectList(fields["projects"])
-      if (frontmatterProjects.length > 0) projects = uniqueStrings([...frontmatterProjects, ...projects])
+      frontmatterProjects.push(...normalizeProjectList(fields["projects"]))
       const sd = parseStartDate(fields["start-date"])
       if (sd !== null) createdAt = sd
       const desc = firstParagraph(fm.body)
@@ -579,8 +587,14 @@ async function loadRequirementFromDir(
   }
 
   const projectFile = await readRequirementProjectFile(dirPath)
-  if (projectFile.projects) projects = uniqueStrings([...projectFile.projects, ...projects])
   if (projectFile.groupPath) groupPath = projectFile.groupPath
+  // Explicit sources win; otherwise inherit ancestor grouping projects;
+  // otherwise the synthetic default project. Precedence (project.json >
+  // frontmatter > inherited > default) matches the legacy accumulation.
+  const explicitProjects = uniqueStrings([...(projectFile.projects ?? []), ...frontmatterProjects])
+  const projects = explicitProjects.length > 0
+    ? explicitProjects
+    : uniqueStrings(parentProjects.length > 0 ? parentProjects : [DEFAULT_PROJECT_NAME])
   const project = projects[0] ?? DEFAULT_PROJECT_NAME
 
   // state.json wins over both frontmatter and the markdown-list status.
@@ -719,16 +733,45 @@ async function collectRequirementsRecursive(
   }
 }
 
-export async function scanHermesRequirements(): Promise<Requirement[]> {
-  const reqDir = _reqDir
-  if (!existsSync(reqDir)) return []
+/**
+ * Resolve the requirement directories to scan. When `_reqDir` is set (test
+ * override), scanning is confined to that single directory. Otherwise the
+ * directories are derived from `requirementScanRoots` in the dashboard
+ * config: each root contributes its `.agents/req/` and/or `req/`
+ * subdirectory if present. Production no longer reads `~/.agents/req/`.
+ */
+async function resolveReqScanDirs(): Promise<string[]> {
+  if (_reqDir) return [_reqDir]
+  const cfg = await getConfig()
+  const roots = cfg.requirementScanRoots ?? []
+  const dirs: string[] = []
+  const seen = new Set<string>()
+  for (const root of roots) {
+    for (const sub of [".agents/req", "req"]) {
+      const candidate = join(root, sub)
+      if (existsSync(candidate) && !seen.has(candidate)) {
+        seen.add(candidate)
+        dirs.push(candidate)
+      }
+    }
+  }
+  return dirs
+}
+
+/**
+ * Scan one requirement directory: iterate its top-level entries. A directory
+ * with `meta.md` is a flat requirement whose project comes from frontmatter;
+ * a directory without `meta.md` is a project-level grouping whose name
+ * becomes the inherited project tag. Children are discovered recursively
+ * via `collectRequirementsRecursive`.
+ */
+async function scanReqDir(reqDir: string, out: Requirement[]): Promise<void> {
   let topEntries: string[]
   try {
     topEntries = await readdir(reqDir)
   } catch {
-    return []
+    return
   }
-  const out: Requirement[] = []
   for (const name of topEntries) {
     if (name === "README.md" || name.startsWith(".")) continue
     const topPath = join(reqDir, name)
@@ -740,24 +783,35 @@ export async function scanHermesRequirements(): Promise<Requirement[]> {
     }
     if (!topSt.isDirectory()) continue
 
-    // Resolve this directory's display project name. `_default` maps to
-    // the synthetic default project name.
-    const projectDisplay =
-      name === "_default" ? DEFAULT_PROJECT_NAME : name
-
+    // `_default` maps to the synthetic default project name; any other
+    // meta-less top dir is a project grouping whose name is inherited.
+    const projectDisplay = name === "_default" ? DEFAULT_PROJECT_NAME : name
     const hasOwnMeta = existsSync(join(topPath, "meta.md"))
 
     if (hasOwnMeta) {
-      // Legacy flat layout: ~/.agents/req/<req-id>/meta.md
-      // project comes from frontmatter or defaults to DEFAULT_PROJECT_NAME.
-      // Use collectRequirementsRecursive so children are discovered too.
+      // Flat layout: <req-id>/meta.md. Project comes from frontmatter or
+      // defaults to DEFAULT_PROJECT_NAME; children are still discovered.
       await collectRequirementsRecursive(topPath, [DEFAULT_PROJECT_NAME], [], out)
       continue
     }
-
-    // Project-level directory. Walk it recursively, accumulating the
-    // intermediate grouping path under `groupPath` for each leaf.
     await collectRequirementsRecursive(topPath, [projectDisplay], [], out)
+  }
+}
+
+export async function scanHermesRequirements(): Promise<Requirement[]> {
+  const reqDirs = await resolveReqScanDirs()
+  const out: Requirement[] = []
+  const seenIds = new Set<string>()
+  for (const reqDir of reqDirs) {
+    if (!existsSync(reqDir)) continue
+    const batch: Requirement[] = []
+    await scanReqDir(reqDir, batch)
+    for (const r of batch) {
+      // Dedupe by id across overlapping scan roots (keeps first occurrence).
+      if (seenIds.has(r.id)) continue
+      seenIds.add(r.id)
+      out.push(r)
+    }
   }
   return out
 }
@@ -776,7 +830,7 @@ function buildDefaultRequirement(sessionIds: string[]): Requirement {
     project: DEFAULT_PROJECT_NAME,
     groupPath: [],
     description:
-      "未关联到具体需求的 session 归属到此默认需求。如需独立管理，可在 ~/.agents/req/ 下创建对应需求目录后重新关联。",
+      "未关联到具体需求的 session 归属到此默认需求。如需独立管理，可在需求扫描目录下创建对应需求目录后重新关联。",
     sessionIds,
     createdAt: now,
     updatedAt: now,
