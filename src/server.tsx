@@ -157,7 +157,6 @@ import {
 } from "./impactAssessment.ts"
 import {
   CODE_REVIEW_STATUSES,
-  DEFAULT_CODE_REVIEW_BASE_REF,
   readCodeReviewSnapshot,
   runCodeReviewScan,
   saveCodeReviewVerdict,
@@ -1388,11 +1387,12 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
         <form method="post" action="/api/requirement/code-review/scan" class="code-review-scan-form">
           <input type="hidden" name="reqId" value={req.id} />
           <input type="hidden" name="redirect" value={redirectPath} />
-          <label class="field-label" for={`code-review-base-${req.id}`}>基线兜底</label>
-          <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" title="前端仓库自动用 origin/production，后端自动用 origin/master；此值仅在 branches.json 未指定 baseRef 且无法自动判断时使用" />
+          <label class="field-label" for={`code-review-base-fe-${req.id}`}>前端基线</label>
+          <input id={`code-review-base-fe-${req.id}`} name="frontendBaseRef" value={snapshot?.frontendBaseRef || "origin/production"} placeholder="origin/production" />
+          <label class="field-label" for={`code-review-base-be-${req.id}`}>后端基线</label>
+          <input id={`code-review-base-be-${req.id}`} name="backendBaseRef" value={snapshot?.backendBaseRef || "origin/master"} placeholder="origin/master" />
           <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
         </form>
-        <p class="muted small code-review-base-hint">基线自动判断：前端用 origin/production，后端用 origin/master。上方输入仅作为无法自动判断时的兜底；在 branches.json 的 repo 上设置 <code>baseRef</code> 可逐仓库精确指定。</p>
         <button type="button" id="branch-scope-ai-btn" class="btn btn-secondary" data-req-id={req.id} title="调用 AI 读取 branch.md 生成精确的 branches.json">🤖 提取 branches.json</button>
         <span id="branch-scope-ai-status" class="branch-scope-ai-status muted small"></span>
         <div class="code-review-total-metrics">
@@ -3388,10 +3388,13 @@ app.post("/api/requirement/category", async (c) => {
 app.post("/api/requirement/code-review/scan", async (c) => {
   const form = await c.req.formData()
   const reqId = String(form.get("reqId") || "")
-  const baseRef = String(form.get("baseRef") || DEFAULT_CODE_REVIEW_BASE_REF).trim() || DEFAULT_CODE_REVIEW_BASE_REF
+  const frontendBaseRef = String(form.get("frontendBaseRef") || "").trim() || "origin/production"
+  const backendBaseRef = String(form.get("backendBaseRef") || "").trim() || "origin/master"
   const redirectBack = String(form.get("redirect") || "") || `/requirement?id=${encodeURIComponent(reqId)}`
   if (!reqId) return c.text("Missing reqId", 400)
-  if (/\s/.test(baseRef) || baseRef.length > 120) return c.text("Invalid baseRef", 400)
+  for (const ref of [frontendBaseRef, backendBaseRef]) {
+    if (/\s/.test(ref) || ref.length > 120) return c.text("Invalid baseRef", 400)
+  }
   const req = await getRequirement(reqId)
   if (!req) return c.text("Requirement not found", 404)
   if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
@@ -3407,7 +3410,7 @@ app.post("/api/requirement/code-review/scan", async (c) => {
   }
 
   try {
-    await runCodeReviewScan(req.reqDir, req.id, scope, { baseRef })
+    await runCodeReviewScan(req.reqDir, req.id, scope, { frontendBaseRef, backendBaseRef })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return c.text(`Failed to scan code review diff: ${msg}`, 500)

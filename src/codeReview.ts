@@ -107,6 +107,10 @@ export interface CodeReviewSnapshot {
   reqId: string
   updatedAt: number
   baseRef: string
+  /** Base ref used for frontend repos this scan (origin/production by default). */
+  frontendBaseRef?: string
+  /** Base ref used for backend/PDA/infra repos this scan (origin/master by default). */
+  backendBaseRef?: string
   sourceFallback?: boolean
   repos: CodeReviewRepoSnapshot[]
   verdict?: CodeReviewVerdict
@@ -172,17 +176,22 @@ export async function readCodeReviewSnapshot(reqDir: string): Promise<CodeReview
  * Auto-detect the production diff base ref for a WMS repo. Mirrors the rule
  * in the WMS AGENTS.md Worktree Branch Rule and `git-wms-wt.py`: frontend
  * repos (role=前端 or path under `frontend/`) use `origin/production` as
- * the PRO base; backend/PDA/infra repos use `origin/master`. Callers should
+ * the PRO base; backend/PDA/infra repos use `origin/master`. The default
+ * refs come from the caller (the review-page form); callers should
  * prefer an explicit `BranchRepo.baseRef` from branches.json first, then
- * fall back to this detection, then to the caller-supplied baseRef.
+ * this detection.
  */
-export function detectDefaultBaseRef(repo: Pick<BranchRepo, "role" | "path">): string {
+export function detectDefaultBaseRef(
+  repo: Pick<BranchRepo, "role" | "path">,
+  opts: { frontendBaseRef?: string; backendBaseRef?: string } = {},
+): string {
   const role = (repo.role || "").trim()
   const path = (repo.path || "").trim()
-  if (role === "前端" || /(^|\/)frontend\//i.test(path)) {
-    return "origin/production"
+  const isFrontend = role === "前端" || /(^|\/)frontend\//i.test(path)
+  if (isFrontend) {
+    return (opts.frontendBaseRef || "").trim() || "origin/production"
   }
-  return "origin/master"
+  return (opts.backendBaseRef || "").trim() || "origin/master"
 }
 
 /**
@@ -192,27 +201,26 @@ export function detectDefaultBaseRef(repo: Pick<BranchRepo, "role" | "path">): s
  *
  * Per-repo base ref resolution priority:
  *   1. explicit `baseRef` in branches.json (`BranchRepo.baseRef`)
- *   2. auto-detect (`detectDefaultBaseRef`: frontend -> origin/production)
- *   3. caller-supplied `opts.baseRef` as a last-resort fallback
+ *   2. auto-detect via `detectDefaultBaseRef` using the caller-supplied
+ *      frontend/backend base refs (defaults: origin/production, origin/master)
  *
- * The snapshot-level `baseRef` records the fallback used, not necessarily
- * every repo's actual base; each repo carries its own resolved `baseRef`.
+ * The snapshot records both `frontendBaseRef` and `backendBaseRef` so the
+ * review-page form can show the values used last scan. Each repo carries
+ * its own resolved `baseRef`.
  */
 export async function runCodeReviewScan(
   reqDir: string,
   reqId: string,
   scope: BranchScope,
-  opts: { baseRef?: string } = {},
+  opts: { frontendBaseRef?: string; backendBaseRef?: string } = {},
 ): Promise<CodeReviewSnapshot> {
-  const fallbackBaseInfo = parseBaseRef(opts.baseRef || DEFAULT_CODE_REVIEW_BASE_REF)
+  const frontendBaseRef = (opts.frontendBaseRef || "").trim() || "origin/production"
+  const backendBaseRef = (opts.backendBaseRef || "").trim() || "origin/master"
   const repos: CodeReviewRepoSnapshot[] = []
   for (const repo of scope.repos) {
     const branches = repo.branches.length > 0 ? repo.branches : [""]
-    const resolvedBaseRef = repo.baseRef?.trim() || detectDefaultBaseRef(repo)
-    const baseInfo =
-      resolvedBaseRef === fallbackBaseInfo.baseRef
-        ? fallbackBaseInfo
-        : parseBaseRef(resolvedBaseRef)
+    const resolvedBaseRef = repo.baseRef?.trim() || detectDefaultBaseRef(repo, { frontendBaseRef, backendBaseRef })
+    const baseInfo = parseBaseRef(resolvedBaseRef)
     for (const branch of branches) {
       repos.push(await scanRepoBranch(repo, branch, baseInfo))
     }
@@ -221,7 +229,9 @@ export async function runCodeReviewScan(
     version: 1,
     reqId,
     updatedAt: Date.now(),
-    baseRef: fallbackBaseInfo.baseRef,
+    baseRef: backendBaseRef,
+    frontendBaseRef,
+    backendBaseRef,
     sourceFallback: scope.fallback || undefined,
     repos,
   }

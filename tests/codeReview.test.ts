@@ -255,3 +255,11 @@ test("detectDefaultBaseRef returns origin/production for frontend repos", () => 
   assert.equal(detectDefaultBaseRef({ role: "PDA", path: "~/Developer/company/WMS/pda/jt-cloudwarehouse/" }), "origin/master")
   assert.equal(detectDefaultBaseRef({ role: "", path: "" }), "origin/master")
 })
+
+test("detectDefaultBaseRef honors caller-supplied frontend/backend base refs", () => {
+  assert.equal(detectDefaultBaseRef({ role: "前端", path: "" }, { frontendBaseRef: "origin/main", backendBaseRef: "origin/dev" }), "origin/main")
+  assert.equal(detectDefaultBaseRef({ role: "后端", path: "" }, { frontendBaseRef: "origin/main", backendBaseRef: "origin/dev" }), "origin/dev")
+  // empty opts fall back to the built-in defaults
+  assert.equal(detectDefaultBaseRef({ role: "前端", path: "" }, { frontendBaseRef: "", backendBaseRef: "" }), "origin/production")
+  assert.equal(detectDefaultBaseRef({ role: "后端", path: "" }, {}), "origin/master")
+})
