@@ -3233,7 +3233,8 @@ form.req-session-inline-form {
   width: 100%;
   box-sizing: border-box;
   min-height: 220px;
-  resize: vertical;
+  max-height: 70vh;
+  overflow: auto;
   font-family: var(--mono);
   font-size: 0.8rem;
   line-height: 1.5;
@@ -3242,8 +3243,23 @@ form.req-session-inline-form {
   border: 1px solid rgba(148, 163, 184, 0.2);
   background: rgba(0, 0, 0, 0.18);
   color: var(--text);
+}
+.code-review-ai-md {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.code-review-ai-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  text-align: center;
+  color: var(--text-muted, #94a3b8);
+  font-size: 0.82rem;
 }
 .code-review-ai-error {
   margin-top: 8px;

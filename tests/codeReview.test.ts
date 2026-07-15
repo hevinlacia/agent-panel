@@ -16,6 +16,7 @@ import {
   CODE_REVIEW_BLOCK_END,
   CODE_REVIEW_BLOCK_START,
   classifyCodeReviewRiskTags,
+  detectDefaultBaseRef,
   parseUnifiedDiff,
   resolveCodeReviewProjectPath,
   runAiCodeReview,
@@ -244,4 +245,13 @@ test("saveCodeReviewAiResult persists suggestions into code-review.json", async 
   // The verdict must survive the AI result write (separate fields).
   assert.equal(reloaded!.verdict?.status, "approved")
   assert.equal(next.aiReview?.content, reloaded!.aiReview?.content)
+})
+
+test("detectDefaultBaseRef returns origin/production for frontend repos", () => {
+  assert.equal(detectDefaultBaseRef({ role: "前端", path: "~/Developer/company/WMS/frontend/yl-cwhsea-wms-web-custom-front/" }), "origin/production")
+  assert.equal(detectDefaultBaseRef({ role: "前端", path: "" }), "origin/production")
+  assert.equal(detectDefaultBaseRef({ role: "", path: "/home/hevin/Developer/company/WMS/frontend/some-front/" }), "origin/production")
+  assert.equal(detectDefaultBaseRef({ role: "后端", path: "~/Developer/company/WMS/backend/yl-cwhsea-wms-outbound-api/" }), "origin/master")
+  assert.equal(detectDefaultBaseRef({ role: "PDA", path: "~/Developer/company/WMS/pda/jt-cloudwarehouse/" }), "origin/master")
+  assert.equal(detectDefaultBaseRef({ role: "", path: "" }), "origin/master")
 })

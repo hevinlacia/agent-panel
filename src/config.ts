@@ -69,6 +69,13 @@ export interface AppConfig {
    * Model name passed to the code review chat completion, e.g. `deepseek-chat`. */
   codeReviewModel: string
   /**
+   * Pi provider/model used for AI code review, in "provider/model" format.
+   * When set, the "AI 审查代码" button dispatches a non-interactive pi agent
+   * (using pi's own configured API keys) instead of a direct LLM call. The
+   * review result is written to `<req-dir>/code-review-ai.md`.
+   */
+  codeReviewPiModel: string
+  /**
    * Model name for the AI-powered branches.json extraction on the code-diff
    * page. Reuses codeReviewBaseUrl/codeReviewApiKey. Falls back to
    * codeReviewModel when empty so the user only configures one endpoint.
@@ -253,6 +260,7 @@ const DEFAULTS: AppConfig = {
   codeReviewBaseUrl: "",
   codeReviewApiKey: "",
   codeReviewModel: "",
+  codeReviewPiModel: "",
   branchScopeModel: "",
   effortEstimateModel: "",
   effortEstimateBaseHours: 4,
@@ -299,6 +307,7 @@ async function load(): Promise<AppConfig> {
       codeReviewBaseUrl: typeof parsed.codeReviewBaseUrl === "string" ? parsed.codeReviewBaseUrl : DEFAULTS.codeReviewBaseUrl,
       codeReviewApiKey: typeof parsed.codeReviewApiKey === "string" ? parsed.codeReviewApiKey : DEFAULTS.codeReviewApiKey,
       codeReviewModel: typeof parsed.codeReviewModel === "string" ? parsed.codeReviewModel : DEFAULTS.codeReviewModel,
+      codeReviewPiModel: typeof parsed.codeReviewPiModel === "string" ? parsed.codeReviewPiModel : DEFAULTS.codeReviewPiModel,
       branchScopeModel: typeof parsed.branchScopeModel === "string" ? parsed.branchScopeModel : DEFAULTS.branchScopeModel,
       effortEstimateModel: typeof parsed.effortEstimateModel === "string" ? parsed.effortEstimateModel : DEFAULTS.effortEstimateModel,
       effortEstimateBaseHours: typeof parsed.effortEstimateBaseHours === "number" && parsed.effortEstimateBaseHours > 0 ? parsed.effortEstimateBaseHours : DEFAULTS.effortEstimateBaseHours,
@@ -331,7 +340,7 @@ export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "codeReviewPiModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -343,6 +352,7 @@ export async function setConfig(
     // Empty string means "keep existing key"; a non-empty value overwrites.
     codeReviewApiKey: partial.codeReviewApiKey && partial.codeReviewApiKey.trim() ? partial.codeReviewApiKey : cur.codeReviewApiKey,
     codeReviewModel: partial.codeReviewModel ?? cur.codeReviewModel,
+    codeReviewPiModel: partial.codeReviewPiModel ?? cur.codeReviewPiModel,
     branchScopeModel: partial.branchScopeModel ?? cur.branchScopeModel,
     effortEstimateModel: partial.effortEstimateModel ?? cur.effortEstimateModel,
     effortEstimateBaseHours: partial.effortEstimateBaseHours ?? cur.effortEstimateBaseHours,

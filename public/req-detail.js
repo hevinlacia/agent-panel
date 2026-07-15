@@ -447,21 +447,31 @@
   }
 
   // ------------------------------------------------------------------
-  // AI code review: the "AI 审查代码" button on the code-diff page POSTs
-  // to /api/requirement/code-review/ai with the requirement id. The model
-  // may take tens of seconds, so we show a loading state and render the
-  // Markdown suggestions into the read-only textarea below the button.
+  // AI code review: the "AI 审查代码" button dispatches a non-interactive pi
+  // agent (async, may take minutes). It returns immediately with a job id;
+  // the user clicks "刷新结果" to fetch the newest code-review-ai.md.
   // ------------------------------------------------------------------
   var aiBtn = document.getElementById("code-review-ai-btn")
   var aiStatus = document.getElementById("code-review-ai-status")
   var aiResult = document.getElementById("code-review-ai-result")
-  if (aiBtn && aiResult) {
+  var aiRefresh = document.getElementById("code-review-ai-refresh")
+
+  function renderAiResult(content) {
+    if (!aiResult) return
+    var pre = document.createElement("pre")
+    pre.className = "code-review-ai-md"
+    pre.textContent = content
+    aiResult.innerHTML = ""
+    aiResult.appendChild(pre)
+  }
+
+  if (aiBtn) {
     aiBtn.addEventListener("click", function () {
       var reqId = aiBtn.getAttribute("data-req-id") || ""
       if (!reqId) return
       aiBtn.disabled = true
-      aiBtn.textContent = "AI 审查中…"
-      if (aiStatus) { aiStatus.textContent = "正在调用模型，可能需要 10-60 秒…"; aiStatus.classList.remove("is-warn") }
+      aiBtn.textContent = "派发中…"
+      if (aiStatus) { aiStatus.textContent = "正在派发 pi agent…"; aiStatus.classList.remove("is-warn") }
       fetch("/api/requirement/code-review/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -469,18 +479,52 @@
       }).then(function (res) { return res.json().then(function (data) { return { status: res.status, data: data } }) })
         .then(function (envelope) {
           var data = envelope.data || {}
-          var review = data.aiReview || {}
-          if (review.content) aiResult.value = review.content
           if (data.ok) {
-            if (aiStatus) aiStatus.textContent = "完成 · " + (review.model || "") + (review.updatedAt ? " · " + formatReviewTime(review.updatedAt) : "")
+            if (aiStatus) aiStatus.textContent = "已派发 pi agent 审查，完成后点「刷新结果」查看。"
           } else {
-            if (aiStatus) { aiStatus.textContent = "失败：" + (data.error || "未知错误"); aiStatus.classList.add("is-warn") }
+            if (aiStatus) { aiStatus.textContent = "派发失败：" + (data.error || "未知错误"); aiStatus.classList.add("is-warn") }
           }
         }).catch(function (err) {
           if (aiStatus) { aiStatus.textContent = "请求失败：" + (err && err.message ? err.message : err); aiStatus.classList.add("is-warn") }
         }).finally(function () {
           aiBtn.disabled = false
           aiBtn.textContent = "🤖 AI 审查代码"
+        })
+    })
+  }
+
+  if (aiRefresh) {
+    aiRefresh.addEventListener("click", function () {
+      var reqId = aiRefresh.getAttribute("data-req-id") || ""
+      if (!reqId) return
+      aiRefresh.disabled = true
+      if (aiStatus) { aiStatus.textContent = "正在读取审查结果…"; aiStatus.classList.remove("is-warn") }
+      fetch("/api/requirement/code-review/ai/result?reqId=" + encodeURIComponent(reqId))
+        .then(function (res) { return res.json() })
+        .then(function (data) {
+          if (!data.ok) {
+            if (aiStatus) { aiStatus.textContent = "读取失败：" + (data.error || "未知错误"); aiStatus.classList.add("is-warn") }
+            return
+          }
+          var job = data.job || {}
+          var result = data.result || null
+          if (result && result.content) renderAiResult(result.content)
+          var stateLabel = job.state === "queued" ? "排队中" : job.state === "running" ? "审查中" : job.state === "done" ? "已完成" : job.state === "failed" ? "失败" : ""
+          if (job.state === "running" || job.state === "queued") {
+            if (aiStatus) aiStatus.textContent = "pi agent 仍在审查中（" + (job.summary || stateLabel) + "），请稍后再点「刷新结果」。"
+          } else if (job.state === "failed") {
+            if (aiStatus) { aiStatus.textContent = "上次审查失败：" + (job.error || job.summary || "请查看会话日志"); aiStatus.classList.add("is-warn") }
+          } else if (job.state === "done") {
+            if (aiStatus) aiStatus.textContent = result && result.content ? "审查完成 · " + formatReviewTime(result.updatedAt) : "审查已完成，但结果文件尚未写入，请稍后刷新或查看会话。"
+          } else if (result && result.content) {
+            if (aiStatus) aiStatus.textContent = "已读取结果 · " + formatReviewTime(result.updatedAt)
+          } else {
+            if (aiStatus) aiStatus.textContent = "暂无审查结果，请先点「AI 审查代码」。"
+          }
+        }).catch(function (err) {
+          if (aiStatus) { aiStatus.textContent = "请求失败：" + (err && err.message ? err.message : err); aiStatus.classList.add("is-warn") }
+        }).finally(function () {
+          aiRefresh.disabled = false
         })
     })
   }

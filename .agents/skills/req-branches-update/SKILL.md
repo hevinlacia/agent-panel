@@ -50,6 +50,7 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 | `branches` | 该需求在该仓库使用的分支数组（需求分支，用于 diff 比对；多分支时全部列出） |
 | `role` | 角色描述，如 `后端`、`前端`、`BFF`、`后端-ES数据源`、`PDA` |
 | `path` | 仓库本地路径，`~/` 开头，结尾带 `/`；由 `git rev-parse --show-toplevel` 实测后把 `/home/<user>` 替换为 `~` |
+| `baseRef` | 可选。该仓库的 PRO diff 基线（如 `origin/production`）。省略时 Agent Panel 自动判断：前端（role=`前端` 或 path 含 `frontend/`）用 `origin/production`，其余用 `origin/master`。仅当自动判断不准时才显式填写 |
 
 ## Workflow
 
@@ -103,6 +104,7 @@ python3 -m json.tool <req-dir>/branches.json
 - 用 `python3 -m json.tool` 校验 JSON 合法后才算完成
 - 不要在文件中写入真实 token、密码、Cookie、私钥
 - `branches.json` 与 `branch.md` 互补：前者给机器做 diff，后者给人看合并轨迹，两者都保留
+- `baseRef` 通常无需填写：前端仓库（role=`前端` 或 path 含 `frontend/`）自动用 `origin/production`，后端自动用 `origin/master`；仅当自动判断不准（如非 WMS 项目或特殊基线）时才显式写入
 
 ## Final Response
 

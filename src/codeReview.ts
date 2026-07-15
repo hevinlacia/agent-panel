@@ -8,7 +8,7 @@
  * Public surface: runCodeReviewScan, readCodeReviewSnapshot,
  * saveCodeReviewVerdict, saveCodeReviewAiResult, runAiCodeReview,
  * parseUnifiedDiff, resolveCodeReviewProjectPath, upsertCodeReviewBlock,
- * and exported types/constants.
+ * detectDefaultBaseRef, and exported types/constants.
  * Constraints / safety: fixed `git` argv only (no shell), reads only repo Git
  * metadata/diffs, and writes only `<req-dir>/code-review.json` + review.md.
  * The AI review reads the API key from server-side config only (never echoed
@@ -169,9 +169,34 @@ export async function readCodeReviewSnapshot(reqDir: string): Promise<CodeReview
 }
 
 /**
+ * Auto-detect the production diff base ref for a WMS repo. Mirrors the rule
+ * in the WMS AGENTS.md Worktree Branch Rule and `git-wms-wt.py`: frontend
+ * repos (role=前端 or path under `frontend/`) use `origin/production` as
+ * the PRO base; backend/PDA/infra repos use `origin/master`. Callers should
+ * prefer an explicit `BranchRepo.baseRef` from branches.json first, then
+ * fall back to this detection, then to the caller-supplied baseRef.
+ */
+export function detectDefaultBaseRef(repo: Pick<BranchRepo, "role" | "path">): string {
+  const role = (repo.role || "").trim()
+  const path = (repo.path || "").trim()
+  if (role === "前端" || /(^|\/)frontend\//i.test(path)) {
+    return "origin/production"
+  }
+  return "origin/master"
+}
+
+/**
  * Build and persist a review snapshot for all repos/branches in scope.
  * Before diffing, each repo refreshes the configured production base via
  * `git fetch`, then best-effort fast-forwards the matching local branch.
+ *
+ * Per-repo base ref resolution priority:
+ *   1. explicit `baseRef` in branches.json (`BranchRepo.baseRef`)
+ *   2. auto-detect (`detectDefaultBaseRef`: frontend -> origin/production)
+ *   3. caller-supplied `opts.baseRef` as a last-resort fallback
+ *
+ * The snapshot-level `baseRef` records the fallback used, not necessarily
+ * every repo's actual base; each repo carries its own resolved `baseRef`.
  */
 export async function runCodeReviewScan(
   reqDir: string,
@@ -179,10 +204,15 @@ export async function runCodeReviewScan(
   scope: BranchScope,
   opts: { baseRef?: string } = {},
 ): Promise<CodeReviewSnapshot> {
-  const baseInfo = parseBaseRef(opts.baseRef || DEFAULT_CODE_REVIEW_BASE_REF)
+  const fallbackBaseInfo = parseBaseRef(opts.baseRef || DEFAULT_CODE_REVIEW_BASE_REF)
   const repos: CodeReviewRepoSnapshot[] = []
   for (const repo of scope.repos) {
     const branches = repo.branches.length > 0 ? repo.branches : [""]
+    const resolvedBaseRef = repo.baseRef?.trim() || detectDefaultBaseRef(repo)
+    const baseInfo =
+      resolvedBaseRef === fallbackBaseInfo.baseRef
+        ? fallbackBaseInfo
+        : parseBaseRef(resolvedBaseRef)
     for (const branch of branches) {
       repos.push(await scanRepoBranch(repo, branch, baseInfo))
     }
@@ -191,7 +221,7 @@ export async function runCodeReviewScan(
     version: 1,
     reqId,
     updatedAt: Date.now(),
-    baseRef: baseInfo.baseRef,
+    baseRef: fallbackBaseInfo.baseRef,
     sourceFallback: scope.fallback || undefined,
     repos,
   }
@@ -685,6 +715,13 @@ function normalizeDiffPath(raw: string): string {
   return path.replace(/^[ab]\//, "")
 }
 
+/** Summarize the per-repo base refs for the review.md block header. */
+function summarizeSnapshotBaseRefs(snapshot: CodeReviewSnapshot): string {
+  const refs = [...new Set(snapshot.repos.map((r) => r.baseRef).filter(Boolean))]
+  if (refs.length === 0) return snapshot.baseRef
+  return refs.join(" / ")
+}
+
 function buildCodeReviewMarkdown(snapshot: CodeReviewSnapshot): string {
   const verdict = snapshot.verdict
   const status = verdict?.status || "not_started"
@@ -698,7 +735,7 @@ function buildCodeReviewMarkdown(snapshot: CodeReviewSnapshot): string {
     `- 结论：${statusLabel(status)}`,
     `- Reviewer：${verdict?.reviewer || "待填写"}`,
     `- 更新时间：${new Date(verdict?.updatedAt || snapshot.updatedAt).toISOString()}`,
-    `- 对比基线：${snapshot.baseRef}`,
+    `- 对比基线：${summarizeSnapshotBaseRefs(snapshot)}`,
     `- 变更规模：${snapshot.repos.length} 个仓库/分支，${files} 个文件，+${additions}/-${deletions}`,
     "",
     "### Review 摘要",
@@ -711,7 +748,7 @@ function buildCodeReviewMarkdown(snapshot: CodeReviewSnapshot): string {
   ]
   for (const repo of snapshot.repos) {
     const flags = [repo.baseUpdate.ok ? "基线已刷新" : "基线刷新异常", repo.dirty ? "工作区有未提交改动" : "工作区干净"]
-    lines.push(`- ${repo.repoName} / ${repo.branch}：${repo.files.length} 文件，+${repo.additions}/-${repo.deletions}（${flags.join("；")}）`)
+    lines.push(`- ${repo.repoName} / ${repo.branch}（基线 ${repo.baseRef}）：${repo.files.length} 文件，+${repo.additions}/-${repo.deletions}（${flags.join("；")}）`)
   }
   lines.push(CODE_REVIEW_BLOCK_END)
   return lines.join("\n")

@@ -74,9 +74,11 @@
       var baseUrl = document.getElementById("cfg-code-review-base").value.trim()
       var model = document.getElementById("cfg-code-review-model").value.trim()
       var key = document.getElementById("cfg-code-review-key").value
+      var piModelEl = document.getElementById("cfg-code-review-pi-model")
       var data = {
         codeReviewBaseUrl: baseUrl,
         codeReviewModel: model,
+        codeReviewPiModel: piModelEl ? (piModelEl.value || "").trim() : "",
         // Only send the key when the user typed a new value.
         codeReviewApiKey: key,
         branchScopeModel: (document.getElementById("cfg-branch-scope-model") || {}).value || "",

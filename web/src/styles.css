@@ -306,6 +306,7 @@
 .react-tool-links,
 .react-chip-list { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
 .react-chip-list a { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; background: rgba(255,255,255,.04); font: 0.76rem var(--react-mono); }
+.react-chip-toggle { color: var(--react-cyan); font: 800 .72rem var(--react-mono); border: 1px solid rgba(34,211,238,.3); background: rgba(34,211,238,.08); border-radius: 999px; padding: 6px 10px; cursor: pointer; }
 .react-inline-form { display: flex; gap: 10px; flex-wrap: wrap; }
 .react-category-form { margin-top: 10px; align-items: center; }
 .react-category-form label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }

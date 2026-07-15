@@ -116,6 +116,7 @@ import {
   readPiConfigSummary,
   savePiConfigFile,
   updatePiSettings,
+  type PiConfigSummary,
 } from "./piConfig.ts"
 import {
   scanDashboardSessions,
@@ -160,14 +161,11 @@ import {
   readCodeReviewSnapshot,
   runCodeReviewScan,
   saveCodeReviewVerdict,
-  saveCodeReviewAiResult,
-  runAiCodeReview,
   parseUnifiedDiff,
   type CodeReviewDiffLine,
   type CodeReviewFileDiff,
   type CodeReviewSnapshot,
   type CodeReviewStatus,
-  type CodeReviewAiResult,
 } from "./codeReview.ts"
 import {
   detectHighlightLanguage,
@@ -252,6 +250,18 @@ import {
   updateAutoDriveJob,
   type AutoDriveJob,
 } from "./requirementAutoDrive.ts"
+import {
+  CODE_REVIEW_AI_FILE,
+  buildCodeReviewAiJobName,
+  buildCodeReviewAiPrompt,
+  createCodeReviewAiJob,
+  finalizeCodeReviewAiJob,
+  getLatestCodeReviewAiJob,
+  initCodeReviewAiJobs,
+  readCodeReviewAiMarkdown,
+  updateCodeReviewAiJob,
+  type CodeReviewAiJob,
+} from "./codeReviewJob.ts"
 import {
   ATTACHMENTS_DIR_NAME,
   listAttachments,
@@ -1325,7 +1335,7 @@ const CodeReviewFilePanel: FC<{ file: CodeReviewFileView; selected: boolean }> =
   )
 }
 
-const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null; redirectPath: string }> = ({ req, scope, snapshot, redirectPath }) => {
+const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; snapshot?: CodeReviewSnapshot | null; aiMarkdown?: { content: string; updatedAt: number } | null; aiJob?: CodeReviewAiJob | null; redirectPath: string }> = ({ req, scope, snapshot, aiMarkdown, aiJob, redirectPath }) => {
   const verdict = snapshot?.verdict
   const repoViews = (snapshot?.repos || []).map((repo, repoIndex) => {
     const parsed = parseUnifiedDiff(repo.diff)
@@ -1359,6 +1369,11 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
   const additions = snapshot?.repos.reduce((n, repo) => n + repo.additions, 0) ?? 0
   const deletions = snapshot?.repos.reduce((n, repo) => n + repo.deletions, 0) ?? 0
   const firstFile = allFiles[0]
+  const baseRefSummary = (() => {
+    const refs = [...new Set((snapshot?.repos || []).map((r) => r.baseRef).filter(Boolean))]
+    if (refs.length === 0) return snapshot?.baseRef || ""
+    return refs.join(" / ")
+  })()
 
   return (
     <section class="code-review-workspace" aria-label="代码差异审查工作区">
@@ -1373,10 +1388,11 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
         <form method="post" action="/api/requirement/code-review/scan" class="code-review-scan-form">
           <input type="hidden" name="reqId" value={req.id} />
           <input type="hidden" name="redirect" value={redirectPath} />
-          <label class="field-label" for={`code-review-base-${req.id}`}>生产基线</label>
-          <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" />
+          <label class="field-label" for={`code-review-base-${req.id}`}>基线兜底</label>
+          <input id={`code-review-base-${req.id}`} name="baseRef" value={snapshot?.baseRef || DEFAULT_CODE_REVIEW_BASE_REF} placeholder="origin/master" title="前端仓库自动用 origin/production，后端自动用 origin/master；此值仅在 branches.json 未指定 baseRef 且无法自动判断时使用" />
           <button type="submit" class="btn btn-primary" disabled={!scope || !req.reqDir}>刷新 PRO Diff</button>
         </form>
+        <p class="muted small code-review-base-hint">基线自动判断：前端用 origin/production，后端用 origin/master。上方输入仅作为无法自动判断时的兜底；在 branches.json 的 repo 上设置 <code>baseRef</code> 可逐仓库精确指定。</p>
         <button type="button" id="branch-scope-ai-btn" class="btn btn-secondary" data-req-id={req.id} title="调用 AI 读取 branch.md 生成精确的 branches.json">🤖 提取 branches.json</button>
         <span id="branch-scope-ai-status" class="branch-scope-ai-status muted small"></span>
         <div class="code-review-total-metrics">
@@ -1442,7 +1458,7 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
                 <span id="code-review-current-repo">{firstFile ? `${req.project} / ${firstFile.repoName}` : ""}</span>
               </div>
               <div class="code-review-diff-head-right">
-                <span>与 {snapshot.baseRef} 对比</span>
+                <span>与 {baseRefSummary} 对比</span>
                 <div class="code-review-fontsize" role="group" aria-label="代码字体大小">
                   <button type="button" class="code-review-fontsize-btn" data-fontsize="down" aria-label="缩小代码字体" title="缩小字体">A−</button>
                   <span class="code-review-fontsize-label" id="code-review-fontsize-label">100%</span>
@@ -1499,23 +1515,27 @@ const CodeReviewWorkspace: FC<{ req: Requirement; scope?: BranchScope | null; sn
         <header class="code-review-ai-head">
           <div class="code-review-ai-head-copy">
             <h3>AI 代码审查</h3>
-            <p class="muted small">基于代码差异 + 需求文件让 AI 给出 review 建议；模型在 <a href="/settings">Settings</a> 配置。人工 review 后可直接点下方按钮让 AI 再 review 一次。</p>
+            <p class="muted small">派发 pi agent 读取代码差异和需求文件做审查，结果写入 <code>{CODE_REVIEW_AI_FILE}</code>。模型在 <a href="/settings">Settings</a> 选择 Pi 供应商/模型。审查是异步的，完成后点「刷新结果」查看。</p>
           </div>
           <div class="code-review-ai-head-meta">
-            {snapshot?.aiReview ? (
+            {aiJob ? (
               <>
-                <span class="code-review-ai-model"><code>{snapshot.aiReview.model || "未知模型"}</code></span>
-                <span class="muted small">更新于 {formatUpdated(snapshot.aiReview.updatedAt)}</span>
+                <span class="code-review-ai-model"><code>{aiJob.model || "未知模型"}</code></span>
+                <span class="muted small">{aiJob.doneAt ? `完成于 ${formatUpdated(aiJob.doneAt)}` : aiJob.summary}</span>
               </>
             ) : null}
           </div>
         </header>
         <div class="code-review-ai-actions">
-          <button type="button" id="code-review-ai-btn" class="btn btn-primary" data-req-id={req.id} disabled={!snapshot || allFiles.length === 0} title={!snapshot || allFiles.length === 0 ? "请先生成代码差异" : "让 AI 根据差异和需求文件审查代码"}>🤖 AI 审查代码</button>
+          <button type="button" id="code-review-ai-btn" class="btn btn-primary" data-req-id={req.id} disabled={!snapshot || allFiles.length === 0} title={!snapshot || allFiles.length === 0 ? "请先生成代码差异" : "派发 pi agent 审查代码"}>🤖 AI 审查代码</button>
+          <button type="button" id="code-review-ai-refresh" class="btn btn-secondary" data-req-id={req.id} title="重新读取审查结果文件">🔄 刷新结果</button>
           <span id="code-review-ai-status" class="code-review-ai-status muted small"></span>
         </div>
-        <textarea id="code-review-ai-result" class="code-review-ai-result" rows={"16"} readonly placeholder="点击「AI 审查代码」后，AI 给出的 review 建议会显示在这里。" spellcheck={false}>{snapshot?.aiReview?.content || ""}</textarea>
-        {snapshot?.aiReview?.error ? <div class="code-review-ai-error">上次审查失败：{snapshot.aiReview.error}</div> : null}
+        <div id="code-review-ai-result" class="code-review-ai-result">
+          {aiMarkdown?.content
+            ? <pre class="code-review-ai-md" spellcheck={false}>{aiMarkdown.content}</pre>
+            : <div class="code-review-ai-empty">点击「AI 审查代码」派发 pi agent，完成后点「刷新结果」查看 {CODE_REVIEW_AI_FILE}。</div>}
+        </div>
       </section>
     </section>
   )
@@ -1526,7 +1546,9 @@ const RequirementReviewPage: FC<{
   req: Requirement
   scope?: BranchScope | null
   snapshot?: CodeReviewSnapshot | null
-}> = ({ req, scope, snapshot }) => {
+  aiMarkdown?: { content: string; updatedAt: number } | null
+  aiJob?: CodeReviewAiJob | null
+}> = ({ req, scope, snapshot, aiMarkdown, aiJob }) => {
   const redirectPath = `/requirement/review?id=${encodeURIComponent(req.id)}`
   return (
     <Layout title={`代码差异 — ${req.title}`} active="requirements" wide>
@@ -1543,9 +1565,9 @@ const RequirementReviewPage: FC<{
           </nav>
         </header>
         <script>{`(function(){try{var v=parseFloat(localStorage.getItem('agent-panel:code-review:font-scale'));if(isFinite(v)){document.documentElement.style.setProperty('--code-review-font-scale',String(Math.min(2,Math.max(0.6,v))))}}catch(e){}})();`}</script>
-        <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} redirectPath={redirectPath} />
+        <CodeReviewWorkspace req={req} scope={scope} snapshot={snapshot} aiMarkdown={aiMarkdown} aiJob={aiJob} redirectPath={redirectPath} />
       </section>
-      <script src="/static/req-detail.js?v=20260714-branch-scope-ai" defer></script>
+      <script src="/static/req-detail.js?v=20260715-pi-review" defer></script>
     </Layout>
   )
 }
@@ -2675,11 +2697,13 @@ app.get("/requirement/review", async (c) => {
   if (!req) return c.text("Requirement not found", 404)
   if (!req.reqDir) return c.text("Requirement has no on-disk directory", 400)
   const branchContent = await readOptionalRequirementFile(req.branchPath)
-  const [scope, snapshot] = await Promise.all([
+  const [scope, snapshot, aiMarkdown] = await Promise.all([
     loadRequirementBranchScope(req, branchContent),
     readCodeReviewSnapshot(req.reqDir),
+    readCodeReviewAiMarkdown(req.reqDir),
   ])
-  return c.html(<RequirementReviewPage req={req} scope={scope} snapshot={snapshot} />)
+  const aiJob = getLatestCodeReviewAiJob(req.id)
+  return c.html(<RequirementReviewPage req={req} scope={scope} snapshot={snapshot} aiMarkdown={aiMarkdown} aiJob={aiJob} />)
 })
 
 app.get("/requirement/release", async (c) => {
@@ -2820,6 +2844,7 @@ app.get("/requirement", async (c) => {
 })
 
 const AUTO_DRIVE_TIMEOUT_MS = 60 * 60 * 1000
+const CODE_REVIEW_AI_TIMEOUT_MS = 10 * 60 * 1000
 
 async function launchRequirementAutoDrive(req: Requirement): Promise<AutoDriveJob> {
   if (!req.reqDir) throw new Error("Requirement has no on-disk directory")
@@ -3426,11 +3451,13 @@ app.post("/api/requirement/code-review/verdict", async (c) => {
 
 /**
  * POST /api/requirement/code-review/ai
- * Runs an AI code review against the existing diff snapshot + requirement
- * files, persists the Markdown suggestions into code-review.json, and
- * returns them as JSON for the review-page button. The model/endpoint/key
- * come from dashboard config (Settings page); the key is read server-side
- * only and never echoed back.
+ *
+ * Dispatches a non-interactive pi agent (configured with the pi
+ * provider/model from Settings) to review the persisted diff snapshot
+ * and write `<req-dir>/code-review-ai.md`. Returns immediately with a
+ * job id; the user clicks the "刷新结果" button on the review page to
+ * fetch the newest file. No LLM call happens in-process - pi uses its
+ * own configured API keys.
  */
 app.post("/api/requirement/code-review/ai", async (c) => {
   const body = await c.req.json().catch(() => null) ?? {}
@@ -3446,22 +3473,71 @@ app.post("/api/requirement/code-review/ai", async (c) => {
   }
 
   const cfg = await getConfig()
-  if (!cfg.codeReviewBaseUrl.trim() || !cfg.codeReviewModel.trim() || !cfg.codeReviewApiKey.trim()) {
-    return c.json({ ok: false, error: "尚未配置 AI 代码审查模型，请在 Settings 页面填写 Base URL / API Key / Model。" }, 400)
+  const model = cfg.codeReviewPiModel.trim()
+  if (!model) {
+    return c.json({ ok: false, error: "尚未配置 AI 代码审查模型，请在 Settings 页面选择 Pi 供应商和模型。" }, 400)
   }
 
-  const aiReview = await runAiCodeReview(req.reqDir, snapshot, {
-    baseUrl: cfg.codeReviewBaseUrl,
-    apiKey: cfg.codeReviewApiKey,
-    model: cfg.codeReviewModel,
+  const sessionId = randomUUID()
+  const name = buildCodeReviewAiJobName(req)
+  const ctx = await buildInjectionContext(req.id)
+  const ctxFile = await writeInjectionContext(sessionId, ctx)
+  try { await associateSession(req.id, sessionId) } catch { /* best effort */ }
+
+  const job = createCodeReviewAiJob(req, sessionId, model)
+  const env = await buildManagedEnv()
+
+  void runQueuedOpencodeProcess({
+    bin: "pi",
+    args: ["--session-id", sessionId, "--name", name, "--model", model, "--append-system-prompt", ctxFile, "-p", buildCodeReviewAiPrompt(req)],
+    spawnOptions: { stdio: ["ignore", "pipe", "pipe"], cwd: req.reqDir },
+    env,
+    timeoutMs: CODE_REVIEW_AI_TIMEOUT_MS,
+    onQueued: (position) => {
+      updateCodeReviewAiJob(job.id, { state: "queued", summary: `等待 pi agent 执行（队列位置 ${position}）。` })
+    },
+    onSpawn: () => {
+      updateCodeReviewAiJob(job.id, { state: "running", summary: "pi agent 正在审查代码。" })
+    },
+  }).then((result) => {
+    finalizeCodeReviewAiJob(job.id, result)
+  }).catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    updateCodeReviewAiJob(job.id, {
+      state: "failed",
+      summary: `启动 pi agent 失败：${message}`,
+      error: message,
+      doneAt: Date.now(),
+    })
   })
-  if (aiReview.error) {
-    // Still persist a failed attempt so the UI can surface the error.
-    await saveCodeReviewAiResult(req.reqDir, snapshot, aiReview)
-    return c.json({ ok: false, error: aiReview.error, aiReview }, 200)
-  }
-  const next = await saveCodeReviewAiResult(req.reqDir, snapshot, aiReview)
-  return c.json({ ok: true, aiReview: next.aiReview })
+
+  return c.json({ ok: true, jobId: job.id, sessionId, status: job.state })
+})
+
+/**
+ * GET /api/requirement/code-review/ai/result?reqId=...
+ *
+ * Returns the latest AI review job status plus the persisted Markdown
+ * content of `code-review-ai.md` (if written). The review page's
+ * "刷新结果" button calls this to surface the newest file without polling.
+ */
+app.get("/api/requirement/code-review/ai/result", async (c) => {
+  const reqId = c.req.query("reqId") || ""
+  if (!reqId) return c.json({ ok: false, error: "Missing reqId" }, 400)
+  const req = await getRequirement(reqId)
+  if (!req) return c.json({ ok: false, error: "Requirement not found" }, 404)
+  if (!req.reqDir) return c.json({ ok: false, error: "Requirement has no on-disk directory" }, 400)
+  const [md, job] = await Promise.all([
+    readCodeReviewAiMarkdown(req.reqDir),
+    Promise.resolve(getLatestCodeReviewAiJob(reqId)),
+  ])
+  return c.json({
+    ok: true,
+    job: job
+      ? { state: job.state, model: job.model, startedAt: job.startedAt, doneAt: job.doneAt, summary: job.summary, error: job.error }
+      : null,
+    result: md ? { content: md.content, updatedAt: md.updatedAt } : null,
+  })
 })
 
 /**
@@ -3890,23 +3966,50 @@ app.get("/schedulers", async (c) => {
 // Settings page + config API
 // ---------------------------------------------------------------------------
 
-const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean } }> = ({ config }) => (
+const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; piConfig: PiConfigSummary | null }> = ({ config, piConfig }) => {
+  const providers = piConfig?.providers || []
+  return (
   <section class="sched-config-panel code-review-config-panel" aria-label="AI 代码审查配置">
     <div class="sched-config-panel-head">
       <div>
         <p class="sched-eyebrow">AI CODE REVIEW</p>
         <h2 class="op-section-title">AI 代码审查</h2>
-        <p class="muted small">配置需求代码差异页面「AI 审查代码」使用的 OpenAI 兼容接口。API Key 仅保存在本地 config.json，不会回显到页面。</p>
+        <p class="muted small">代码差异页面「AI 审查代码」派发 pi agent（复用 pi 已配置的供应商和 API Key）审查，结果写入需求目录的 code-review-ai.md。下方只需选择 Pi 供应商和模型。</p>
       </div>
     </div>
     <form id="code-review-config-form" class="sched-config-form">
       <div class="sched-config-grid">
         <article class="sched-config-card sched-config-card-wide">
           <div class="sched-config-card-top">
+            <span class="sched-config-pill">PI</span>
+            <div>
+              <h3>代码审查模型</h3>
+              <p class="muted small">选择 pi 已配置的供应商/模型。无需填写 API Key（pi 自带）；缺 Key 的供应商会在名称后标注。</p>
+            </div>
+          </div>
+          <label class="settings-field">
+            <span class="settings-label">供应商 / 模型</span>
+            {providers.length > 0 ? (
+              <select id="cfg-code-review-pi-model" name="codeReviewPiModel" class="settings-input">
+                <option value="">（选择模型）</option>
+                {providers.map((p) => (
+                  <optgroup label={`${p.id}${p.hasApiKey ? "" : " · 缺 API Key"}`}>
+                    {p.models.map((m) => <option value={`${p.id}/${m.modelId}`} selected={`${p.id}/${m.modelId}` === config.codeReviewPiModel}>{m.label || m.modelId}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            ) : (
+              <input type="text" id="cfg-code-review-pi-model" name="codeReviewPiModel" value={config.codeReviewPiModel} class="settings-input" placeholder="provider/model" spellcheck={false} autocomplete="off" />
+            )}
+            {providers.length === 0 ? <span class="muted small is-warn">未读取到 pi providers，请确认 pi 已配置模型，或手动输入 provider/model。</span> : null}
+          </label>
+        </article>
+        <article class="sched-config-card sched-config-card-wide">
+          <div class="sched-config-card-top">
             <span class="sched-config-pill">LLM</span>
             <div>
-              <h3>模型接入</h3>
-              <p class="muted small">Base URL 需为 OpenAI 兼容的 <code>/v1</code> 端点，例如 <code>https://api.deepseek.com/v1</code>；代码差异页面会调用 <code>{`{baseUrl}/chat/completions`}</code>。</p>
+              <h3>分支提取与工时评估 LLM 接入</h3>
+              <p class="muted small">branches.json 提取和工时评估仍走直接 LLM 调用，需配置 OpenAI 兼容接口。Base URL 例如 <code>https://api.deepseek.com/v1</code>。</p>
             </div>
           </div>
           <div class="sched-config-controls">
@@ -3915,7 +4018,7 @@ const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boo
               <input type="text" id="cfg-code-review-base" name="codeReviewBaseUrl" value={config.codeReviewBaseUrl} class="settings-input" placeholder="https://api.deepseek.com/v1" spellcheck={false} autocomplete="off" />
             </label>
             <label class="settings-field">
-              <span class="settings-label">Model</span>
+              <span class="settings-label">默认 Model <span class="muted small">（提取/工时兜底）</span></span>
               <input type="text" id="cfg-code-review-model" name="codeReviewModel" value={config.codeReviewModel} class="settings-input" placeholder="deepseek-chat" spellcheck={false} autocomplete="off" />
             </label>
           </div>
@@ -3924,8 +4027,8 @@ const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boo
             <input type="password" id="cfg-code-review-key" name="codeReviewApiKey" class="settings-input" placeholder={config.codeReviewApiKeySet ? "已设置，输入新值覆盖（留空保持不变）" : "粘贴 API Key"} autocomplete="off" spellcheck={false} />
           </label>
           <label class="settings-field">
-            <span class="settings-label">branches.json 提取模型 <span class="muted small">（留空则复用上方 Model）</span></span>
-            <input type="text" id="cfg-branch-scope-model" name="branchScopeModel" value={config.branchScopeModel} class="settings-input" placeholder="留空复用 code review Model" spellcheck={false} autocomplete="off" />
+            <span class="settings-label">branches.json 提取模型 <span class="muted small">（留空则复用默认 Model）</span></span>
+            <input type="text" id="cfg-branch-scope-model" name="branchScopeModel" value={config.branchScopeModel} class="settings-input" placeholder="留空复用默认 Model" spellcheck={false} autocomplete="off" />
           </label>
         </article>
       </div>
@@ -3935,9 +4038,10 @@ const CodeReviewConfigPanel: FC<{ config: AppConfig & { codeReviewApiKeySet: boo
       </div>
     </form>
   </section>
-)
+  )
+}
 
-const SettingsPage: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; githubRepos: { path: string; label: string; remote: string }[] }> = ({ config, githubRepos }) => {
+const SettingsPage: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; githubRepos: { path: string; label: string; remote: string }[]; piConfig: PiConfigSummary | null }> = ({ config, githubRepos, piConfig }) => {
   return (
   <Layout title="Settings" active="settings">
     <div class="settings-page">
@@ -3948,7 +4052,7 @@ const SettingsPage: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; g
       </div>
 
       <SchedulerConfigPanel config={config} githubRepos={githubRepos} />
-      <CodeReviewConfigPanel config={config} />
+      <CodeReviewConfigPanel config={config} piConfig={piConfig} />
     </div>
     <script src="/static/config.js" defer></script>
   </Layout>
@@ -3956,8 +4060,12 @@ const SettingsPage: FC<{ config: AppConfig & { codeReviewApiKeySet: boolean }; g
 }
 
 app.get("/settings", async (c) => {
-  const [cfg, githubRepos] = await Promise.all([getSafeConfig(), listDeveloperGithubRepos()])
-  return c.html(<SettingsPage config={cfg} githubRepos={githubRepos} />)
+  const [cfg, githubRepos, piConfig] = await Promise.all([
+    getSafeConfig(),
+    listDeveloperGithubRepos(),
+    readPiConfigSummary().catch(() => null),
+  ])
+  return c.html(<SettingsPage config={cfg} githubRepos={githubRepos} piConfig={piConfig} />)
 })
 
 // ---------------------------------------------------------------------------
@@ -4150,6 +4258,7 @@ app.post("/api/config", async (c) => {
   // AI code review: empty apiKey means "keep existing" (handled in setConfig).
   if (typeof body.codeReviewBaseUrl === "string") partial.codeReviewBaseUrl = body.codeReviewBaseUrl.trim()
   if (typeof body.codeReviewModel === "string") partial.codeReviewModel = body.codeReviewModel.trim()
+  if (typeof body.codeReviewPiModel === "string") partial.codeReviewPiModel = body.codeReviewPiModel.trim()
   if (typeof body.branchScopeModel === "string") partial.branchScopeModel = body.branchScopeModel.trim()
   if (typeof body.effortEstimateModel === "string") partial.effortEstimateModel = body.effortEstimateModel.trim()
   if (typeof body.effortEstimateBaseHours === "number" && body.effortEstimateBaseHours > 0) partial.effortEstimateBaseHours = body.effortEstimateBaseHours
@@ -5293,6 +5402,7 @@ const port = parseInt(process.env.PORT || "7331", 10)
 await initNotifications()
 await initConfig()
 await initAutoDriveJobs()
+await initCodeReviewAiJobs()
 await initMarkers()
 
 // Blue/green: only the backend holding the scheduler lock runs background

@@ -13,7 +13,7 @@
  *      pre-existing requirements still get an overview. Marked
  *      `fallback: true` so the UI can warn it may be imprecise.
  *
- * v2 format (simplified): only repoName + branches + optional role/path.
+ * v2 format (simplified): only repoName + branches + optional role/path/baseRef.
  * Removed merge/commitCount/changedFiles - those belong in release-check
  * or review workflows, not in the branch record. `readBranchScope` still
  * reads the v1 `projectPath` field for backwards compatibility.
@@ -52,6 +52,13 @@ export interface BranchRepo {
   role?: string
   /** Absolute or `~`-relative path to the repo working copy. */
   path?: string
+  /**
+   * Optional explicit PRO diff base ref for this repo (e.g.
+   * `origin/production` for WMS frontend repos). When absent the code-review
+   * scan auto-detects via `detectDefaultBaseRef`: frontend repos use
+   * `origin/production`, everything else `origin/master`.
+   */
+  baseRef?: string
 }
 
 /**
@@ -113,6 +120,8 @@ export async function readBranchScope(reqDir: string): Promise<BranchScope | nul
       role:
         typeof rr.role === "string" && rr.role.trim() ? rr.role.trim() : undefined,
       path,
+      baseRef:
+        typeof rr.baseRef === "string" && rr.baseRef.trim() ? rr.baseRef.trim() : undefined,
     })
   }
   if (repos.length === 0) return null
