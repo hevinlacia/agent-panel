@@ -4,8 +4,10 @@ set -uo pipefail
 # hot-deploy-agent-panel.sh - Blue/green deploy agent-panel without dropping users.
 #
 # Flow: build dashboard -> start inactive backend -> wait /health -> atomically
-# switch active-backend.json -> stop old backend (it drains live WebSockets up
-# to 5 min via TimeoutStopSec=300). The front proxy (agent-panel-proxy.service)
+# switch active-backend.json -> enable new / disable old slot (so a reboot
+# always revives the slot active-backend.json points at) -> stop old backend
+# (it drains live WebSockets up to 5 min via TimeoutStopSec=300). The front proxy
+# (agent-panel-proxy.service)
 # never stops and routes new connections to the active slot. Only the backend
 # holding scheduler.lock runs background schedulers, so a deploy never double-
 # runs sync/extract workers.
@@ -18,10 +20,20 @@ BUN="${BUN:-/home/hevin/.local/share/mise/installs/bun/latest/bin/bun}"
 
 slot_url() { case "$1" in blue) echo "http://127.0.0.1:7332" ;; green) echo "http://127.0.0.1:7333" ;; esac; }
 slot_service() { echo "agent-panel-backend@$1.service"; }
+# Enable/disable autostart so the slot that active-backend.json points at is
+# always the one revived on reboot. Without this, a hot-deploy to green only
+# `start`s it (not enabled); after a reboot blue autostarts while
+# active-backend.json still says green -> proxy 502s on a dead 7333.
+enable_slot() { systemctl --user enable "$(slot_service "$1")"; }
+disable_slot() { systemctl --user disable "$(slot_service "$1")" 2>/dev/null || true; }
 
 read_active_slot() {
   [[ -f "$ACTIVE_FILE" ]] || { echo ""; return; }
-  grep -o '"slot":"[^"]*"' "$ACTIVE_FILE" 2>/dev/null | head -1 | cut -d'"' -f4
+  # Tolerate both the compact form written by write_active_slot below
+  # ({"slot":"blue"}) and the pretty-printed form written by the proxy
+  # control plane (POST /_proxy/active/<slot> -> "slot": "blue").
+  grep -oE '"slot"[[:space:]]*:[[:space:]]*"[^"]*"' "$ACTIVE_FILE" 2>/dev/null \
+    | head -1 | cut -d'"' -f4
 }
 
 inactive_slot() { [[ "$1" == "blue" ]] && echo green || echo blue; }
@@ -79,6 +91,7 @@ cmd_bootstrap() {
   systemctl --user start "$(slot_service "$slot")"
   wait_healthy "$slot" "$timeout" || return 1
   write_active_slot "$slot"
+  enable_slot "$slot"
   systemctl --user enable --now "$PROXY_SERVICE"
   echo "bootstrapped $slot"
   cmd_status
@@ -102,10 +115,12 @@ cmd_deploy() {
 
   write_active_slot "$target"
   echo "switched active backend to $target"
+  enable_slot "$target"
 
   if [[ -n "$old" ]]; then
     echo "stopping old backend $old (SIGTERM; drains WS up to 5min)..."
     systemctl --user stop "$(slot_service "$old")"
+    disable_slot "$old"
     echo "stopped old backend $old"
   fi
   cmd_status

@@ -382,6 +382,7 @@ else:
 在后续开发过程中，以下事件发生后必须立即更新对应需求文件：
 - 完成 PRD/需求口径澄清 → memory.md（记忆索引）+ background.md（背景）
 - 代码 push 或 merge 成功 → branch.md（分支名、commit、合并状态）
+- 需求分支首次 push / 涉及仓库或分支变动 → branches.json（加载 `req-branches-update` skill，或跑 `python3 ~/.agents/scripts/req-branches-scan.py <req-id>`）
 - 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md
 - 明确测试场景或回归范围 → test.md
 - 编码前或影响面变化 → impact.md（核心链路风险）

@@ -58,41 +58,59 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 
 优先从当前 session 绑定的需求获取 `req-id` 和目录；否则由用户指定。路径形如 `~/.agents/req/<project>/<req-id>/`。
 
-### 2. 确认涉及的仓库和分支
+### 2. 自动扫描多仓库（首选）
 
-从 `branch.md`、`notes.md` 或用户说明收集本次需求涉及的仓库。对每个仓库执行：
-
-```bash
-cd <repo-path>
-git remote -v | head -1          # 取 origin URL 最后段去 .git => repoName
-git rev-parse --show-toplevel    # => path（/home/<user> 替换为 ~）
-git fetch origin 2>&1 | tail -3  # 刷新远端引用，只读
-```
-
-分支同步确认：
+WMS 是多独立 git 仓库（`backend/`、`frontend/`、`pda/` 下各自 `.git`），手动逐仓库查分支易漏。优先用脚本统一扫描所有子仓库，找出含需求 ID 的分支：
 
 ```bash
-git rev-parse <branch> origin/<branch>  # 两者相等 = 已 push
+# 预览将写入的内容（不实际写入）
+python3 ~/.agents/scripts/req-branches-scan.py <req-id> --dry-run
 ```
 
-- `branches` 只放**需求分支**（用于 diff 比对的来源分支），不放目标分支（test/UAT/master）。
-- 已 fast-forward 合入主分支的临时补丁分支**不单独列出**。
-- 多仓库需求逐个收集，每个仓库一个 `repos` 元素。
+脚本自动实测 `repoName`（`git remote`）、`path`（`git rev-parse --show-toplevel`），按规则推断 `role`。确认无误后写入：
 
-### 3. 更新或新建
+```bash
+python3 ~/.agents/scripts/req-branches-scan.py <req-id>
+```
 
-- **已存在** `branches.json`：读取现有内容。保留未变更仓库的条目，更新或追加变更仓库的条目；刷新 `updatedAt`。
-- **不存在**：按 version 2 格式新建。
+需求目录不在默认位置时用 `--req-dir` 指定：
+
+```bash
+python3 ~/.agents/scripts/req-branches-scan.py <req-id> --req-dir <req-dir>
+```
+
+> 脚本 `--check` 模式只对比不写入、输出 JSON 状态，供 `req-branch-watcher` 扩展自动检测缺失时调用，agent 一般不用。
+
+### 3. 检查与补充
+
+脚本输出后必须人工核对：
+
+- **废弃分支**：脚本列出所有含需求 ID 的本地分支，可能含早期废弃分支。对照 `branch.md` 确认每个分支是否属于本次需求，多余的用 `edit` 从 `branches` 数组删除。
+- **校正 `role`**：脚本按规则推断基础角色（`后端`/`前端`/`后端-BFF`/`PDA`/`后端-组件库`）。如需细分（如"后端-ES数据源"），用 `edit` 修正。
+- **未 push 分支**：脚本会提示未 push 的分支。已 push 才能被 Agent Panel 做远端 diff，未 push 的先 `git push` 再登记。
+- **未扫到的已有仓库**：脚本列出"本次未扫到分支的已有仓库"（可能分支已合并清理），确认是否仍需保留。
 
 ### 4. 写入并校验
 
-写入 `<req-dir>/branches.json`，然后校验 JSON 合法性：
+脚本写入后自带 JSON 校验。手动写入时校验：
 
 ```bash
 python3 -m json.tool <req-dir>/branches.json
 ```
 
-校验通过即完成。
+### 手动方式（脚本不可用时）
+
+从 `branch.md`、`notes.md` 收集涉及的仓库，对每个仓库执行：
+
+```bash
+cd <repo-path>
+git remote -v | head -1          # origin URL 最后段去 .git => repoName
+git rev-parse --show-toplevel    # => path（/home/<user> 替换为 ~）
+git rev-parse <branch> origin/<branch>  # 两者相等 = 已 push
+```
+
+- `branches` 只放**需求分支**（diff 比对的来源分支），不放目标分支（test/UAT/master）。
+- 已 fast-forward 合入主分支的临时补丁分支**不单独列出**。
 
 ## Required Checks
 
