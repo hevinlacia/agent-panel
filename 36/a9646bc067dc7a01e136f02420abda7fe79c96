@@ -1,0 +1,41 @@
+prompts/phase-selftest.md
+  e8c78706d48bfeaa 1-23
+src/server.tsx
+  e8c78706d48bfeaa 47
+tests/requirements.test.ts
+  e8c78706d48bfeaa 42,44,191-193,271,281-289
+prompts/phase-done.md
+  e8c78706d48bfeaa 1-17
+src/requirements.ts
+  e8c78706d48bfeaa 22,66-68,70-77,81-84,86-102,105,1168-1169,1297,1300
+prompts/phase-dev.md
+  e8c78706d48bfeaa 1-20
+prompts/phase-align.md
+  e8c78706d48bfeaa 1-18
+prompts/phase-design.md
+  e8c78706d48bfeaa 1-18
+prompts/phase-testing.md
+  e8c78706d48bfeaa 1-20
+prompts/phase-deploy.md
+  e8c78706d48bfeaa 1-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "36a9646bc067dc7a01e136f02420abda7fe79c96",
+  "prompts": {
+    "e8c78706d48bfeaa": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019f6da5-71f7-7cf1-807c-db3da864703e",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 189,
+      "total_deletions": 92,
+      "accepted_lines": 189,
+      "overriden_lines": 0
+    }
+  }
+}
