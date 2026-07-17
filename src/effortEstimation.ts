@@ -16,8 +16,9 @@
  *   - Pure module for prompt building + response parsing; the only I/O is
  *     the `fetch` call inside `runAiEffortEstimation`, which never throws
  *     (failures land in `result.error`).
- *   - Reuses the code-review base URL / API key; the model falls back to
- *     `codeReviewModel` when `effortEstimateModel` is empty.
+ *   - Reuses the baseUrl / API key resolved from the selected pi provider
+ *     by the caller (src/server.tsx route); the model is the chosen
+ *     pi modelId.
  *   - The LLM never sees secrets or session transcripts—only curated
  *     requirement markdown files, each capped to a prompt budget.
  *

@@ -127,6 +127,43 @@ export async function readPiConfigSummary(): Promise<PiConfigSummary> {
   }
 }
 
+/**
+ * Resolved credentials for one pi-configured model, for server-side direct
+ * OpenAI-compatible calls. The API key is the REAL value from pi's
+ * models.json - this is server-only and must never be sent to the browser
+ * (the Settings UI only ever sees provider summaries via readPiConfigSummary).
+ */
+export interface PiModelCredentials {
+  providerId: string
+  modelId: string
+  baseUrl: string
+  apiKey: string
+}
+
+/**
+ * Resolve a "provider/model" string to the provider's baseUrl + real API key
+ * plus the bare modelId, so dashboard tasks that make direct OpenAI-compatible
+ * calls (branches.json extraction, effort estimation) can reuse a
+ * pi-configured provider instead of a separately-managed endpoint. Returns
+ * null when the provider/model is unknown or the provider lacks a baseUrl or
+ * API key (the Settings dropdown marks such providers "缺 API Key").
+ */
+export async function resolvePiModelCredentials(providerModel: string): Promise<PiModelCredentials | null> {
+  const value = (providerModel || "").trim()
+  if (!value) return null
+  const slash = value.indexOf("/")
+  if (slash <= 0) return null
+  const providerId = value.slice(0, slash)
+  const modelId = value.slice(slash + 1)
+  if (!modelId) return null
+  const modelsObj = await readJsonObject(fileMeta().models.path)
+  const provider = asRecord(asRecord(modelsObj.providers)[providerId])
+  const baseUrl = stringValue(provider.baseUrl)
+  const apiKey = typeof provider.apiKey === "string" ? provider.apiKey.trim() : ""
+  if (!baseUrl || !apiKey) return null
+  return { providerId, modelId, baseUrl, apiKey }
+}
+
 /** Merge editable Pi defaults into settings.json while preserving unknown keys. */
 export async function updatePiSettings(update: PiSettingsUpdate): Promise<PiConfigSummary> {
   const settingsPath = fileMeta().settings.path

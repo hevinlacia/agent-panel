@@ -16,7 +16,7 @@
  * `.env` / secret file.
  */
 
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
@@ -151,6 +151,14 @@ export interface Requirement {
   sessionIds: string[]
   /** Requirement category ("需求" | "线上问题"). Defaults to "需求" when unset. */
   category?: ReqCategory
+  /**
+   * ONES task reference associated with this requirement, stored in
+   * meta.md frontmatter as `ones`. May be a full ONES task URL
+   * (clickable in the UI) or a bare task id (display-only). Absent when
+   * no ONES task has been linked yet - the board surfaces this as
+   * "未关联 ONES" so the user knows to ask the PM to create one.
+   */
+  ones?: string
   createdAt: number
   updatedAt: number
   metaPath?: string
@@ -543,6 +551,7 @@ async function loadRequirementFromDir(
   let title = dirName
   let status: ReqStatus = "开发中"
   let category: ReqCategory = "需求"
+  let ones: string | undefined
   // Explicit project sources (frontmatter + project.json) are collected
   // first; they take precedence over inherited parentProjects / the
   // DEFAULT_PROJECT_NAME fallback, so a flat requirement that declares its
@@ -566,6 +575,8 @@ async function loadRequirementFromDir(
       if (rawStatus) status = rawStatus
       const rawCategory = normalizeReqCategory(fields["category"])
       if (rawCategory) category = rawCategory
+      const rawOnes = (fields["ones"] || "").trim()
+      if (rawOnes) ones = rawOnes
       if (fields["project"] && fields["project"].trim()) {
         frontmatterProjects.push(fields["project"].trim())
       }
@@ -631,6 +642,7 @@ async function loadRequirementFromDir(
     title,
     status,
     category,
+    ones,
     projects,
     project,
     groupPath,
@@ -652,6 +664,117 @@ async function loadRequirementFromDir(
     effortEstimate,
     reqDir: dirPath,
   }
+}
+
+/**
+ * Parsed view of a requirement's ONES task reference for the UI. `url` is
+ * set only when the stored value is an http(s) link (clickable); a bare
+ * task id yields `url: null` so the board renders it as plain text.
+ * `label` is the last URL path segment for links (usually the task id)
+ * or the raw value otherwise.
+ */
+export interface OnesRef {
+  raw: string
+  url: string | null
+  label: string
+}
+
+/**
+ * Turn a raw `ones` frontmatter value into a display-ready reference.
+ * Returns null for empty/missing values. Never throws - a malformed URL
+ * falls back to treating the whole value as a non-clickable label.
+ */
+export function parseOnesRef(raw: string | undefined | null): OnesRef | null {
+  const value = (raw || "").trim()
+  if (!value) return null
+  if (/^https?:\/\//i.test(value)) {
+    let label = value
+    try {
+      const u = new URL(value)
+      const seg = u.pathname.split("/").filter(Boolean).pop()
+      if (seg && seg.length <= 60) label = decodeURIComponent(seg)
+    } catch {
+      // keep full value as label
+    }
+    return { raw: value, url: value, label }
+  }
+  return { raw: value, url: null, label: value }
+}
+
+/**
+ * Upsert (or remove, when value is empty) a single frontmatter key in
+ * meta.md, preserving the body and every other frontmatter field. This is
+ * the write path for requirement metadata that lives in meta.md (like the
+ * ONES reference) rather than in the Agent Panel-managed state.json.
+ * Quoting matches what `parseFrontmatter` can strip: values containing a
+ * colon, `#`, quotes, or surrounding whitespace are quoted so the lenient
+ * split-on-first-colon parser round-trips them losslessly.
+ */
+export async function upsertMetaFrontmatterField(
+  reqDir: string,
+  key: string,
+  value: string,
+): Promise<void> {
+  const metaPath = join(reqDir, "meta.md")
+  const raw = existsSync(metaPath) ? await readFile(metaPath, "utf-8").catch(() => "") : ""
+  const normalized = raw.replace(/\r\n/g, "\n")
+  const hasFrontmatter = normalized.startsWith("---\n") || normalized === "---"
+  const lines = normalized.split("\n")
+
+  let fmEnd = -1
+  if (hasFrontmatter) {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i] === "---") { fmEnd = i; break }
+    }
+  }
+
+  const fmLines = hasFrontmatter && fmEnd > 0 ? lines.slice(1, fmEnd) : []
+  const bodyStart = hasFrontmatter && fmEnd > 0 ? fmEnd + 1 : 0
+  const body = lines.slice(bodyStart).join("\n")
+
+  const kept: string[] = []
+  for (const line of fmLines) {
+    const colonIdx = line.indexOf(":")
+    if (colonIdx > 0 && line.slice(0, colonIdx).trim() === key) {
+      // Drop the existing value line; re-add below only if value is non-empty.
+      continue
+    }
+    kept.push(line)
+  }
+
+  const trimmedValue = value.trim()
+  if (trimmedValue) {
+    kept.push(`${key}: ${formatFrontmatterValue(trimmedValue)}`)
+  }
+
+  const fmBlock = kept.length > 0 ? ["---", ...kept, "---"].join("\n") + "\n" : ""
+  // Preserve the body verbatim, including any blank line that separated the
+  // closing `---` from the first heading, so re-writing a frontmatter field
+  // is a no-op on the body and produces a minimal git diff.
+  const next = fmBlock + body
+  await mkdir(dirname(metaPath), { recursive: true })
+  const tmp = `${metaPath}.tmp.${process.pid}.${Date.now()}`
+  await writeFile(tmp, next, "utf-8")
+  await rename(tmp, metaPath)
+}
+
+function formatFrontmatterValue(value: string): string {
+  if (/[:#"']/.test(value) || value !== value.trim()) {
+    // Double-quote and escape embedded double quotes.
+    return `"${value.replace(/"/g, '\\"')}"`
+  }
+  return value
+}
+
+/**
+ * Set (or clear, when `ones` is empty) the requirement's ONES task
+ * reference in meta.md frontmatter. Returns the normalized stored value
+ * so the API can echo it back without re-reading the file.
+ */
+export async function writeRequirementOnes(reqDir: string, ones: string): Promise<string> {
+  const normalized = ones.trim()
+  await upsertMetaFrontmatterField(reqDir, "ones", normalized)
+  return normalized
 }
 
 /**

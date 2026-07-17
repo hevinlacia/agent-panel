@@ -465,6 +465,19 @@
     aiResult.appendChild(pre)
   }
 
+  // Reveal / re-target the "查看审查终端" link to the pi session that is
+  // (or will be) running the AI review. The link is server-rendered hidden
+  // until a job exists; this updates it client-side right after a dispatch
+  // or refresh so the user can open the live pi terminal without reloading.
+  function updateAiTerminalLink(sessionId) {
+    if (!sessionId) return
+    var link = document.getElementById("code-review-ai-terminal")
+    if (!link) return
+    var reqId = (aiBtn && aiBtn.getAttribute("data-req-id")) || ""
+    link.setAttribute("href", "/session?id=" + encodeURIComponent(sessionId) + "&req=" + encodeURIComponent(reqId))
+    link.hidden = false
+  }
+
   if (aiBtn) {
     aiBtn.addEventListener("click", function () {
       var reqId = aiBtn.getAttribute("data-req-id") || ""
@@ -480,7 +493,10 @@
         .then(function (envelope) {
           var data = envelope.data || {}
           if (data.ok) {
-            if (aiStatus) aiStatus.textContent = "已派发 pi agent 审查，完成后点「刷新结果」查看。"
+            if (data.sessionId) updateAiTerminalLink(data.sessionId)
+            if (aiStatus) aiStatus.textContent = data.sessionId
+              ? "已派发 pi agent（session " + data.sessionId.slice(0, 8) + "…），点「查看审查终端」可实时查看审查过程。"
+              : "已派发 pi agent 审查，完成后点「刷新结果」查看。"
           } else {
             if (aiStatus) { aiStatus.textContent = "派发失败：" + (data.error || "未知错误"); aiStatus.classList.add("is-warn") }
           }
@@ -508,6 +524,7 @@
           }
           var job = data.job || {}
           var result = data.result || null
+          if (job.sessionId) updateAiTerminalLink(job.sessionId)
           if (result && result.content) renderAiResult(result.content)
           var stateLabel = job.state === "queued" ? "排队中" : job.state === "running" ? "审查中" : job.state === "done" ? "已完成" : job.state === "failed" ? "失败" : ""
           if (job.state === "running" || job.state === "queued") {

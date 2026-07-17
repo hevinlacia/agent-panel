@@ -77,6 +77,8 @@ interface Requirement {
   sessionIds: string[]
   reqDir?: string
   effortEstimate?: EffortEstimate
+  /** ONES task reference: a full URL (clickable) or a bare task id (display-only). */
+  ones?: string
 }
 
 interface SessionInfo {
@@ -229,6 +231,35 @@ function statusPill(status: string) {
 
 function projectsOf(req: Requirement): string {
   return (req.projects?.length ? req.projects : [req.project]).filter(Boolean).join(" / ") || "-"
+}
+
+/**
+ * Parse a stored `ones` value into a display-ready reference for the UI.
+ * A full http(s) URL is clickable (label = last path segment); a bare id
+ * yields url=null so it renders as plain text; empty/missing -> null.
+ */
+function parseOnesRef(raw?: string): { raw: string; url: string | null; label: string } | null {
+  const value = (raw || "").trim()
+  if (!value) return null
+  if (/^https?:\/\//i.test(value)) {
+    let label = value
+    try {
+      const u = new URL(value)
+      const seg = u.pathname.split("/").filter(Boolean).pop()
+      if (seg && seg.length <= 60) label = decodeURIComponent(seg)
+    } catch { /* keep full value as label */ }
+    return { raw: value, url: value, label }
+  }
+  return { raw: value, url: null, label: value }
+}
+
+/** Compact ONES status badge for the board card: warning when missing,
+ * clickable link when a URL is stored, plain pill for a bare id. */
+function onesBadge(ones?: string) {
+  const ref = parseOnesRef(ones)
+  if (!ref) return <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务，请联系产品在 ONES 上登记">⚠ 未关联 ONES</span>
+  if (ref.url) return <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={`ONES 任务：${ref.raw}`}>🔗 ONES</a>
+  return <span className="react-ones-badge react-ones-id" title={`ONES 任务编号：${ref.label}`}>ONES</span>
 }
 
 const driveStateLabel: Record<AutoDriveState, string> = {
@@ -450,7 +481,7 @@ function ProjectsPage() {
 function RequirementCard({ req, index, driveJob, selected, onToggle }: { req: Requirement; index: number; driveJob?: AutoDriveJob; selected: boolean; onToggle: (reqId: string, checked: boolean) => void }) {
   const selectable = Boolean(req.reqDir && req.id !== "__default__")
   const blocked = driveJob?.state === "blocked" || driveJob?.state === "failed"
-  return <motion.article className={`react-list-card react-req-card ${blocked ? "react-drive-blocked-card" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><label className="react-card-select"><input type="checkbox" checked={selected} disabled={!selectable} onChange={(e) => onToggle(req.id, e.target.checked)} /><span>选择</span></label><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span>{driveJob ? driveStateBadge(driveJob) : null}{driveJob?.blockers?.length ? <span className="react-drive-blocker">阻塞 {driveJob.blockers.length}</span> : null}</div></div><div className="react-card-side">{req.effortEstimate ? <span className="react-effort-badge" title={`系数 ${req.effortEstimate.coefficient}× · ${req.effortEstimate.estimatedHours}h`}>{req.effortEstimate.estimatedHours}h</span> : null}{req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}{statusPill(req.status)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
+  return <motion.article className={`react-list-card react-req-card ${blocked ? "react-drive-blocked-card" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><label className="react-card-select"><input type="checkbox" checked={selected} disabled={!selectable} onChange={(e) => onToggle(req.id, e.target.checked)} /><span>选择</span></label><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span>{driveJob ? driveStateBadge(driveJob) : null}{driveJob?.blockers?.length ? <span className="react-drive-blocker">阻塞 {driveJob.blockers.length}</span> : null}</div></div><div className="react-card-side">{req.effortEstimate ? <span className="react-effort-badge" title={`系数 ${req.effortEstimate.coefficient}× · ${req.effortEstimate.estimatedHours}h`}>{req.effortEstimate.estimatedHours}h</span> : null}{req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}{statusPill(req.status)}{onesBadge(req.ones)}<a href={`/requirement/review?id=${encodeURIComponent(req.id)}`}>Review</a><a href={`/requirement/release?id=${encodeURIComponent(req.id)}`}>Release</a></div></motion.article>
 }
 
 function SessionsPage() {
@@ -654,6 +685,19 @@ function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
   return <div className="react-chip-list react-chip-list-collapsible">{visible.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}{needsCollapse ? <button type="button" className="react-chip-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? `收起` : `展开全部 (${hiddenCount} 更多)`}</button> : null}</div>
 }
 
+function OnesPanel({ req, onUpdated }: { req: Requirement; onUpdated: () => void }) {
+  const [ones, setOnes] = useState(req.ones ?? "")
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setOnes(req.ones ?? "") }, [req.ones])
+  const ref = parseOnesRef(req.ones)
+  const submit = async () => {
+    if (saving || ones === (req.ones ?? "")) return
+    setSaving(true)
+    try { await postForm("/api/requirement/ones", { reqId: req.id, ones }); onUpdated() } finally { setSaving(false) }
+  }
+  return <section className="react-panel"><PanelHead kicker="ONES" title="ONES 任务关联" chip={ref ? (ref.url ? <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={ref.raw}>🔗 {ref.label}</a> : <span className="react-ones-badge react-ones-id" title="ONES 任务编号（无链接）">ONES: {ref.label}</span>) : <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联</span>} /><p className="react-muted">关联产品在 ONES 上登记的任务，便于跳转查看和填写工时。填完整网址可点击跳转；只填编号则仅展示不跳转。留空保存可清除关联。</p><div className="react-inline-form"><input value={ones} onChange={(e) => setOnes(e.target.value)} placeholder="ONES 任务网址或编号，如 https://ones.example.com/task/T-123 或 T-123" spellCheck={false} autoComplete="off" /><button onClick={submit} disabled={saving || ones === (req.ones ?? "")}>{saving ? "保存中…" : "保存"}</button></div></section>
+}
+
 function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "recall" | "auto-extract" }) {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const sessionId = new URLSearchParams(window.location.search).get("sessionId") || ""
@@ -670,7 +714,7 @@ function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "
   const submitStatus = async () => { if (!req || !status || savingStatus) return; setSavingStatus(true); try { await postForm("/api/requirement/status", { reqId: req.id, status, note }); setSavedStatus(status); refresh() } finally { setSavingStatus(false) } }
   const submitCategory = async () => { if (!req || !category || savingCategory) return; setSavingCategory(true); try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() } finally { setSavingCategory(false) } }
   const newSession = async () => { if (!req) return; const res = await postForm<any>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command || JSON.stringify(res)) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"} actions={<a href="/projects"><ArrowLeft size={15} />返回需求列表</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || status === savedStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><RecommendationPanel req={req} onBound={refresh} /><EffortEstimatePanel req={req} onUpdated={refresh} /><AttachmentPanel req={req} /><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"} actions={<a href="/projects"><ArrowLeft size={15} />返回需求列表</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><OnesPanel req={req} onUpdated={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || status === savedStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><RecommendationPanel req={req} onBound={refresh} /><EffortEstimatePanel req={req} onUpdated={refresh} /><AttachmentPanel req={req} /><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
 }
 
 function ToolPanel({ tool, req, sessionId }: { tool: string; req: Requirement; sessionId: string }) {

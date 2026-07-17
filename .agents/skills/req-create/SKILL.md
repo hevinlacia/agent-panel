@@ -108,6 +108,7 @@ plan-release: unknown
 | `owner` | 否 | string | 负责人 |
 | `start-date` | 否 | string | `YYYY-MM-DD` 或 `unknown` |
 | `plan-release` | 否 | string | `YYYY-MM-DD` 或 `unknown` |
+| `ones` | 否 | string | 关联的 ONES 任务编号或完整网址；填完整 `http(s)://` 网址时看板和详情页可点击跳转，只填编号则仅展示不跳转。留空或省略表示未关联（看板显示「未关联 ONES」提醒找产品登记）。也可通过 Agent Panel 详情页「ONES 任务关联」表单设置，会写回本字段。 |
 
 **状态值（7 个，严格匹配 Agent Panel）：**
 

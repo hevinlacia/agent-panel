@@ -12,6 +12,7 @@ import {
   buildManagedEnv,
   deleteEnvVar,
   getConfig,
+  getSafeConfig,
   safeEnvVars,
   setConfig,
   initConfig,
@@ -69,22 +70,42 @@ test("setConfig merges partial updates", async () => {
   assert.equal(cfg.fullSyncSchedule, true)
 })
 
-test("branchScopeModel persists and defaults to empty", async () => {
+test("pi model config fields persist and default to empty", async () => {
   const p = newTmpPath()
   _resetForTest(p)
-  // Default value before any write.
+  // Default values before any write.
   let cfg = await getConfig()
-  assert.equal(cfg.branchScopeModel, "")
-  // Write a value and reload.
-  await setConfig({ branchScopeModel: "deepseek-chat" })
+  assert.equal(cfg.codeReviewPiModel, "")
+  assert.equal(cfg.branchScopePiModel, "")
+  assert.equal(cfg.effortEstimatePiModel, "")
+  // Write values and reload.
+  await setConfig({
+    codeReviewPiModel: "deepseek-official/deepseek-chat",
+    branchScopePiModel: "llm-provider-router/openai-gpt-5.6",
+    effortEstimatePiModel: "oai-relay/gpt-4o",
+  })
   _resetForTest(p)
   await initConfig()
   cfg = await getConfig()
-  assert.equal(cfg.branchScopeModel, "deepseek-chat")
-  // Clear it back to empty.
-  await setConfig({ branchScopeModel: "" })
+  assert.equal(cfg.codeReviewPiModel, "deepseek-official/deepseek-chat")
+  assert.equal(cfg.branchScopePiModel, "llm-provider-router/openai-gpt-5.6")
+  assert.equal(cfg.effortEstimatePiModel, "oai-relay/gpt-4o")
+  // Clear them back to empty.
+  await setConfig({ branchScopePiModel: "", effortEstimatePiModel: "" })
   cfg = await getConfig()
-  assert.equal(cfg.branchScopeModel, "")
+  assert.equal(cfg.branchScopePiModel, "")
+  assert.equal(cfg.effortEstimatePiModel, "")
+  // codeReviewPiModel is untouched by the partial clear.
+  assert.equal(cfg.codeReviewPiModel, "deepseek-official/deepseek-chat")
+})
+
+test("getSafeConfig no longer carries a redacted API key field", async () => {
+  _resetForTest(newTmpPath())
+  const safe = await getSafeConfig()
+  const obj = safe as unknown as Record<string, unknown>
+  assert.equal(obj.codeReviewApiKeySet, undefined)
+  assert.equal(obj.codeReviewApiKey, undefined)
+  assert.equal(obj.codeReviewBaseUrl, undefined)
 })
 
 test("env vars persist normalized names and redacted safe previews", async () => {

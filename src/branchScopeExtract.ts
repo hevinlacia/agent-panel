@@ -218,8 +218,8 @@ export interface AiBranchScopeResult {
  * Call an OpenAI-compatible chat completion endpoint to extract a
  * structured branches.json from branch.md text. Never throws - failures
  * land in the returned `error` field so the UI can render them inline.
- * Reuses the code-review base URL / API key; the model falls back to
- * `codeReviewModel` when `branchScopeModel` is empty.
+ * Reuses the baseUrl / API key resolved from the selected pi provider
+ * by the caller (src/server.tsx route); the model is the chosen pi modelId.
  */
 export async function runAiBranchScopeExtraction(
   req: Pick<Requirement, "id" | "title">,

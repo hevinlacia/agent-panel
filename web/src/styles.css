@@ -312,6 +312,13 @@
 .react-category-form label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
 .react-effort-panel { border-color: rgba(34,211,238,.18); }
 .react-effort-badge { color: var(--react-cyan); font: 800 .72rem var(--react-mono); border: 1px solid rgba(34,211,238,.3); border-radius: 999px; padding: 3px 8px; }
+/* ONES task reference badge: linked (URL), id-only, and missing states. */
+.react-ones-badge { display: inline-flex; align-items: center; gap: 3px; padding: 3px 9px; border: 1px solid; border-radius: 999px; font: 800 0.7rem var(--react-mono); white-space: nowrap; text-decoration: none; }
+.react-ones-badge code { font-family: var(--react-mono); }
+.react-ones-linked { color: #4ade80; border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.14); }
+.react-ones-linked:hover { background: rgba(34,197,94,.26); }
+.react-ones-id { color: #60a5fa; border-color: rgba(59,130,246,.4); background: rgba(59,130,246,.14); }
+.react-ones-missing { color: #fbbf24; border-color: rgba(245,158,11,.4); background: rgba(245,158,11,.14); }
 .react-effort-result { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
 .react-effort-headline { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
 .react-effort-coeff { display: flex; flex-direction: column; align-items: center; }

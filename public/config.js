@@ -63,39 +63,33 @@
     })
   }
 
-  // AI code-review config form. The API key is type=password and intentionally
-  // empty on load; an empty value tells the server to keep the existing key.
+  // Model config form: each task picks a pi "provider/model". The server
+  // resolves the provider's baseUrl + API key from pi's config, so there is
+  // no separate Base URL / API Key to submit.
   function bindCodeReviewForm() {
     var form = document.getElementById("code-review-config-form")
     var saved = document.getElementById("code-review-config-saved")
     if (!form) return
     form.addEventListener("submit", function (ev) {
       ev.preventDefault()
-      var baseUrl = document.getElementById("cfg-code-review-base").value.trim()
-      var model = document.getElementById("cfg-code-review-model").value.trim()
-      var key = document.getElementById("cfg-code-review-key").value
-      var piModelEl = document.getElementById("cfg-code-review-pi-model")
+      function val(id) {
+        var el = document.getElementById(id)
+        return el ? (el.value || "").trim() : ""
+      }
       var data = {
-        codeReviewBaseUrl: baseUrl,
-        codeReviewModel: model,
-        codeReviewPiModel: piModelEl ? (piModelEl.value || "").trim() : "",
-        // Only send the key when the user typed a new value.
-        codeReviewApiKey: key,
-        branchScopeModel: (document.getElementById("cfg-branch-scope-model") || {}).value || "",
+        codeReviewPiModel: val("cfg-code-review-pi-model"),
+        branchScopePiModel: val("cfg-branch-scope-pi-model"),
+        effortEstimatePiModel: val("cfg-effort-estimate-pi-model"),
       }
       var btn = form.querySelector("button[type=\"submit\"]")
       if (btn) { btn.disabled = true; btn.textContent = "保存中…" }
       requestJson("/api/config", data)
-        .then(function () {
-          // Clear the password field so the placeholder re-appears.
-          document.getElementById("cfg-code-review-key").value = ""
-          showSaved(saved)
-        })
+        .then(function () { showSaved(saved) })
         .catch(function (err) {
           alert("保存失败：" + (err && err.message ? err.message : err))
         })
         .finally(function () {
-          if (btn) { btn.disabled = false; btn.textContent = "保存 AI 代码审查设置" }
+          if (btn) { btn.disabled = false; btn.textContent = "保存模型配置" }
         })
     })
   }

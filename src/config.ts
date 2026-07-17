@@ -6,7 +6,8 @@
  *
  * Public surface:
  *   - getConfig()/setConfig(): read and persist dashboard behavior toggles
- *   - getSafeConfig(): UI/API-safe copy with the code-review API key redacted
+ *   - getSafeConfig(): UI/API-safe config accessor (no secrets to redact
+ *     now that model selection comes from pi's providers)
  *   - safeEnvVars()/safeEnvVarsByFile(): redacted variable list for UI/API
  *   - getEnvFileMeta(): env file metadata for UI display
  *   - upsertEnvVar/deleteEnvVar: mutate OpenCode env files safely
@@ -56,36 +57,24 @@ export interface AppConfig {
    */
   extractModel: string
   /**
-   * OpenAI-compatible base URL for AI code review, e.g. `https://api.deepseek.com/v1`.
-   * Empty until the user configures it on the Settings page.
-   */
-  codeReviewBaseUrl: string
-  /**
-   * API key for the AI code review endpoint. Stored locally in config.json
-   * (never committed); redacted in every UI/API response via getSafeConfig().
-   */
-  codeReviewApiKey: string
-  /**
-   * Model name passed to the code review chat completion, e.g. `deepseek-chat`. */
-  codeReviewModel: string
-  /**
    * Pi provider/model used for AI code review, in "provider/model" format.
    * When set, the "AI 审查代码" button dispatches a non-interactive pi agent
-   * (using pi's own configured API keys) instead of a direct LLM call. The
-   * review result is written to `<req-dir>/code-review-ai.md`.
+   * (using pi's own configured API keys). The review result is written to
+   * `<req-dir>/code-review-ai.md`.
    */
   codeReviewPiModel: string
   /**
-   * Model name for the AI-powered branches.json extraction on the code-diff
-   * page. Reuses codeReviewBaseUrl/codeReviewApiKey. Falls back to
-   * codeReviewModel when empty so the user only configures one endpoint.
+   * Pi provider/model ("provider/model") for AI branches.json extraction.
+   * The server resolves the provider's baseUrl + API key from pi's config so
+   * no separate LLM endpoint is needed. Falls back to codeReviewPiModel when
+   * empty, so one model can serve every task.
    */
-  branchScopeModel: string
+  branchScopePiModel: string
   /**
-   * Model name for AI effort estimation. Falls back to codeReviewModel when
-   * empty (reuses the same code-review base URL / API key).
+   * Pi provider/model ("provider/model") for AI effort estimation. Same
+   * resolution/fallback behavior as branchScopePiModel.
    */
-  effortEstimateModel: string
+  effortEstimatePiModel: string
   /**
    * Base hours for effort estimation. The final estimate = baseHours × coefficient.
    * Default 4 (a standard small feature takes ~4h).
@@ -264,12 +253,9 @@ const DEFAULTS: AppConfig = {
   autoExtract: false,
   autoExtractSchedule: false,
   extractModel: "litellm-local/deepseek-v4-flash-auto",
-  codeReviewBaseUrl: "",
-  codeReviewApiKey: "",
-  codeReviewModel: "",
   codeReviewPiModel: "",
-  branchScopeModel: "",
-  effortEstimateModel: "",
+  branchScopePiModel: "",
+  effortEstimatePiModel: "",
   effortEstimateBaseHours: 4,
   minChangeMessages: 5,
   autoValuation: false,
@@ -312,12 +298,9 @@ async function load(): Promise<AppConfig> {
       autoExtract: parsed.autoExtract ?? DEFAULTS.autoExtract,
       autoExtractSchedule: parsed.autoExtractSchedule ?? DEFAULTS.autoExtractSchedule,
       extractModel: parsed.extractModel || DEFAULTS.extractModel,
-      codeReviewBaseUrl: typeof parsed.codeReviewBaseUrl === "string" ? parsed.codeReviewBaseUrl : DEFAULTS.codeReviewBaseUrl,
-      codeReviewApiKey: typeof parsed.codeReviewApiKey === "string" ? parsed.codeReviewApiKey : DEFAULTS.codeReviewApiKey,
-      codeReviewModel: typeof parsed.codeReviewModel === "string" ? parsed.codeReviewModel : DEFAULTS.codeReviewModel,
       codeReviewPiModel: typeof parsed.codeReviewPiModel === "string" ? parsed.codeReviewPiModel : DEFAULTS.codeReviewPiModel,
-      branchScopeModel: typeof parsed.branchScopeModel === "string" ? parsed.branchScopeModel : DEFAULTS.branchScopeModel,
-      effortEstimateModel: typeof parsed.effortEstimateModel === "string" ? parsed.effortEstimateModel : DEFAULTS.effortEstimateModel,
+      branchScopePiModel: typeof parsed.branchScopePiModel === "string" ? parsed.branchScopePiModel : DEFAULTS.branchScopePiModel,
+      effortEstimatePiModel: typeof parsed.effortEstimatePiModel === "string" ? parsed.effortEstimatePiModel : DEFAULTS.effortEstimatePiModel,
       effortEstimateBaseHours: typeof parsed.effortEstimateBaseHours === "number" && parsed.effortEstimateBaseHours > 0 ? parsed.effortEstimateBaseHours : DEFAULTS.effortEstimateBaseHours,
       minChangeMessages: parsed.minChangeMessages ?? DEFAULTS.minChangeMessages,
       autoValuation: parsed.autoValuation ?? DEFAULTS.autoValuation,
@@ -339,17 +322,17 @@ export async function getConfig(): Promise<AppConfig> {
 }
 
 /**
- * Return a UI/API-safe copy of the config with the code-review API key
- * redacted. Server-side callers that need the real key (the AI review
- * endpoint) must use getConfig() directly, never this helper.
+ * Return a UI/API-safe copy of the config. With the manual LLM endpoint
+ * config retired (model selection now comes from pi's providers), there is
+ * no secret to redact; this is kept as the canonical UI/API-facing accessor
+ * so callers don't reach for the raw getConfig() inadvertently.
  */
-export async function getSafeConfig(): Promise<AppConfig & { codeReviewApiKeySet: boolean }> {
-  const cfg = await load()
-  return { ...cfg, codeReviewApiKey: "", codeReviewApiKeySet: cfg.codeReviewApiKey.trim() !== "" }
+export async function getSafeConfig(): Promise<AppConfig> {
+  return load()
 }
 
 export async function setConfig(
-  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewBaseUrl" | "codeReviewApiKey" | "codeReviewModel" | "codeReviewPiModel" | "branchScopeModel" | "effortEstimateModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "requirementScanRoots" | "envVars">>,
+  partial: Partial<Pick<AppConfig, "harness" | "autoExtract" | "autoExtractSchedule" | "extractModel" | "codeReviewPiModel" | "branchScopePiModel" | "effortEstimatePiModel" | "effortEstimateBaseHours" | "minChangeMessages" | "autoValuation" | "valuationThreshold" | "fullSyncSchedule" | "fullSyncTimes" | "fullSyncGithubRepos" | "requirementScanRoots" | "envVars">>,
 ): Promise<AppConfig> {
   const cur = await load()
   const next: AppConfig = {
@@ -357,13 +340,9 @@ export async function setConfig(
     autoExtract: partial.autoExtract ?? cur.autoExtract,
     autoExtractSchedule: partial.autoExtractSchedule ?? cur.autoExtractSchedule,
     extractModel: partial.extractModel ?? cur.extractModel,
-    codeReviewBaseUrl: partial.codeReviewBaseUrl ?? cur.codeReviewBaseUrl,
-    // Empty string means "keep existing key"; a non-empty value overwrites.
-    codeReviewApiKey: partial.codeReviewApiKey && partial.codeReviewApiKey.trim() ? partial.codeReviewApiKey : cur.codeReviewApiKey,
-    codeReviewModel: partial.codeReviewModel ?? cur.codeReviewModel,
     codeReviewPiModel: partial.codeReviewPiModel ?? cur.codeReviewPiModel,
-    branchScopeModel: partial.branchScopeModel ?? cur.branchScopeModel,
-    effortEstimateModel: partial.effortEstimateModel ?? cur.effortEstimateModel,
+    branchScopePiModel: partial.branchScopePiModel ?? cur.branchScopePiModel,
+    effortEstimatePiModel: partial.effortEstimatePiModel ?? cur.effortEstimatePiModel,
     effortEstimateBaseHours: partial.effortEstimateBaseHours ?? cur.effortEstimateBaseHours,
     minChangeMessages: partial.minChangeMessages ?? cur.minChangeMessages,
     autoValuation: partial.autoValuation ?? cur.autoValuation,
