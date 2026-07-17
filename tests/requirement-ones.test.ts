@@ -1,6 +1,6 @@
 /**
  * Unit tests for the ONES task reference feature:
- *   - parseOnesRef: URL vs bare-id vs empty
+ *   - parseOnesRef: hash-routed URL vs conventional URL vs bare-id vs empty
  *   - writeRequirementOnes: frontmatter upsert / update / clear,
  *     preserving other fields and the body, and round-tripping through
  *     the scanner so the value the UI reads matches what was written.
@@ -49,6 +49,19 @@ test("parseOnesRef: http URL is clickable with last segment as label", () => {
   assert.equal(ref?.url, "https://ones.example.com/project/task/T-123")
   assert.equal(ref?.label, "T-123")
   assert.equal(ref?.raw, "https://ones.example.com/project/task/T-123")
+})
+
+test("parseOnesRef: ONES hash issue route extracts the issue code", () => {
+  const url = "https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347390"
+  const ref = parseOnesRef(url)
+  assert.equal(ref?.url, url)
+  assert.equal(ref?.label, "JTYC-1347390")
+  assert.equal(ref?.raw, url)
+})
+
+test("parseOnesRef: ONES hash issue route ignores query parameters after the code", () => {
+  const ref = parseOnesRef("https://ones.example.com/project/#/team/demo/issue/JTYC-42?view=detail")
+  assert.equal(ref?.label, "JTYC-42")
 })
 
 test("parseOnesRef: bare id has no url", () => {

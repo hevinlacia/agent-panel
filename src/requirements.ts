@@ -1,19 +1,9 @@
 /**
- * Requirement (需求) data layer — Hermes-backed.
- *
- * Requirement records live as Markdown directories discovered under the
- * configured `requirementScanRoots` (each root's `.agents/req/` or `req/`
- * subdirectory), managed by the Hermes `req-tracker` skill. The dashboard
- * owns only session associations, persisted at
- * `~/.local/share/agent-panel/associations.json`.
- * `alignment.md` is the product/business alignment brief for the first
- * requirement phase; `prd.md` is kept as the original-source trace.
- * `impact.md` is the pre-coding safety gate for business-flow risk.
- *
- * Tests can override the associations store path via `_setStorePath`.
- *
- * Only `node:` built-ins are used. Never reads or writes any
- * `.env` / secret file.
+ * Role: Hermes-backed requirement scanning, metadata updates, and session associations.
+ * Public surface: requirement records, lifecycle helpers, ONES references, and association APIs.
+ * Constraints: only `node:` built-ins; never reads or writes `.env` or secret files.
+ * Tests may isolate scan roots and stores through the exported `_set*` helpers.
+ * Read-this-with: src/requirementState.ts, src/requirementAlignment.ts, and src/server.tsx.
  */
 
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises"
@@ -642,8 +632,8 @@ async function loadRequirementFromDir(
  * Parsed view of a requirement's ONES task reference for the UI. `url` is
  * set only when the stored value is an http(s) link (clickable); a bare
  * task id yields `url: null` so the board renders it as plain text.
- * `label` is the last URL path segment for links (usually the task id)
- * or the raw value otherwise.
+ * `label` is the issue code from an ONES hash route, otherwise the last
+ * URL path segment for links, or the raw value for a bare task id.
  */
 export interface OnesRef {
   raw: string
@@ -653,8 +643,8 @@ export interface OnesRef {
 
 /**
  * Turn a raw `ones` frontmatter value into a display-ready reference.
- * Returns null for empty/missing values. Never throws - a malformed URL
- * falls back to treating the whole value as a non-clickable label.
+ * ONES uses hash routing, so `#/.../issue/<code>` wins over pathname.
+ * Returns null for empty/missing values and never throws on malformed URLs.
  */
 export function parseOnesRef(raw: string | undefined | null): OnesRef | null {
   const value = (raw || "").trim()
@@ -662,9 +652,11 @@ export function parseOnesRef(raw: string | undefined | null): OnesRef | null {
   if (/^https?:\/\//i.test(value)) {
     let label = value
     try {
-      const u = new URL(value)
-      const seg = u.pathname.split("/").filter(Boolean).pop()
-      if (seg && seg.length <= 60) label = decodeURIComponent(seg)
+      const url = new URL(value)
+      const issueCode = url.hash.match(/(?:^|\/)issue\/([^/?#]+)/i)?.[1]
+      const pathSegment = url.pathname.split("/").filter(Boolean).pop()
+      const segment = issueCode || pathSegment
+      if (segment && segment.length <= 60) label = decodeURIComponent(segment)
     } catch {
       // keep full value as label
     }

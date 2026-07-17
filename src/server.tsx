@@ -2391,8 +2391,8 @@ const ReactAppPage: FC<{ title: string; active: Tab }> = ({ title, active }) => 
     <div id="dashboard-root" data-api="/api/dashboard/stats">
       <div class="react-dashboard-fallback">正在加载 React app…</div>
     </div>
-    <link rel="stylesheet" href="/static/dashboard-react/dashboard.css?v=20260717-ones" />
-    <script type="module" src="/static/dashboard-react/dashboard.js?v=20260717-ones"></script>
+    <link rel="stylesheet" href="/static/dashboard-react/dashboard.css?v=20260717-ones-code-feedback" />
+    <script type="module" src="/static/dashboard-react/dashboard.js?v=20260717-ones-code-feedback"></script>
   </Layout>
 )
 

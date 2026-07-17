@@ -235,8 +235,8 @@ function projectsOf(req: Requirement): string {
 
 /**
  * Parse a stored `ones` value into a display-ready reference for the UI.
- * A full http(s) URL is clickable (label = last path segment); a bare id
- * yields url=null so it renders as plain text; empty/missing -> null.
+ * ONES issue links use hash routing, so `#/.../issue/<code>` takes priority
+ * over the final pathname segment. Empty or missing values return null.
  */
 function parseOnesRef(raw?: string): { raw: string; url: string | null; label: string } | null {
   const value = (raw || "").trim()
@@ -244,9 +244,11 @@ function parseOnesRef(raw?: string): { raw: string; url: string | null; label: s
   if (/^https?:\/\//i.test(value)) {
     let label = value
     try {
-      const u = new URL(value)
-      const seg = u.pathname.split("/").filter(Boolean).pop()
-      if (seg && seg.length <= 60) label = decodeURIComponent(seg)
+      const url = new URL(value)
+      const issueCode = url.hash.match(/(?:^|\/)issue\/([^/?#]+)/i)?.[1]
+      const pathSegment = url.pathname.split("/").filter(Boolean).pop()
+      const segment = issueCode || pathSegment
+      if (segment && segment.length <= 60) label = decodeURIComponent(segment)
     } catch { /* keep full value as label */ }
     return { raw: value, url: value, label }
   }
@@ -685,17 +687,32 @@ function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
   return <div className="react-chip-list react-chip-list-collapsible">{visible.map((sid) => <a key={sid} href={`/session?id=${sid}`}>{sid}</a>)}{needsCollapse ? <button type="button" className="react-chip-toggle" onClick={() => setExpanded((v) => !v)}>{expanded ? `收起` : `展开全部 (${hiddenCount} 更多)`}</button> : null}</div>
 }
 
-function OnesPanel({ req, onUpdated }: { req: Requirement; onUpdated: () => void }) {
+function OnesPanel({ req }: { req: Requirement }) {
   const [ones, setOnes] = useState(req.ones ?? "")
   const [saving, setSaving] = useState(false)
+  const [feedback, setFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null)
   useEffect(() => { setOnes(req.ones ?? "") }, [req.ones])
   const ref = parseOnesRef(req.ones)
+  const draftRef = parseOnesRef(ones)
+  const changed = ones.trim() !== (req.ones ?? "").trim()
+  const recognizedCode = draftRef && (draftRef.url === null || draftRef.label !== draftRef.raw) ? draftRef.label : null
   const submit = async () => {
-    if (saving || ones === (req.ones ?? "")) return
+    if (saving || !changed) return
     setSaving(true)
-    try { await postForm("/api/requirement/ones", { reqId: req.id, ones }); onUpdated() } finally { setSaving(false) }
+    setFeedback(null)
+    try {
+      const result = await postForm<{ ones: string; ref: { label: string } | null }>("/api/requirement/ones", { reqId: req.id, ones })
+      const message = result.ref
+        ? `保存成功，ONES 编码为 ${result.ref.label}。正在刷新页面…`
+        : "ONES 关联已清除。正在刷新页面…"
+      setFeedback({ tone: "success", message })
+      window.setTimeout(() => window.location.reload(), 1_800)
+    } catch (err) {
+      setFeedback({ tone: "error", message: `保存失败：${err instanceof Error ? err.message : String(err)}` })
+      setSaving(false)
+    }
   }
-  return <section className="react-panel"><PanelHead kicker="ONES" title="ONES 任务关联" chip={ref ? (ref.url ? <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={ref.raw}>🔗 {ref.label}</a> : <span className="react-ones-badge react-ones-id" title="ONES 任务编号（无链接）">ONES: {ref.label}</span>) : <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联</span>} /><p className="react-muted">关联产品在 ONES 上登记的任务，便于跳转查看和填写工时。填完整网址可点击跳转；只填编号则仅展示不跳转。留空保存可清除关联。</p><div className="react-inline-form"><input value={ones} onChange={(e) => setOnes(e.target.value)} placeholder="ONES 任务网址或编号，如 https://ones.example.com/task/T-123 或 T-123" spellCheck={false} autoComplete="off" /><button onClick={submit} disabled={saving || ones === (req.ones ?? "")}>{saving ? "保存中…" : "保存"}</button></div></section>
+  return <section className="react-panel"><PanelHead kicker="ONES" title="ONES 任务关联" chip={ref ? (ref.url ? <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={ref.raw}>🔗 {ref.label}</a> : <span className="react-ones-badge react-ones-id" title="ONES 任务编号（无链接）">ONES: {ref.label}</span>) : <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联</span>} /><p className="react-muted">关联产品在 ONES 上登记的任务，便于跳转查看和填写工时。粘贴 ONES 网址会自动提取任务编码；只填编号则仅展示不跳转。留空保存可清除关联。</p><div className="react-inline-form"><input value={ones} onChange={(e) => { setOnes(e.target.value); setFeedback(null) }} placeholder="ONES 任务网址或编号，如 https://ones.example.com/project/#/team/.../issue/JTYC-123 或 JTYC-123" spellCheck={false} autoComplete="off" /><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button></div>{recognizedCode && changed ? <p className="react-ones-recognized">已识别 ONES 编码：<code>{recognizedCode}</code></p> : null}<AnimatePresence>{feedback ? <motion.div className={`react-save-feedback react-save-feedback-${feedback.tone}`} role="status" aria-live="polite" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }}>{feedback.tone === "success" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}<span>{feedback.message}</span></motion.div> : null}</AnimatePresence></section>
 }
 
 function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "recall" | "auto-extract" }) {
@@ -714,7 +731,7 @@ function RequirementPage({ tool }: { tool?: "review" | "release" | "extract" | "
   const submitStatus = async () => { if (!req || !status || savingStatus) return; setSavingStatus(true); try { await postForm("/api/requirement/status", { reqId: req.id, status, note }); setSavedStatus(status); refresh() } finally { setSavingStatus(false) } }
   const submitCategory = async () => { if (!req || !category || savingCategory) return; setSavingCategory(true); try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() } finally { setSavingCategory(false) } }
   const newSession = async () => { if (!req) return; const res = await postForm<any>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command || JSON.stringify(res)) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"} actions={<a href="/projects"><ArrowLeft size={15} />返回需求列表</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><OnesPanel req={req} onUpdated={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || status === savedStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><RecommendationPanel req={req} onBound={refresh} /><EffortEstimatePanel req={req} onUpdated={refresh} /><AttachmentPanel req={req} /><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={tool ? `${tool} — ${req?.title || id}` : (req?.title || id || "Requirement")} description={req?.description || "需求详情、状态流转、关联 session 与工具入口。"} actions={<a href="/projects"><ArrowLeft size={15} />返回需求列表</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p><div className="react-tool-links"><a href={`/requirement/review?id=${req.id}`}>代码差异</a><a href={`/requirement/release?id=${req.id}`}>发版注意</a></div></section><OnesPanel req={req} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || status === savedStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>另开新 session</button></div>{command ? <code className="react-command">{command}</code> : null}</section><RecommendationPanel req={req} onBound={refresh} /><EffortEstimatePanel req={req} onUpdated={refresh} /><AttachmentPanel req={req} /><AutoDrivePanel req={req} />{tool ? <ToolPanel tool={tool} req={req} sessionId={sessionId} /> : null}</div>}</PageChrome>
 }
 
 function ToolPanel({ tool, req, sessionId }: { tool: string; req: Requirement; sessionId: string }) {
