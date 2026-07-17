@@ -5,8 +5,9 @@
  * code diff and write `<req-dir>/code-review-ai.md`. Mirrors the auto-drive
  * pattern (src/requirementAutoDrive.ts) but lighter - no phase/blocker
  * model, just run -> done/failed. The pi agent reads `code-review.json`
- * (the PRO diff snapshot) plus the requirement files and writes the
- * review Markdown; the dashboard only tracks run status and serves the file.
+ * (the PRO diff snapshot) plus the requirement files, expands to read
+ * surrounding repo source when needed for context, and writes the review
+ * Markdown; the dashboard only tracks run status and serves the file.
  *
  * Public surface:
  *   - initCodeReviewAiJobs(): load persisted jobs at startup
@@ -30,12 +31,27 @@ import { mkdir, readFile, stat, writeFile, rename } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { randomBytes } from "node:crypto"
 import { homedir } from "node:os"
+import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 
 import type { Requirement } from "./requirements.ts"
 import type { QueuedOpencodeProcessResult } from "./opencodeProcessQueue.ts"
 
 export const CODE_REVIEW_AI_FILE = "code-review-ai.md"
+
+/**
+ * Path to the editable code-review prompt template (repo-relative). The
+ * prompt lives in a Markdown file so it can be tuned without code changes;
+ * `buildCodeReviewAiPrompt` loads it at dispatch time and substitutes the
+ * `{{REQ_ID}}` / `{{REQ_TITLE}}` / `{{REQ_DIR}}` / `{{OUTPUT_FILE}}` tokens.
+ * Resolved relative to this module so it works regardless of `cwd`.
+ */
+const CODE_REVIEW_AI_PROMPT_PATH = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "prompts",
+  "code-review-ai.md",
+)
 
 export type CodeReviewAiJobState = "queued" | "running" | "done" | "failed"
 
@@ -169,38 +185,25 @@ export function buildCodeReviewAiJobName(req: Requirement): string {
 }
 
 /**
- * Build the non-interactive pi prompt. The agent reads the persisted diff
- * snapshot (`code-review.json`) and requirement files, then writes its
- * Markdown review to `code-review-ai.md`. No code mutations, only the one
- * output file.
+ * Build the non-interactive pi prompt by loading the editable Markdown
+ * template at `prompts/code-review-ai.md` and substituting the requirement's
+ * id / title / dir / output filename. The template is the source of truth
+ * for the review instructions (materials, logic + performance angles,
+ * output sections) so it can be tuned without a code change; this function
+ * only injects the per-requirement variables. Throws a clear error if the
+ * template file is missing so a broken deploy fails loudly rather than
+ * silently reviewing with a stale/fallback prompt.
  */
-export function buildCodeReviewAiPrompt(req: Requirement): string {
-  return [
-    `你正在为 Agent Panel 需求做 AI 代码审查：${req.id} - ${req.title}`,
-    req.reqDir ? `需求目录：${req.reqDir}` : "需求目录：未知",
-    "",
-    "任务：",
-    "1. 读取需求目录下的 code-review.json，其中 repos[].diff 是每个仓库相对生产基线的逐文件 unified diff。",
-    "2. 读取需求上下文文件：meta.md、background.md、branch.md、impact.md、test.md、config-changes.md、notes.md。",
-    "3. 基于 diff 和需求上下文做严格 code review。",
-    `4. 将审查结果写入需求目录下的 ${CODE_REVIEW_AI_FILE}（覆盖已有内容），Markdown 格式。`,
-    "",
-    "审查关注：逻辑错误、边界与空值、并发与事务、资源泄漏、与需求不符的实现、安全与配置风险、可维护性。",
-    "",
-    `${CODE_REVIEW_AI_FILE} 必须包含以下小节：`,
-    "## 审查概览",
-    "（需求标题、变更仓库与文件数、审查模型、时间）",
-    "## 严重问题（必须修复）",
-    "## 改进建议",
-    "## 测试验收要点",
-    "## 亮点",
-    "",
-    "要求：具体到文件与代码片段，不要泛泛而谈；某小节无内容写「无」。",
-    "",
-    "注意：",
-    "- 只读 code-review.json 和需求文件，不要修改任何代码或需求文件，唯一写入的文件是 code-review-ai.md。",
-    "- 审查结论必须基于 code-review.json 中 repos[].diff 的实际差异；如果某仓库 diff 为空，说明该仓库相对基线无改动。",
-  ].join("\n")
+export async function buildCodeReviewAiPrompt(req: Requirement): Promise<string> {
+  if (!existsSync(CODE_REVIEW_AI_PROMPT_PATH)) {
+    throw new Error(`AI 代码审查提示词模板缺失：${CODE_REVIEW_AI_PROMPT_PATH}`)
+  }
+  const template = await readFile(CODE_REVIEW_AI_PROMPT_PATH, "utf-8")
+  return template
+    .replaceAll("{{REQ_ID}}", req.id)
+    .replaceAll("{{REQ_TITLE}}", req.title)
+    .replaceAll("{{REQ_DIR}}", req.reqDir || "未知")
+    .replaceAll("{{OUTPUT_FILE}}", CODE_REVIEW_AI_FILE)
 }
 
 /**

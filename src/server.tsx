@@ -3531,9 +3531,23 @@ app.post("/api/requirement/code-review/ai", async (c) => {
   const job = createCodeReviewAiJob(req, sessionId, model)
   const env = await buildManagedEnv()
 
+  let prompt: string
+  try {
+    prompt = await buildCodeReviewAiPrompt(req)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    updateCodeReviewAiJob(job.id, {
+      state: "failed",
+      summary: `加载审查提示词失败：${message}`,
+      error: message,
+      doneAt: Date.now(),
+    })
+    return c.json({ ok: false, error: message, jobId: job.id }, 500)
+  }
+
   void runQueuedOpencodeProcess({
     bin: "pi",
-    args: ["--session-id", sessionId, "--name", name, "--model", model, "--append-system-prompt", ctxFile, "-p", buildCodeReviewAiPrompt(req)],
+    args: ["--session-id", sessionId, "--name", name, "--model", model, "--append-system-prompt", ctxFile, "-p", prompt],
     spawnOptions: { stdio: ["ignore", "pipe", "pipe"], cwd: req.reqDir },
     env,
     timeoutMs: CODE_REVIEW_AI_TIMEOUT_MS,
