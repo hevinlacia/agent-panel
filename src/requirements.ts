@@ -19,6 +19,7 @@
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
+import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { randomBytes } from "node:crypto"
 
@@ -62,74 +63,45 @@ export const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题"]
  */
 export const PRE_DEV_STATUSES: ReqStatus[] = ["需求对齐", "方案设计"]
 /**
- * Status-specific execution contract injected into requirement-bound sessions.
- * The current requirement status acts as a lightweight role switch so each
- * phase gets different required context, prohibitions, and completion criteria.
+ * ASCII slug per requirement status, used for the editable per-phase prompt
+ * files (`prompts/phase-<slug>.md`) and the board status badge CSS class.
+ * Shared here so the prompt loader and the UI stay in sync on naming.
  */
-export interface RequirementPhaseProfile {
-  role: string
-  mustRead: string[]
-  mustDo: string[]
-  mustNotDo: string[]
-  doneCriteria: string[]
+export const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
+  "需求对齐": "align",
+  "方案设计": "design",
+  "开发中": "dev",
+  "自测中": "selftest",
+  "测试中": "testing",
+  "待上线": "deploy",
+  "已完成": "done",
 }
 
 /**
- * Dashboard-owned phase profiles keyed by the canonical requirement statuses.
- * Keep this exhaustive with `REQ_STATUSES`; tests assert every status has a
- * non-empty profile so new statuses cannot silently skip phase guidance.
+ * Directory holding the per-phase prompt Markdown files, resolved relative
+ * to this module so it works regardless of the server's `cwd`. Each file
+ * `phase-<slug>.md` describes what to do in that requirement phase and is
+ * injected into a new session's context as the "阶段执行规范" section.
  */
-export const REQUIREMENT_PHASE_PROFILES: Record<ReqStatus, RequirementPhaseProfile> = {
-  需求对齐: {
-    role: "业务需求对齐者",
-    mustRead: ["alignment.md", "memory.md", "background.md", "prd.md"],
-    mustDo: ["只和产品或业务对齐真实业务诉求、目标、范围、验收口径和未决问题", "把 PRD 或飞书原文提炼成 alignment.md 标准格式", "在 memory.md/background.md 记录已确认结论和开放问题"],
-    mustNotDo: ["讨论代码实现、技术方案、分支或改造方式", "把 PRD 原文当作后续阶段的主要上下文", "在业务口径未明确时推进到开发"],
-    doneCriteria: ["alignment.md 已覆盖业务目标、范围、场景、规则、验收口径、非目标和未决问题", "prd.md 只保留来源链接/摘要/转化记录，后续阶段无需默认重读 PRD"],
-  },
-  方案设计: {
-    role: "技术方案设计 / 影响评估者",
-    mustRead: ["memory.md", "background.md", "impact.md", "branch.md", "config-changes.md"],
-    mustDo: ["把业务语言翻译成开发可执行技术方案", "识别是否涉及核心链路、是否可能阻塞主流程，并补齐 impact.md 风险等级", "确认影响模块、配置变更、验证路径和最小开发任务"],
-    mustNotDo: ["未完成核心链路和阻塞风险评估就进入编码", "遗漏 DB/Apollo/Nacos/RocketMQ 配置影响", "在方案未明确时直接改代码"],
-    doneCriteria: ["impact.md 明确核心链路、影响面、风险等级和阻塞风险", "branch.md/config-changes.md/test.md 足够指导开发和验证"],
-  },
-  开发中: {
-    role: "代码实现者",
-    mustRead: ["memory.md", "impact.md", "branch.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-backend-logging.md"],
-    mustDo: ["每次代码改动完成后立即提交并同步到需求分支（自测中、测试中、待上线等后续状态同样适用）", "先按 impact.md 校验核心链路风险", "实现最小正确改动并同步维护 branch.md/config-changes.md/notes.md", "涉及入口、MQ、Job、外部调用、异常处理时补齐 tid 日志"],
-    mustNotDo: ["只改代码不更新需求文件", "绕过现有项目规范或删除用户未授权改动", "引入无法追踪的硬编码配置"],
-    doneCriteria: ["代码改动完成且关键路径可解释", "需求文件记录分支、配置、影响面和阶段性进展"],
-  },
-  自测中: {
-    role: "自测验证者",
-    mustRead: ["test.md", "impact.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md", "~/.agents/knowledge/wms/conventions-wms-backend-logging.md"],
-    mustDo: ["每次改动先提交并同步到需求分支（继承开发中规则）", "每次需求分支的改动合并同步到 test 分支", "记录触发方式和 tid", "用 tid 串起入口、关键分支、成功/失败日志", "验证 DB 或副作用并做反向检查", "在 test.md 写入 A/B/C/D 置信度"],
-    mustNotDo: ["只用接口成功作为通过结论", "缺少 tid 时宣称链路验证通过", "忽略 ERROR/Exception/consumeFail/rollback 等反向证据"],
-    doneCriteria: ["核心场景至少达到 B 级证据", "test.md 留下可复用验证链路和证据摘要"],
-  },
-  测试中: {
-    role: "测试支持 / 缺陷排查者",
-    mustRead: ["test.md", "impact.md", "notes.md", "config-changes.md", "~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md"],
-    mustDo: ["每次改动先提交并同步到需求分支（继承开发中规则）", "每次需求分支的改动合并同步到 test 分支和 UAT 分支（前端与后端 UAT 分支不同，按所在仓库对应分支同步）", "围绕测试反馈复现并定位证据", "更新 test.md 的实际结果和缺陷证据", "把排查结论和待跟进项追加到 notes.md"],
-    mustNotDo: ["把测试现象当根因", "未记录复现数据和日志关键字就结束排查"],
-    doneCriteria: ["测试问题有复现、定位或明确阻塞项", "test.md/notes.md 可支撑后续回归"],
-  },
-  待上线: {
-    role: "发布经理 / 风险审查者",
-    mustRead: ["branch.md", "config-changes.md", "test.md", "impact.md", "review.md"],
-    mustDo: ["每次改动先提交并同步到需求分支（继承开发中规则）", "检查分支合并、配置发布、测试证据、Review 结论和回滚方案", "把发布预检结论写入 release-check.md", "对阻塞项明确标注 OK/需关注/阻塞"],
-    mustNotDo: ["缺少测试证据或配置确认时放行", "忽略 review.md 中未关闭的问题", "直接修改 state.json"],
-    doneCriteria: ["release-check.md 覆盖分支、配置、测试、Review、回滚", "阻塞项清零或有用户确认的处理结论"],
-  },
-  已完成: {
-    role: "复盘沉淀者",
-    mustRead: ["memory.md", "notes.md", "test.md", "release-check.md"],
-    mustDo: ["沉淀上线结果、复盘和可复用经验", "识别可进入 knowledge 的业务链路、接口、踩坑或规范", "保持 notes.md/memory.md 为后续 session 可读"],
-    mustNotDo: ["继续当作开发任务推进", "把未验证猜测沉淀为事实"],
-    doneCriteria: ["需求结论和经验已归档", "后续类似需求能从 memory.md/notes.md 复用上下文"],
-  },
+const PHASE_PROMPT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts")
+
+/**
+ * Load the phase prompt for a requirement status from
+ * `prompts/phase-<slug>.md`. The file is the source of truth for per-phase
+ * guidance (role, must-read/do/not-do, completion criteria) so it can be
+ * tuned without a code change. Returns a clear missing-file note instead of
+ * throwing so a missing template degrades the guidance rather than breaking
+ * session creation.
+ */
+export async function readPhasePrompt(status: ReqStatus): Promise<string> {
+  const slug = REQ_STATUS_SLUG[status]
+  const path = join(PHASE_PROMPT_DIR, `phase-${slug}.md`)
+  if (!existsSync(path)) {
+    return `（未找到该阶段（${status}）的提示词文件 prompts/phase-${slug}.md，请补充该阶段的执行规范。）`
+  }
+  return readFile(path, "utf-8").catch(() => `（读取阶段提示词失败：prompts/phase-${slug}.md）`)
 }
+
 
 export interface Requirement {
   id: string
@@ -1193,7 +1165,8 @@ async function readFileSnippet(path: string | undefined, limit = 500): Promise<s
   *   5. notes.md (current progress, up to 300 chars)
   *   6. impact.md (pre-coding safety gate, up to 500 chars)
   *   7. branch.md (branch / commit context, up to 300 chars)
-  *   8. the phase profile for the requirement's current status
+  *   8. the phase prompt for the requirement's current status (loaded from
+ *      prompts/phase-<slug>.md)
   *   9. absolute paths to all known files so the agent knows where
   *      to read further or write updates
   *   10. a routing guide that tells the agent which file is authoritative
@@ -1321,14 +1294,10 @@ export async function buildInjectionContext(reqId: string): Promise<string> {
       lines.push(`（未提供 branch.md，路径：${branchFile}）`)
     }
 
-    const profile = REQUIREMENT_PHASE_PROFILES[req.status]
+    const phasePrompt = await readPhasePrompt(req.status)
     lines.push("")
     lines.push("阶段执行规范：")
-    lines.push(`  - 当前身份：${profile.role}`)
-    lines.push(`  - 必读：${profile.mustRead.join("、")}`)
-    lines.push(`  - 必做：${profile.mustDo.join("；")}`)
-    lines.push(`  - 禁止：${profile.mustNotDo.join("；")}`)
-    lines.push(`  - 完成标准：${profile.doneCriteria.join("；")}`)
+    lines.push(phasePrompt.trim())
 
     lines.push("")
     lines.push("需求文件：")

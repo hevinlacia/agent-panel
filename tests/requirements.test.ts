@@ -39,8 +39,9 @@ import {
   generateSessionId,
   buildInjectionContext,
   scanHermesRequirements,
+  readPhasePrompt,
   DEFAULT_REQ_ID,
-  REQUIREMENT_PHASE_PROFILES,
+  REQ_STATUSES,
 } from "../src/requirements.ts"
 
 function freshStore(): string {
@@ -187,9 +188,9 @@ test("buildInjectionContext: lists file paths and content for a real requirement
     assert.match(ctx, /影响面评估：/)
     assert.match(ctx, /分支与改动：/)
     assert.match(ctx, /阶段执行规范：/)
-    assert.match(ctx, /当前身份：代码实现者/)
-    assert.match(ctx, /必读：memory\.md、impact\.md、branch\.md、config-changes\.md/)
-    assert.match(ctx, /完成标准：代码改动完成且关键路径可解释/)
+    assert.match(ctx, /代码实现者/)
+    assert.match(ctx, /memory\.md、impact\.md、branch\.md、config-changes\.md/)
+    assert.match(ctx, /代码改动完成且关键路径可解释/)
 
     // Path-listing section must include all ten known files (memory,
     // alignment, prd, background, branch, notes, impact, test, config-changes, review) by absolute path.
@@ -267,7 +268,7 @@ test("buildInjectionContext: injects self-test phase profile for 自测中", asy
   try {
     const ctx = await buildInjectionContext(reqId)
     assert.match(ctx, /阶段执行规范：/)
-    assert.match(ctx, /当前身份：自测验证者/)
+    assert.match(ctx, /自测验证者/)
     assert.match(ctx, /conventions-wms-agent-self-test-evidence\.md/)
     assert.match(ctx, /记录触发方式和 tid/)
     assert.match(ctx, /只用接口成功作为通过结论/)
@@ -277,14 +278,15 @@ test("buildInjectionContext: injects self-test phase profile for 自测中", asy
   }
 })
 
-test("REQUIREMENT_PHASE_PROFILES: covers every dashboard requirement status", () => {
-  for (const status of ["需求对齐", "方案设计", "开发中", "自测中", "测试中", "待上线", "已完成"] as const) {
-    const profile = REQUIREMENT_PHASE_PROFILES[status]
-    assert.ok(profile.role)
-    assert.ok(profile.mustRead.length > 0)
-    assert.ok(profile.mustDo.length > 0)
-    assert.ok(profile.mustNotDo.length > 0)
-    assert.ok(profile.doneCriteria.length > 0)
+test("readPhasePrompt: every requirement status has an editable phase prompt file", async () => {
+  for (const status of REQ_STATUSES) {
+    const prompt = await readPhasePrompt(status)
+    assert.ok(prompt.length > 0, `${status} phase prompt is empty`)
+    assert.equal(/未找到该阶段/.test(prompt), false, `${status} phase prompt file is missing`)
+    assert.match(prompt, /必读/)
+    assert.match(prompt, /必做/)
+    assert.match(prompt, /禁止/)
+    assert.match(prompt, /完成标准/)
   }
 })
 

@@ -44,6 +44,7 @@ import { writeRequirementStatus, writeRequirementCategory, nextStatus, readRequi
 import {
   REQ_STATUSES,
   REQ_CATEGORIES,
+  REQ_STATUS_SLUG,
   type ReqStatus,
   type ReqCategory,
   type Requirement,
@@ -909,16 +910,6 @@ const SessionMissingPage: FC<{ id: string; backReqId?: string }> = ({ id, backRe
 // ---------------------------------------------------------------------------
 // Requirement pages
 // ---------------------------------------------------------------------------
-
-const REQ_STATUS_SLUG: Record<ReqStatus, string> = {
-  "需求对齐": "align",
-  "方案设计": "design",
-  "开发中": "dev",
-  "自测中": "selftest",
-  "测试中": "testing",
-  "待上线": "deploy",
-  "已完成": "done",
-}
 
 function reqStatusBadgeClass(status: ReqStatus): string {
   return `req-status-badge req-status-${REQ_STATUS_SLUG[status]}`
