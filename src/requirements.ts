@@ -1,6 +1,6 @@
 /**
- * Role: Hermes-backed requirement scanning, metadata updates, and session associations.
- * Public surface: requirement records, lifecycle helpers, ONES references, and association APIs.
+ * Role: Hermes-backed requirement scanning, metadata updates, session commands, and session associations.
+ * Public surface: requirement records, lifecycle helpers, ONES references, command helpers, and association APIs.
  * Constraints: only `node:` built-ins; never reads or writes `.env` or secret files.
  * Tests may isolate scan roots and stores through the exported `_set*` helpers.
  * Read-this-with: src/requirementState.ts, src/requirementAlignment.ts, and src/server.tsx.
@@ -10,7 +10,7 @@ import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promi
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { randomBytes } from "node:crypto"
 
 import { ALIGNMENT_FILE, PRD_FILE } from "./requirementAlignment.ts"
@@ -739,6 +739,41 @@ export async function writeRequirementOnes(reqDir: string, ones: string): Promis
   const normalized = ones.trim()
   await upsertMetaFrontmatterField(reqDir, "ones", normalized)
   return normalized
+}
+
+/**
+ * Infer the owning project workspace from a requirement directory. The
+ * scanner stores requirement files under `<project>/.agents/req/...` or
+ * `<project>/req/...`; new pi sessions should start in `<project>` so
+ * AGENTS.md discovery, git commands, and relative paths match the project.
+ * Returns null for legacy/external layouts where no project marker exists.
+ */
+export function resolveRequirementProjectCwd(req: Pick<Requirement, "reqDir">): string | null {
+  const reqDir = req.reqDir ? resolve(req.reqDir) : ""
+  if (!reqDir) return null
+  for (const marker of [`/.agents/req/`, `/req/`]) {
+    const idx = reqDir.indexOf(marker)
+    if (idx <= 0) continue
+    const cwd = reqDir.slice(0, idx)
+    return cwd && existsSync(cwd) ? cwd : null
+  }
+  return null
+}
+
+/**
+ * Build the copyable command for a requirement-bound Pi session. Prefixes
+ * the command with `cd <project>` when the requirement directory reveals a
+ * project root; otherwise falls back to the current terminal directory.
+ */
+export function buildPiRequirementSessionCommand(req: Pick<Requirement, "reqDir">, args: readonly string[]): string {
+  const piCommand = ["pi", ...args].map(shellQuote).join(" ")
+  const cwd = resolveRequirementProjectCwd(req)
+  return cwd ? `cd ${shellQuote(cwd)} && ${piCommand}` : piCommand
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value
+  return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
 /**

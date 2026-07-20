@@ -13,7 +13,7 @@ import fastifyWebsocket from "@fastify/websocket"
 import fastifySwagger from "@fastify/swagger"
 import fastifySwaggerUi from "@fastify/swagger-ui"
 import { Type } from "@sinclair/typebox"
-import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH, DASHBOARD_PATH } from "./navigation.ts"
+import { NAV_ITEMS, sessionsDaysPath, SESSIONS_PATH, DASHBOARD_PATH, GIT_AI_PATH } from "./navigation.ts"
 import { type FC, type Ctx, createRouter } from "./fastify/context.ts"
 import { readFile, writeFile, appendFile, readdir, rename, mkdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -63,6 +63,8 @@ import {
   DEFAULT_PROJECT_NAME,
   parseOnesRef,
   writeRequirementOnes,
+  buildPiRequirementSessionCommand,
+  resolveRequirementProjectCwd,
 } from "./requirements.ts"
 import {
   buildRequirementBoardItems,
@@ -275,6 +277,17 @@ import {
   resolveAttachmentPath,
   type AttachmentInfo,
 } from "./requirementAttachments.ts"
+import {
+  initGitAiSuspects,
+  recordGitAiSuspect,
+  refreshGitAiSuspects,
+  listGitAiSuspects,
+  buildGitAiSuspectStats,
+  type GitAiCompanyStatus,
+  type GitAiEventSource,
+  type GitAiLocalNoteState,
+} from "./gitAiSuspects.ts"
+import { readGitAiHealth } from "./gitAiHealth.ts"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -286,7 +299,7 @@ const NODE_MODULES_DIR = join(PROJECT_ROOT, "node_modules")
 // Layout
 // ---------------------------------------------------------------------------
 
-type Tab = "sessions" | "reports" | "requirements" | "dashboard" | "settings" | "schedulers" | "envvars"
+type Tab = "sessions" | "reports" | "requirements" | "dashboard" | "settings" | "schedulers" | "envvars" | "gitai"
 
 const NAV_ICONS: Record<Tab, string> = {
   requirements: "PR",
@@ -294,6 +307,7 @@ const NAV_ICONS: Record<Tab, string> = {
   sessions: "SE",
   reports: "RP",
   schedulers: "SC",
+  gitai: "AI",
   settings: "ST",
   envvars: "EV",
 }
@@ -304,6 +318,7 @@ const NAV_LABELS: Record<Tab, string> = {
   sessions: "Sessions",
   reports: "Reports",
   schedulers: "Schedulers",
+  gitai: "Git AI",
   settings: "Settings",
   envvars: "Env Vars",
 }
@@ -2401,6 +2416,7 @@ function reactPageMeta(path: string): { title: string; active: Tab } | null {
   if (path === "/projects" || path === "/requirements") return { title: "需求进度看板", active: "requirements" }
   if (path === "/sessions" || path === "/sessions/refresh" || path === "/session") return { title: "Sessions", active: "sessions" }
   if (path === "/reports" || path === "/report") return { title: "Reports", active: "reports" }
+  if (path === GIT_AI_PATH) return { title: "Git AI", active: "gitai" }
   if (path === "/requirement") return { title: "Requirement", active: "requirements" }
   if (path === "/env-vars") return { title: "Env Vars", active: "envvars" }
   return null
@@ -2587,6 +2603,8 @@ app.get("/reports", async (c) => {
   )
   return c.html(<ReportListPage reports={enriched} />)
 })
+
+app.get(GIT_AI_PATH, async (c) => c.html(<ReactAppPage title="Git AI" active="gitai" />))
 
 // Backwards-compatible redirect: /report (no s) -> /reports
 app.get("/report", async (c) => {
@@ -2934,8 +2952,9 @@ async function launchRequirementAutoDrive(req: Requirement): Promise<AutoDriveJo
  * OpenCode: spawn `opencode run "<injection-context>" --title "<title>"` and
  * poll for the new id (15s timeout).
  * Pi:       pre-assign a UUID session-id, return
- * `pi --session-id <id> --name "<title>"` immediately (no spawn, no wait);
- * the session is created when the user runs the command.
+ * `cd <project-root> && pi --session-id <id> --name "<title>"`
+ * immediately (no spawn, no wait). The session is created when the user
+ * runs the command, already rooted at the requirement's owning project.
  *
  * The user copies the returned command and pastes it into their terminal.
  *
@@ -2966,7 +2985,8 @@ app.post("/api/requirement/new-session", async (c) => {
     try { await associateSession(reqId, sessionId) } catch { /* noop */ }
     return c.json({
       sessionId,
-      command: `pi --session-id ${sessionId} --name ${JSON.stringify(name)} --append-system-prompt ${ctxFile}`,
+      cwd: resolveRequirementProjectCwd(req),
+      command: buildPiRequirementSessionCommand(req, ["--session-id", sessionId, "--name", name, "--append-system-prompt", ctxFile]),
     })
   }
 
@@ -5268,6 +5288,79 @@ app.post("/api/valuation/poll", async (c) => {
   return c.json({ ok: true, stats })
 })
 
+// ---------------------------------------------------------------------------
+// git-ai suspect commit API
+// ---------------------------------------------------------------------------
+
+function normalizeGitAiSource(raw: unknown): GitAiEventSource {
+  const value = String(raw || "api")
+  return value === "post-commit" || value === "pre-push" || value === "manual" || value === "api" ? value : "api"
+}
+
+function normalizeLocalNoteState(raw: unknown): GitAiLocalNoteState {
+  const value = String(raw || "unknown")
+  return value === "complete" || value === "missing" || value === "unknown" ? value : "unknown"
+}
+
+function normalizeCompanyStatus(raw: unknown): GitAiCompanyStatus | undefined {
+  const value = String(raw || "")
+  return value === "pending" || value === "confirmed_ai" || value === "missing_ai" || value === "not_found" || value === "check_failed" ? value : undefined
+}
+
+/**
+ * GET /api/git-ai/suspects
+ * Lists app+commit records captured by git-ai hooks. Company ai-stats, not
+ * local git notes, is the source of truth when a refresh is requested.
+ */
+app.get("/api/git-ai/suspects", async (c) => {
+  const status = normalizeCompanyStatus(c.req.query("status"))
+  const records = listGitAiSuspects(status)
+  return c.json({ records, stats: buildGitAiSuspectStats(records), generatedAt: Date.now() })
+})
+
+/** GET /api/git-ai/health - read-only git-ai + Pi extension status. */
+app.get("/api/git-ai/health", async (c) => c.json(await readGitAiHealth()))
+
+/**
+ * POST /api/git-ai/suspects
+ * Body: { projectName, commitSha, ... }. Hooks may use this when the panel is
+ * running; they also write the same JSON store directly when it is not.
+ */
+app.post("/api/git-ai/suspects", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  try {
+    const record = await recordGitAiSuspect({
+      projectName: body.projectName ?? body.project_name,
+      commitSha: body.commitSha ?? body.commit_sha,
+      gitlabProjectId: body.gitlabProjectId ?? body.gitlab_project_id ?? null,
+      repoPath: body.repoPath ?? body.repo_path ?? null,
+      remoteUrl: body.remoteUrl ?? body.remote_url ?? null,
+      branch: body.branch ?? null,
+      subject: body.subject ?? null,
+      authorName: body.authorName ?? body.author_name ?? null,
+      eventSources: [normalizeGitAiSource(body.source)],
+      localNoteState: normalizeLocalNoteState(body.localNoteState ?? body.local_note_state),
+    })
+    return c.json({ ok: true, record })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return c.json({ ok: false, error: message }, 400)
+  }
+})
+
+/**
+ * POST /api/git-ai/suspects/refresh
+ * Re-checks recorded commits through the company ai-stats service. This is
+ * intentionally user-driven because company-side processing may lag push time.
+ */
+app.post("/api/git-ai/suspects/refresh", async (c) => {
+  const body = await c.req.json().catch(() => null) ?? {}
+  const rawLimit = Number(body.limit ?? 200)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : 200
+  const records = await refreshGitAiSuspects({ limit })
+  return c.json({ ok: true, records, stats: buildGitAiSuspectStats(records), generatedAt: Date.now() })
+})
+
 // API: confirm or reject candidates.
 // Extended: if the confirmed report has an associated marker (i.e. it
 // was auto-generated from a marked session), trigger the execution fork
@@ -5373,7 +5466,10 @@ async function handleTerminalSocket(
     directory = sessionInfo?.directory ?? null
   } else if (reqId) {
     const req = await getRequirement(reqId)
-    if (req) title = req.title || undefined
+    if (req) {
+      title = req.title || undefined
+      directory = resolveRequirementProjectCwd(req) ?? req.reqDir ?? null
+    }
   }
 
   const startMs = Date.now()
@@ -5480,6 +5576,7 @@ const port = parseInt(process.env.PORT || "7331", 10)
 
 await initNotifications()
 await initConfig()
+await initGitAiSuspects()
 await initAutoDriveJobs()
 await initCodeReviewAiJobs()
 await initMarkers()

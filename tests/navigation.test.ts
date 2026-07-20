@@ -11,6 +11,7 @@ import { strict as assert } from "node:assert"
 
 import {
   DASHBOARD_PATH,
+  GIT_AI_PATH,
   HOME_PATH,
   NAV_ITEMS,
   PROJECTS_ALIAS_PATH,
@@ -23,24 +24,24 @@ import {
   sessionsDaysPath,
 } from "../src/navigation.ts"
 
-test("NAV_ITEMS labels are dashboard, projects, sessions, reports, schedulers, env-vars, settings in that order", () => {
+test("NAV_ITEMS labels are dashboard, projects, sessions, reports, schedulers, git-ai, env-vars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.label),
-    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
+    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/git-ai", "/env-vars", "/settings"],
   )
 })
 
 test("NAV_ITEMS hrefs start with dashboard and projects", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.href),
-    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/env-vars", "/settings"],
+    ["/dashboard", "/projects", "/sessions", "/reports", "/schedulers", "/git-ai", "/env-vars", "/settings"],
   )
 })
 
-test("NAV_ITEMS keys are dashboard, requirements, sessions, reports, schedulers, envvars, settings in that order", () => {
+test("NAV_ITEMS keys are dashboard, requirements, sessions, reports, schedulers, gitai, envvars, settings in that order", () => {
   assert.deepEqual(
     NAV_ITEMS.map((i) => i.key),
-    ["dashboard", "requirements", "sessions", "reports", "schedulers", "envvars", "settings"],
+    ["dashboard", "requirements", "sessions", "reports", "schedulers", "gitai", "envvars", "settings"],
   )
 })
 
@@ -59,6 +60,7 @@ test("route path constants", () => {
   assert.equal(SESSIONS_PATH, "/sessions")
   assert.equal(REPORTS_PATH, "/reports")
   assert.equal(SCHEDULERS_PATH, "/schedulers")
+  assert.equal(GIT_AI_PATH, "/git-ai")
   assert.equal(SETTINGS_PATH, "/settings")
   assert.equal(ENV_VARS_PATH, "/env-vars")
 })

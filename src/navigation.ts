@@ -14,10 +14,11 @@ export const DASHBOARD_PATH = "/dashboard"
 export const SESSIONS_PATH = "/sessions"
 export const REPORTS_PATH = "/reports"
 export const SCHEDULERS_PATH = "/schedulers"
+export const GIT_AI_PATH = "/git-ai"
 export const SETTINGS_PATH = "/settings"
 export const ENV_VARS_PATH = "/env-vars"
 
-export type NavKey = "requirements" | "dashboard" | "sessions" | "reports" | "schedulers" | "settings" | "envvars"
+export type NavKey = "requirements" | "dashboard" | "sessions" | "reports" | "schedulers" | "gitai" | "settings" | "envvars"
 
 export interface NavItem {
   key: NavKey
@@ -31,6 +32,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { key: "sessions", label: "/sessions", href: SESSIONS_PATH },
   { key: "reports", label: "/reports", href: REPORTS_PATH },
   { key: "schedulers", label: "/schedulers", href: SCHEDULERS_PATH },
+  { key: "gitai", label: "/git-ai", href: GIT_AI_PATH },
   { key: "envvars", label: "/env-vars", href: ENV_VARS_PATH },
   { key: "settings", label: "/settings", href: SETTINGS_PATH },
 ] as const

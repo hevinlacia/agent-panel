@@ -136,6 +136,70 @@ interface AutoDriveJob {
 }
 interface AutoDrivePayload { jobs: AutoDriveJob[]; active: number; blocked: number; queue: { active: number; queued: number } }
 
+type GitAiCompanyStatus = "pending" | "confirmed_ai" | "missing_ai" | "not_found" | "check_failed"
+interface GitAiSuspectRecord {
+  id: string
+  projectName: string
+  commitSha: string
+  shortSha: string
+  gitlabProjectId: string | null
+  repoPath: string | null
+  remoteUrl: string | null
+  branch: string | null
+  subject: string | null
+  authorName: string | null
+  eventSources: string[]
+  localNoteState: "complete" | "missing" | "unknown"
+  companyStatus: GitAiCompanyStatus
+  companyCheckedAt: number | null
+  companyError: string | null
+  commitWebUrl: string | null
+  commitTitle: string | null
+  committedAt: string | null
+  originBranch: string | null
+  additions: number | null
+  deletions: number | null
+  aiRate: number | null
+  aiLines: number | null
+  humanLines: number | null
+  firstSeenAt: number
+  lastSeenAt: number
+}
+interface GitAiSuspectStats { total: number; pending: number; confirmedAi: number; missingAi: number; notFound: number; checkFailed: number }
+interface GitAiSuspectsPayload { records: GitAiSuspectRecord[]; stats: GitAiSuspectStats; generatedAt: number }
+type HealthTone = "ok" | "warn" | "error" | "unknown"
+interface GitAiHookHealth { path: string | null; exists: boolean; mode: string; recordsToAgentPanel: boolean; executable: boolean }
+interface GitAiHealthPayload {
+  generatedAt: number
+  storePath: string
+  cli: {
+    binaryPath: string | null
+    installed: boolean
+    version: string | null
+    daemonOk: boolean
+    daemonMessage: string | null
+    trace2Target: string | null
+    trace2Socket: string | null
+    trace2SocketExists: boolean
+    hooksPath: string | null
+    postCommitHook: GitAiHookHealth
+    prePushHook: GitAiHookHealth
+  }
+  piExtension: {
+    globalPath: string
+    sourcePath: string
+    globalExists: boolean
+    sourceExists: boolean
+    sourceMatchesGlobal: boolean
+    autoDiscoveryPath: boolean
+    gitAiBinaryExistsForExtension: boolean
+    registersStatus: boolean
+    tracksTools: string[]
+    status: HealthTone
+    message: string
+  }
+}
+
 const cardVariants = {
   hidden: { opacity: 0, y: 18, scale: 0.98 },
   show: { opacity: 1, y: 0, scale: 1 },
@@ -847,6 +911,62 @@ function SchedulersPage() {
   return <PageChrome icon={<Bell size={15} />} eyebrow="Schedulers" title="Schedulers" description="自动同步、智能提取、经验总结和价值发现任务状态。"><section className="react-kpi-grid"><KpiCard icon={<Activity size={20} />} label="Auto Extract" value={config.data?.autoExtract ? "ON" : "OFF"} sub="extract scheduler" tone="active" /><KpiCard icon={<Sparkles size={20} />} label="Valuation" value={config.data?.autoValuation ? "ON" : "OFF"} sub="session scoring" tone="done" /><KpiCard icon={<Bell size={20} />} label="Markers" value={markers.data?.markers?.length || 0} sub="experience markers" tone="avg" /><KpiCard icon={<Search size={20} />} label="Candidates" value={valuation.data?.candidates?.length || 0} sub="recent value hits" tone="total" /></section><section className="react-panel"><PanelHead kicker="Valuation" title="高价值 Session 候选" chip={<button onClick={poll}>手动扫描</button>} /><div className="react-card-list">{(valuation.data?.candidates || []).map((c: any) => <div className="react-env-row" key={c.sessionId}><div><a href={`/session?id=${c.sessionId}`}>{c.sessionId}</a><p>score {c.score} · {(c.reasons || []).join(" / ")}</p></div></div>)}</div></section></PageChrome>
 }
 
+const gitAiStatusMeta: Record<GitAiCompanyStatus, { label: string; color: string; soft: string }> = {
+  pending: { label: "待公司接口确认", color: "#f59e0b", soft: "rgba(245, 158, 11, .14)" },
+  confirmed_ai: { label: "公司确认已标", color: "#22c55e", soft: "rgba(34, 197, 94, .14)" },
+  missing_ai: { label: "公司确认缺失", color: "#ef4444", soft: "rgba(239, 68, 68, .14)" },
+  not_found: { label: "公司接口未找到", color: "#94a3b8", soft: "rgba(148, 163, 184, .14)" },
+  check_failed: { label: "检查失败", color: "#f97316", soft: "rgba(249, 115, 22, .14)" },
+}
+
+function gitAiStatusPill(status: GitAiCompanyStatus) {
+  const meta = gitAiStatusMeta[status]
+  return <span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}66` }}>{meta.label}</span>
+}
+
+const gitAiHealthMeta: Record<HealthTone, { label: string; color: string; soft: string }> = {
+  ok: { label: "OK", color: "#22c55e", soft: "rgba(34, 197, 94, .14)" },
+  warn: { label: "WARN", color: "#f59e0b", soft: "rgba(245, 158, 11, .14)" },
+  error: { label: "ERROR", color: "#ef4444", soft: "rgba(239, 68, 68, .14)" },
+  unknown: { label: "UNKNOWN", color: "#94a3b8", soft: "rgba(148, 163, 184, .14)" },
+}
+
+function tonePill(tone: HealthTone, label?: string) {
+  const meta = gitAiHealthMeta[tone]
+  return <span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}66` }}>{label || meta.label}</span>
+}
+
+function healthTone(ok: boolean, warn = false): HealthTone {
+  return ok ? (warn ? "warn" : "ok") : "error"
+}
+
+function GitAiHealthPanel({ health, loading, error, refresh }: { health: GitAiHealthPayload | null; loading: boolean; error: string | null; refresh: () => void }) {
+  const cliTone = health ? healthTone(Boolean(health.cli.installed && health.cli.daemonOk && health.cli.trace2SocketExists && health.cli.postCommitHook.recordsToAgentPanel && health.cli.prePushHook.recordsToAgentPanel)) : "unknown"
+  const piTone = health?.piExtension.status || "unknown"
+  return <section className="react-panel"><PanelHead kicker="Health" title="git-ai / Pi Extension 状态" chip={<button onClick={refresh}>刷新状态</button>} />{error ? <ErrorCard error={error} /> : loading ? <LoadingCard label="正在检查 git-ai 状态…" /> : !health ? <EmptyCard>暂无健康状态。</EmptyCard> : <><div className="react-kpi-grid"><KpiCard icon={<Gauge size={20} />} label="git-ai CLI" value={health.cli.version || (health.cli.installed ? "installed" : "missing")} sub={health.cli.binaryPath || "binary n/a"} tone={cliTone === "ok" ? "done" : cliTone === "warn" ? "active" : "total"} /><KpiCard icon={<Activity size={20} />} label="Daemon" value={health.cli.daemonOk ? "running" : "check"} sub={health.cli.daemonMessage || "daemon status"} tone={health.cli.daemonOk ? "done" : "total"} /><KpiCard icon={<GitBranch size={20} />} label="Hooks" value={health.cli.postCommitHook.mode + " / " + health.cli.prePushHook.mode} sub="post-commit / pre-push" tone={health.cli.postCommitHook.recordsToAgentPanel && health.cli.prePushHook.recordsToAgentPanel ? "done" : "total"} /><KpiCard icon={<Sparkles size={20} />} label="Pi Extension" value={gitAiHealthMeta[piTone].label} sub={health.piExtension.globalExists ? "auto-discovery path" : "missing"} tone={piTone === "ok" ? "done" : piTone === "warn" ? "active" : "total"} /></div><div className="react-meta-grid"><span>Trace2 {tonePill(health.cli.trace2SocketExists ? "ok" : "error", health.cli.trace2SocketExists ? "socket ok" : "socket missing")}</span><span><code>{health.cli.trace2Socket || health.cli.trace2Target || "trace2 n/a"}</code></span><span>post-commit {tonePill(health.cli.postCommitHook.recordsToAgentPanel ? "ok" : "error", health.cli.postCommitHook.mode)}</span><span><code>{health.cli.postCommitHook.path || "hook n/a"}</code></span><span>pre-push {tonePill(health.cli.prePushHook.recordsToAgentPanel ? "ok" : "error", health.cli.prePushHook.mode)}</span><span><code>{health.cli.prePushHook.path || "hook n/a"}</code></span><span>Pi source match {tonePill(health.piExtension.sourceMatchesGlobal ? "ok" : "warn", health.piExtension.sourceMatchesGlobal ? "synced" : "differs")}</span><span><code>{health.piExtension.globalPath}</code></span><span>Pi tools</span><span>{health.piExtension.tracksTools.length ? health.piExtension.tracksTools.join(" / ") : "none detected"}</span><span>Pi message</span><span>{health.piExtension.message}</span><span>Suspect store</span><span><code>{health.storePath}</code></span></div></>}</section>
+}
+
+function GitAiPage() {
+  const feed = useFetch<GitAiSuspectsPayload>("/api/git-ai/suspects")
+  const health = useFetch<GitAiHealthPayload>("/api/git-ai/health")
+  const [status, setStatus] = useState<GitAiCompanyStatus | "all">("all")
+  const [refreshing, setRefreshing] = useState(false)
+  const records = feed.data?.records || []
+  const filtered = status === "all" ? records : records.filter((r) => r.companyStatus === status)
+  const stats = feed.data?.stats
+  const refreshCompany = async () => {
+    setRefreshing(true)
+    try { await postJson("/api/git-ai/suspects/refresh", { limit: 200 }); feed.refresh() }
+    finally { setRefreshing(false) }
+  }
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Git AI" title="AI 标记疑似缺失" description="hook 只记录疑似缺失，不再阻断 commit/push；最终是否缺标以公司 ai-stats/check-commit 接口为准。" actions={<button onClick={refreshCompany} disabled={refreshing}>{refreshing ? "公司接口检查中…" : "刷新公司接口状态"}</button>}>
+    <GitAiHealthPanel health={health.data} loading={health.loading} error={health.error} refresh={health.refresh} />
+    <section className="react-kpi-grid"><KpiCard icon={<AlertTriangle size={20} />} label="疑似记录" value={stats?.total ?? "—"} sub="hook captured" tone="avg" /><KpiCard icon={<Clock3 size={20} />} label="待确认" value={stats?.pending ?? "—"} sub="pending company check" tone="active" /><KpiCard icon={<AlertTriangle size={20} />} label="确认缺失" value={stats?.missingAi ?? "—"} sub="company says missing" tone="total" /><KpiCard icon={<CheckCircle2 size={20} />} label="确认已标" value={stats?.confirmedAi ?? "—"} sub="company says tagged" tone="done" /></section>
+    <section className="react-panel"><PanelHead kicker="Source of truth" title="公司接口判定" chip={feed.data ? `更新 ${relAge(feed.data.generatedAt)}` : undefined} /><p className="react-muted">本页不会把本地 git notes 当最终结果。git-ai 可能延迟生成标记；点击刷新时会用 <code>project_name</code> + <code>commit_sha</code> + 可选 <code>gitlab_project_id</code> 调公司接口复核。</p><div className="react-tab-row"><button className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}>全部</button>{(Object.keys(gitAiStatusMeta) as GitAiCompanyStatus[]).map((s) => <button key={s} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>{gitAiStatusMeta[s].label}</button>)}</div></section>
+    {feed.error ? <ErrorCard error={feed.error} /> : feed.loading ? <LoadingCard /> : <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的疑似缺标 commit。</EmptyCard> : filtered.map((r, i) => <motion.article key={r.id} className="react-list-card react-session-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{r.projectName} · {r.shortSha}</span><h3>{r.commitWebUrl ? <a href={r.commitWebUrl} target="_blank" rel="noopener noreferrer">{r.commitTitle || r.subject || r.commitSha}</a> : (r.commitTitle || r.subject || r.commitSha)}</h3><p>{r.repoPath || r.remoteUrl || "repo path n/a"}</p><div className="react-card-meta"><span>{gitAiStatusPill(r.companyStatus)}</span><span>hook: {r.eventSources.join(" / ") || "-"}</span><span>本地 note: {r.localNoteState}</span><span>记录 {relAge(r.lastSeenAt)}</span><span>公司检查 {r.companyCheckedAt ? relAge(r.companyCheckedAt) : "未检查"}</span>{r.aiRate !== null ? <span>AI rate {r.aiRate}%</span> : null}{r.gitlabProjectId ? <span>GitLab {r.gitlabProjectId}</span> : null}</div>{r.companyError ? <p className="react-error">{r.companyError}</p> : null}</div><div className="react-card-side"><span className="react-effort-badge">{r.aiLines ?? 0} AI / {r.humanLines ?? 0} human</span><span className="react-muted">{r.originBranch || r.branch || "branch n/a"}</span><code>{r.commitSha.slice(0, 12)}</code></div></motion.article>)}</div>}
+  </PageChrome>
+}
+
 function NotFoundPage() { return <PageChrome icon={<AlertTriangle size={15} />} eyebrow="Not Found" title="页面不存在"><EmptyCard>当前路由没有匹配的 React 页面。</EmptyCard></PageChrome> }
 
 export function App({ apiPath }: AppProps) {
@@ -868,6 +988,7 @@ export function App({ apiPath }: AppProps) {
       : path === "/settings" ? <SettingsPage />
       : path === "/env-vars" ? <EnvVarsPage />
       : path === "/schedulers" ? <SchedulersPage />
+      : path === "/git-ai" ? <GitAiPage />
       : <NotFoundPage />}
   </motion.div></AnimatePresence>
 }

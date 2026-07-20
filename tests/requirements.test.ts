@@ -38,6 +38,8 @@ import {
   getAllAssociatedSessionIds,
   generateSessionId,
   buildInjectionContext,
+  buildPiRequirementSessionCommand,
+  resolveRequirementProjectCwd,
   scanHermesRequirements,
   readPhasePrompt,
   DEFAULT_REQ_ID,
@@ -123,6 +125,32 @@ test("generateSessionId: returns string matching ^ses_[A-Za-z0-9]+$", () => {
     // 24 hex chars after the prefix (12 random bytes hex-encoded).
     assert.equal(id.length, 4 + 24)
   }
+})
+
+test("buildPiRequirementSessionCommand: starts pi in owning project root", () => {
+  const projectRoot = join("/tmp", "opencode", "WMS Project " + randomBytes(3).toString("hex"))
+  const reqDir = join(projectRoot, ".agents", "req", "WMS", "mq", "REQ-1")
+  mkdirSync(reqDir, { recursive: true })
+
+  assert.equal(resolveRequirementProjectCwd({ reqDir }), projectRoot)
+  const command = buildPiRequirementSessionCommand(
+    { reqDir },
+    ["--session-id", "123e4567-e89b-12d3-a456-426614174000", "--name", "REQ-1 can't fail", "--append-system-prompt", join(projectRoot, "ctx file.md")],
+  )
+  assert.match(command, /^cd '\/tmp\/opencode\/WMS Project [a-f0-9]+' && pi --session-id 123e4567-e89b-12d3-a456-426614174000 --name 'REQ-1 can'"'"'t fail' --append-system-prompt '\/tmp\/opencode\/WMS Project [a-f0-9]+\/ctx file\.md'$/)
+})
+
+test("resolveRequirementProjectCwd: supports plain req directory marker", () => {
+  const projectRoot = join("/tmp", "opencode", "plain-req-" + randomBytes(3).toString("hex"))
+  const reqDir = join(projectRoot, "req", "WMS", "REQ-2")
+  mkdirSync(reqDir, { recursive: true })
+  assert.equal(resolveRequirementProjectCwd({ reqDir }), projectRoot)
+})
+
+test("resolveRequirementProjectCwd: returns null for legacy flat fixture", () => {
+  const reqDir = join("/tmp", "opencode", "legacy-" + randomBytes(3).toString("hex"), "REQ-3")
+  mkdirSync(reqDir, { recursive: true })
+  assert.equal(resolveRequirementProjectCwd({ reqDir }), null)
 })
 
 test("buildInjectionContext: returns minimal context for DEFAULT_REQ_ID", async () => {
