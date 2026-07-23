@@ -1,14 +1,12 @@
 [Unit]
-Description=Agent Panel (Fastify SSR)
+Description=Agent Panel (Rust + React)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=__WORKDIR__
-Environment=PATH=__BUN_BIN_DIR__:/usr/local/bin:/usr/bin:/bin
-Environment=NODE_ENV=production
 Environment=PORT=__PORT__
-ExecStart=__BUN_BIN__ run start
+ExecStart=__BIN__
 Restart=on-failure
 RestartSec=3
 StandardOutput=append:__LOG_FILE__

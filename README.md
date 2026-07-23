@@ -1,183 +1,82 @@
 # agent-panel
 
-本地常驻 Web 控制面，在浏览器里驱动本机的 coding agent session。当前以 **pi** 为主力
-harness，同时保留 OpenCode 兼容代码（后续逐步清理）。
+本地常驻 Web 控制面，用浏览器查看 **pi coding agent** session 与需求进度。项目已重写为：
 
-右上角 **OC / PI** 开关切换全局 harness：session 列表、终端 spawn、需求「新建并绑定
-session」都按当前 harness 分派。
+- **前端**：TypeScript + React + Vite + Framer Motion
+- **后端**：Rust + Axum
+- **数据源**：pi JSONL session、Hermes/Agent Panel 需求目录、`~/.local/share/agent-panel/*`
 
-## 技术栈
-
-- **Fastify** 5（HTTP + WebSocket + 插件生态）
-- **@kitajs/html** SSR（服务端 shell 与历史页面，JSX 直接编译为字符串）
-- **Vite + React + Framer Motion**（`/dashboard` React island，负责现代化动效看板）
-- **@fastify/static** 静态资源、**@fastify/websocket** 终端 WS、**@fastify/swagger** OpenAPI
-- **TypeBox** 请求/响应 Schema 与自动 OpenAPI 文档
-- **tsx** 直接运行 TypeScript
-- **node-pty** 承载 agent TUI 子进程
-- **@xterm/xterm** + addon-fit 浏览器内嵌终端
+OpenCode 旧兼容代码、经验报告链路、Node/Fastify SSR、`node-pty`、xterm/embedded terminal 已移除。
 
 ## 快速开始
 
 ```bash
 cd ~/Developer/tools/agent-panel
 bun install
-bun start
-# -> Agent Panel running at http://localhost:7331
+bun run build
+bun run start
+# -> http://localhost:7331
 ```
 
-开发模式（文件变更自动重启）：`bun run dev`
-类型检查：`bun run typecheck`
-React dashboard 构建：`bun run build:dashboard`（`bun run start` / `bun run dev` 会自动先构建）
-
-后台常驻（Linux + systemd user service）：
+常用命令：
 
 ```bash
-./scripts/install-systemd.sh
-# -> 安装并启动 agent-panel.service，默认端口 7331
-# -> PORT=8080 ./scripts/install-systemd.sh 可改端口
+bun run build:dashboard   # Vite 构建 React SPA
+bun run build:backend     # cargo build --release
+bun run build             # 前后端完整构建
+bun run typecheck         # TS 类型检查 + cargo check
+bun run test              # cargo test
+bun run start:backend     # cargo run（开发后端）
 ```
-
-详细部署 / 升级 / 卸载 / 排障见 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)。
-
-## Harness 模式
-
-全局 `config.harness`（`"opencode" | "pi"`），右上角切换，持久化到
-`~/.local/share/agent-panel/config.json`。切换后所有路由重新按 harness 读取数据 /
-spawn 终端。
-
-| 能力 | pi 模式（主力） | opencode 模式（保留） |
-| --- | --- | --- |
-| session 数据源 | `~/.pi/agent/sessions/*/*.jsonl`（`src/piSessions.ts`） | `~/.local/share/opencode/opencode.db` SQLite → CLI → fs（`src/sessions.ts`） |
-| session id | UUID | `ses_<base62>` |
-| 继续会话 | spawn `pi --session <uuid>` | spawn `opencode --session <id>` |
-| 新建 session | 预生成 UUID + 立即关联 + 返回 `pi --session-id <uuid> --name "<标题>"`，**立即返回** | 后台 `opencode run` + 轮询 + 返回 `opencode -s <id>` |
-| 需求关联 | UUID 写入 associations | `ses_` id 写入 associations |
-
-> pi 新建 session 利用 `pi --session-id <id>` 的特性：指定的 id 会直接成为 session 的
-> header id，所以 dashboard 能预先生成 id、预先关联，用户跑命令时 pi 才真正创建
-> session，dashboard 扫描自动识别。
 
 ## 页面
 
 | 路径 | 说明 |
 | --- | --- |
-| `/` `/dashboard` | **React 状态看板**：需求 KPI、状态分布、交付时长，带 Framer Motion 动效 |
-| `/projects` | **需求进度看板**：需求平铺展示；按创建时间、状态多选、一级/二级项目组合筛选 |
-| `/requirement?id=<req>` | 需求详情：记忆 / 测试 / 影响评估 / 关联 session；提供代码差异与发版注意事项入口 |
-| `/requirement/review?id=<req>` | 独立代码 Review 页：查看 AI 相比生产分支的提交、文件和 unified diff，并保存人工结论 |
-| `/requirement/release?id=<req>` | 独立发版注意页：汇总分支、DB、配置、MQ、复验链路、Review 结论和上线注意事项 |
-| `/sessions` | **Sessions** 仪表盘（Operator 风格 lane），按 harness 列 session |
-| `/session?id=<id>` | 单 session 详情 + 内嵌 xterm 终端 |
-| `/api/sessions` `/api/session?id=` `/api/config` | JSON API |
-| `/ws/session-terminal?id=<id>` | 终端 WebSocket 端点 |
+| `/` `/dashboard` | 需求 KPI、状态分布、交付周期 |
+| `/projects` | 需求进度看板 |
+| `/requirement?id=<req>` | 需求详情、状态/类别/ONES、关联 session、新 pi session 命令 |
+| `/sessions` | pi session 列表 |
+| `/session?id=<uuid>` | pi session 元数据详情（无 terminal） |
+| `/settings` | 需求扫描目录、模型偏好、Pi `settings.json` 编辑 |
 
-OpenCode 专属页面（`/reports` `/report` `/schedulers` `/env-vars` 及对应 API）当前
-保留，pi 模式下不使用，后续清理。
+旧页面 `/reports`、`/report`、`/schedulers`、`/env-vars`、`/git-ai` 会显示“已移除”说明。
 
-## pi session 数据源
+## Rust API
 
-`src/piSessions.ts` 扫描 `~/.pi/agent/sessions/<project-dir>/<timestamp>_<id>.jsonl`：
+核心接口：
 
-- **header 行**：`id`（UUID）、`cwd`、`timestamp`
-- **`session_info` 行**：display name（`pi --name` 设的值，优先作标题）
-- **`model_change` 行**：provider / modelId
-- **首条 user message**：标题 fallback
-- `updated` 取文件 mtime；`status` 由 recency 派生（<5m `running` / <24h `idle` / 否则 `stale`）
+- `GET /health`
+- `GET /api/dashboard/stats`
+- `GET /api/requirements`
+- `GET /api/requirement?id=<req>`
+- `POST /api/requirement/status`
+- `POST /api/requirement/category`
+- `POST /api/requirement/ones`
+- `POST /api/requirement/associate`
+- `POST /api/requirement/dissociate`
+- `POST /api/requirement/new-session`
+- `GET /api/sessions?days=7`
+- `GET /api/session?id=<uuid>`
+- `GET/POST /api/config`
+- `GET/POST /api/pi-config/file?file=settings`
 
-## 内嵌终端
+## 数据约定
 
-- 服务端 `src/terminal.ts`：`node-pty` 按 harness spawn `pi --session` / `opencode --session`
-- `/ws/session-terminal`（`src/server.tsx`）用 `upgradeWebSocket` 桥接 PTY stdin/stdout
-- 客户端 `public/terminal.js` 加载 `/vendor/xterm/*`，WebSocket 双向通信，支持输入 / resize / 退出提示
-- 新建模式：WS spawn 后轮询新 session，把真实 id 推回页面并关联需求
-
-## 需求生命周期（Hermes，harness 无关）
-
-需求目录在 `~/.agents/req/<project>/.../<req-id>/`，dashboard 只维护 session 关联
-（`~/.local/share/agent-panel/associations.json`）和状态写入。关键文件：
-
-- `memory.md` — 新建 session 的首要记忆入口
-- `alignment.md` — 需求对齐阶段的标准业务说明
-- `branch.md` + `config-changes.md` - 上线包（分支 / DB / Apollo / Nacos / RocketMQ）
-- `branches.json` - 可选的结构化分支概览（仓库 ↔ 需求分支 ↔ test/uat/master 合并状态）；缺失时 dashboard 从 `branch.md` 兜底解析，agent 写入后为精确数据源
-- `code-review.json` - dashboard 生成的 PRO diff 快照（扫描前会先更新本地生产基线），保存仓库/分支、提交、文件、风险标签和人工结论
-- `test.md` / `review.md` / `impact.md` — 测试 / Review / 影响评估；人工 Code Review 结论会同步写入 `review.md` 的托管区块
-
-## 目录结构
-
-```
-src/
-  server.tsx              - Fastify 路由、JSX 页面、WS upgrade、插件注册
-  fastify/context.ts      - 请求上下文适配器（Fastify request/reply -> Ctx）
-  config.ts               - AppConfig（含 harness 字段）+ env 管理
-  piSessions.ts           - pi JSONL session 扫描器
-  sessions.ts             - OpenCode SQLite/CLI/fs 扫描（保留，待清理）
-  dashboardSessions.ts    - harness 门面：按 harness 分派扫描/校验/命令
-  terminal.ts             - node-pty 包装，按 harness spawn
-  terminalProtocol.ts     - 纯 WS 帧解析（无原生依赖）
-  terminalUrl.ts          - 终端 WS URL + 自动注入门控
-  requirements.ts         - Hermes 需求 + session 关联存储
-  requirementBoard.ts      - 需求看板纯筛选逻辑（时间、状态多选、一级/二级项目）
-  requirementState.ts     - 需求 state.json 读写
-  branchScope.ts          - branches.json 读写 + branch.md 兜底解析（代码改动范围卡片）
-  codeReview.ts           - PRO diff 扫描、生产基线刷新、code-review.json 与 review.md 托管区块
-  paths.ts                - 路径安全边界
-  navigation.ts           - 导航项
-  dashboardStats.ts        - React dashboard 的需求统计纯函数
-  notifications.ts        - 通知中心持久化
-web/
-  src/App.tsx             - React 状态看板 UI 与 Framer Motion 动效
-  src/main.tsx            - React dashboard island 挂载入口
-  src/styles.css          - React dashboard 专属样式
-  tsconfig.json           - 前端类型检查配置
-  # OpenCode 专属（保留，后续清理）：
-  forkSalvage.ts experienceMarkers.ts experienceAutoSummary.ts
-  sessionExtract.ts extractJobs.ts extractQueue.ts autoExtractScheduler.ts
-  autoExtract.ts autoValuation.ts sessionValuation.ts sessionTranscript.ts
-  opencodeProcessQueue.ts
-public/
-  harness-switch.js       - 右上角 OC/PI 切换
-  terminal.js             - 内嵌终端客户端
-  app.js / req-detail.js  - 报告页 / 需求页交互
-  requirements-board.js   - 需求看板项目级联筛选与日期校验
-  style.css               - Operator 暗色主题
-```
-
-## 开发工具链与验证
-
-- Node.js 22+ 负责应用运行和 `node:test` 测试。
-- Bun 负责依赖安装、`bun.lock` 和 `package.json` 脚本调度。
-- 不要直接执行 `bun test`，它会改用 Bun 测试运行器；本项目必须通过 `bun run test` 调用 Node 测试命令。
+- 需求扫描目录来自 `~/.local/share/agent-panel/config.json` 的 `requirementScanRoots`。
+- 每个扫描 root 下会查找 `.agents/req/` 和 `req/`。
+- 需求目录以 `meta.md` 识别，`state.json` 管理状态和类别。
+- 关联关系存储在 `~/.local/share/agent-panel/associations.json`。
+- 新建 session 只生成命令，不再内嵌终端：
 
 ```bash
-bun install         # 安装依赖并维护 bun.lock
-bun run build:dashboard # Vite 构建 React dashboard 到 public/dashboard-react
-bun run typecheck       # server + web 双类型检查
-bun run test            # node --test --import tsx tests/*.test.ts
-bun run start           # 自动构建 dashboard 并打开 http://localhost:7331
+pi --session-id <uuid> --name '<需求标题>' --append-system-prompt @<ctx-file>
 ```
 
-## 安全约束
+## 部署
 
-- 不读取任何 `.env*`、`credentials.json`、`secrets.json`、私钥文件。
-- session id 按 harness 严格校验（pi: UUID；opencode: `^ses_[A-Za-z0-9]+$`），spawn 前再校验一次。
-- 所有 CLI 调用用 `child_process.spawn` 固定 argv，不 shell-eval 用户输入。
-- 路径拒绝 `..`；vendor / static 路由强制边界。
+```bash
+./scripts/install-systemd.sh
+```
 
-## 后续路线
-
-`main` 分支聚焦 pi。OpenCode 专属代码（experience summary / extract context / SQLite
-扫描 / fork 救回等）保留但不再维护，后续按 roadmap 逐步移除。完整双 harness 版本存档
-在 `archive/dual-harness` tag，随时可找回。
-
-## 继续开发 / AI handoff
-
-1. [`AGENTS.md`](./AGENTS.md) — 项目规则、安全约束、验证清单。**先读这个再动手。**
-2. [`docs/AI_DEVELOPMENT.md`](./docs/AI_DEVELOPMENT.md) — 长篇交接文档。
-3. 本 README — 用户视角的功能 / 路由 / 目录导览。
-
-> 注：`AGENTS.md` 与 `docs/` 的部分描述仍基于 OpenCode 单 harness 时期，尚未同步到
-> pi 为主力的现状，后续会一并更新。
-
-本 README 保持一页篇幅；详细设计放在 `AGENTS.md` 和 `docs/AI_DEVELOPMENT.md`。
+更多见 [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)。

@@ -1,0 +1,24 @@
+[package]
+name = "agent-panel"
+version = "0.2.0"
+edition = "2021"
+description = "Local React + Rust control panel for pi agent sessions and requirement tracking."
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.7", features = ["multipart"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+regex = "1.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "fs", "process", "time"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3.12"

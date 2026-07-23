@@ -1,8 +1,8 @@
 /**
  * Role: browser-side DTOs for the React dashboard island.
  * Public surface: DashboardStatsPayload and supporting requirement/stat types.
- * Constraints: mirrors /api/dashboard/stats JSON without importing server modules into Vite.
- * Read-this-with: src/dashboardStats.ts and web/src/App.tsx.
+ * Constraints: mirrors /api/dashboard/stats JSON without importing Rust backend internals into Vite.
+ * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
 export interface RequirementSummary {

@@ -2,7 +2,7 @@
  * Role: bootstraps the React dashboard island inside the server-rendered shell.
  * Public surface: none; mounts <App /> into #dashboard-root.
  * Constraints: only owns the dashboard page and fetches data through local JSON APIs.
- * Read-this-with: web/src/App.tsx and src/server.tsx DashboardPage.
+ * Read-this-with: web/src/App.tsx and src/main.rs.
  */
 import React from "react"
 import { createRoot } from "react-dom/client"

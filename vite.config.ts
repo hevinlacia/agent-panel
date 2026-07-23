@@ -1,12 +1,11 @@
 /**
- * Role: Vite build entry for the React dashboard island.
- * Public surface: builds web/src/main.tsx into public/dashboard-react for Fastify static serving.
- * Constraints: keeps the server stack intact while allowing React to own high-interaction pages.
- * Read-this-with: web/src/App.tsx and src/server.tsx dashboard routes.
+ * Role: Vite build entry for the React Agent Panel SPA.
+ * Public surface: builds web/index.html into public/dashboard-react for the Rust server.
+ * Constraints: the backend only serves static SPA files plus JSON APIs; no SSR or PTY bundle.
+ * Read-this-with: web/src/App.tsx and src/main.rs.
  */
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
-import { resolve } from "node:path"
 
 export default defineConfig({
   root: "web",
@@ -15,14 +14,12 @@ export default defineConfig({
   build: {
     outDir: "../public/dashboard-react",
     emptyOutDir: true,
-    cssCodeSplit: false,
     sourcemap: false,
     rollupOptions: {
-      input: resolve(__dirname, "web/src/main.tsx"),
       output: {
-        entryFileNames: "dashboard.js",
-        chunkFileNames: "chunks/[name].js",
-        assetFileNames: "dashboard.[ext]",
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]",
       },
     },
   },
