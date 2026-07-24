@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
+  FileCode2,
   Gauge,
   GitBranch,
   LayoutDashboard,
@@ -171,6 +172,9 @@ interface CodeReviewRepoSnapshot {
 }
 interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; repos: CodeReviewRepoSnapshot[] }
 interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
+interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
+interface DiffLine { type: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string }
+interface DiffFileView { repo: CodeReviewRepoSnapshot; file: CodeReviewFile; diff: string; lines: DiffLine[] }
 
 const cardVariants = {
   hidden: { opacity: 0, y: 18, scale: 0.98 },
@@ -188,7 +192,7 @@ const navItems = [
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
-  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement"
+  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/git-ai") return path === "/git-ai"
   return path === href
@@ -198,6 +202,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/" || path === "/dashboard") return { eyebrow: "Dashboard", title: "状态看板" }
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
+  if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
@@ -480,6 +485,80 @@ function reviewStats(review?: CodeReviewSnapshot | null) {
   }
 }
 
+function parseUnifiedDiffFiles(review?: CodeReviewSnapshot | null): DiffFileView[] {
+  if (!review) return []
+  const rows: DiffFileView[] = []
+  for (const repo of review.repos || []) {
+    const chunks = splitUnifiedDiff(repo.diff || "")
+    for (const file of repo.files || []) {
+      const diff = chunks.get(file.path) || ""
+      rows.push({ repo, file, diff, lines: parseDiffLines(diff) })
+    }
+  }
+  return rows
+}
+
+function splitUnifiedDiff(diff: string): Map<string, string> {
+  const files = new Map<string, string>()
+  let currentPath = ""
+  let buffer: string[] = []
+  const flush = () => {
+    if (currentPath) files.set(currentPath, buffer.join("\n"))
+  }
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      flush()
+      const match = line.match(/^diff --git a\/(.*?) b\/(.*)$/)
+      currentPath = match?.[2] || ""
+      buffer = [line]
+      continue
+    }
+    if (currentPath) buffer.push(line)
+  }
+  flush()
+  return files
+}
+
+function parseDiffLines(diff: string): DiffLine[] {
+  const lines: DiffLine[] = []
+  let oldNo = 0
+  let newNo = 0
+  for (const raw of diff.split("\n")) {
+    const hunk = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/)
+    if (hunk) {
+      oldNo = Number(hunk[1])
+      newNo = Number(hunk[2])
+      lines.push({ type: "hunk", oldNo: "", newNo: "", text: raw })
+      continue
+    }
+    if (!raw || raw.startsWith("diff --git") || raw.startsWith("index ") || raw.startsWith("--- ") || raw.startsWith("+++ ")) continue
+    if (raw.startsWith("+")) {
+      lines.push({ type: "add", oldNo: "", newNo: String(newNo++), text: raw.slice(1) })
+    } else if (raw.startsWith("-")) {
+      lines.push({ type: "del", oldNo: String(oldNo++), newNo: "", text: raw.slice(1) })
+    } else {
+      lines.push({ type: "ctx", oldNo: String(oldNo++), newNo: String(newNo++), text: raw.startsWith(" ") ? raw.slice(1) : raw })
+    }
+  }
+  return lines
+}
+
+function shortFileName(path: string): string {
+  const parts = path.split("/").filter(Boolean)
+  return parts.slice(-1)[0] || path
+}
+
+function compactPath(path: string, max = 52): string {
+  if (path.length <= max) return path
+  const parts = path.split("/")
+  if (parts.length <= 3) return `…${path.slice(-(max - 1))}`
+  return `${parts[0]}/…/${parts.slice(-3).join("/")}`
+}
+
+function diffDomId(key: string): string {
+  return `diff-file-${encodeURIComponent(key).replace(/%/g, "_")}`
+}
+
 function CodeReviewPanel({ req }: { req: Requirement }) {
   const { data, error, loading, refresh } = useFetch<CodeReviewPayload>(`/api/requirement/code-review?id=${encodeURIComponent(req.id)}`, [req.id])
   const [refreshing, setRefreshing] = useState(false)
@@ -503,7 +582,7 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
     }
   }
   return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Diff" title="代码差异" chip={review ? `${stats.fileCount} files` : canScan ? "ready" : "missing scope"} />
-    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新代码差异" : "生成代码差异"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}</div>
+    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新代码差异" : "生成代码差异"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
     {error ? <p className="react-effort-error">加载失败：{error}</p> : null}{actionError ? <p className="react-effort-error">刷新失败：{actionError}</p> : null}
     {loading ? <LoadingCard label="正在加载代码差异…" /> : <>
       <div className="react-branch-scope">
@@ -521,6 +600,63 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
       </details>)}
     </>}
   </section>
+}
+
+function RequirementDiffPage() {
+  const params = new URLSearchParams(window.location.search)
+  const reqId = params.get("id") || params.get("reqId") || ""
+  const initialBase = params.get("base") || "origin/master"
+  const requirements = RequirementsData()
+  const req = requirements.data?.requirements.find((r) => r.id === reqId)
+  const [baseRef, setBaseRef] = useState(initialBase)
+  const [loadingDiff, setLoadingDiff] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [review, setReview] = useState<CodeReviewSnapshot | null>(null)
+  const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
+  const stats = reviewStats(review)
+  const [activeKey, setActiveKey] = useState("")
+  useEffect(() => {
+    if (!reqId) return
+    let cancelled = false
+    setLoadingDiff(true)
+    setError(null)
+    postForm<MasterDiffPayload>("/api/requirement/master-diff", { reqId, baseRef })
+      .then((payload) => { if (!cancelled) setReview(payload.review || null) })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)) })
+      .finally(() => { if (!cancelled) setLoadingDiff(false) })
+    return () => { cancelled = true }
+  }, [reqId, baseRef])
+  useEffect(() => {
+    if (!files.length) { setActiveKey(""); return }
+    const exists = files.some((item) => `${item.repo.repoName}:${item.file.path}` === activeKey)
+    if (!exists) setActiveKey(`${files[0].repo.repoName}:${files[0].file.path}`)
+  }, [files, activeKey])
+  const activeIndex = Math.max(0, files.findIndex((item) => `${item.repo.repoName}:${item.file.path}` === activeKey))
+  const scrollToFile = (key: string) => {
+    setActiveKey(key)
+    document.getElementById(diffDomId(key))?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+  const changeBase = (next: string) => {
+    setBaseRef(next)
+    const q = new URLSearchParams(window.location.search)
+    q.set("id", reqId)
+    q.set("base", next)
+    window.history.replaceState(null, "", `/requirement-diff?${q.toString()}`)
+  }
+  const title = req?.title || reqId || "分支差异"
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="按需求分支和指定基准分支生成代码差异，左侧选择文件，中间查看改动内容。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => changeBase(baseRef)} disabled={loadingDiff}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />刷新 diff</button></>}>
+    <section className="react-diff-shell">
+      <aside className="react-diff-sidebar"><div className="react-diff-compare"><span>Compare</span><select value={baseRef} onChange={(e) => changeBase(e.target.value)}><option value="origin/master">origin/master</option><option value="origin/production">origin/production</option><option value="master">master</option><option value="production">production</option></select><em>and latest version</em></div><label className="react-diff-search"><Search size={14} /><input placeholder="Search files (Ctrl+P)" onChange={(e) => { const hit = files.find((f) => f.file.path.toLowerCase().includes(e.target.value.toLowerCase())); if (hit && e.target.value) scrollToFile(`${hit.repo.repoName}:${hit.file.path}`) }} /></label><div className="react-diff-file-list">{[...new Set(review?.repos?.map((r) => r.repoName) || [])].map((repoName) => {
+          const repo = review?.repos?.find((r) => r.repoName === repoName)
+          const repoFiles = files.filter((f) => f.repo.repoName === repoName)
+          return <details key={repoName} className="react-diff-repo-group" open>
+            <summary><strong>{repoName}</strong><em>base: {repo?.baseRef || baseRef}</em></summary>
+            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em><b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
+          </details>
+        })}</div></aside>
+      <main className="react-diff-main"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成分支差异…" /> : files.length === 0 ? <EmptyCard>没有可展示的文件级差异。</EmptyCard> : files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <article key={key} id={diffDomId(key)} className="react-diff-file-card"><header><div><FileCode2 size={16} /><strong>{item.repo.repoName}/{item.file.path}</strong><em className="react-diff-base-label">vs {item.repo.baseRef || review?.baseRef || "?"}</em></div><span><b>+{item.file.additions}</b><i>-{item.file.deletions}</i></span></header>{item.lines.length ? <table className="react-diff-code"><tbody>{item.lines.map((line, i) => <tr key={i} className={`react-diff-line-${line.type}`}><td>{line.oldNo}</td><td>{line.newNo}</td><td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td></tr>)}</tbody></table> : <pre className="react-diff-preview">{item.diff || "该文件 diff 已截断或为空。"}</pre>}</article> })}</main>
+    </section>
+  </PageChrome>
 }
 
 function RequirementPage() {
@@ -632,6 +768,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/sessions" ? <SessionsPage />
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
+    : path === "/requirement-diff" ? <RequirementDiffPage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/git-ai" ? <GitAiPage />
     : path === "/settings" ? <SettingsPage />

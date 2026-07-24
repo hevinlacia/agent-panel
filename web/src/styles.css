@@ -592,6 +592,54 @@ button, input, select, textarea { font: inherit; }
 .react-review-commits pre,
 .react-diff-preview { overflow: auto; max-height: 54vh; white-space: pre; color: var(--react-text); background: #080c13; border: 1px solid var(--react-border); border-radius: 14px; padding: 12px; font: .74rem/1.5 var(--react-mono); }
 .react-diff-preview { margin-top: 12px; margin-bottom: 14px; }
+.react-master-diff { margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(148,163,184,.22); }
+.react-master-diff > .react-review-summary { margin-top: 0; }
+.react-diff-shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+.react-diff-sidebar { position: sticky; top: 92px; max-height: calc(100vh - 112px); overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; background: linear-gradient(180deg, rgba(15,20,28,.94), rgba(8,12,18,.96)); padding: 12px; }
+.react-diff-compare { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid rgba(148,163,184,.12); color: var(--react-muted); font: .76rem var(--react-mono); }
+.react-diff-compare select { min-width: 0; border: 1px solid var(--react-border); border-radius: 10px; padding: 7px 9px; background: rgba(255,255,255,.045); color: var(--react-text); font: .74rem var(--react-mono); outline: none; }
+.react-diff-compare em { grid-column: 2; color: var(--react-faint); font-style: normal; }
+.react-diff-search { display: flex; align-items: center; gap: 8px; margin: 12px 0; border: 1px solid var(--react-border); border-radius: 12px; padding: 8px 10px; background: rgba(255,255,255,.035); color: var(--react-muted); }
+.react-diff-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--react-text); font: .76rem var(--react-mono); }
+.react-diff-file-list { display: flex; flex-direction: column; gap: 6px; }
+.react-diff-repo-group { border: 1px solid transparent; border-radius: 12px; margin-bottom: 4px; }
+.react-diff-repo-group > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 6px; cursor: pointer; color: var(--react-text); font-size: .82rem; }
+.react-diff-repo-group > summary strong { color: #fff; font: 850 .76rem var(--react-mono); }
+.react-diff-repo-group > summary em { color: var(--react-faint); font: .64rem var(--react-mono); font-style: normal; }
+.react-diff-repo-group > summary::-webkit-details-marker { color: var(--react-faint); }
+.react-diff-file-list button { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; border: 1px solid transparent; border-radius: 12px; padding: 9px 8px; background: transparent; color: var(--react-muted); text-align: left; cursor: pointer; }
+.react-diff-file-list button:hover,
+.react-diff-file-list button.active { border-color: rgba(34,211,238,.28); background: rgba(34,211,238,.08); color: #fff; }
+.react-diff-file-list button svg { color: #38bdf8; }
+.react-diff-file-list span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.react-diff-file-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font: 850 .76rem var(--react-mono); }
+.react-diff-file-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--react-faint); font: .66rem var(--react-mono); }
+.react-diff-file-list em { display: inline-flex; gap: 5px; font: 850 .68rem var(--react-mono); font-style: normal; }
+.react-diff-file-list b,
+.react-diff-file-card header b { color: #86efac; }
+.react-diff-file-list i,
+.react-diff-file-card header i { color: #fca5a5; font-style: normal; }
+.react-diff-main { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.react-diff-toolbar { position: sticky; top: 72px; z-index: 5; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--react-border); border-radius: 16px; padding: 11px 14px; background: rgba(10,14,21,.92); backdrop-filter: blur(16px); color: var(--react-muted); font: .76rem var(--react-mono); }
+.react-diff-toolbar div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.react-diff-toolbar strong { color: #fff; }
+.react-diff-file-card { overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); }
+.react-diff-file-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(16,22,31,.95); }
+.react-diff-file-card header div { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--react-text); }
+.react-diff-file-card header svg { color: var(--react-cyan); flex: 0 0 auto; }
+.react-diff-file-card header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 850 .78rem var(--react-mono); }
+.react-diff-base-label { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; margin-left: 4px; }
+.react-diff-file-card header span { display: inline-flex; gap: 9px; font: 850 .72rem var(--react-mono); }
+.react-diff-code { width: 100%; border-collapse: collapse; table-layout: fixed; font: .74rem/1.5 var(--react-mono); }
+.react-diff-code td { padding: 0 9px; border-bottom: 1px solid rgba(148,163,184,.035); vertical-align: top; }
+.react-diff-code td:nth-child(1),
+.react-diff-code td:nth-child(2) { width: 52px; color: var(--react-faint); text-align: right; user-select: none; background: rgba(255,255,255,.018); }
+.react-diff-code td:nth-child(3) { white-space: pre; overflow-x: auto; color: #cfd8e3; }
+.react-diff-code code { font-family: var(--react-mono); }
+.react-diff-line-add td { background: rgba(22,101,52,.34); }
+.react-diff-line-del td { background: rgba(127,29,29,.38); }
+.react-diff-line-hunk td { background: rgba(37,99,235,.14); color: #93c5fd; font-weight: 800; }
+.react-diff-line-hunk td:nth-child(3) { color: #93c5fd; }
 .react-gitai-card { grid-template-columns: minmax(0, 1fr) auto; }
 .react-gitai-fix-result { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .react-fix-ok { color: #86efac !important; border-color: rgba(34,197,94,.36) !important; background: rgba(34,197,94,.12) !important; }
@@ -599,5 +647,5 @@ button, input, select, textarea { font: inherit; }
 .react-gitai-agent-info code { color: var(--react-cyan); word-break: break-all; }
 .react-fix-note-btn { border: 1px solid rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; color: #fcd34d !important; border-radius: 999px !important; padding: 7px 12px !important; font: 800 .74rem var(--react-mono) !important; cursor: pointer; }
 .react-fix-note-btn:disabled { opacity: .5; cursor: not-allowed; }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } }
 @media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }

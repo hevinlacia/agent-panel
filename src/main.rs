@@ -285,6 +285,8 @@ struct NewSessionForm {
 #[serde(rename_all = "camelCase")]
 struct CodeReviewForm {
     req_id: String,
+    #[serde(default)]
+    base_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -406,6 +408,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/code-review",
             get(api_requirement_code_review).post(api_requirement_code_review_post),
+        )
+        .route(
+            "/api/requirement/master-diff",
+            post(api_requirement_master_diff),
         )
         .route(
             "/api/requirement/auto-drive",
@@ -617,6 +623,30 @@ async fn api_requirement_code_review_post(
         ))
     })?;
     let review = run_code_review_scan(&req_dir, &req.id, &branch_scope).await?;
+    Ok(Json(
+        json!({ "ok": true, "branchScope": branch_scope, "review": review }),
+    ))
+}
+
+async fn api_requirement_master_diff(
+    State(state): State<AppState>,
+    form: FormOrJson<CodeReviewForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let base_ref = body
+        .base_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("origin/master");
+    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref).await?;
     Ok(Json(
         json!({ "ok": true, "branchScope": branch_scope, "review": review }),
     ))
@@ -2429,14 +2459,58 @@ async fn run_code_review_scan(req_dir: &Path, req_id: &str, scope: &BranchScope)
     Ok(review)
 }
 
+async fn run_master_diff_scan(req_id: &str, scope: &BranchScope, base_ref: &str) -> Result<Value> {
+    let mut repos = Vec::new();
+    for repo in &scope.repos {
+        let branches = if repo.branches.is_empty() {
+            vec![String::new()]
+        } else {
+            repo.branches.clone()
+        };
+        let repo_base = if repo.role.as_deref() == Some("前端")
+            || repo.path.as_deref().unwrap_or("").contains("/frontend/")
+        {
+            "origin/production"
+        } else {
+            base_ref
+        };
+        for branch in branches {
+            repos.push(scan_repo_branch_with_base(repo, &branch, Some(repo_base)).await);
+        }
+    }
+    Ok(json!({
+        "version": 1,
+        "reqId": req_id,
+        "updatedAt": now_ms(),
+        "baseRef": base_ref,
+        "frontendBaseRef": "origin/production",
+        "backendBaseRef": "origin/master",
+        "sourceFallback": scope.fallback,
+        "repos": repos,
+    }))
+}
+
 async fn scan_repo_branch(repo: &BranchRepo, branch: &str) -> Value {
+    scan_repo_branch_with_base(repo, branch, None).await
+}
+
+async fn scan_repo_branch_with_base(
+    repo: &BranchRepo,
+    branch: &str,
+    forced_base_ref: Option<&str>,
+) -> Value {
     let mut warnings = Vec::<String>::new();
-    let base_ref = repo
-        .base_ref
-        .as_deref()
+    let base_ref = forced_base_ref
         .filter(|v| !v.trim().is_empty())
         .map(str::trim)
         .map(str::to_string)
+        .or_else(|| {
+            repo.base_ref
+                .as_deref()
+                .filter(|v| !v.trim().is_empty())
+                .map(str::trim)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| detect_default_base_ref(repo));
     let base_info = parse_base_ref(&base_ref);
     let branch = branch.trim();
