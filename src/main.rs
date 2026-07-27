@@ -283,6 +283,102 @@ struct NewSessionForm {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RequirementCreateForm {
+    req_id: String,
+    title: String,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    projects: Option<Vec<String>>,
+    #[serde(default)]
+    group_path: Option<Vec<String>>,
+    #[serde(default)]
+    parent_req_id: Option<String>,
+    #[serde(default)]
+    root: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    start_date: Option<String>,
+    #[serde(default)]
+    plan_release: Option<String>,
+    #[serde(default)]
+    ones: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    background: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementPatchForm {
+    req_id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    projects: Option<Vec<String>>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    start_date: Option<String>,
+    #[serde(default)]
+    plan_release: Option<String>,
+    #[serde(default)]
+    ones: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementNoteForm {
+    req_id: String,
+    text: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementDocForm {
+    req_id: String,
+    doc_type: String,
+    content: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RequirementValidateForm {
+    req_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodeReviewForm {
     req_id: String,
     #[serde(default)]
@@ -388,8 +484,21 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/dashboard/stats", get(api_dashboard_stats))
-        .route("/api/requirements", get(api_requirements))
-        .route("/api/requirement", get(api_requirement))
+        .route(
+            "/api/requirements",
+            get(api_requirements).post(api_requirements_post),
+        )
+        .route(
+            "/api/requirement",
+            get(api_requirement).patch(api_requirement_patch),
+        )
+        .route("/api/requirement/update", post(api_requirement_update))
+        .route("/api/requirement/notes", post(api_requirement_notes))
+        .route(
+            "/api/requirement/doc",
+            post(api_requirement_doc).put(api_requirement_doc),
+        )
+        .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route("/api/requirement/category", post(api_requirement_category))
         .route("/api/requirement/ones", post(api_requirement_ones))
@@ -510,6 +619,55 @@ async fn api_requirement(
     let id = query.id.or(query.req_id).unwrap_or_default();
     let req = get_requirement(&state, &id).await?;
     Ok(Json(json!({ "requirement": req })))
+}
+
+async fn api_requirements_post(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementCreateForm>,
+) -> ApiResult<Json<Value>> {
+    let created = create_requirement(&state, form.0).await?;
+    Ok(Json(created))
+}
+
+async fn api_requirement_patch(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementPatchForm>,
+) -> ApiResult<Json<Value>> {
+    let updated = update_requirement(&state, form.0).await?;
+    Ok(Json(updated))
+}
+
+async fn api_requirement_update(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementPatchForm>,
+) -> ApiResult<Json<Value>> {
+    let updated = update_requirement(&state, form.0).await?;
+    Ok(Json(updated))
+}
+
+async fn api_requirement_notes(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementNoteForm>,
+) -> ApiResult<Json<Value>> {
+    let value = append_requirement_note(&state, form.0).await?;
+    Ok(Json(value))
+}
+
+async fn api_requirement_doc(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementDocForm>,
+) -> ApiResult<Json<Value>> {
+    let value = write_requirement_doc(&state, form.0).await?;
+    Ok(Json(value))
+}
+
+async fn api_requirement_validate(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementValidateForm>,
+) -> ApiResult<Json<Value>> {
+    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let value = validate_requirement(&state, &req).await?;
+    Ok(Json(value))
 }
 
 async fn api_requirement_status(
@@ -3003,6 +3161,741 @@ fn short_err(result: &GitCommandResult) -> String {
             None if result.timed_out => format!("{} timed out", result.command),
             None => format!("{} failed", result.command),
         })
+}
+
+async fn create_requirement(state: &AppState, form: RequirementCreateForm) -> ApiResult<Value> {
+    let req_id = ensure_req_id(&form.req_id)?;
+    let title = clean_required(&form.title, "title")?;
+    let status = form
+        .status
+        .as_deref()
+        .unwrap_or("需求对齐")
+        .trim()
+        .to_string();
+    ensure_status(&status)?;
+    let category = form
+        .category
+        .as_deref()
+        .unwrap_or("需求")
+        .trim()
+        .to_string();
+    ensure_category(&category)?;
+    let dry_run = form.dry_run.unwrap_or(false);
+    let base = resolve_create_req_root(state, form.root.as_deref()).await?;
+    let target_dir = if let Some(parent_id) = clean_optional(form.parent_req_id.as_deref()) {
+        let parent = get_real_requirement(state, &parent_id).await?;
+        let parent_dir = req_dir_path(&parent)?;
+        ensure_requirement_dir_writable(state, &parent_dir).await?;
+        parent_dir.join(&req_id)
+    } else {
+        let mut dir = base.clone();
+        for segment in form.group_path.unwrap_or_default() {
+            dir = dir.join(ensure_safe_segment(&segment, "groupPath")?);
+        }
+        dir.join(&req_id)
+    };
+    ensure_path_inside_req_roots(state, &target_dir).await?;
+    if target_dir.exists() {
+        return Err(ApiError::bad_request(format!(
+            "requirement directory already exists: {}",
+            target_dir.to_string_lossy()
+        )));
+    }
+
+    let projects = normalize_projects(form.project.as_deref(), form.projects.as_deref());
+    let project = projects
+        .first()
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
+    let owner = clean_optional(form.owner.as_deref()).unwrap_or_else(|| "unknown".to_string());
+    let start_date = clean_optional(form.start_date.as_deref()).unwrap_or_else(today_ymd);
+    ensure_date_or_unknown(&start_date, "startDate")?;
+    let plan_release =
+        clean_optional(form.plan_release.as_deref()).unwrap_or_else(|| "unknown".to_string());
+    ensure_date_or_unknown(&plan_release, "planRelease")?;
+    let ones = clean_optional(form.ones.as_deref()).unwrap_or_default();
+    let summary = clean_optional(form.summary.as_deref()).unwrap_or_else(|| "待补充".to_string());
+    let background = clean_optional(form.background.as_deref());
+    let notes = clean_optional(form.notes.as_deref());
+
+    let files = requirement_create_files(
+        &req_id,
+        &title,
+        &status,
+        &project,
+        &projects,
+        &category,
+        &owner,
+        &start_date,
+        &plan_release,
+        &ones,
+        &summary,
+        background.as_deref(),
+        notes.as_deref(),
+    );
+    let planned: Vec<String> = files
+        .iter()
+        .map(|(name, _)| target_dir.join(name).to_string_lossy().to_string())
+        .collect();
+    if !dry_run {
+        fs::create_dir_all(&target_dir).await?;
+        for (name, body) in &files {
+            atomic_write_text(&target_dir.join(name), body).await?;
+        }
+    }
+    let validation = if dry_run {
+        json!({ "ok": true, "dryRun": true, "problems": [], "warnings": [] })
+    } else {
+        let req = load_requirement_from_dir(&target_dir, &req_id, &[project.clone()], &[])
+            .await?
+            .ok_or_else(|| anyhow!("created requirement cannot be loaded"))?;
+        validate_requirement(state, &req).await?
+    };
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req_id,
+        "title": title,
+        "status": status,
+        "category": category,
+        "project": project,
+        "projects": projects,
+        "reqDir": target_dir.to_string_lossy(),
+        "files": planned,
+        "validation": validation,
+    }))
+}
+
+async fn update_requirement(state: &AppState, form: RequirementPatchForm) -> ApiResult<Value> {
+    let req = get_real_requirement(state, &form.req_id).await?;
+    let dir = req_dir_path(&req)?;
+    ensure_requirement_dir_writable(state, &dir).await?;
+    let dry_run = form.dry_run.unwrap_or(false);
+    let mut changes = Vec::<String>::new();
+    let mut planned_files = Vec::<String>::new();
+
+    let meta_path = dir.join("meta.md");
+    let mut meta_next = fs::read_to_string(&meta_path)
+        .await
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    if let Some(title) = clean_optional(form.title.as_deref()) {
+        meta_next = set_frontmatter_field(&meta_next, "title", &title);
+        meta_next = update_meta_summary_line(&meta_next, "Title", &title);
+        changes.push("meta.title".into());
+    }
+    if let Some(project) = clean_optional(form.project.as_deref()) {
+        meta_next = set_frontmatter_field(&meta_next, "project", &project);
+        changes.push("meta.project".into());
+    }
+    if let Some(projects) = form.projects.as_deref() {
+        let value =
+            unique_strings(projects.iter().map(|s| s.trim().to_string()).collect()).join(", ");
+        meta_next = set_frontmatter_field(&meta_next, "projects", &value);
+        changes.push("meta.projects".into());
+    }
+    if let Some(owner) = clean_optional(form.owner.as_deref()) {
+        meta_next = set_frontmatter_field(&meta_next, "owner", &owner);
+        meta_next = update_meta_summary_line(&meta_next, "Owner", &owner);
+        changes.push("meta.owner".into());
+    }
+    if let Some(start_date) = clean_optional(form.start_date.as_deref()) {
+        ensure_date_or_unknown(&start_date, "startDate")?;
+        meta_next = set_frontmatter_field(&meta_next, "start-date", &start_date);
+        meta_next = update_meta_summary_line(&meta_next, "Start date", &start_date);
+        changes.push("meta.startDate".into());
+    }
+    if let Some(plan_release) = clean_optional(form.plan_release.as_deref()) {
+        ensure_date_or_unknown(&plan_release, "planRelease")?;
+        meta_next = set_frontmatter_field(&meta_next, "plan-release", &plan_release);
+        meta_next = update_meta_summary_line(&meta_next, "Planned release", &plan_release);
+        changes.push("meta.planRelease".into());
+    }
+    if let Some(ones) = form.ones.as_deref() {
+        let value = ones.trim().to_string();
+        meta_next = set_frontmatter_field(&meta_next, "ones", &value);
+        changes.push("meta.ones".into());
+    }
+    if let Some(category) = form.category.as_deref() {
+        ensure_category(category)?;
+        changes.push("state.category".into());
+        if !dry_run {
+            write_requirement_category(dir.to_string_lossy().as_ref(), category).await?;
+        }
+        planned_files.push(dir.join(STATE_FILE).to_string_lossy().to_string());
+    }
+    if let Some(status) = form.status.as_deref() {
+        ensure_status(status)?;
+        changes.push("state.status".into());
+        if !dry_run {
+            write_requirement_status(dir.to_string_lossy().as_ref(), status, form.note.as_deref())
+                .await?;
+        }
+        planned_files.push(dir.join(STATE_FILE).to_string_lossy().to_string());
+    }
+    let old_meta = fs::read_to_string(&meta_path)
+        .await
+        .unwrap_or_default()
+        .replace("\r\n", "\n");
+    if meta_next != old_meta {
+        planned_files.push(meta_path.to_string_lossy().to_string());
+        if !dry_run {
+            atomic_write_text(&meta_path, &meta_next).await?;
+        }
+    }
+
+    let validation = if dry_run {
+        json!({ "ok": true, "dryRun": true, "problems": [], "warnings": [] })
+    } else {
+        let refreshed = get_real_requirement(state, &form.req_id).await?;
+        validate_requirement(state, &refreshed).await?
+    };
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req.id,
+        "changes": unique_strings(changes),
+        "files": unique_strings(planned_files),
+        "validation": validation,
+    }))
+}
+
+async fn append_requirement_note(state: &AppState, form: RequirementNoteForm) -> ApiResult<Value> {
+    let req = get_real_requirement(state, &form.req_id).await?;
+    let dir = req_dir_path(&req)?;
+    ensure_requirement_dir_writable(state, &dir).await?;
+    let text = clean_required(&form.text, "text")?;
+    ensure_text_size(&text, "text")?;
+    let dry_run = form.dry_run.unwrap_or(false);
+    let path = dir.join("notes.md");
+    let raw = fs::read_to_string(&path)
+        .await
+        .unwrap_or_else(|_| format!("# {} Notes\n", req.id));
+    let title = clean_optional(form.title.as_deref()).unwrap_or_else(|| "Agent Update".to_string());
+    let session = clean_optional(form.session_id.as_deref()).unwrap_or_default();
+    let block = format!(
+        "\n\n## {} - {}\n{}{}\n",
+        today_ymd(),
+        title,
+        if session.is_empty() {
+            String::new()
+        } else {
+            format!("- Session: `{}`\n", session)
+        },
+        text.trim()
+    );
+    let next = format!("{}{}", raw.trim_end(), block);
+    if !dry_run {
+        atomic_write_text(&path, &next).await?;
+    }
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req.id,
+        "file": path.to_string_lossy(),
+        "appendedBytes": block.len(),
+    }))
+}
+
+async fn write_requirement_doc(state: &AppState, form: RequirementDocForm) -> ApiResult<Value> {
+    let req = get_real_requirement(state, &form.req_id).await?;
+    let dir = req_dir_path(&req)?;
+    ensure_requirement_dir_writable(state, &dir).await?;
+    let content = form.content.replace("\r\n", "\n");
+    ensure_text_size(&content, "content")?;
+    let doc_file = requirement_doc_file(&form.doc_type)?;
+    let mode = form.mode.as_deref().unwrap_or("replace").trim();
+    if !matches!(mode, "replace" | "append") {
+        return Err(ApiError::bad_request(format!("invalid mode: {mode}")));
+    }
+    let dry_run = form.dry_run.unwrap_or(false);
+    let path = dir.join(doc_file);
+    let next = if mode == "append" {
+        let raw = fs::read_to_string(&path)
+            .await
+            .unwrap_or_else(|_| format!("# {} {}\n", req.id, doc_file));
+        format!("{}\n\n{}\n", raw.trim_end(), content.trim())
+    } else {
+        ensure_doc_heading(&req.id, doc_file, &content)
+    };
+    if !dry_run {
+        atomic_write_text(&path, &next).await?;
+    }
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req.id,
+        "docType": form.doc_type,
+        "mode": mode,
+        "file": path.to_string_lossy(),
+        "bytes": next.len(),
+    }))
+}
+
+async fn validate_requirement(state: &AppState, req: &Requirement) -> ApiResult<Value> {
+    let dir = req_dir_path(req)?;
+    ensure_requirement_dir_writable(state, &dir).await?;
+    let mut problems = Vec::<String>::new();
+    let mut warnings = Vec::<String>::new();
+    let mut files = HashMap::<String, bool>::new();
+    for file in [
+        "meta.md",
+        "background.md",
+        "memory.md",
+        "branch.md",
+        "config-changes.md",
+        "impact.md",
+        "test.md",
+        "notes.md",
+    ] {
+        let exists = dir.join(file).is_file();
+        files.insert(file.to_string(), exists);
+        if file == "meta.md" && !exists {
+            problems.push("missing meta.md".into());
+        } else if file != "meta.md" && !exists {
+            warnings.push(format!("missing {file}"));
+        }
+    }
+    let meta_path = dir.join("meta.md");
+    let raw = fs::read_to_string(&meta_path).await.unwrap_or_default();
+    let fm = parse_frontmatter(&raw);
+    match fm.fields.get("req-id") {
+        Some(id) if id == &req.id => {}
+        Some(id) => problems.push(format!("meta req-id mismatch: {id} != {}", req.id)),
+        None => problems.push("meta missing req-id".into()),
+    }
+    if fm
+        .fields
+        .get("title")
+        .map(|v| v.trim().is_empty())
+        .unwrap_or(true)
+    {
+        problems.push("meta missing title".into());
+    }
+    if let Some(status) = fm.fields.get("status") {
+        if normalize_status(Some(status)).is_none() {
+            problems.push(format!("invalid meta status: {status}"));
+        }
+    } else if req.status.trim().is_empty() {
+        problems.push("missing status".into());
+    }
+    if let Some(category) = fm.fields.get("category") {
+        if normalize_category(Some(category)).is_none() {
+            problems.push(format!("invalid meta category: {category}"));
+        }
+    }
+    if let Some(state_json) = read_requirement_state(&dir).await? {
+        if let Some(status) = state_json.get("status").and_then(Value::as_str) {
+            if normalize_status(Some(&status.to_string())).is_none() {
+                problems.push(format!("invalid state status: {status}"));
+            }
+        }
+        if let Some(category) = state_json.get("category").and_then(Value::as_str) {
+            if normalize_category(Some(&category.to_string())).is_none() {
+                problems.push(format!("invalid state category: {category}"));
+            }
+        }
+    }
+    let branches_path = dir.join(BRANCH_SCOPE_FILE);
+    if branches_path.is_file() && read_branch_scope(&dir).await?.is_none() {
+        warnings.push("branches.json exists but has no valid repos".into());
+    }
+    Ok(json!({
+        "ok": problems.is_empty(),
+        "reqId": req.id,
+        "reqDir": dir.to_string_lossy(),
+        "problems": problems,
+        "warnings": warnings,
+        "files": files,
+    }))
+}
+
+fn req_dir_path(req: &Requirement) -> ApiResult<PathBuf> {
+    req.req_dir
+        .as_deref()
+        .filter(|v| !v.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!("requirement has no writable dir: {}", req.id))
+        })
+}
+
+async fn resolve_create_req_root(state: &AppState, requested: Option<&str>) -> ApiResult<PathBuf> {
+    let roots = writable_req_roots(state).await?;
+    if roots.is_empty() {
+        return Err(ApiError::bad_request(
+            "no requirementScanRoots configured; set /settings requirement scan roots first",
+        ));
+    }
+    if let Some(raw) = clean_optional(requested) {
+        let requested_path = normalize_user_path(&raw);
+        for root in &roots {
+            if same_or_child_path(&requested_path, root) {
+                return Ok(root.clone());
+            }
+            if let Some(parent) = root.parent().and_then(|p| p.parent()) {
+                if path_eq(&requested_path, parent) {
+                    return Ok(root.clone());
+                }
+            }
+        }
+        return Err(ApiError::bad_request(format!(
+            "root is not under configured requirementScanRoots: {raw}"
+        )));
+    }
+    Ok(roots[0].clone())
+}
+
+async fn writable_req_roots(state: &AppState) -> ApiResult<Vec<PathBuf>> {
+    let cfg = read_config(state).await?;
+    let roots = normalize_scan_roots(cfg.requirement_scan_roots);
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for root in roots {
+        let root_path = PathBuf::from(root);
+        let mut candidates = Vec::new();
+        if root_path.file_name().and_then(|v| v.to_str()) == Some("req") {
+            candidates.push(root_path.clone());
+        } else {
+            candidates.push(root_path.join(".agents/req"));
+            candidates.push(root_path.join("req"));
+        }
+        for candidate in candidates {
+            let key = normalize_path_string(&candidate);
+            if seen.insert(key) {
+                out.push(candidate);
+            }
+        }
+    }
+    Ok(out)
+}
+
+async fn ensure_requirement_dir_writable(state: &AppState, dir: &Path) -> ApiResult<()> {
+    ensure_path_inside_req_roots(state, dir).await
+}
+
+async fn ensure_path_inside_req_roots(state: &AppState, path: &Path) -> ApiResult<()> {
+    let roots = writable_req_roots(state).await?;
+    if roots.iter().any(|root| same_or_child_path(path, root)) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "path is outside configured requirement roots: {}",
+            path.to_string_lossy()
+        )))
+    }
+}
+
+fn same_or_child_path(path: &Path, root: &Path) -> bool {
+    normalize_path_string(path) == normalize_path_string(root)
+        || normalize_path_string(path).starts_with(&(normalize_path_string(root) + "/"))
+}
+
+fn path_eq(a: &Path, b: &Path) -> bool {
+    normalize_path_string(a) == normalize_path_string(b)
+}
+
+fn normalize_path_string(path: &Path) -> String {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir().unwrap_or_default().join(path)
+    };
+    let mut parts = Vec::new();
+    for comp in abs.components() {
+        match comp {
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => parts.push(comp.as_os_str().to_string_lossy().to_string()),
+        }
+    }
+    if parts.is_empty() {
+        "/".into()
+    } else if parts.first().map(|s| s.as_str()) == Some("/") {
+        format!("/{}", parts[1..].join("/"))
+    } else {
+        parts.join("/")
+    }
+}
+
+fn normalize_user_path(raw: &str) -> PathBuf {
+    let trimmed = raw.trim();
+    if trimmed == "~" {
+        home_dir().unwrap_or_default()
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        home_dir().unwrap_or_default().join(rest)
+    } else {
+        let path = PathBuf::from(trimmed);
+        if path.is_absolute() {
+            path
+        } else {
+            env::current_dir().unwrap_or_default().join(path)
+        }
+    }
+}
+
+fn ensure_req_id(value: &str) -> ApiResult<String> {
+    let v = value.trim();
+    if v == DEFAULT_REQ_ID || v.len() < 2 || v.len() > 128 {
+        return Err(ApiError::bad_request("invalid reqId length"));
+    }
+    if !v.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        || v.starts_with('-')
+        || v.ends_with('-')
+        || v.contains("--")
+    {
+        return Err(ApiError::bad_request(
+            "reqId must use ASCII letters, numbers and single hyphens only",
+        ));
+    }
+    Ok(v.to_string())
+}
+
+fn ensure_safe_segment(value: &str, field: &str) -> ApiResult<String> {
+    let v = value.trim();
+    if v.is_empty() || v == "." || v == ".." || v.len() > 128 {
+        return Err(ApiError::bad_request(format!("invalid {field} segment")));
+    }
+    if !v
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        || v.contains('/')
+        || v.contains('\\')
+    {
+        return Err(ApiError::bad_request(format!(
+            "{field} segment must be ASCII and path-safe"
+        )));
+    }
+    Ok(v.to_string())
+}
+
+fn clean_required(value: &str, field: &str) -> ApiResult<String> {
+    clean_optional(Some(value)).ok_or_else(|| ApiError::bad_request(format!("missing {field}")))
+}
+
+fn clean_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+fn ensure_date_or_unknown(value: &str, field: &str) -> ApiResult<()> {
+    if value == "unknown" || chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok() {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "{field} must be YYYY-MM-DD or unknown"
+        )))
+    }
+}
+
+fn ensure_text_size(value: &str, field: &str) -> ApiResult<()> {
+    if value.len() > 300_000 {
+        Err(ApiError::bad_request(format!("{field} is too large")))
+    } else {
+        Ok(())
+    }
+}
+
+fn today_ymd() -> String {
+    chrono::Utc::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
+fn normalize_projects(project: Option<&str>, projects: Option<&[String]>) -> Vec<String> {
+    let mut values = Vec::new();
+    if let Some(project) = clean_optional(project) {
+        values.push(project);
+    }
+    if let Some(projects) = projects {
+        values.extend(
+            projects
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+    }
+    if values.is_empty() {
+        values.push(DEFAULT_PROJECT_NAME.to_string());
+    }
+    unique_strings(values)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn requirement_create_files(
+    req_id: &str,
+    title: &str,
+    status: &str,
+    project: &str,
+    projects: &[String],
+    category: &str,
+    owner: &str,
+    start_date: &str,
+    plan_release: &str,
+    ones: &str,
+    summary: &str,
+    background: Option<&str>,
+    notes: Option<&str>,
+) -> Vec<(&'static str, String)> {
+    let meta = build_meta_doc(
+        req_id,
+        title,
+        status,
+        project,
+        projects,
+        category,
+        owner,
+        start_date,
+        plan_release,
+        ones,
+        summary,
+    );
+    vec![
+        ("meta.md", meta),
+        (
+            "background.md",
+            background
+                .map(str::to_string)
+                .unwrap_or_else(|| template_background(req_id)),
+        ),
+        ("memory.md", template_memory(req_id, title)),
+        ("branch.md", template_branch(req_id)),
+        ("config-changes.md", template_config_changes(req_id)),
+        ("impact.md", template_impact(req_id)),
+        ("test.md", template_test(req_id)),
+        (
+            "notes.md",
+            notes
+                .map(str::to_string)
+                .unwrap_or_else(|| template_notes(req_id)),
+        ),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_meta_doc(
+    req_id: &str,
+    title: &str,
+    status: &str,
+    project: &str,
+    projects: &[String],
+    category: &str,
+    owner: &str,
+    start_date: &str,
+    plan_release: &str,
+    ones: &str,
+    summary: &str,
+) -> String {
+    let mut fm = vec![
+        format!("req-id: {}", yaml_quote(req_id)),
+        format!("title: {}", yaml_quote(title)),
+        format!("status: {}", yaml_quote(status)),
+        format!("project: {}", yaml_quote(project)),
+    ];
+    if projects.len() > 1 {
+        fm.push(format!("projects: {}", yaml_quote(&projects.join(", "))));
+    }
+    fm.push(format!("category: {}", yaml_quote(category)));
+    fm.push(format!("owner: {}", yaml_quote(owner)));
+    fm.push(format!("start-date: {}", yaml_quote(start_date)));
+    fm.push(format!("plan-release: {}", yaml_quote(plan_release)));
+    if !ones.trim().is_empty() {
+        fm.push(format!("ones: {}", yaml_quote(ones)));
+    }
+    format!(
+        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
+        fm.join("\n"),
+        req_id,
+        title,
+        title,
+        status,
+        owner,
+        start_date,
+        plan_release,
+        projects.join(" / "),
+        summary.trim()
+    )
+}
+
+fn template_background(req_id: &str) -> String {
+    format!("# {req_id} 需求背景\n\n## 目标\n- 待补充\n\n## 背景\n- 待补充\n\n## 范围\n- 仓库：待补充\n- 分支：待补充\n- 关键改动文件：待补充\n\n## 关键决策\n- 待补充\n")
+}
+
+fn template_memory(req_id: &str, title: &str) -> String {
+    format!("# {req_id} Memory\n\n## 当前目标\n- {title}\n\n## 当前进展\n- 已创建需求，待补充进展。\n\n## 关键决策\n- 待补充\n\n## 待办 / 风险\n- [ ] 待补充\n")
+}
+
+fn template_branch(req_id: &str) -> String {
+    format!("# {req_id} Branches\n\n| Item | Value |\n| --- | --- |\n| Source branch | unknown |\n| Target branch | unknown |\n| Project path | unknown |\n| Merge status | 开发中 |\n\n## Commit / Diff Notes\n- 待补充\n")
+}
+
+fn template_config_changes(req_id: &str) -> String {
+    format!("# {req_id} Config Changes\n\n## DB 变更\n- 暂无\n\n## Apollo / Nacos 变更\n- 暂无\n\n## RocketMQ / Console 变更\n- 暂无\n")
+}
+
+fn template_impact(req_id: &str) -> String {
+    format!("# {req_id} Impact\n\n## 风险等级\n- 待评估\n\n## 核心链路影响\n- 待补充\n\n## 回滚方案\n- 待补充\n")
+}
+
+fn template_test(req_id: &str) -> String {
+    format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归记录\n- ⬜ 待执行\n")
+}
+
+fn template_notes(req_id: &str) -> String {
+    format!("# {req_id} Notes\n\n## 当前状态\n- 需求已创建。\n\n## 待跟进\n- [ ] 补充需求背景、影响面、分支和测试证据。\n")
+}
+
+fn update_meta_summary_line(raw: &str, label: &str, value: &str) -> String {
+    let prefix = format!("- {label}:");
+    let mut changed = false;
+    let lines: Vec<String> = raw
+        .split('\n')
+        .map(|line| {
+            if line.trim_start().starts_with(&prefix) {
+                changed = true;
+                format!("- {label}: {value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    if changed {
+        lines.join("\n")
+    } else {
+        raw.to_string()
+    }
+}
+
+fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
+    match doc_type.trim() {
+        "background" | "background.md" => Ok("background.md"),
+        "memory" | "memory.md" => Ok("memory.md"),
+        "branch" | "branch.md" => Ok("branch.md"),
+        "config" | "config-changes" | "config-changes.md" => Ok("config-changes.md"),
+        "impact" | "impact.md" => Ok("impact.md"),
+        "test" | "test.md" => Ok("test.md"),
+        "notes" | "notes.md" => Ok("notes.md"),
+        "review" | "review.md" => Ok("review.md"),
+        "alignment" | "alignment.md" => Ok("alignment.md"),
+        "prd" | "prd.md" => Ok("prd.md"),
+        other => Err(ApiError::bad_request(format!(
+            "unsupported docType: {other}"
+        ))),
+    }
+}
+
+fn ensure_doc_heading(req_id: &str, doc_file: &str, content: &str) -> String {
+    let clean = content.trim_start_matches('\u{feff}').trim_start();
+    if clean.starts_with('#') {
+        format!("{}\n", content.trim_end())
+    } else {
+        format!("# {} {}\n\n{}\n", req_id, doc_file, content.trim_end())
+    }
 }
 
 async fn read_requirement_state(dir: &Path) -> Result<Option<Value>> {

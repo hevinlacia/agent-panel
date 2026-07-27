@@ -49,7 +49,12 @@ bun run start:backend     # cargo run（开发后端）
 - `GET /health`
 - `GET /api/dashboard/stats`
 - `GET /api/requirements`
+- `POST /api/requirements` — 创建需求目录和标准文件；支持 JSON/form，`dryRun=true` 只返回计划写入路径
 - `GET /api/requirement?id=<req>`
+- `PATCH /api/requirement` / `POST /api/requirement/update` — 修改受控字段（title/project/projects/status/category/owner/startDate/planRelease/ones）
+- `POST /api/requirement/notes` — 追加 `notes.md` 进展块，不覆盖原文
+- `PUT|POST /api/requirement/doc` — 写入受控文档，`docType=background|memory|branch|config-changes|impact|test|notes|review|alignment|prd`，`mode=replace|append`
+- `POST /api/requirement/validate` — 校验 `meta.md`、`state.json`、标准文件和 `branches.json` 基本结构
 - `POST /api/requirement/status`
 - `POST /api/requirement/category`
 - `POST /api/requirement/ones`
@@ -60,6 +65,35 @@ bun run start:backend     # cargo run（开发后端）
 - `GET /api/session?id=<uuid>`
 - `GET/POST /api/config`
 - `GET/POST /api/pi-config/file?file=settings`
+
+示例：
+
+```bash
+# 创建需求（正式写入；加 dryRun=true 可预览）
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{"reqId":"WMS-001-demo","title":"示例需求","project":"WMS","summary":"统一由 Agent Panel 创建需求文件"}'
+
+# 修改需求字段，状态/类别会写入 state.json，meta 字段由服务端更新
+curl -sS -H 'Content-Type: application/json' \
+  -X PATCH http://localhost:7331/api/requirement \
+  -d '{"reqId":"WMS-001-demo","status":"开发中","note":"进入开发","owner":"hevin"}'
+
+# 追加 notes.md
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/notes \
+  -d '{"reqId":"WMS-001-demo","title":"进展","text":"完成方案梳理。"}'
+
+# 写受控文档
+curl -sS -H 'Content-Type: application/json' \
+  -X PUT http://localhost:7331/api/requirement/doc \
+  -d '{"reqId":"WMS-001-demo","docType":"test","mode":"replace","content":"# WMS-001-demo Test\\n\\n## 测试场景清单\\n- 待补充"}'
+
+# 校验需求结构
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/validate \
+  -d '{"reqId":"WMS-001-demo"}'
+```
 
 ## 数据约定
 

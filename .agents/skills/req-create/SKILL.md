@@ -1,33 +1,61 @@
 ---
 name: req-create
-description: 创建和更新需求文件（meta.md/background.md/branch.md/notes.md/test.md/config-changes.md/state.json），确保目录结构、frontmatter 格式、父子关系和状态值符合 Agent Panel 解析规范。
-allowed-tools: ["bash", "read", "write", "edit", "glob", "grep", "get_session_info"]
+description: 创建和更新需求文件，优先通过 Agent Panel API 与需求文件交互（创建/改字段/写文档/校验），API 不可用时才直接写文件兜底，确保目录结构、frontmatter 格式、父子关系和状态值符合 Agent Panel 解析规范。
+allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 ---
 
 # Requirement File Create & Update
 
-用于：当需要创建新需求、更新需求信息或变更需求状态时，按统一规范生成和修改 `~/.agents/req/` 下的需求文件，确保 Agent Panel 能正确解析。
+用于：当需要创建新需求、更新需求信息、变更需求状态或补充需求文档时，**优先通过 Agent Panel API** 生成和修改需求文件；API 不可用时才退化为直接写文件兜底。
 
 适用：
-- 用户说"创建需求"/"新建需求"/"登记需求"时生成目录和初始文件
-- 用户说"更新需求"/"改需求状态"/"补充需求信息"时修改已有文件
-- 用户说"创建子需求"/"拆分子需求"时在父需求目录下新建子需求
+- 用户说"创建需求"/"新建需求"/"登记需求"时生成目录和初始文件（走 API）
+- 用户说"更新需求"/"改需求标题/owner/计划上线/ONES/项目"等受控字段时（走 API）
+- 用户说"补充需求背景/测试/影响面/配置变更/进展笔记"等文档时（走 API 的 doc/notes 接口）
+- 用户说"创建子需求"/"拆分子需求"时（走 API，传 `parentReqId`）
+- 用户说"校验需求文件结构"时（走 API validate）
 
 不适用：
 - 需求开发到上线的全流程跟踪和发布预检（走 `req-tracker` skill）
 - 将已有 session 绑定到已有需求（用 `req-session-bind`）；创建需求时的自动绑定由本 skill 负责
-- 状态/API 调用细节（用 `agent-panel-requirement-api`）
 - 代码实现、仓库探索、调用链分析
+
+## 交互模式：API 优先，文件兜底
+
+所有需求文件写操作默认走 Agent Panel API。只有当 Agent Panel 不可用时，才退化为直接写文件，并必须在最终回复里明确标注"兜底路径"。
+
+**Agent Panel 默认地址**：`http://localhost:7331`（可由 `PORT` 覆盖）。
+
+**健康检查**（每次写操作前先确认服务可用）：
+
+```bash
+curl -sf --max-time 3 http://localhost:7331/health >/dev/null \
+  && echo API_UP || echo API_DOWN
+```
+
+- `API_UP` → 走 API 主路径。
+- `API_DOWN` → 告知用户 Agent Panel 未运行，并按「兜底路径」直接写文件；不要静默走兜底。
+
+API 契约详情见 `agent-panel-requirement-api` skill，本 skill 只列与创建/更新相关的端点：
+
+| 用途 | 方法 | 端点 | 关键参数 |
+|---|---|---|---|
+| 创建需求 | POST | `/api/requirements` | `reqId`, `title`；可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
+| 更新受控字段 | PATCH | `/api/requirement` | `reqId`；可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun`（不便发 PATCH 时用 `POST /api/requirement/update`） |
+| 追加 notes | POST | `/api/requirement/notes` | `reqId`, `text`；可选 `title`, `sessionId`, `dryRun` |
+| 写受控文档 | PUT/POST | `/api/requirement/doc` | `reqId`, `docType`, `content`；可选 `mode=replace\|append`, `dryRun` |
+| 校验需求 | POST | `/api/requirement/validate` | `reqId` |
+| 更新状态 | POST | `/api/requirement/status` | `reqId`, `status`, 可选 `note` |
+
+`dryRun:true` 适用于创建、更新字段、notes、doc 写入预览；只返回计划写入的文件路径，不落盘。
 
 ## Directory Layout
 
-需求根目录：`~/.agents/req/`
-
-两种合法布局：
+需求根目录由 Agent Panel 配置的 `requirementScanRoots` 决定（见 `/settings`）。两种合法布局：
 
 ```text
 # 项目分组布局（推荐）
-~/.agents/req/
+<scanRoot>/.agents/req/
 ├── WMS/                          # 项目目录
 │   ├── WMS-001-log-refactor/     # 叶子需求
 │   │   ├── meta.md
@@ -38,31 +66,23 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep", "get_session_in
 │   │   ├── impact.md
 │   │   ├── test.md
 │   │   ├── notes.md
-│   │   ├── review.md
-│   │   └── state.json
+│   │   └── state.json            # 由 Agent Panel 管理，不要手写
 │   └── WMS-003-rabbitmq-to-rocketmq/   # 父需求（分组容器）
-│       ├── meta.md                      # 父需求自身 meta
-│       ├── background.md                # 父需求背景
-│       ├── WMS-003-after-picking-batch/ # 子需求
-│       │   ├── meta.md
-│       │   ├── branch.md
-│       │   └── notes.md
-│       └── WMS-003-stock-diff-adjust/   # 子需求
+│       ├── meta.md
+│       └── WMS-003-after-picking-batch/ # 子需求
 │           └── meta.md
 
-# 旧版平铺布局（顶层直接放需求，无项目分组）
-~/.agents/req/
-├── legacy-req/
-│   └── meta.md
+# 旧版平铺布局
+<scanRoot>/.agents/req/<req-id>/meta.md
 ```
 
-### 父需求 vs 叶子需求
+- **父需求**：有 `meta.md` 且包含子目录（子目录有自己的 `meta.md`），只是分组容器，状态无意义。
+- **叶子需求**：有 `meta.md` 且不包含子需求目录，有完整状态、session、上下文注入功能。
+- **子需求**：位于父需求目录下的叶子需求，`parentReqId` 由 API 创建时传入或由扫描器推断。
 
-- **父需求**：目录里有 `meta.md` 且包含子目录（子目录有自己的 `meta.md`）。父需求只是一个分组容器，和项目目录作用一样。状态无意义，Agent Panel 不显示状态徽章和状态切换器。
-- **叶子需求**：目录里有 `meta.md` 且不包含子需求目录。叶子需求有状态、session 绑定、上下文注入等完整功能。
-- **子需求**：位于父需求目录下的叶子需求，`parentReqId` 由扫描器自动设置。
+## File Specs（校验依据 + 兜底模板）
 
-## File Specs
+下面是 API 内置生成的文件规范，也是 `validate` 和兜底写文件时的依据。
 
 ### meta.md（必填）
 
@@ -97,7 +117,7 @@ plan-release: unknown
 - <待确认的问题>
 ```
 
-**frontmatter 字段规则：**
+frontmatter 字段规则：
 
 | 字段 | 必填 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -108,9 +128,9 @@ plan-release: unknown
 | `owner` | 否 | string | 负责人 |
 | `start-date` | 否 | string | `YYYY-MM-DD` 或 `unknown` |
 | `plan-release` | 否 | string | `YYYY-MM-DD` 或 `unknown` |
-| `ones` | 否 | string | 关联的 ONES 任务编号或完整网址；填完整 `http(s)://` 网址时看板和详情页可点击跳转，只填编号则仅展示不跳转。留空或省略表示未关联（看板显示「未关联 ONES」提醒找产品登记）。也可通过 Agent Panel 详情页「ONES 任务关联」表单设置，会写回本字段。 |
+| `ones` | 否 | string | 关联的 ONES 任务编号或完整网址；留空或省略表示未关联 |
 
-**状态值（7 个，严格匹配 Agent Panel）：**
+状态值（7 个，严格匹配 Agent Panel）：
 
 | 值 | 含义 |
 | --- | --- |
@@ -122,196 +142,125 @@ plan-release: unknown
 | `待上线` | 测试通过，等待上线 |
 | `已完成` | 已上线，需求关闭 |
 
-### background.md（推荐填写）
+### 其它标准文件
 
-需求背景文件。`buildInjectionContext` 会读取此文件（最多 500 字符）注入到新 session 的上下文中。
-
-```markdown
-# 需求背景
-
-## 目标
-<这个需求要解决什么问题>
-
-## 背景
-<为什么要做这个需求，当前系统的什么状况需要改变>
-
-## 范围
-- 仓库：<仓库路径>
-- 分支：<分支名>
-- 关键改动文件：<文件列表>
-- 测试文件：<文件列表>
-
-## 关键决策
-- <重要的技术决策、方案选择及原因>
-```
-
-### branch.md（推荐填写）
-
-```markdown
-# <req-id> Branches
-
-| Item | Value |
-| --- | --- |
-| Source branch | <分支名> |
-| Target branch | <目标分支> |
-| Project path | <仓库路径> |
-| Merge status | <开发中 / 已合并 / unknown> |
-
-## Commit / Diff Notes
-- 关键 commit: `<sha>` — <描述>
-- 改动文件:
-  - `<file path>` — <改动说明>
-```
-
-### memory.md（推荐填写）
-
-需求生命周期记忆，供 Agent Panel 新 session 注入和智能提取维护。记录当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围和 session 摘要索引。
-
-### impact.md（推荐填写）
-
-编码前影响面评估，供 Agent Panel 和 agent 判断本次改动是否影响 WMS 入库、库存、出库、复核、发运、回传等核心链路。应记录风险等级、核心链路、影响入口、数据影响、阻塞风险、自测清单和回滚方案。
-
-### review.md（按需）
-
-待上线 Code Review 文件。只在本次需求包含待上线 review、用户确认的 review 处理结论或复查结果时维护。
-
-### notes.md（按需）
-
-```markdown
-# <req-id> Notes
-
-## 当前状态
-- <当前进展、已知问题>
-
-## 待跟进
-- [ ] <待办项>
-```
-
-### test.md（按需）
-
-测试场景清单 + 分阶段执行记录。支持两阶段测试工作流：开发自测（test 环境）和上线前 UAT 回归。WMS 需求应按 `~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md` 维护日志、DB、副作用和反向证据标准，并在自测结论中标注 A/B/C/D 置信度。
-
-```markdown
-# <req-id> Test
-
-## 测试场景清单
-
-| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |
-| --- | --- | --- | --- | --- | --- |
-| S1 | <一句话描述测试场景> | <API/UI/Job/MQ/curl> | <依赖数据或状态> | <预期行为和验证点> | <日志 + DB + 副作用 + 反向检查> |
-| S2 | <...> | <...> | <...> | <...> | <...> |
-
-## 日志关键字
-
-| 类型 | 关键字 | 说明 |
+| 文件 | 作用 | 填写时机 |
 | --- | --- | --- |
-| 链路 | `tid=<tid>` | 首选链路关键字，必须能串起入口、关键分支、成功/失败 |
-| 正常 | <正常链路日志关键词，如 "MQ消息发送" "MQ消息消费成功"> | <出现在哪条链路、什么阶段> |
-| 异常 | <异常/错误日志关键词，如 "MQ消息消费失败" "rollback" "异常"> | <出现原因和排查方向> |
-
-## DB / 副作用验证标准
-
-| 场景 | 表/副作用 | 查询条件 | 预期结果 | 反向检查 |
-| --- | --- | --- | --- | --- |
-| S1 | <table/topic/外部target> | <bizNo/warehouse/timeRange> | <字段/数量/状态符合预期> | <无 ERROR/consumeFail/重复记录/误跳过> |
-
-## 自测记录（test 环境）
-
-### S1: <场景描述> — ⬜
-- 触发: <实际执行的命令或操作>, tid=<tid>
-- 日志: <Kibana 关键词或日志片段，确认 tid 链路走通>
-- DB: <SQL 查询方向和结果摘要，确认数据变化>
-- 副作用: <MQ/外部调用/DTS/回传，如无写“不涉及”>
-- 反向检查: <同 tid / bizNo / topic 下无 ERROR、Exception、consumeFail、rollback>
-- 置信度: <A/B/C/D>
-- 结果: <✅ 通过 / ❌ 失败原因 / ⬜ 待测 / 证据不足>
-
-### S2: <场景描述> — ⬜
-- 触发: <...>
-- 日志: <...>
-- DB: <...>
-- 结果: <...>
-
-## UAT 回归记录
-
-> 部署 master 到 UAT 后，逐场景回归。全 ✅ 方可上线。
-
-### S1: <场景描述> — ⬜
-- 结果: <✅ / ❌ / ⬜>
-
-### S2: <场景描述> — ⬜
-- 结果: <✅ / ❌ / ⬜>
-
-## 回归范围
-- <需要回归验证的模块或功能点>
-
-## 注意事项
-- <部署顺序、依赖项、已知风险等>
-```
-
-**各阶段填写时机：**
-
-| 阶段 | 填写内容 | 触发时机 |
-| --- | --- | --- |
-| 测试场景清单 | 列出所有需要验证的场景 | 进入「自测中」状态前 |
-| 日志关键字 | 正常/异常链路的日志搜索关键词 | 与场景清单一起填写 |
-| 自测记录 | 每个场景的触发命令、日志、DB 验证结果 | 自测过程中逐条更新 |
-| UAT 回归记录 | 每个场景在 UAT 环境的通过/失败 | 上线前 UAT 部署后 |
-| 回归范围 + 注意事项 | 需要回归的模块、部署风险 | 与场景清单一起填写 |
-
-**状态标记规则：**
-- `⬜` 待测 — 尚未执行
-- `✅` 通过 — 至少达到 B 级证据；A 级表示日志、DB、副作用和反向检查完整
-- `❌` 失败 — 记录失败原因和复现步骤
-- `证据不足` — 只有接口成功或单点日志/DB，链路不完整，不能认为测试到位
-
-### config-changes.md（按需）
-
-```markdown
-# <req-id> Config Changes
-
-## DB 变更
-| 类型 | SQL | 备注 |
-| --- | --- | --- |
-| DDL | <SQL> | <说明> |
-
-## Apollo / Nacos 变更
-| Namespace | Key | 值 | 环境 |
-| --- | --- | --- | --- |
-| <ns> | <key> | <value> | <env> |
-```
-
-### state.json（由 Agent Panel 管理，不要手写）
-
-状态变更后由 Agent Panel 的 `POST /api/requirement/status` 自动写入。手动创建需求时无需生成此文件，Agent Panel 会在首次状态切换时自动创建。
+| `background.md` | 目标、背景、范围、关键决策（注入新 session 上下文） | 创建时或需求口径澄清后 |
+| `memory.md` | 需求生命周期记忆，供 session 注入 | 持续维护 |
+| `branch.md` | 分支、commit、合并状态 | 代码 push/merge 后 |
+| `config-changes.md` | DB / Apollo / Nacos / RocketMQ 变更 | 配置变更时 |
+| `impact.md` | 编码前影响面评估、核心链路风险、回滚方案 | 编码前 |
+| `test.md` | 测试场景清单 + 分阶段执行记录 | 进入自测前 / 自测中 / UAT |
+| `notes.md` | 进展、决策、踩坑（追加，不覆盖） | 阶段性进展时 |
+| `review.md` | 待上线 Code Review | 按需 |
+| `state.json` | Agent Panel 管理，**不要手写** | 首次状态切换时 API 自动生成 |
 
 ## Workflow
 
-### 创建新需求
+### 0. 健康检查
 
-1. 确认信息：`req-id`、`title`、`project`（项目目录名）、是否为父需求（是否要包含子需求）
-2. 确认目录路径：
-   - 项目分组：`~/.agents/req/<project>/<req-id>/`
-   - 旧版平铺：`~/.agents/req/<req-id>/`
-3. 创建目录：`mkdir -p <path>`
-4. 生成 `meta.md`（必填，按模板）
-5. 生成 `background.md`（推荐，至少写目标和范围）
-6. 生成 Agent Panel 维护的需求事实文件：`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`、`review.md`
-7. 文件可先写空模板或占位内容，但不要写真实 token、密码、Cookie、私钥、完整敏感 header
-8. 不要创建 `state.json`，Agent Panel 会在首次状态切换时自动生成
-9. **绑定当前 session 到需求**（详见下方「Session 绑定」）
-10. **向用户输出需求文件维护提示**（详见下方「需求文件维护提示」）
+先确认 Agent Panel 是否可用（见上方健康检查命令）。`API_UP` 走主路径，`API_DOWN` 走兜底路径并告知用户。
 
-### 创建子需求
+### 1. 创建新需求（API 主路径）
 
-1. 确认父需求目录已存在且有自己的 `meta.md`
-2. 子需求创建在父需求目录下：`~/.agents/req/<parent-project>/<parent-req-id>/<child-req-id>/`
-3. 子需求的 `meta.md` 中 `project` 字段与父需求保持一致
-4. 其余步骤与创建普通需求相同
+1. 确认信息：`req-id`、`title`、`project`（项目目录名）、是否为父需求、`parentReqId`（子需求时）。
+2. **dryRun 预览**，确认目录和文件不会误覆盖：
 
-### 更新需求状态
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{
+    "reqId": "<req-id>",
+    "title": "<需求标题>",
+    "project": "<project>",
+    "status": "需求对齐",
+    "summary": "<一句话摘要>",
+    "dryRun": true
+  }'
+```
 
-状态变更统一走 `agent-panel-requirement-api`，不要直接改 `meta.md` 或 `state.json`。常用命令：
+3. **正式创建**（去掉 `dryRun`，可顺带传 `background`/`notes` 初始内容）：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{
+    "reqId": "<req-id>",
+    "title": "<需求标题>",
+    "project": "<project>",
+    "status": "需求对齐",
+    "summary": "<一句话摘要>"
+  }'
+```
+
+返回含 `reqDir`、`files`、`validation`。若 `validation.ok=false`，先处理 `problems` 再继续。
+
+4. **补充文档**（按需，分多次调 `/doc` 写 `background`/`impact`/`test`，用 `mode=replace`）：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X PUT http://localhost:7331/api/requirement/doc \
+  -d '{"reqId":"<req-id>","docType":"background","mode":"replace","content":"# <req-id> 需求背景\n\n## 目标\n- ..."}'
+```
+
+5. **绑定当前 session**（见下方「Session 绑定」）。
+6. **向用户输出需求文件维护提示**（见下方）。
+
+> 不传 `status` 时默认 `需求对齐`；不要在创建后立刻手改 `meta.md` 的 status，状态流转走 `/api/requirement/status`。
+
+### 2. 创建子需求
+
+父需求目录已存在时，创建子需求走同一个 `POST /api/requirements`，传 `parentReqId`：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{
+    "reqId": "<child-req-id>",
+    "title": "<子需求标题>",
+    "parentReqId": "<parent-req-id>",
+    "summary": "<一句话摘要>"
+  }'
+```
+
+API 会把子需求目录建在父需求目录下，`project` 默认继承父需求。
+
+### 3. 更新需求字段（API 主路径）
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X PATCH http://localhost:7331/api/requirement \
+  -d '{
+    "reqId": "<req-id>",
+    "title": "<新标题>",
+    "owner": "hevin",
+    "planRelease": "unknown",
+    "ones": "https://..."
+  }'
+```
+
+字段范围仅受控字段：`title`/`project`/`projects`/`owner`/`startDate`/`planRelease`/`ones`/`status`/`category`。状态和类别可走 PATCH，但单纯状态流转仍推荐专用 `/api/requirement/status`（会记录 history）。
+
+### 4. 更新需求文档（API 主路径）
+
+- **追加进展**（不要全文覆盖 `notes.md`）：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/notes \
+  -d '{"reqId":"<req-id>","title":"进展","text":"完成方案梳理。","sessionId":"<可选>"}'
+```
+
+- **替换或追加白名单文档**（`docType` 仅支持 `background`/`memory`/`branch`/`config-changes`/`impact`/`test`/`notes`/`review`/`alignment`/`prd`）：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X PUT http://localhost:7331/api/requirement/doc \
+  -d '{"reqId":"<req-id>","docType":"test","mode":"replace","content":"# <req-id> Test\n\n## 测试场景清单\n- ..."}'
+```
+
+### 5. 状态变更
 
 ```bash
 curl -sS -H 'Accept: application/json' \
@@ -321,15 +270,36 @@ curl -sS -H 'Accept: application/json' \
   -d "note=<备注，可选>"
 ```
 
-状态会写入 `state.json`，Agent Panel 读取时 `state.json` 优先于 `meta.md` frontmatter。
+### 6. 校验需求（推荐在创建/更新后跑一次）
 
-### 更新需求文件
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/validate \
+  -d '{"reqId":"<req-id>"}'
+```
 
-直接编辑对应文件即可。`background.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`、`review.md` 都是普通 Markdown，无特殊解析要求；Agent Panel 智能提取会读取并维护这些文件。`state.json` 由 Agent Panel 管理，不要手写。
+`ok=false` 时必须修复 `problems`；`warnings` 是推荐补齐项。
+
+## 兜底路径：API 不可用时直接写文件
+
+仅当健康检查返回 `API_DOWN` 时使用。必须先告知用户"Agent Panel 未运行，本次用直接写文件兜底"。
+
+1. 确认目录路径：
+   - 项目分组：`<scanRoot>/.agents/req/<project>/<req-id>/`
+   - 旧版平铺：`<scanRoot>/.agents/req/<req-id>/`
+   - 子需求：`<scanRoot>/.agents/req/<parent-project>/<parent-req-id>/<child-req-id>/`
+2. `mkdir -p <path>`
+3. 按「File Specs」生成 `meta.md`（必填，含 frontmatter，`status` 严格匹配 7 个值之一，`req-id` 与目录名一致）。
+4. 生成 `background.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`（可先写占位模板，不写真实 token/密码/Cookie/私钥）。
+5. **不要创建 `state.json`**；`meta.md` 的 `status` 字段作为兜底状态来源，Agent Panel 恢复后会以 `state.json` 优先、`meta.md` 次之读取。
+6. 绑定当前 session（API 恢复后再补绑，或本 skill 的 session 绑定脚本）。
+7. 在最终回复标注「兜底路径」，并提示用户恢复 Agent Panel 后跑一次 `/api/requirement/validate` 校验兜底写入的文件。
+
+兜底写文件时，`status`/`category` 仍只写到 `meta.md`，不要手写 `state.json`。
 
 ## Session 绑定
 
-创建需求后，必须立即将当前 session 绑定到该需求，让 Agent Panel 能追踪关联关系，并为后续新 session 自动注入需求上下文。
+创建需求后，必须立即将当前 session 绑定到该需求。
 
 ### 1. 获取当前 Session ID
 
@@ -341,20 +311,20 @@ curl -sS -H 'Accept: application/json' \
 bash ~/Developer/tools/agent-panel/.agents/skills/req-session-bind/scripts/current-session.sh
 ```
 
-### 2. 调用 Agent Panel 绑定接口
+### 2. 调用 Agent Panel 绑定接口（API 可用时）
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
   -X POST http://localhost:7331/api/requirement/associate \
-  -H "Accept: application/json" \
-  -d "reqId=<req-id>" \
-  -d "sessionId=<sessionID>"
+  -H 'Accept: application/json' \
+  -d 'reqId=<req-id>' \
+  -d 'sessionId=<sessionID>'
 ```
 
 - `200`（JSON `{"ok":true}`）或 `303` = 成功
 - `400` = sessionId 格式不合法
 - `404` = 需求不存在
-- 连接失败 = Agent Panel 未运行，告知用户但不阻塞需求创建
+- 连接失败 = Agent Panel 未运行，告知用户但不阻塞需求创建（兜底路径下记录待绑定的 req-id + session-id，待 API 恢复后补绑）
 
 ### 3. 验证
 
@@ -375,58 +345,72 @@ else:
 
 ## 需求文件维护提示
 
-绑定 session 后，必须向用户输出以下维护要求，让 agent 在整个开发过程中持续更新需求文件：
+绑定 session 后，必须向用户输出以下维护要求，让 agent 在整个开发过程中持续更新需求文件（**优先走 API**）：
 
 ```text
 📋 需求已创建并绑定当前 session。
 
-在后续开发过程中，以下事件发生后必须立即更新对应需求文件：
-- 完成 PRD/需求口径澄清 → memory.md（记忆索引）+ background.md（背景）
-- 代码 push 或 merge 成功 → branch.md（分支名、commit、合并状态）
-- 需求分支首次 push / 涉及仓库或分支变动 → branches.json（加载 `req-branches-update` skill，或跑 `python3 ~/.agents/scripts/req-branches-scan.py <req-id>`）
-- 新增/修改 DB / Apollo / Nacos 配置 → config-changes.md
-- 明确测试场景或回归范围 → test.md
-- 编码前或影响面变化 → impact.md（核心链路风险）
-- 完成阶段性进展、关键决策、踩坑 → notes.md
+在后续开发过程中，以下事件发生后必须立即更新对应需求文件（优先走 Agent Panel API）：
+- 完成 PRD/需求口径澄清 -> /doc 写 memory.md + background.md
+- 代码 push 或 merge 成功 -> /doc 写 branch.md（分支名、commit、合并状态）
+- 需求分支首次 push / 涉及仓库或分支变动 -> branches.json（加载 `req-branches-update` skill，或跑 `python3 ~/.agents/scripts/req-branches-scan.py <req-id>`）
+- 新增/修改 DB / Apollo / Nacos 配置 -> /doc 写 config-changes.md
+- 明确测试场景或回归范围 -> /doc 写 test.md
+- 编码前或影响面变化 -> /doc 写 impact.md（核心链路风险）
+- 完成阶段性进展、关键决策、踩坑 -> /notes 追加 notes.md（不要覆盖）
 
 重要：更新需求文件是任务的一部分。代码 push 完成但需求文件未更新 = 任务未完成。
+状态变更统一走 /api/requirement/status，不要直接改 meta.md 或 state.json 的状态字段。
 ```
 
-不修改 `meta.md` 的 status 字段（由 Agent Panel 管理）。
+## Required Checks
 
-- `req-id` 只用 ASCII 字母数字和连字符，不含空格、中文、路径分隔符、`..`
-- `meta.md` frontmatter 的 `status` 严格匹配 7 个值之一
-- `meta.md` frontmatter 的 `req-id` 与目录名一致
-- 不要在文件里写真实 token、密码、Cookie、私钥
-- 不要手动创建 `state.json`（Agent Panel 自动管理）
-- 创建子需求前确认父需求目录和 `meta.md` 已存在
+- 写操作优先走 Agent Panel API；健康检查 `API_DOWN` 才走兜底，且必须告知用户并标注「兜底路径」。
+- `req-id` 只用 ASCII 字母数字和连字符，不含空格、中文、路径分隔符、`..`；`req-id` 与目录名一致。
+- `meta.md` frontmatter 的 `status` 严格匹配 7 个值之一。
+- 不要在文件里写真实 token、密码、Cookie、私钥。
+- 不要手动创建/编辑 `state.json`（Agent Panel 管理）；兜底时状态只写 `meta.md`。
+- 创建子需求前确认父需求目录和 `meta.md` 已存在。
+- API 创建/更新后建议跑一次 `/api/requirement/validate`，`ok=false` 必须修复 `problems`。
 
 ## Final Response
 
-创建完成：
+创建完成（API 主路径）：
 
 ```text
-✅ 已创建: <path>
+✅ 已创建（Agent Panel API）: <reqDir>
 - 需求: <title>
 - 状态: <status>
-- 已生成: <文件列表>
-- 待补: <哪些文件还需要用户填>
+- 已生成: <files>
+- 待补: <哪些文档还需要填>
+- 校验: <ok / problems 摘要>
 - Session 绑定: <已绑定 / 未绑定（Agent Panel 未运行）>
 ```
 
-绑定成功后，紧接着输出「需求文件维护提示」中的维护要求。
+创建完成（兜底路径）：
+
+```text
+⚠️ 已创建（兜底路径，Agent Panel 未运行）: <path>
+- 需求: <title>
+- 状态: <status>
+- 已生成: <文件列表>
+- 注意: Agent Panel 恢复后请跑一次 /api/requirement/validate 校验
+- Session 绑定: <待补绑 / 已绑定>
+```
 
 更新完成：
 
 ```text
-✅ 已更新: <file>
-- 变更: <简述>
+✅ 已更新（Agent Panel API）: <字段或文档>
+- 变更: <changes 摘要>
+- 写入: <files 或 无>
+- 校验: <ok / problems 摘要>
 ```
 
 状态变更：
 
 ```text
 ✅ <req-id> 状态已变更
-- <旧状态> → <新状态>
+- <旧状态> -> <新状态>
 - 备注: <note>
 ```
