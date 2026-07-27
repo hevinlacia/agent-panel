@@ -1470,7 +1470,7 @@ fn company_has_ai_mark(payload: &Value) -> bool {
         || num_or_null(stats.and_then(|v| v.get("ai_rate"))).unwrap_or(0.0) > 0.0
 }
 
-async fn check_company_ai_mark(record: &Value) -> Value {
+async fn check_company_ai_mark(client: &reqwest::Client, record: &Value) -> Value {
     let project_name = record
         .get("projectName")
         .and_then(Value::as_str)
@@ -1484,27 +1484,39 @@ async fn check_company_ai_mark(record: &Value) -> Value {
     }
     let endpoint = env::var("AGENT_PANEL_AI_STATS_CHECK_URL")
         .unwrap_or_else(|_| "http://10.24.12.40/api/ai-stats/check-commit".into());
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get(endpoint)
-        .query(&[("project_name", project_name), ("commit_sha", commit_sha)]);
+    let mut query: Vec<(&str, &str)> =
+        vec![("project_name", project_name), ("commit_sha", commit_sha)];
     if let Some(gitlab_id) = record
         .get("gitlabProjectId")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
     {
-        req = req.query(&[("gitlab_project_id", gitlab_id)]);
+        query.push(("gitlab_project_id", gitlab_id));
     }
-    let resp = match req
-        .header("Accept", "application/json")
-        .timeout(Duration::from_secs(6))
-        .send()
-        .await
-    {
-        Ok(v) => v,
-        Err(err) => {
-            return json!({ "companyStatus": "check_failed", "companyError": err.to_string() })
+    // Retry once on transient send errors (connection reset / timeout) so a
+    // brief network blip doesn't permanently mark the record as check_failed.
+    let mut resp = None;
+    let mut last_err = String::new();
+    for attempt in 0..2u8 {
+        if attempt == 1 {
+            sleep(Duration::from_millis(800)).await;
         }
+        let req = client
+            .get(endpoint.as_str())
+            .query(&query)
+            .header("Accept", "application/json")
+            .timeout(Duration::from_secs(6));
+        match req.send().await {
+            Ok(v) => {
+                resp = Some(v);
+                break;
+            }
+            Err(err) => last_err = err.to_string(),
+        }
+    }
+    let resp = match resp {
+        Some(v) => v,
+        None => return json!({ "companyStatus": "check_failed", "companyError": last_err }),
     };
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
@@ -1566,6 +1578,10 @@ async fn api_git_ai_suspects_refresh(
     Json(payload): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     let limit = payload.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
+    let force = payload
+        .get("force")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let store_path = state.data_dir.join("git-ai-suspects.json");
     let mut store = read_json_if_exists(&store_path)
         .await
@@ -1577,8 +1593,19 @@ async fn api_git_ai_suspects_refresh(
         .unwrap_or_default();
     records.sort_by_key(|r| -(r.get("lastSeenAt").and_then(Value::as_i64).unwrap_or(0)));
     let count = records.len().min(limit);
+    // Reuse one HTTP client (pooled connections) for the whole batch. By
+    // default skip records already confirmed by the company -- they don't
+    // change, and re-checking all of them only amplifies transient failures.
+    // Set force=true to re-check every record.
+    let client = reqwest::Client::builder()
+        .pool_idle_timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     for record in records.iter_mut().take(count) {
-        let result = check_company_ai_mark(record).await;
+        if !force && record.get("companyStatus").and_then(Value::as_str) == Some("confirmed_ai") {
+            continue;
+        }
+        let result = check_company_ai_mark(&client, record).await;
         apply_company_result(record, result, now_ms());
     }
     store["records"] = Value::Array(records);
@@ -1612,7 +1639,7 @@ async fn api_git_ai_suspects_payload(state: &AppState) -> Value {
     }
     json!({
         "records": records,
-        "stats": { "total": pending + missing_ai + not_found + check_failed, "pending": pending, "confirmedAi": confirmed_ai, "missingAi": missing_ai, "notFound": not_found, "checkFailed": check_failed },
+        "stats": { "total": pending + not_found + check_failed, "pending": pending, "confirmedAi": confirmed_ai, "missingAi": missing_ai, "notFound": not_found, "checkFailed": check_failed },
         "generatedAt": now_ms()
     })
 }
@@ -1692,7 +1719,8 @@ async fn api_git_ai_suspect_fix_note(
 
     // Step 2: wait 4s then re-check the company API.
     sleep(Duration::from_secs(4)).await;
-    let recheck = check_company_ai_mark(&record).await;
+    let client = reqwest::Client::new();
+    let recheck = check_company_ai_mark(&client, &record).await;
     let still_missing = recheck
         .get("companyStatus")
         .and_then(Value::as_str)
