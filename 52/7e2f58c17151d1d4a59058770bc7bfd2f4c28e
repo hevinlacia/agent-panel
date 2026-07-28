@@ -1,0 +1,27 @@
+src/main.rs
+  943f1de7336e7bdd 3212-3213,3666-3815,4692-4790
+.agents/skills/req-create/SKILL.md
+  943f1de7336e7bdd 167,183-190
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  943f1de7336e7bdd 57-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "527e2f58c17151d1d4a59058770bc7bfd2f4c28e",
+  "prompts": {
+    "943f1de7336e7bdd": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019fa65f-2d6c-79bb-b459-bd25f55986ff",
+        "model": "glm-latest-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 286,
+      "total_deletions": 21,
+      "accepted_lines": 286,
+      "overriden_lines": 0
+    }
+  }
+}
