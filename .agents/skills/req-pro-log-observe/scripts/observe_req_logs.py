@@ -562,9 +562,9 @@ def main():
                 region=env,
                 base_url=base_url,
                 cli_sid=None,
-                env_sid_var=f"OPENCODE_KIBANA_{env_prefix}_SID",
-                env_user_var=f"OPENCODE_KIBANA_{env_prefix}_USERNAME",
-                env_pass_var=f"OPENCODE_KIBANA_{env_prefix}_PASSWORD",
+                env_sid_var=f"AGENT_KIBANA_{env_prefix}_SID",
+                env_user_var=f"AGENT_KIBANA_{env_prefix}_USERNAME",
+                env_pass_var=f"AGENT_KIBANA_{env_prefix}_PASSWORD",
                 allow_auto_login=True,
             )
             sids[env] = sid

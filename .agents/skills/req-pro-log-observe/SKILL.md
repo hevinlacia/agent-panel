@@ -78,7 +78,7 @@ AI 需要结合需求内容判断：
 ## Required Checks
 
 - 执行前用 `date` 确认当前绝对时间，确保时间窗口覆盖发布后时段。
-- 确认 Kibana 环境变量（`OPENCODE_KIBANA_*_SID` 或 `OPENCODE_KIBANA_*_USERNAME/PASSWORD`）已配置。
+- 确认 Kibana 环境变量（`AGENT_KIBANA_*_SID` 或 `AGENT_KIBANA_*_USERNAME/PASSWORD`）已配置。
 - CN bsearch 首包通常 `isRunning=true`，脚本自动轮询，无需手动干预。
 - 若关键字 0 命中，检查索引名是否正确（CN: `pro-cwh*-applog*`，SEA: `pro-cwhsea*applog*`）。
 - 若 SID 过期（401/403），脚本自动用账号密码重新登录。

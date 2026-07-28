@@ -14,7 +14,7 @@
 set -euo pipefail
 
 DASH="${DASHBOARD_URL:-http://localhost:7331}"
-DB_PATH="${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}"
+DB_PATH="${AGENT_DB:-$HOME/.local/share/opencode/opencode.db}"
 
 # Method 1: Dashboard API（跨 harness，pi 下返回 UUID）
 SID=$(curl -sf --max-time 3 "$DASH/api/sessions" 2>/dev/null \
