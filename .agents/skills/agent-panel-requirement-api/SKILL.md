@@ -54,6 +54,31 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 更新 ONES | POST | `/api/requirement/ones` | form body: `reqId`, `ones` |
 | 关联 session | POST | `/api/requirement/associate` | form body: `reqId`, `sessionId`，成功默认 200 JSON，历史版本可能 303 |
 
+### `{seq}` 自动编号
+
+`reqId` 支持用 `{seq}` 占位符让 API 自动分配序号，调用方不必预先查最大编号。格式：`<前缀>-{seq}-<描述>`，API 扫描同前缀现有需求的最大序号 +1，补零到 3 位（如现有 `WMS-042-*` 则分配 `043`）。
+
+- 占位符必须带非空前缀：`WMS-{seq}-demo` 合法，`{seq}-demo` 报错。
+- 只允许一个 `{seq}`：`WMS-{seq}-{seq}` 报错。
+- 非 `dryRun` 时用原子 `mkdir` 占号，并发安全；`dryRun` 只预览不占号。
+- 不含 `{seq}` 的 `reqId` 走原校验逻辑，完全向后兼容。
+
+示例：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{
+    "reqId": "WMS-{seq}-rocketmq-fail-alarm",
+    "title": "RocketMQ 发送/消费失败告警",
+    "project": "WMS",
+    "status": "方案设计",
+    "summary": "...",
+    "dryRun": true
+  }'
+# 返回 reqId: "WMS-043-rocketmq-fail-alarm"（序号由 API 分配）
+```
+
 状态值必须严格匹配：
 
 ```text

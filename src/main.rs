@@ -3192,7 +3192,6 @@ fn short_err(result: &GitCommandResult) -> String {
 }
 
 async fn create_requirement(state: &AppState, form: RequirementCreateForm) -> ApiResult<Value> {
-    let req_id = ensure_req_id(&form.req_id)?;
     let title = clean_required(&form.title, "title")?;
     let status = form
         .status
@@ -3210,25 +3209,8 @@ async fn create_requirement(state: &AppState, form: RequirementCreateForm) -> Ap
     ensure_category(&category)?;
     let dry_run = form.dry_run.unwrap_or(false);
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
-    let target_dir = if let Some(parent_id) = clean_optional(form.parent_req_id.as_deref()) {
-        let parent = get_real_requirement(state, &parent_id).await?;
-        let parent_dir = req_dir_path(&parent)?;
-        ensure_requirement_dir_writable(state, &parent_dir).await?;
-        parent_dir.join(&req_id)
-    } else {
-        let mut dir = base.clone();
-        for segment in form.group_path.unwrap_or_default() {
-            dir = dir.join(ensure_safe_segment(&segment, "groupPath")?);
-        }
-        dir.join(&req_id)
-    };
-    ensure_path_inside_req_roots(state, &target_dir).await?;
-    if target_dir.exists() {
-        return Err(ApiError::bad_request(format!(
-            "requirement directory already exists: {}",
-            target_dir.to_string_lossy()
-        )));
-    }
+    let (req_id, target_dir) =
+        resolve_req_id_and_target_dir(state, &base, form.req_id.trim(), &form, dry_run).await?;
 
     let projects = normalize_projects(form.project.as_deref(), form.projects.as_deref());
     let project = projects
@@ -3679,6 +3661,156 @@ fn ensure_req_id(value: &str) -> ApiResult<String> {
         ));
     }
     Ok(v.to_string())
+}
+
+/// Parse a reqId template containing a single `{seq}` placeholder into
+/// `(prefix, suffix)`. `WMS-{seq}-demo` -> `("WMS", "-demo")`.
+fn split_seq_template(template: &str) -> ApiResult<(String, String)> {
+    let count = template.matches("{seq}").count();
+    if count == 0 {
+        return Err(ApiError::bad_request("reqId template must contain {seq}"));
+    }
+    if count > 1 {
+        return Err(ApiError::bad_request(
+            "reqId template may contain at most one {seq}",
+        ));
+    }
+    let idx = template.find("{seq}").expect("checked count above");
+    let prefix = template[..idx].trim_end_matches('-').to_string();
+    let suffix = template[idx + 5..].to_string();
+    if prefix.is_empty() {
+        return Err(ApiError::bad_request(
+            "reqId template must have a non-empty prefix before {seq}",
+        ));
+    }
+    if !prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(ApiError::bad_request(
+            "reqId prefix must be ASCII alphanumeric or hyphen",
+        ));
+    }
+    Ok((prefix, suffix))
+}
+
+/// Format the final reqId from prefix, sequence (zero-padded to 3 digits) and
+/// suffix. `("WMS", 43, "-demo")` -> `WMS-043-demo`.
+fn format_seq_id(prefix: &str, seq: u64, suffix: &str) -> String {
+    format!("{prefix}-{:03}{suffix}", seq)
+}
+
+/// Pure helper: compute the next sequence number for `prefix` from a list of
+/// existing requirement ids. Sub-requirements sharing a number (e.g.
+/// `WMS-003-*`) and gaps are handled by taking `max + 1`. `floor` forces a
+/// minimum (used when retrying after a collision).
+fn compute_next_seq_from_ids(ids: &[String], prefix: &str, floor: Option<u64>) -> u64 {
+    let re = Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix))).expect("valid regex");
+    let mut max_seq: u64 = 0;
+    for id in ids {
+        if let Some(caps) = re.captures(id) {
+            if let Ok(n) = caps[1].parse::<u64>() {
+                if n > max_seq {
+                    max_seq = n;
+                }
+            }
+        }
+    }
+    let mut next = max_seq + 1;
+    if let Some(f) = floor {
+        next = next.max(f);
+    }
+    next
+}
+
+/// Allocate the next sequence number for `prefix` by scanning existing
+/// requirements on disk.
+async fn allocate_next_seq(
+    state: &AppState,
+    prefix: &str,
+    floor: Option<u64>,
+) -> ApiResult<u64> {
+    let reqs = scan_hermes_requirements(state).await?;
+    let ids: Vec<String> = reqs.iter().map(|r| r.id.clone()).collect();
+    Ok(compute_next_seq_from_ids(&ids, prefix, floor))
+}
+
+/// Compute the target directory for a fully-resolved reqId, resolving parent
+/// requirement or group path from the create form.
+async fn compute_create_target_dir(
+    state: &AppState,
+    base: &Path,
+    req_id: &str,
+    form: &RequirementCreateForm,
+) -> ApiResult<PathBuf> {
+    if let Some(parent_id) = clean_optional(form.parent_req_id.as_deref()) {
+        let parent = get_real_requirement(state, &parent_id).await?;
+        let parent_dir = req_dir_path(&parent)?;
+        ensure_requirement_dir_writable(state, &parent_dir).await?;
+        Ok(parent_dir.join(req_id))
+    } else {
+        let mut dir = base.to_path_buf();
+        for segment in form.group_path.as_deref().unwrap_or_default() {
+            dir = dir.join(ensure_safe_segment(segment, "groupPath")?);
+        }
+        Ok(dir.join(req_id))
+    }
+}
+
+/// Resolve the final reqId and target directory for a create request.
+///
+/// When `template` contains `{seq}`, the next sequence number is allocated
+/// from existing requirements and (for non-dry-run) the target directory is
+/// atomically reserved with `fs::create_dir`, retrying on collision. When
+/// `template` has no `{seq}`, it is validated as-is and the target directory
+/// is checked for prior existence.
+async fn resolve_req_id_and_target_dir(
+    state: &AppState,
+    base: &Path,
+    template: &str,
+    form: &RequirementCreateForm,
+    dry_run: bool,
+) -> ApiResult<(String, PathBuf)> {
+    if !template.contains("{seq}") {
+        let req_id = ensure_req_id(template)?;
+        let target_dir = compute_create_target_dir(state, base, &req_id, form).await?;
+        ensure_path_inside_req_roots(state, &target_dir).await?;
+        if target_dir.exists() {
+            return Err(ApiError::bad_request(format!(
+                "requirement directory already exists: {}",
+                target_dir.to_string_lossy()
+            )));
+        }
+        return Ok((req_id, target_dir));
+    }
+
+    let (prefix, suffix) = split_seq_template(template)?;
+    let max_retries: u32 = 5;
+    let mut floor: Option<u64> = None;
+    for attempt in 0..=max_retries {
+        let seq = allocate_next_seq(state, &prefix, floor).await?;
+        let req_id = ensure_req_id(&format_seq_id(&prefix, seq, &suffix))?;
+        let target_dir = compute_create_target_dir(state, base, &req_id, form).await?;
+        ensure_path_inside_req_roots(state, &target_dir).await?;
+        if dry_run {
+            return Ok((req_id, target_dir));
+        }
+        if let Some(parent) = target_dir.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        match fs::create_dir(&target_dir).await {
+            Ok(()) => return Ok((req_id, target_dir)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if attempt == max_retries {
+                    return Err(ApiError::bad_request(format!(
+                        "requirement directory already exists after {max_retries} retries: {}",
+                        target_dir.to_string_lossy()
+                    )));
+                }
+                floor = Some(seq + 1);
+                continue;
+            }
+            Err(e) => return Err(anyhow!("create requirement dir failed: {e}").into()),
+        }
+    }
+    unreachable!("retry loop exhausted without returning")
 }
 
 fn ensure_safe_segment(value: &str, field: &str) -> ApiResult<String> {
@@ -4557,3 +4689,102 @@ async fn run_command(program: &str, args: &[&str]) -> Result<String> {
     let output = Command::new(program).args(args).output().await?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_seq_template_with_suffix() {
+        let (prefix, suffix) = split_seq_template("WMS-{seq}-demo").unwrap();
+        assert_eq!(prefix, "WMS");
+        assert_eq!(suffix, "-demo");
+    }
+
+    #[test]
+    fn split_seq_template_trailing() {
+        let (prefix, suffix) = split_seq_template("WMS-{seq}").unwrap();
+        assert_eq!(prefix, "WMS");
+        assert_eq!(suffix, "");
+    }
+
+    #[test]
+    fn split_seq_template_strips_trailing_hyphen_in_prefix() {
+        // "WMS--{seq}" -> prefix trimmed to "WMS"
+        let (prefix, _) = split_seq_template("WMS--{seq}").unwrap();
+        assert_eq!(prefix, "WMS");
+    }
+
+    #[test]
+    fn split_seq_template_rejects_missing_placeholder() {
+        assert!(split_seq_template("WMS-043").is_err());
+    }
+
+    #[test]
+    fn split_seq_template_rejects_multiple_placeholders() {
+        assert!(split_seq_template("WMS-{seq}-{seq}").is_err());
+    }
+
+    #[test]
+    fn split_seq_template_rejects_empty_prefix() {
+        assert!(split_seq_template("{seq}-demo").is_err());
+    }
+
+    #[test]
+    fn split_seq_template_rejects_non_ascii_prefix() {
+        assert!(split_seq_template("WMS_测试-{seq}").is_err());
+    }
+
+    #[test]
+    fn format_seq_id_pads_to_three_digits() {
+        assert_eq!(format_seq_id("WMS", 43, "-demo"), "WMS-043-demo");
+        assert_eq!(format_seq_id("WMS", 1, ""), "WMS-001");
+        // 4-digit numbers are not truncated by {:03}
+        assert_eq!(format_seq_id("WMS", 1000, "-x"), "WMS-1000-x");
+    }
+
+    #[test]
+    fn compute_next_seq_ignores_subrequirements_and_gaps() {
+        // Existing WMS data: WMS-003-* sub-requirements share 003, 004 is a gap,
+        // max is 042 -> next is 043.
+        let ids = vec![
+            "WMS-001-log".to_string(),
+            "WMS-003-a".to_string(),
+            "WMS-003-b".to_string(),
+            "WMS-003-c".to_string(),
+            "WMS-005-x".to_string(),
+            "WMS-042-y".to_string(),
+            "OTHER-099-z".to_string(), // different prefix, ignored
+        ];
+        assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 43);
+    }
+
+    #[test]
+    fn compute_next_seq_respects_floor() {
+        let ids = vec!["WMS-010-a".to_string()];
+        // max + 1 = 11, but floor = 50
+        assert_eq!(compute_next_seq_from_ids(&ids, "WMS", Some(50)), 50);
+    }
+
+    #[test]
+    fn compute_next_seq_starts_at_one_when_no_match() {
+        let ids = vec!["OTHER-099".to_string()];
+        assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 1);
+    }
+
+    #[test]
+    fn compute_next_seq_ignores_non_numeric_segments() {
+        let ids = vec!["WMS-abc".to_string(), "WMS-005".to_string()];
+        // WMS-abc does not match \d+, max numeric = 5 -> next 6
+        assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 6);
+    }
+
+    #[test]
+    fn compute_next_seq_matches_subrequirement_numbers() {
+        // Ensure the regex captures the number even when followed by a hyphen
+        // (sub-requirement case like WMS-003-after-picking-batch).
+        let ids = vec!["WMS-003-after-picking-batch".to_string()];
+        assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 4);
+    }
+}
+

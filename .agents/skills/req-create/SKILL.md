@@ -164,7 +164,7 @@ frontmatter 字段规则：
 
 ### 1. 创建新需求（API 主路径）
 
-1. 确认信息：`req-id`、`title`、`project`（项目目录名）、是否为父需求、`parentReqId`（子需求时）。
+1. 确认信息：`req-id`、`title`、`project`（项目目录名）、是否为父需求、`parentReqId`（子需求时）。`req-id` 支持用 `{seq}` 占位符让 API 自动分配序号（见下方「{seq} 自动编号」），不必手动查最大编号。
 2. **dryRun 预览**，确认目录和文件不会误覆盖：
 
 ```bash
@@ -179,6 +179,15 @@ curl -sS -H 'Content-Type: application/json' \
     "dryRun": true
   }'
 ```
+
+> **{seq} 自动编号**：不确定下一个编号时，`reqId` 传 `<前缀>-{seq}-<描述>`（如 `WMS-{seq}-rocketmq-fail-alarm`），API 会扫描同前缀现有需求并分配 `max+1`（补零 3 位）。`dryRun` 只预览不占号，正式创建时原子占号。示例：
+>
+> ```bash
+> curl -sS -H 'Content-Type: application/json' \
+>   -X POST http://localhost:7331/api/requirements \
+>   -d '{"reqId":"WMS-{seq}-demo","title":"示例","project":"WMS","dryRun":true}'
+> # -> reqId: "WMS-043-demo"
+> ```
 
 3. **正式创建**（去掉 `dryRun`，可顺带传 `background`/`notes` 初始内容）：
 
