@@ -17,6 +17,7 @@ use axum::{
     Json, Router,
 };
 use regex::Regex;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{
@@ -37,6 +38,7 @@ const CONFIG_FILE: &str = "config.json";
 const INJECTION_CTX_SUBDIR: &str = "ctx";
 const BRANCH_SCOPE_FILE: &str = "branches.json";
 const CODE_REVIEW_FILE: &str = "code-review.json";
+const DEFAULT_GITLAB_API_URL: &str = "http://code.jms.com/api/v4";
 const COMMAND_OUTPUT_LIMIT: usize = 80_000;
 const DIFF_OUTPUT_LIMIT: usize = 180_000;
 
@@ -385,6 +387,12 @@ struct CodeReviewForm {
     base_ref: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProdMrForm {
+    req_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct BranchScope {
@@ -522,6 +530,7 @@ async fn main() -> Result<()> {
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
         )
+        .route("/api/requirement/prod-mrs", post(api_requirement_prod_mrs))
         .route(
             "/api/requirement/auto-drive",
             get(api_auto_drive).post(api_auto_drive_post),
@@ -808,6 +817,27 @@ async fn api_requirement_master_diff(
     Ok(Json(
         json!({ "ok": true, "branchScope": branch_scope, "review": review }),
     ))
+}
+
+async fn api_requirement_prod_mrs(
+    State(state): State<AppState>,
+    form: FormOrJson<ProdMrForm>,
+) -> ApiResult<Json<Value>> {
+    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let results = generate_prod_mrs(&req, &branch_scope).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "generatedAt": now_ms(),
+        "branchScope": branch_scope,
+        "results": results,
+    })))
 }
 
 async fn api_auto_drive() -> Json<Value> {
@@ -2676,6 +2706,397 @@ async fn run_master_diff_scan(req_id: &str, scope: &BranchScope, base_ref: &str)
     }))
 }
 
+async fn generate_prod_mrs(req: &Requirement, scope: &BranchScope) -> Result<Vec<Value>> {
+    let token = gitlab_api_token()?;
+    let api_base = env::var("GITLAB_API_URL").unwrap_or_else(|_| DEFAULT_GITLAB_API_URL.into());
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("build GitLab API client")?;
+    let mut results = Vec::new();
+
+    for repo in &scope.repos {
+        let target_branch = detect_prod_target_branch(repo);
+        let branches = if repo.branches.is_empty() {
+            vec![String::new()]
+        } else {
+            repo.branches.clone()
+        };
+        let Some(project_path) =
+            resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+        else {
+            for branch in branches {
+                results.push(prod_mr_result(
+                    repo,
+                    &branch,
+                    &target_branch,
+                    "failed",
+                    None,
+                    Some("branches.json 缺少 path"),
+                    None,
+                ));
+            }
+            continue;
+        };
+        if !project_path.exists() {
+            for branch in branches {
+                results.push(prod_mr_result(
+                    repo,
+                    &branch,
+                    &target_branch,
+                    "failed",
+                    None,
+                    Some(&format!(
+                        "仓库路径不存在：{}",
+                        project_path.to_string_lossy()
+                    )),
+                    None,
+                ));
+            }
+            continue;
+        }
+        let remote = git(
+            &project_path,
+            &["config", "--get", "remote.origin.url"],
+            30_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await;
+        let project_namespace = if remote.ok {
+            gitlab_project_path_from_remote(remote.stdout.trim())
+        } else {
+            None
+        };
+        let Some(project_namespace) = project_namespace else {
+            for branch in branches {
+                results.push(prod_mr_result(
+                    repo,
+                    &branch,
+                    &target_branch,
+                    "failed",
+                    None,
+                    Some(&format!("无法解析 GitLab 项目路径：{}", short_err(&remote))),
+                    Some(project_path.to_string_lossy().as_ref()),
+                ));
+            }
+            continue;
+        };
+        for branch in branches {
+            results.push(
+                create_or_reuse_gitlab_mr(
+                    &client,
+                    &api_base,
+                    &token,
+                    req,
+                    repo,
+                    &project_namespace,
+                    &project_path,
+                    &branch,
+                    &target_branch,
+                )
+                .await,
+            );
+        }
+    }
+    Ok(results)
+}
+
+async fn create_or_reuse_gitlab_mr(
+    client: &Client,
+    api_base: &str,
+    token: &str,
+    req: &Requirement,
+    repo: &BranchRepo,
+    project_namespace: &str,
+    project_path: &Path,
+    source_branch: &str,
+    target_branch: &str,
+) -> Value {
+    let source_branch = source_branch.trim();
+    if source_branch.is_empty() {
+        return prod_mr_result(
+            repo,
+            "(未指定分支)",
+            target_branch,
+            "skipped",
+            None,
+            Some("branches.json 缺少需求分支"),
+            Some(project_path.to_string_lossy().as_ref()),
+        );
+    }
+    let project_key = percent_encode(project_namespace);
+    let url = format!(
+        "{}/projects/{}/merge_requests",
+        api_base.trim_end_matches('/'),
+        project_key
+    );
+    match find_existing_gitlab_mr(client, token, &url, source_branch, target_branch).await {
+        Ok(Some(mr)) => {
+            return prod_mr_result(
+                repo,
+                source_branch,
+                target_branch,
+                "reused",
+                Some(&mr),
+                None,
+                Some(project_path.to_string_lossy().as_ref()),
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return prod_mr_result(
+                repo,
+                source_branch,
+                target_branch,
+                "failed",
+                None,
+                Some(&err),
+                Some(project_path.to_string_lossy().as_ref()),
+            );
+        }
+    }
+
+    let title = format!(
+        "{} 生产发布：{} {} -> {}",
+        req.id, repo.repo_name, source_branch, target_branch
+    );
+    let description = format!(
+        "Agent Panel 自动创建生产 MR。\n\n- Req: `{}` {}\n- Repo: `{}`\n- Source: `{}`\n- Target: `{}`\n\n请组长审批后合入生产分支。",
+        req.id, req.title, repo.repo_name, source_branch, target_branch
+    );
+    let form = [
+        ("source_branch", source_branch),
+        ("target_branch", target_branch),
+        ("title", title.as_str()),
+        ("description", description.as_str()),
+        ("remove_source_branch", "false"),
+    ];
+    let response = client
+        .post(&url)
+        .header("PRIVATE-TOKEN", token)
+        .form(&form)
+        .send()
+        .await;
+    let response = match response {
+        Ok(response) => response,
+        Err(err) => {
+            return prod_mr_result(
+                repo,
+                source_branch,
+                target_branch,
+                "failed",
+                None,
+                Some(&format!("GitLab API request failed: {err}")),
+                Some(project_path.to_string_lossy().as_ref()),
+            );
+        }
+    };
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        if let Ok(Some(mr)) =
+            find_existing_gitlab_mr(client, token, &url, source_branch, target_branch).await
+        {
+            return prod_mr_result(
+                repo,
+                source_branch,
+                target_branch,
+                "reused",
+                Some(&mr),
+                Some("创建返回非成功状态，但已找到可复用 open MR"),
+                Some(project_path.to_string_lossy().as_ref()),
+            );
+        }
+        return prod_mr_result(
+            repo,
+            source_branch,
+            target_branch,
+            "failed",
+            None,
+            Some(&format!(
+                "GitLab API HTTP {}: {}",
+                status.as_u16(),
+                compact_http_body(&text)
+            )),
+            Some(project_path.to_string_lossy().as_ref()),
+        );
+    }
+    let mr: Value =
+        serde_json::from_str(&text).unwrap_or_else(|_| json!({ "raw": compact_http_body(&text) }));
+    prod_mr_result(
+        repo,
+        source_branch,
+        target_branch,
+        "created",
+        Some(&mr),
+        None,
+        Some(project_path.to_string_lossy().as_ref()),
+    )
+}
+
+async fn find_existing_gitlab_mr(
+    client: &Client,
+    token: &str,
+    url: &str,
+    source_branch: &str,
+    target_branch: &str,
+) -> std::result::Result<Option<Value>, String> {
+    let response = client
+        .get(url)
+        .header("PRIVATE-TOKEN", token)
+        .query(&[
+            ("state", "opened"),
+            ("source_branch", source_branch),
+            ("target_branch", target_branch),
+            ("per_page", "20"),
+        ])
+        .send()
+        .await
+        .map_err(|err| format!("GitLab API request failed: {err}"))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "GitLab API HTTP {}: {}",
+            status.as_u16(),
+            compact_http_body(&text)
+        ));
+    }
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|err| format!("GitLab API response is not JSON: {err}"))?;
+    Ok(value
+        .as_array()
+        .and_then(|arr| arr.iter().find(|item| item.is_object()).cloned()))
+}
+
+fn prod_mr_result(
+    repo: &BranchRepo,
+    source_branch: &str,
+    target_branch: &str,
+    status: &str,
+    mr: Option<&Value>,
+    error: Option<&str>,
+    project_path: Option<&str>,
+) -> Value {
+    json!({
+        "repoName": repo.repo_name,
+        "role": repo.role,
+        "projectPath": project_path,
+        "sourceBranch": source_branch,
+        "targetBranch": target_branch,
+        "status": status,
+        "iid": mr.and_then(|m| m.get("iid")).cloned().unwrap_or(Value::Null),
+        "webUrl": mr.and_then(|m| m.get("web_url")).cloned().unwrap_or(Value::Null),
+        "title": mr.and_then(|m| m.get("title")).cloned().unwrap_or(Value::Null),
+        "error": error,
+    })
+}
+
+fn detect_prod_target_branch(repo: &BranchRepo) -> String {
+    let role = repo.role.as_deref().unwrap_or_default();
+    let path = repo.path.as_deref().unwrap_or_default();
+    if role.contains("前端") || path.contains("/frontend/") || path.contains("\\frontend\\") {
+        "production".into()
+    } else {
+        "master".into()
+    }
+}
+
+fn gitlab_api_token() -> Result<String> {
+    let token = env::var("GITLAB_TOKEN")
+        .or_else(|_| env::var("GL_TOKEN"))
+        .or_else(|_| read_agent_panel_env_var("GITLAB_TOKEN"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| anyhow!("missing GitLab token: set GITLAB_TOKEN / GL_TOKEN, or create .env.agent with GITLAB_TOKEN"))?;
+    Ok(token)
+}
+
+fn read_agent_panel_env_var(key: &str) -> std::result::Result<String, env::VarError> {
+    let path = env::current_dir()
+        .map(|cwd| cwd.join(".env.agent"))
+        .unwrap_or_else(|_| PathBuf::from(".env.agent"));
+    let text = std::fs::read_to_string(path).map_err(|_| env::VarError::NotPresent)?;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let trimmed = trimmed
+            .strip_prefix("export ")
+            .unwrap_or(trimmed)
+            .trim_start();
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if name.trim() == key {
+            return Ok(value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string());
+        }
+    }
+    Err(env::VarError::NotPresent)
+}
+
+fn gitlab_project_path_from_remote(remote: &str) -> Option<String> {
+    let mut value = remote.trim().trim_end_matches(".git").to_string();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(rest) = value.strip_prefix("ssh://") {
+        return rest
+            .split_once('/')
+            .map(|(_, path)| path.trim_matches('/').to_string())
+            .filter(|path| !path.is_empty());
+    }
+    if let Some(rest) = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+    {
+        return rest
+            .split_once('/')
+            .map(|(_, path)| path.trim_matches('/').to_string())
+            .filter(|path| !path.is_empty());
+    }
+    if let Some((prefix, path)) = value.split_once(':') {
+        if prefix.contains('@') {
+            let path = path.trim_matches('/').to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
+        }
+    }
+    if value.starts_with('/') {
+        value = value.trim_matches('/').to_string();
+    }
+    (!value.is_empty()).then_some(value)
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut out = String::new();
+    for b in value.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+fn compact_http_body(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(600)
+        .collect()
+}
+
 async fn scan_repo_branch(repo: &BranchRepo, branch: &str) -> Value {
     scan_repo_branch_with_base(repo, branch, None).await
 }
@@ -3683,7 +4104,10 @@ fn split_seq_template(template: &str) -> ApiResult<(String, String)> {
             "reqId template must have a non-empty prefix before {seq}",
         ));
     }
-    if !prefix.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if !prefix
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(ApiError::bad_request(
             "reqId prefix must be ASCII alphanumeric or hyphen",
         ));
@@ -3722,11 +4146,7 @@ fn compute_next_seq_from_ids(ids: &[String], prefix: &str, floor: Option<u64>) -
 
 /// Allocate the next sequence number for `prefix` by scanning existing
 /// requirements on disk.
-async fn allocate_next_seq(
-    state: &AppState,
-    prefix: &str,
-    floor: Option<u64>,
-) -> ApiResult<u64> {
+async fn allocate_next_seq(state: &AppState, prefix: &str, floor: Option<u64>) -> ApiResult<u64> {
     let reqs = scan_hermes_requirements(state).await?;
     let ids: Vec<String> = reqs.iter().map(|r| r.id.clone()).collect();
     Ok(compute_next_seq_from_ids(&ids, prefix, floor))
@@ -4787,4 +5207,3 @@ mod tests {
         assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 4);
     }
 }
-

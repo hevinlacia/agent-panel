@@ -173,6 +173,8 @@ interface CodeReviewRepoSnapshot {
 interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; repos: CodeReviewRepoSnapshot[] }
 interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
 interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
+interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null }
+interface ProdMrPayload { ok: boolean; reqId: string; generatedAt: number; branchScope?: BranchScope | null; results: ProdMrResult[] }
 interface DiffLine { type: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string }
 interface DiffFileView { repo: CodeReviewRepoSnapshot; file: CodeReviewFile; diff: string; lines: DiffLine[] }
 
@@ -602,6 +604,46 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
   </section>
 }
 
+function ProdMrPanel({ req }: { req: Requirement }) {
+  const [payload, setPayload] = useState<ProdMrPayload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const createMrs = async () => {
+    if (loading) return
+    setLoading(true)
+    setError(null)
+    try {
+      const next = await postForm<ProdMrPayload>("/api/requirement/prod-mrs", { reqId: req.id })
+      setPayload(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+  const copyMrLink = async (item: ProdMrResult, index: number) => {
+    if (!item.webUrl) return
+    const key = `${item.repoName}-${item.sourceBranch}-${index}`
+    try {
+      await navigator.clipboard.writeText(item.webUrl)
+      setCopiedKey(key)
+      window.setTimeout(() => setCopiedKey((current) => current === key ? null : current), 1600)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "复制失败，请手动复制链接")
+    }
+  }
+  const results = payload?.results || []
+  const okCount = results.filter((item) => item.webUrl).length
+  const chip = payload ? `${okCount}/${results.length} ready` : "test/uat → prod"
+  return <section className="react-panel react-prod-mr-panel"><PanelHead kicker="Production MR" title="生产 MR" chip={chip} />
+    <p className="react-muted">按 <code>branches.json</code> 中每个应用的每个需求分支创建生产 MR；后端目标 <code>master</code>，前端目标 <code>production</code>。再次点击会重新扫描并复用已存在的 open MR。</p>
+    <div className="react-actions"><button onClick={createMrs} disabled={loading}><GitBranch size={15} />{loading ? "生成中…" : payload ? "重新生成 / 复用 MR" : "生成生产 MR 链接"}</button>{payload?.generatedAt ? <span className="react-muted">更新 {formatDateTime(payload.generatedAt)}</span> : null}</div>
+    {error ? <p className="react-effort-error">生成失败：{error}</p> : null}
+    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>MR</th><th>复制</th></tr></thead><tbody>{results.map((item, index) => { const key = `${item.repoName}-${item.sourceBranch}-${index}`; return <tr key={key}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch}</code></td><td><span className={`react-prod-mr-status ${item.status}`}>{item.status === "created" ? "新建" : item.status === "reused" ? "复用" : item.status === "skipped" ? "跳过" : "失败"}</span>{item.error ? <em>{item.error}</em> : null}</td><td>{item.webUrl ? <a href={item.webUrl} target="_blank" rel="noopener noreferrer">!{item.iid || "MR"}</a> : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <button type="button" className="react-copy-link-btn" onClick={() => copyMrLink(item, index)}>{copiedKey === key ? "已复制" : "复制链接"}</button> : <span className="react-muted">-</span>}</td></tr> })}</tbody></table></div> : payload ? <p className="react-muted">未生成 MR，请检查 <code>branches.json</code> 是否包含应用和分支。</p> : null}
+  </section>
+}
+
 function RequirementDiffPage() {
   const params = new URLSearchParams(window.location.search)
   const reqId = params.get("id") || params.get("reqId") || ""
@@ -672,7 +714,7 @@ function RequirementPage() {
   const submitStatus = async () => { if (!req || !status || savingStatus) return; setSavingStatus(true); try { await postForm("/api/requirement/status", { reqId: req.id, status, note }); refresh() } finally { setSavingStatus(false) } }
   const submitCategory = async () => { if (!req || !category || savingCategory) return; setSavingCategory(true); try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() } finally { setSavingCategory(false) } }
   const newSession = async () => { if (!req) return; const res = await postForm<{ command: string }>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、代码差异与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section><CodeReviewPanel req={req} /><OnesPanel req={req} onSaved={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section><section className="react-panel"><PanelHead kicker="Files" title="需求文件" /><div className="react-meta-grid"><span>memory.md</span><span>{req.reqDir ? `${req.reqDir}/memory.md` : "-"}</span><span>branch.md</span><span>{req.reqDir ? `${req.reqDir}/branch.md` : "-"}</span><span>test.md</span><span>{req.reqDir ? `${req.reqDir}/test.md` : "-"}</span><span>review.md</span><span>{req.reqDir ? `${req.reqDir}/review.md` : "-"}</span></div></section></div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、代码差异与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section><CodeReviewPanel req={req} /><ProdMrPanel req={req} /><OnesPanel req={req} onSaved={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section><section className="react-panel"><PanelHead kicker="Files" title="需求文件" /><div className="react-meta-grid"><span>memory.md</span><span>{req.reqDir ? `${req.reqDir}/memory.md` : "-"}</span><span>branch.md</span><span>{req.reqDir ? `${req.reqDir}/branch.md` : "-"}</span><span>test.md</span><span>{req.reqDir ? `${req.reqDir}/test.md` : "-"}</span><span>review.md</span><span>{req.reqDir ? `${req.reqDir}/review.md` : "-"}</span></div></section></div>}</PageChrome>
 }
 
 function modelOptions(pi: PiConfigSummary | null): string[] {
