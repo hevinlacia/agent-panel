@@ -14,6 +14,7 @@ import {
   FileCode2,
   Gauge,
   GitBranch,
+  GitMerge,
   LayoutDashboard,
   ListChecks,
   RefreshCw,
@@ -150,7 +151,7 @@ interface GitAiHealthPayload {
   }
 }
 interface AutoDrivePayload { jobs: unknown[]; active: number; blocked: number; queue: { active: number; queued: number }; message?: string }
-interface BranchRepo { repoName: string; branches: string[]; role?: string; path?: string; baseRef?: string }
+interface BranchRepo { repoName: string; branches: string[]; role?: string; path?: string; baseRef?: string; testTargetBranch?: string; uatTargetBranch?: string }
 interface BranchScope { version: number; updatedAt: number; repos: BranchRepo[]; fallback?: boolean }
 interface CodeReviewFile { path: string; status: string; additions: number; deletions: number; riskTags?: string[] }
 interface CodeReviewRepoSnapshot {
@@ -175,6 +176,9 @@ interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; rev
 interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
 interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null }
 interface ProdMrPayload { ok: boolean; reqId: string; generatedAt: number; branchScope?: BranchScope | null; results: ProdMrResult[] }
+type MergeTarget = "test" | "uat"
+interface MergeBranchResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: MergeTarget | string; targetBranch?: string | null; status: "merged" | "upToDate" | "conflict" | "failed" | "skipped" | "idle" | "pending" | string; message?: string | null; conflictFiles?: string[]; worktreePath?: string | null; warnings?: string[]; commands?: string[] }
+interface MergeBranchPayload { ok: boolean; reqId: string; target?: MergeTarget | string; status: string; generatedAt: number; branchScope?: BranchScope | null; results: MergeBranchResult[] }
 interface DiffLine { type: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string }
 interface DiffFileView { repo: CodeReviewRepoSnapshot; file: CodeReviewFile; diff: string; lines: DiffLine[] }
 
@@ -194,7 +198,7 @@ const navItems = [
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
-  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff"
+  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/git-ai") return path === "/git-ai"
   return path === href
@@ -205,6 +209,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
   if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
+  if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
@@ -604,6 +609,47 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
   </section>
 }
 
+function MergeBranchPanel({ req }: { req: Requirement }) {
+  const [payload, setPayload] = useState<MergeBranchPayload | null>(null)
+  const [loadingTarget, setLoadingTarget] = useState<MergeTarget | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const runMerge = async (target: MergeTarget) => {
+    if (loadingTarget) return
+    setLoadingTarget(target)
+    setError(null)
+    try {
+      const next = await postForm<MergeBranchPayload>("/api/requirement/merge-branch", { reqId: req.id, target })
+      setPayload(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoadingTarget(null)
+    }
+  }
+  const results = payload?.results || []
+  const conflictCount = results.filter((item) => item.status === "conflict").length
+  const mergedCount = results.filter((item) => item.status === "merged" || item.status === "upToDate").length
+  const chip = payload ? payload.status : "需求分支 → 环境分支"
+  return <section className="react-panel react-merge-panel"><PanelHead kicker="Branch Merge" title="合并到测试 / UAT" chip={chip} />
+    <p className="react-muted">按 <code>branches.json</code> 的应用与需求分支自动合并：test 默认合并到 <code>test</code>，UAT 前端合并到 <code>master</code>、后端自动选择最新 <code>UAT-*</code> 分支；PDA 客户端默认跳过。</p>
+    <div className="react-actions"><button onClick={() => runMerge("test")} disabled={!!loadingTarget}><GitMerge size={15} />{loadingTarget === "test" ? "合并中…" : "合并到 test"}</button><button onClick={() => runMerge("uat")} disabled={!!loadingTarget}><GitMerge size={15} />{loadingTarget === "uat" ? "合并中…" : "合并到 UAT"}</button><a href={`/requirement-merge?id=${encodeURIComponent(req.id)}`}><AlertTriangle size={15} />查看冲突 / 合并状态</a>{payload?.generatedAt ? <span className="react-muted">更新 {formatDateTime(payload.generatedAt)}</span> : null}</div>
+    {error ? <p className="react-effort-error">合并失败：{error}</p> : null}
+    {payload ? <div className="react-review-summary"><span>{results.length} repo/branch</span><span className="react-review-add">{mergedCount} merged</span><span className={conflictCount ? "react-review-del" : undefined}>{conflictCount} conflict</span><span>{payload.target || "-"}</span></div> : null}
+    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>冲突 / 位置</th></tr></thead><tbody>{results.map((item, index) => <tr key={`${item.repoName}-${item.sourceBranch}-${item.target}-${index}`}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch || item.target}</code></td><td><span className={`react-merge-status ${item.status}`}>{mergeStatusLabel(item.status)}</span>{item.message ? <em>{item.message}</em> : null}</td><td>{item.status === "conflict" ? <a href={`/requirement-merge?id=${encodeURIComponent(req.id)}&target=${encodeURIComponent(String(item.target))}`}>{item.conflictFiles?.length || 0} 个冲突文件</a> : item.worktreePath ? <code>{item.worktreePath}</code> : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : payload ? <p className="react-muted">未返回合并结果，请检查 <code>branches.json</code>。</p> : null}
+  </section>
+}
+
+function mergeStatusLabel(status: string): string {
+  if (status === "merged") return "已合并"
+  if (status === "upToDate") return "已最新"
+  if (status === "conflict") return "冲突"
+  if (status === "skipped") return "跳过"
+  if (status === "idle") return "空闲"
+  if (status === "pending") return "待检查"
+  if (status === "failed") return "失败"
+  return status
+}
+
 function ProdMrPanel({ req }: { req: Requirement }) {
   const [payload, setPayload] = useState<ProdMrPayload | null>(null)
   const [loading, setLoading] = useState(false)
@@ -701,6 +747,56 @@ function RequirementDiffPage() {
   </PageChrome>
 }
 
+function RequirementMergePage() {
+  const params = new URLSearchParams(window.location.search)
+  const reqId = params.get("id") || params.get("reqId") || ""
+  const targetParam = params.get("target") || ""
+  const targetFilter = targetParam === "test" || targetParam === "uat" ? targetParam : ""
+  const requirements = RequirementsData()
+  const req = requirements.data?.requirements.find((r) => r.id === reqId)
+  const [target, setTarget] = useState<MergeTarget | "">(targetFilter as MergeTarget | "")
+  const [payload, setPayload] = useState<MergeBranchPayload | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const loadStatus = async (nextTarget = target) => {
+    if (!reqId) return
+    setLoading(true)
+    setError(null)
+    try {
+      const query = new URLSearchParams({ id: reqId })
+      if (nextTarget) query.set("target", nextTarget)
+      const next = await fetchJson<MergeBranchPayload>(`/api/requirement/merge-status?${query.toString()}`)
+      setPayload(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { loadStatus(targetFilter as MergeTarget | "") }, [reqId])
+  const changeTarget = (next: MergeTarget | "") => {
+    setTarget(next)
+    const q = new URLSearchParams(window.location.search)
+    q.set("id", reqId)
+    if (next) q.set("target", next); else q.delete("target")
+    window.history.replaceState(null, "", `/requirement-merge?${q.toString()}`)
+    loadStatus(next)
+  }
+  const results = payload?.results || []
+  const conflicts = results.filter((item) => item.status === "conflict")
+  const title = req?.title || reqId || "分支合并"
+  return <PageChrome icon={<GitMerge size={15} />} eyebrow="Merge" title={title} description="查看 Agent Panel 自动合并结果；冲突 worktree 会保留，人工或 agent 可按返回路径继续处理。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => loadStatus()} disabled={loading}><RefreshCw size={15} className={loading ? "react-spin" : ""} />刷新状态</button></>}>
+    <section className="react-panel react-merge-panel"><PanelHead kicker="Merge Status" title="环境合并状态" chip={payload?.status || "status"} />
+      <div className="react-tab-row"><button className={target === "" ? "active" : ""} onClick={() => changeTarget("")}>全部</button><button className={target === "test" ? "active" : ""} onClick={() => changeTarget("test")}>test</button><button className={target === "uat" ? "active" : ""} onClick={() => changeTarget("uat")}>UAT</button></div>
+      {requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loading ? <LoadingCard label="正在读取合并状态…" /> : results.length === 0 ? <EmptyCard>暂无合并状态；请先在需求详情页触发合并。</EmptyCard> : <>
+        <div className="react-review-summary"><span>{results.length} repo/branch</span><span className="react-review-del">{conflicts.length} conflict</span><span>{payload?.generatedAt ? formatDateTime(payload.generatedAt) : "-"}</span></div>
+        {conflicts.length ? <div className="react-drive-blockers"><strong>冲突处理提示</strong><ul><li>人工处理：进入下方 <code>worktreePath</code> 后解决冲突、提交并推送到目标分支。</li><li>Agent 处理：把接口返回的 <code>repoName / targetBranch / worktreePath / conflictFiles</code> 交给 agent，agent 可继续在该 worktree 解决冲突。</li></ul></div> : null}
+        <div className="react-card-list react-merge-result-list">{results.map((item, index) => <article key={`${item.repoName}-${item.target}-${item.sourceBranch}-${index}`} className={`react-list-card react-merge-card react-merge-card-${item.status}`}><div><span className="react-card-id">{item.repoName} · {item.target}</span><h3>{item.sourceBranch} → {item.targetBranch || item.target}</h3><p>{item.message || mergeStatusLabel(item.status)}</p><div className="react-card-meta"><span>{mergeStatusLabel(item.status)}</span><span>{item.role || "repo"}</span><span>{item.projectPath || "path n/a"}</span></div>{item.worktreePath ? <code className="react-command">{item.worktreePath}</code> : null}{item.conflictFiles?.length ? <details className="react-review-commits" open><summary>冲突文件（{item.conflictFiles.length}）</summary><pre>{item.conflictFiles.join("\n")}</pre></details> : null}{item.warnings?.length ? <div className="react-drive-blockers"><strong>Warnings</strong><ul>{item.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div> : null}</div><div className="react-card-side"><span className={`react-merge-status ${item.status}`}>{mergeStatusLabel(item.status)}</span><span className="react-muted">{item.targetBranch || "-"}</span></div></article>)}</div>
+      </>}
+    </section>
+  </PageChrome>
+}
+
 function RequirementPage() {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const { data, error, loading, refresh } = RequirementsData()
@@ -714,7 +810,7 @@ function RequirementPage() {
   const submitStatus = async () => { if (!req || !status || savingStatus) return; setSavingStatus(true); try { await postForm("/api/requirement/status", { reqId: req.id, status, note }); refresh() } finally { setSavingStatus(false) } }
   const submitCategory = async () => { if (!req || !category || savingCategory) return; setSavingCategory(true); try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() } finally { setSavingCategory(false) } }
   const newSession = async () => { if (!req) return; const res = await postForm<{ command: string }>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、代码差异与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section><CodeReviewPanel req={req} /><ProdMrPanel req={req} /><OnesPanel req={req} onSaved={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section><section className="react-panel"><PanelHead kicker="Files" title="需求文件" /><div className="react-meta-grid"><span>memory.md</span><span>{req.reqDir ? `${req.reqDir}/memory.md` : "-"}</span><span>branch.md</span><span>{req.reqDir ? `${req.reqDir}/branch.md` : "-"}</span><span>test.md</span><span>{req.reqDir ? `${req.reqDir}/test.md` : "-"}</span><span>review.md</span><span>{req.reqDir ? `${req.reqDir}/review.md` : "-"}</span></div></section></div>}</PageChrome>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、代码差异与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section><CodeReviewPanel req={req} /><MergeBranchPanel req={req} /><ProdMrPanel req={req} /><OnesPanel req={req} onSaved={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section><section className="react-panel"><PanelHead kicker="Files" title="需求文件" /><div className="react-meta-grid"><span>memory.md</span><span>{req.reqDir ? `${req.reqDir}/memory.md` : "-"}</span><span>branch.md</span><span>{req.reqDir ? `${req.reqDir}/branch.md` : "-"}</span><span>test.md</span><span>{req.reqDir ? `${req.reqDir}/test.md` : "-"}</span><span>review.md</span><span>{req.reqDir ? `${req.reqDir}/review.md` : "-"}</span></div></section></div>}</PageChrome>
 }
 
 function modelOptions(pi: PiConfigSummary | null): string[] {
@@ -817,6 +913,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
     : path === "/requirement-diff" ? <RequirementDiffPage />
+    : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/git-ai" ? <GitAiPage />
     : path === "/settings" ? <SettingsPage />

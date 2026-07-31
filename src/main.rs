@@ -249,6 +249,7 @@ struct IdQuery {
     intent: Option<String>,
     budget: Option<usize>,
     tokens: Option<String>,
+    target: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +430,13 @@ struct ProdMrForm {
     req_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeBranchForm {
+    req_id: String,
+    target: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct BranchScope {
@@ -455,6 +463,10 @@ struct BranchRepo {
     path: Option<String>,
     #[serde(default)]
     base_ref: Option<String>,
+    #[serde(default)]
+    test_target_branch: Option<String>,
+    #[serde(default)]
+    uat_target_branch: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -569,6 +581,14 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
+        )
+        .route(
+            "/api/requirement/merge-branch",
+            post(api_requirement_merge_branch),
+        )
+        .route(
+            "/api/requirement/merge-status",
+            get(api_requirement_merge_status),
         )
         .route("/api/requirement/prod-mrs", post(api_requirement_prod_mrs))
         .route(
@@ -897,6 +917,66 @@ async fn api_requirement_master_diff(
     Ok(Json(
         json!({ "ok": true, "branchScope": branch_scope, "review": review }),
     ))
+}
+
+async fn api_requirement_merge_branch(
+    State(state): State<AppState>,
+    form: FormOrJson<MergeBranchForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let target = normalize_merge_target(&body.target)?;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let results = merge_requirement_branches(&branch_scope, &target).await;
+    let status = merge_overall_status(&results);
+    Ok(Json(json!({
+        "ok": matches!(status, "merged" | "skipped" | "empty"),
+        "reqId": req.id,
+        "target": target,
+        "status": status,
+        "generatedAt": now_ms(),
+        "branchScope": branch_scope,
+        "results": results,
+    })))
+}
+
+async fn api_requirement_merge_status(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let target = match query
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(raw) => Some(normalize_merge_target(raw)?),
+        None => None,
+    };
+    let results = inspect_requirement_merge_status(&branch_scope, target.clone()).await;
+    let status = merge_overall_status(&results);
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "target": target,
+        "status": status,
+        "generatedAt": now_ms(),
+        "branchScope": branch_scope,
+        "results": results,
+    })))
 }
 
 async fn api_requirement_prod_mrs(
@@ -3079,6 +3159,779 @@ fn detect_prod_target_branch(repo: &BranchRepo) -> String {
         "production".into()
     } else {
         "master".into()
+    }
+}
+
+fn normalize_merge_target(raw: &str) -> ApiResult<String> {
+    let target = raw.trim().to_lowercase();
+    match target.as_str() {
+        "test" | "uat" => Ok(target),
+        _ => Err(ApiError::bad_request("target must be test or uat")),
+    }
+}
+
+fn merge_overall_status(results: &[Value]) -> &'static str {
+    let mut has_conflict = false;
+    let mut has_failed = false;
+    let mut has_merged = false;
+    let mut has_skipped = false;
+    let mut has_pending = false;
+    let mut has_idle = false;
+    for item in results {
+        match item
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
+            "conflict" => has_conflict = true,
+            "failed" => has_failed = true,
+            "merged" | "upToDate" => has_merged = true,
+            "skipped" => has_skipped = true,
+            "pending" => has_pending = true,
+            "idle" => has_idle = true,
+            _ => {}
+        }
+    }
+    if has_conflict {
+        "conflict"
+    } else if has_merged && (has_failed || has_pending) {
+        "partial"
+    } else if has_failed {
+        "failed"
+    } else if has_pending {
+        "pending"
+    } else if has_merged {
+        "merged"
+    } else if has_skipped && !has_idle {
+        "skipped"
+    } else if has_idle {
+        "idle"
+    } else {
+        "empty"
+    }
+}
+
+async fn merge_requirement_branches(scope: &BranchScope, target: &str) -> Vec<Value> {
+    let mut results = Vec::new();
+    for repo in &scope.repos {
+        let branches = if repo.branches.is_empty() {
+            vec![String::new()]
+        } else {
+            repo.branches.clone()
+        };
+        for branch in branches {
+            results.push(merge_repo_branch(repo, &branch, target).await);
+        }
+    }
+    results
+}
+
+async fn inspect_requirement_merge_status(
+    scope: &BranchScope,
+    target: Option<String>,
+) -> Vec<Value> {
+    let targets = match target.as_deref() {
+        Some("test") | Some("uat") => vec![target.unwrap()],
+        _ => vec!["test".to_string(), "uat".to_string()],
+    };
+    let mut results = Vec::new();
+    for repo in &scope.repos {
+        let branches = if repo.branches.is_empty() {
+            vec![String::new()]
+        } else {
+            repo.branches.clone()
+        };
+        for target in &targets {
+            for branch in &branches {
+                results.push(inspect_repo_merge_status(repo, branch, target).await);
+            }
+        }
+    }
+    results
+}
+
+async fn merge_repo_branch(repo: &BranchRepo, source_branch: &str, target: &str) -> Value {
+    let source_branch = source_branch.trim();
+    let Some(project_path) =
+        resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+    else {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "failed",
+            "branches.json 缺少 path",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    };
+    if !project_path.exists() {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "failed",
+            &format!("仓库路径不存在：{}", project_path.to_string_lossy()),
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    if source_branch.is_empty() {
+        return merge_result(
+            repo,
+            "(未指定分支)",
+            target,
+            None,
+            "skipped",
+            "branches.json 缺少需求分支",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let git_root = git(
+        &project_path,
+        &["rev-parse", "--show-toplevel"],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !git_root.ok {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "failed",
+            "projectPath 不是 Git 仓库",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            vec![git_root.command],
+        );
+    }
+
+    let Some(target_branch) = merge_target_branch_for_repo(repo, target, &project_path).await
+    else {
+        return merge_result(repo, source_branch, target, None, "skipped", "当前仓库不适用该环境分支合并；如需启用，请在 branches.json 指定 testTargetBranch/uatTargetBranch", Some(&project_path), Vec::new(), Vec::new(), Vec::new());
+    };
+    let worktree_path = merge_worktree_path(&project_path, target, source_branch, &target_branch);
+    if worktree_path.exists() {
+        let existing = inspect_merge_worktree(
+            repo,
+            source_branch,
+            target,
+            &target_branch,
+            &project_path,
+            &worktree_path,
+        )
+        .await;
+        let existing_status = existing
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(existing_status, "conflict" | "pending") {
+            return existing;
+        }
+        let remove = git(
+            &project_path,
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path.to_string_lossy().as_ref(),
+            ],
+            30_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await;
+        if !remove.ok {
+            return merge_result(
+                repo,
+                source_branch,
+                target,
+                Some(&target_branch),
+                "failed",
+                &format!("旧 merge worktree 清理失败：{}", short_err(&remove)),
+                Some(&project_path),
+                Vec::new(),
+                vec![worktree_path.to_string_lossy().to_string()],
+                vec![remove.command],
+            );
+        }
+    }
+
+    let mut warnings = Vec::new();
+    for branch_to_fetch in [&target_branch, source_branch] {
+        let fetch = git(
+            &project_path,
+            &["fetch", "origin", branch_to_fetch],
+            60_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await;
+        if !fetch.ok {
+            warnings.push(format!(
+                "fetch {branch_to_fetch} 失败：{}",
+                short_err(&fetch)
+            ));
+        }
+    }
+    let Some(target_ref) = resolve_branch_ref(&project_path, &target_branch).await else {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "failed",
+            &format!("无法解析目标分支 {target_branch}"),
+            Some(&project_path),
+            Vec::new(),
+            warnings,
+            Vec::new(),
+        );
+    };
+    let Some(source_ref) = resolve_branch_ref(&project_path, source_branch).await else {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "failed",
+            &format!("无法解析需求分支 {source_branch}"),
+            Some(&project_path),
+            Vec::new(),
+            warnings,
+            Vec::new(),
+        );
+    };
+
+    if let Err(err) = fs::create_dir_all(worktree_path.parent().unwrap_or(&project_path)).await {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "failed",
+            &format!("创建 merge worktree 目录失败：{err}"),
+            Some(&project_path),
+            Vec::new(),
+            warnings,
+            Vec::new(),
+        );
+    }
+    let temp_branch = merge_temp_branch(target, source_branch, &target_branch);
+    let add = git(
+        &project_path,
+        &[
+            "worktree",
+            "add",
+            "-B",
+            &temp_branch,
+            worktree_path.to_string_lossy().as_ref(),
+            &target_ref,
+        ],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !add.ok {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "failed",
+            &format!("创建 merge worktree 失败：{}", short_err(&add)),
+            Some(&project_path),
+            Vec::new(),
+            warnings,
+            vec![add.command],
+        );
+    }
+    let merge = git(
+        &worktree_path,
+        &["merge", "--no-ff", "--no-edit", &source_ref],
+        120_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !merge.ok {
+        let conflicts = conflicted_files(&worktree_path).await;
+        let mut commands = vec![add.command.clone(), merge.command.clone()];
+        let status = if conflicts.is_empty() {
+            "failed"
+        } else {
+            "conflict"
+        };
+        let message = if conflicts.is_empty() {
+            format!("合并失败：{}", short_err(&merge))
+        } else {
+            format!("合并冲突：{} 个文件需要处理", conflicts.len())
+        };
+        if conflicts.is_empty() {
+            commands
+                .extend(cleanup_merge_worktree(&project_path, &worktree_path, &temp_branch).await);
+        }
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            status,
+            &message,
+            Some(&project_path),
+            conflicts,
+            warnings,
+            commands,
+        );
+    }
+    let push_ref = format!("HEAD:refs/heads/{target_branch}");
+    let push = git(
+        &worktree_path,
+        &["push", "origin", &push_ref],
+        120_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !push.ok {
+        let mut commands = vec![
+            add.command.clone(),
+            merge.command.clone(),
+            push.command.clone(),
+        ];
+        commands.extend(cleanup_merge_worktree(&project_path, &worktree_path, &temp_branch).await);
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "failed",
+            &format!("推送目标分支失败：{}", short_err(&push)),
+            Some(&project_path),
+            Vec::new(),
+            warnings,
+            commands,
+        );
+    }
+    let cleanup_commands =
+        cleanup_merge_worktree(&project_path, &worktree_path, &temp_branch).await;
+    if cleanup_commands.iter().any(|cmd| cmd.contains(" failed:")) {
+        warnings.push("合并已推送，但临时 worktree/分支清理不完整".to_string());
+    }
+    let status = if merge.stdout.contains("Already up to date")
+        || merge.stdout.contains("Already up-to-date")
+    {
+        "upToDate"
+    } else {
+        "merged"
+    };
+    merge_result(
+        repo,
+        source_branch,
+        target,
+        Some(&target_branch),
+        status,
+        "合并并推送完成",
+        Some(&project_path),
+        Vec::new(),
+        warnings,
+        vec![
+            add.command,
+            merge.command,
+            push.command,
+            cleanup_commands.join(" && "),
+        ],
+    )
+}
+
+async fn inspect_repo_merge_status(repo: &BranchRepo, source_branch: &str, target: &str) -> Value {
+    let Some(project_path) =
+        resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+    else {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "failed",
+            "branches.json 缺少 path",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    };
+    if !project_path.exists() {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "failed",
+            &format!("仓库路径不存在：{}", project_path.to_string_lossy()),
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    if source_branch.trim().is_empty() {
+        return merge_result(
+            repo,
+            "(未指定分支)",
+            target,
+            None,
+            "skipped",
+            "branches.json 缺少需求分支",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let Some(target_branch) = merge_target_branch_for_repo(repo, target, &project_path).await
+    else {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "skipped",
+            "当前仓库不适用该环境分支合并",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    };
+    let worktree_path = merge_worktree_path(&project_path, target, source_branch, &target_branch);
+    inspect_merge_worktree(
+        repo,
+        source_branch,
+        target,
+        &target_branch,
+        &project_path,
+        &worktree_path,
+    )
+    .await
+}
+
+async fn inspect_merge_worktree(
+    repo: &BranchRepo,
+    source_branch: &str,
+    target: &str,
+    target_branch: &str,
+    project_path: &Path,
+    worktree_path: &Path,
+) -> Value {
+    if !worktree_path.exists() {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(target_branch),
+            "idle",
+            "暂无未完成合并",
+            Some(project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    let conflicts = conflicted_files(worktree_path).await;
+    if conflicts.is_empty() {
+        let status = git(
+            worktree_path,
+            &["status", "--porcelain"],
+            30_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await;
+        let message = if status.ok && status.stdout.trim().is_empty() {
+            "merge worktree 存在但无未提交变更"
+        } else {
+            "merge worktree 存在，待人工检查"
+        };
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(target_branch),
+            "pending",
+            message,
+            Some(project_path),
+            Vec::new(),
+            Vec::new(),
+            vec![status.command],
+        );
+    }
+    merge_result(
+        repo,
+        source_branch,
+        target,
+        Some(target_branch),
+        "conflict",
+        &format!("合并冲突：{} 个文件需要处理", conflicts.len()),
+        Some(project_path),
+        conflicts,
+        Vec::new(),
+        Vec::new(),
+    )
+}
+
+fn merge_result(
+    repo: &BranchRepo,
+    source_branch: &str,
+    target: &str,
+    target_branch: Option<&str>,
+    status: &str,
+    message: &str,
+    project_path: Option<&Path>,
+    conflict_files: Vec<String>,
+    warnings: Vec<String>,
+    commands: Vec<String>,
+) -> Value {
+    let worktree_path = project_path
+        .and_then(|path| {
+            target_branch.map(|branch| merge_worktree_path(path, target, source_branch, branch))
+        })
+        .map(|path| path.to_string_lossy().to_string());
+    json!({
+        "repoName": repo.repo_name,
+        "role": repo.role,
+        "projectPath": project_path.map(|p| p.to_string_lossy().to_string()),
+        "sourceBranch": source_branch,
+        "target": target,
+        "targetBranch": target_branch,
+        "status": status,
+        "message": message,
+        "conflictFiles": conflict_files,
+        "worktreePath": worktree_path,
+        "warnings": warnings,
+        "commands": commands,
+    })
+}
+
+async fn merge_target_branch_for_repo(
+    repo: &BranchRepo,
+    target: &str,
+    project_path: &Path,
+) -> Option<String> {
+    let explicit = if target == "test" {
+        repo.test_target_branch.as_deref()
+    } else if target == "uat" {
+        repo.uat_target_branch.as_deref()
+    } else {
+        None
+    }
+    .map(str::trim)
+    .filter(|v| !v.is_empty())
+    .map(str::to_string);
+    if explicit.is_some() {
+        return explicit;
+    }
+    if is_pda_client_repo(repo) {
+        return None;
+    }
+    if target == "test" {
+        return Some("test".to_string());
+    }
+    if target != "uat" {
+        return None;
+    }
+    if is_frontend_repo(repo) {
+        return Some("master".to_string());
+    }
+    detect_latest_uat_branch(project_path).await
+}
+
+fn is_frontend_repo(repo: &BranchRepo) -> bool {
+    let role = repo.role.as_deref().unwrap_or_default();
+    let path = repo.path.as_deref().unwrap_or_default();
+    role.contains("前端") || path.contains("/frontend/") || path.contains("\\frontend\\")
+}
+
+fn is_pda_client_repo(repo: &BranchRepo) -> bool {
+    let role = repo.role.as_deref().unwrap_or_default();
+    let path = repo.path.as_deref().unwrap_or_default();
+    role == "PDA" || path.contains("/pda/") || path.contains("\\pda\\")
+}
+
+async fn detect_latest_uat_branch(project_path: &Path) -> Option<String> {
+    let _ = git(
+        project_path,
+        &[
+            "fetch",
+            "origin",
+            "+refs/heads/UAT-*:refs/remotes/origin/UAT-*",
+        ],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let result = git(
+        project_path,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/remotes/origin/UAT-*",
+        ],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !result.ok {
+        return None;
+    }
+    result
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("origin/UAT-"))
+        .map(|line| line.trim_start_matches("origin/").to_string())
+}
+
+async fn resolve_branch_ref(project_path: &Path, branch: &str) -> Option<String> {
+    let remote_branch = format!("origin/{branch}");
+    let remote_ref = format!("{}^{{commit}}", remote_branch);
+    let remote = git(
+        project_path,
+        &["rev-parse", "--verify", &remote_ref],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if remote.ok {
+        return Some(remote_branch);
+    }
+    let local_ref = format!("{}^{{commit}}", branch);
+    let local = git(
+        project_path,
+        &["rev-parse", "--verify", &local_ref],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    local.ok.then_some(branch.to_string())
+}
+
+async fn conflicted_files(worktree_path: &Path) -> Vec<String> {
+    let result = git(
+        worktree_path,
+        &["diff", "--name-only", "--diff-filter=U"],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !result.ok {
+        return Vec::new();
+    }
+    result
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+async fn cleanup_merge_worktree(
+    project_path: &Path,
+    worktree_path: &Path,
+    temp_branch: &str,
+) -> Vec<String> {
+    let remove = git(
+        &project_path,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path.to_string_lossy().as_ref(),
+        ],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let delete_branch = git(
+        &project_path,
+        &["branch", "-D", temp_branch],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    vec![
+        if remove.ok {
+            remove.command
+        } else {
+            format!("{} failed: {}", remove.command, short_err(&remove))
+        },
+        if delete_branch.ok {
+            delete_branch.command
+        } else {
+            format!(
+                "{} failed: {}",
+                delete_branch.command,
+                short_err(&delete_branch)
+            )
+        },
+    ]
+}
+
+fn merge_worktree_path(
+    project_path: &Path,
+    target: &str,
+    source_branch: &str,
+    target_branch: &str,
+) -> PathBuf {
+    let repo_leaf = project_path
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| "repo".to_string());
+    project_path
+        .parent()
+        .unwrap_or(project_path)
+        .join(".agent-panel-merge-worktrees")
+        .join(repo_leaf)
+        .join(target)
+        .join(format!(
+            "{}__{}",
+            sanitize_ref_segment(target_branch),
+            sanitize_ref_segment(source_branch)
+        ))
+}
+
+fn merge_temp_branch(target: &str, source_branch: &str, target_branch: &str) -> String {
+    format!(
+        "agent-panel/merge/{}/{}/{}",
+        sanitize_ref_segment(target),
+        sanitize_ref_segment(target_branch),
+        sanitize_ref_segment(source_branch)
+    )
+}
+
+fn sanitize_ref_segment(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('-');
+        }
+    }
+    let compact = out.trim_matches('-').to_string();
+    if compact.is_empty() {
+        "branch".to_string()
+    } else {
+        compact
     }
 }
 
