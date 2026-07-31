@@ -246,6 +246,9 @@ struct IdQuery {
     req_id: Option<String>,
     days: Option<i64>,
     file: Option<String>,
+    intent: Option<String>,
+    budget: Option<usize>,
+    tokens: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -381,6 +384,39 @@ struct RequirementValidateForm {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RequirementEditForm {
+    req_id: String,
+    operation: String,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    doc_type: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    heading: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    fields: Option<HashMap<String, String>>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CodeReviewForm {
     req_id: String,
     #[serde(default)]
@@ -501,6 +537,10 @@ async fn main() -> Result<()> {
             get(api_requirement).patch(api_requirement_patch),
         )
         .route("/api/requirement/update", post(api_requirement_update))
+        .route("/api/requirement/schema", get(api_requirement_schema))
+        .route("/api/requirement/context", get(api_requirement_context))
+        .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
+        .route("/api/requirement/edit", post(api_requirement_edit))
         .route("/api/requirement/notes", post(api_requirement_notes))
         .route(
             "/api/requirement/doc",
@@ -676,6 +716,46 @@ async fn api_requirement_validate(
 ) -> ApiResult<Json<Value>> {
     let req = get_real_requirement(&state, &form.0.req_id).await?;
     let value = validate_requirement(&state, &req).await?;
+    Ok(Json(value))
+}
+
+async fn api_requirement_schema() -> Json<Value> {
+    Json(requirement_api_schema())
+}
+
+async fn api_requirement_edit_plan(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let intent = normalize_requirement_intent(query.intent.as_deref());
+    Ok(Json(build_requirement_edit_plan(&req, &intent)))
+}
+
+async fn api_requirement_context(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let intent = normalize_requirement_intent(query.intent.as_deref());
+    let tokens = query
+        .tokens
+        .as_deref()
+        .map(parse_token_list)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| intent_read_tokens(&intent));
+    let budget = query.budget.unwrap_or(2_000).clamp(400, 12_000);
+    let value = build_requirement_context(&req, &intent, tokens, budget).await?;
+    Ok(Json(value))
+}
+
+async fn api_requirement_edit(
+    State(state): State<AppState>,
+    form: FormOrJson<RequirementEditForm>,
+) -> ApiResult<Json<Value>> {
+    let value = apply_requirement_edit(&state, form.0).await?;
     Ok(Json(value))
 }
 
@@ -3863,6 +3943,711 @@ async fn write_requirement_doc(state: &AppState, form: RequirementDocForm) -> Ap
     }))
 }
 
+fn requirement_api_schema() -> Value {
+    json!({
+        "version": 1,
+        "flow": ["edit-plan", "context", "edit", "validate"],
+        "statusValues": REQ_STATUSES,
+        "categoryValues": REQ_CATEGORIES,
+        "tokens": requirement_token_specs_json(),
+        "intents": [
+            {"intent": "overview", "readTokens": intent_read_tokens("overview"), "writeTokens": ["req.memory", "req.notes"]},
+            {"intent": "status", "readTokens": intent_read_tokens("status"), "writeTokens": ["req.state", "req.notes"]},
+            {"intent": "progress", "readTokens": intent_read_tokens("progress"), "writeTokens": ["req.notes", "req.memory"]},
+            {"intent": "branch", "readTokens": intent_read_tokens("branch"), "writeTokens": ["req.branchScope", "req.branch"]},
+            {"intent": "self-test", "readTokens": intent_read_tokens("self-test"), "writeTokens": ["req.test", "req.notes", "req.memory"]},
+            {"intent": "release-check", "readTokens": intent_read_tokens("release-check"), "writeTokens": ["req.configChanges", "req.test", "req.impact", "req.review", "req.notes"]},
+            {"intent": "design", "readTokens": intent_read_tokens("design"), "writeTokens": ["req.background", "req.impact", "req.memory"]},
+            {"intent": "config", "readTokens": intent_read_tokens("config"), "writeTokens": ["req.configChanges", "req.impact"]},
+            {"intent": "review", "readTokens": intent_read_tokens("review"), "writeTokens": ["req.review", "req.notes"]}
+        ],
+        "operations": [
+            {"operation": "setStatus", "writes": ["req.state"], "required": ["reqId", "status"], "optional": ["note", "dryRun"]},
+            {"operation": "setCategory", "writes": ["req.state"], "required": ["reqId", "category"], "optional": ["dryRun"]},
+            {"operation": "patchMeta", "writes": ["req.meta"], "required": ["reqId", "fields"], "allowedFields": ["title", "project", "owner", "startDate", "planRelease", "ones"]},
+            {"operation": "appendNote", "writes": ["req.notes"], "required": ["reqId", "text"], "optional": ["title", "sessionId", "dryRun"]},
+            {"operation": "writeDoc", "writes": ["token/docType"], "required": ["reqId", "token or docType", "content"], "optional": ["mode=replace|append", "dryRun"]},
+            {"operation": "upsertSection", "writes": ["token/docType"], "required": ["reqId", "token or docType", "heading", "content"], "optional": ["dryRun"]}
+        ],
+        "rules": [
+            "Agent should call edit-plan before selecting files for non-trivial requirement edits.",
+            "Agent should call context with an intent and token budget instead of reading large files directly.",
+            "state.json is the source of truth for status/category; do not direct-edit it.",
+            "Use appendNote for progress logs; avoid replacing notes.md.",
+            "Use branches.json as machine-readable branch scope; branch.md is human-readable narrative."
+        ]
+    })
+}
+
+fn requirement_token_specs_json() -> Vec<Value> {
+    vec![
+        token_spec(
+            "req.meta",
+            "meta.md",
+            None,
+            "stable identity fields and human summary",
+            true,
+            vec!["patchMeta"],
+        ),
+        token_spec(
+            "req.state",
+            STATE_FILE,
+            None,
+            "status/category and transition history; state source of truth",
+            true,
+            vec!["setStatus", "setCategory"],
+        ),
+        token_spec(
+            "req.background",
+            "background.md",
+            Some("background"),
+            "goal, background, scope, key decisions",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.memory",
+            "memory.md",
+            Some("memory"),
+            "short agent-facing lifecycle memory and compressed context",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.branch",
+            "branch.md",
+            Some("branch"),
+            "human-readable branch and merge narrative",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.branchScope",
+            BRANCH_SCOPE_FILE,
+            None,
+            "machine-readable repo/branch scope for diff/deploy automation",
+            true,
+            vec![],
+        ),
+        token_spec(
+            "req.configChanges",
+            "config-changes.md",
+            Some("config-changes"),
+            "DB/Apollo/Nacos/RocketMQ/config changes",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.impact",
+            "impact.md",
+            Some("impact"),
+            "impact assessment, core-link risk, rollback plan",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.test",
+            "test.md",
+            Some("test"),
+            "test scenarios, self-test/UAT evidence and confidence",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.notes",
+            "notes.md",
+            Some("notes"),
+            "append-only progress, decisions and pitfalls",
+            false,
+            vec!["appendNote", "writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.review",
+            "review.md",
+            Some("review"),
+            "pre-release review summary",
+            false,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.alignment",
+            "alignment.md",
+            Some("alignment"),
+            "requirement alignment notes and PRD interpretation",
+            false,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.prd",
+            "prd.md",
+            Some("prd"),
+            "source PRD or product notes",
+            false,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.codeReview",
+            CODE_REVIEW_FILE,
+            None,
+            "large generated code-review artifact; read only by explicit intent",
+            false,
+            vec![],
+        ),
+    ]
+}
+
+fn token_spec(
+    token: &str,
+    file: &str,
+    doc_type: Option<&str>,
+    role: &str,
+    standard: bool,
+    write_ops: Vec<&str>,
+) -> Value {
+    json!({
+        "token": token,
+        "file": file,
+        "docType": doc_type,
+        "role": role,
+        "standard": standard,
+        "writeOps": write_ops,
+    })
+}
+
+fn normalize_requirement_intent(raw: Option<&str>) -> String {
+    let s = raw.unwrap_or("overview").trim().to_lowercase();
+    if s.is_empty() || s == "default" {
+        "overview".into()
+    } else if s.contains("状态") || s.contains("status") || s.contains("state") {
+        "status".into()
+    } else if s.contains("自测")
+        || s.contains("测试")
+        || s.contains("test")
+        || s.contains("evidence")
+    {
+        "self-test".into()
+    } else if s.contains("上线") || s.contains("release") || s.contains("发布") {
+        "release-check".into()
+    } else if s.contains("分支") || s.contains("branch") || s.contains("diff") {
+        "branch".into()
+    } else if s.contains("配置")
+        || s.contains("config")
+        || s.contains("apollo")
+        || s.contains("nacos")
+        || s.contains("db")
+    {
+        "config".into()
+    } else if s.contains("影响")
+        || s.contains("方案")
+        || s.contains("design")
+        || s.contains("impact")
+    {
+        "design".into()
+    } else if s.contains("进展") || s.contains("note") || s.contains("progress") {
+        "progress".into()
+    } else if s.contains("review") || s.contains("cr") || s.contains("代码审查") {
+        "review".into()
+    } else {
+        s
+    }
+}
+
+fn intent_read_tokens(intent: &str) -> Vec<&'static str> {
+    match intent {
+        "status" => vec!["req.meta", "req.state", "req.notes"],
+        "progress" => vec!["req.meta", "req.memory", "req.notes"],
+        "branch" => vec!["req.meta", "req.branchScope", "req.branch"],
+        "self-test" => vec![
+            "req.meta",
+            "req.memory",
+            "req.branch",
+            "req.test",
+            "req.notes",
+        ],
+        "release-check" => vec![
+            "req.meta",
+            "req.state",
+            "req.branchScope",
+            "req.branch",
+            "req.configChanges",
+            "req.test",
+            "req.impact",
+            "req.review",
+        ],
+        "config" => vec!["req.meta", "req.configChanges", "req.impact", "req.notes"],
+        "design" => vec!["req.meta", "req.background", "req.impact", "req.memory"],
+        "review" => vec![
+            "req.meta",
+            "req.branchScope",
+            "req.review",
+            "req.codeReview",
+        ],
+        _ => vec![
+            "req.meta",
+            "req.state",
+            "req.memory",
+            "req.background",
+            "req.branch",
+            "req.test",
+            "req.notes",
+        ],
+    }
+}
+
+fn intent_write_tokens(intent: &str) -> Vec<&'static str> {
+    match intent {
+        "status" => vec!["req.state", "req.notes"],
+        "progress" => vec!["req.notes", "req.memory"],
+        "branch" => vec!["req.branchScope", "req.branch"],
+        "self-test" => vec!["req.test", "req.notes", "req.memory"],
+        "release-check" => vec![
+            "req.configChanges",
+            "req.test",
+            "req.impact",
+            "req.review",
+            "req.notes",
+        ],
+        "config" => vec!["req.configChanges", "req.impact"],
+        "design" => vec!["req.background", "req.impact", "req.memory"],
+        "review" => vec!["req.review", "req.notes"],
+        _ => vec!["req.memory", "req.notes"],
+    }
+}
+
+fn parse_token_list(raw: &str) -> Vec<&'static str> {
+    raw.split([',', '，', ' '])
+        .filter_map(canonical_requirement_token)
+        .collect()
+}
+
+fn canonical_requirement_token(raw: &str) -> Option<&'static str> {
+    let s = raw
+        .trim()
+        .trim_start_matches("req.")
+        .trim_end_matches(".md")
+        .replace(['-', '_'], "")
+        .to_lowercase();
+    match s.as_str() {
+        "meta" => Some("req.meta"),
+        "state" | "statejson" => Some("req.state"),
+        "background" => Some("req.background"),
+        "memory" => Some("req.memory"),
+        "branch" => Some("req.branch"),
+        "branchscope" | "branches" | "branchesjson" => Some("req.branchScope"),
+        "config" | "configchanges" => Some("req.configChanges"),
+        "impact" => Some("req.impact"),
+        "test" => Some("req.test"),
+        "notes" | "note" => Some("req.notes"),
+        "review" => Some("req.review"),
+        "alignment" => Some("req.alignment"),
+        "prd" => Some("req.prd"),
+        "codereview" | "codereviewjson" => Some("req.codeReview"),
+        _ => None,
+    }
+}
+
+fn requirement_token_file(token: &str) -> Option<&'static str> {
+    match canonical_requirement_token(token)? {
+        "req.meta" => Some("meta.md"),
+        "req.state" => Some(STATE_FILE),
+        "req.background" => Some("background.md"),
+        "req.memory" => Some("memory.md"),
+        "req.branch" => Some("branch.md"),
+        "req.branchScope" => Some(BRANCH_SCOPE_FILE),
+        "req.configChanges" => Some("config-changes.md"),
+        "req.impact" => Some("impact.md"),
+        "req.test" => Some("test.md"),
+        "req.notes" => Some("notes.md"),
+        "req.review" => Some("review.md"),
+        "req.alignment" => Some("alignment.md"),
+        "req.prd" => Some("prd.md"),
+        "req.codeReview" => Some(CODE_REVIEW_FILE),
+        _ => None,
+    }
+}
+
+fn requirement_doc_type_for_token(token: &str) -> Option<&'static str> {
+    match canonical_requirement_token(token)? {
+        "req.background" => Some("background"),
+        "req.memory" => Some("memory"),
+        "req.branch" => Some("branch"),
+        "req.configChanges" => Some("config-changes"),
+        "req.impact" => Some("impact"),
+        "req.test" => Some("test"),
+        "req.notes" => Some("notes"),
+        "req.review" => Some("review"),
+        "req.alignment" => Some("alignment"),
+        "req.prd" => Some("prd"),
+        _ => None,
+    }
+}
+
+fn requirement_token_info(req: &Requirement, token: &str) -> ApiResult<Value> {
+    let canonical = canonical_requirement_token(token)
+        .ok_or_else(|| ApiError::bad_request(format!("unknown requirement token: {token}")))?;
+    let file = requirement_token_file(canonical).unwrap_or_default();
+    let dir = req_dir_path(req)?;
+    let path = dir.join(file);
+    let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+    Ok(json!({
+        "token": canonical,
+        "file": file,
+        "docType": requirement_doc_type_for_token(canonical),
+        "path": path.to_string_lossy(),
+        "exists": path.is_file(),
+        "bytes": bytes,
+    }))
+}
+
+fn build_requirement_edit_plan(req: &Requirement, intent: &str) -> Value {
+    let read: Vec<Value> = intent_read_tokens(intent)
+        .into_iter()
+        .filter_map(|t| requirement_token_info(req, t).ok())
+        .collect();
+    let write: Vec<Value> = intent_write_tokens(intent)
+        .into_iter()
+        .filter_map(|t| requirement_token_info(req, t).ok())
+        .collect();
+    json!({
+        "ok": true,
+        "reqId": req.id,
+        "title": req.title,
+        "status": req.status,
+        "intent": intent,
+        "read": read,
+        "write": write,
+        "preferredFlow": [
+            format!("GET /api/requirement/context?id={}&intent={}&budget=2000", req.id, intent),
+            "POST /api/requirement/edit",
+            "POST /api/requirement/validate"
+        ],
+        "writeExamples": {
+            "appendNote": {"operation": "appendNote", "reqId": req.id, "title": "进展", "text": "..."},
+            "upsertTestSection": {"operation": "upsertSection", "reqId": req.id, "token": "req.test", "heading": "自测证据", "content": "- ..."},
+            "setStatus": {"operation": "setStatus", "reqId": req.id, "status": "自测中", "note": "..."}
+        },
+        "rules": [
+            "Read only the tokens listed here unless the task explicitly needs more.",
+            "Prefer /api/requirement/edit over direct file edits.",
+            "Use appendNote for progress; use upsertSection for targeted document updates.",
+            "Run validate after writes."
+        ]
+    })
+}
+
+async fn build_requirement_context(
+    req: &Requirement,
+    intent: &str,
+    tokens: Vec<&'static str>,
+    budget: usize,
+) -> ApiResult<Value> {
+    let dir = req_dir_path(req)?;
+    let mut rows = Vec::new();
+    let mut remaining = budget;
+    let total = tokens.len().max(1);
+    for (idx, token) in tokens.into_iter().enumerate() {
+        let canonical = canonical_requirement_token(token).unwrap_or(token);
+        let Some(file) = requirement_token_file(canonical) else {
+            continue;
+        };
+        let path = dir.join(file);
+        let exists = path.is_file();
+        let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+        let slots_left = total.saturating_sub(idx).max(1);
+        let per_file_budget = (remaining / slots_left).clamp(300, 3_000);
+        let (content, truncated, chars) = if exists && remaining > 0 {
+            let raw = fs::read_to_string(&path).await.unwrap_or_default();
+            let (excerpt, truncated) = truncate_chars(&raw, per_file_budget);
+            let chars = excerpt.chars().count();
+            remaining = remaining.saturating_sub(chars);
+            (excerpt, truncated, chars)
+        } else {
+            (String::new(), false, 0)
+        };
+        rows.push(json!({
+            "token": canonical,
+            "file": file,
+            "docType": requirement_doc_type_for_token(canonical),
+            "path": path.to_string_lossy(),
+            "exists": exists,
+            "bytes": bytes,
+            "contentChars": chars,
+            "truncated": truncated,
+            "content": content,
+        }));
+    }
+    Ok(json!({
+        "ok": true,
+        "reqId": req.id,
+        "title": req.title,
+        "status": req.status,
+        "project": req.project,
+        "intent": intent,
+        "budget": budget,
+        "remainingBudget": remaining,
+        "tokens": rows,
+        "editPlanUrl": format!("/api/requirement/edit-plan?id={}&intent={}", req.id, intent),
+    }))
+}
+
+fn truncate_chars(raw: &str, max_chars: usize) -> (String, bool) {
+    let count = raw.chars().count();
+    if count <= max_chars {
+        return (raw.to_string(), false);
+    }
+    let excerpt = raw.chars().take(max_chars).collect::<String>();
+    (
+        format!(
+            "{}\n…[truncated; {} chars total]",
+            excerpt.trim_end(),
+            count
+        ),
+        true,
+    )
+}
+
+async fn apply_requirement_edit(state: &AppState, form: RequirementEditForm) -> ApiResult<Value> {
+    let op = form.operation.trim();
+    match op {
+        "setStatus" | "status" => {
+            let status = clean_required_opt(form.status.as_deref(), "status")?;
+            update_requirement(
+                state,
+                RequirementPatchForm {
+                    req_id: form.req_id,
+                    title: None,
+                    project: None,
+                    projects: None,
+                    status: Some(status),
+                    category: None,
+                    owner: None,
+                    start_date: None,
+                    plan_release: None,
+                    ones: None,
+                    note: form.note,
+                    dry_run: form.dry_run,
+                },
+            )
+            .await
+        }
+        "setCategory" | "category" => {
+            let category = clean_required_opt(form.category.as_deref(), "category")?;
+            update_requirement(
+                state,
+                RequirementPatchForm {
+                    req_id: form.req_id,
+                    title: None,
+                    project: None,
+                    projects: None,
+                    status: None,
+                    category: Some(category),
+                    owner: None,
+                    start_date: None,
+                    plan_release: None,
+                    ones: None,
+                    note: None,
+                    dry_run: form.dry_run,
+                },
+            )
+            .await
+        }
+        "patchMeta" | "meta" => {
+            let fields = form.fields.unwrap_or_default();
+            let patch = RequirementPatchForm {
+                req_id: form.req_id,
+                title: field_value(&fields, &["title"]),
+                project: field_value(&fields, &["project"]),
+                projects: None,
+                status: None,
+                category: None,
+                owner: field_value(&fields, &["owner"]),
+                start_date: field_value(&fields, &["startDate", "start-date"]),
+                plan_release: field_value(&fields, &["planRelease", "plan-release"]),
+                ones: field_value(&fields, &["ones"]),
+                note: None,
+                dry_run: form.dry_run,
+            };
+            if patch.title.is_none()
+                && patch.project.is_none()
+                && patch.owner.is_none()
+                && patch.start_date.is_none()
+                && patch.plan_release.is_none()
+                && patch.ones.is_none()
+            {
+                return Err(ApiError::bad_request("patchMeta has no supported fields"));
+            }
+            update_requirement(state, patch).await
+        }
+        "appendNote" | "appendNotes" | "note" => {
+            let text = form.text.or(form.content).unwrap_or_default();
+            append_requirement_note(
+                state,
+                RequirementNoteForm {
+                    req_id: form.req_id,
+                    text,
+                    title: form.title,
+                    session_id: form.session_id,
+                    dry_run: form.dry_run,
+                },
+            )
+            .await
+        }
+        "writeDoc" | "replaceDoc" | "appendDoc" | "doc" => {
+            let doc_type = resolve_doc_type(form.doc_type.as_deref(), form.token.as_deref())?;
+            let mode = if op == "appendDoc" {
+                Some("append".to_string())
+            } else if op == "replaceDoc" {
+                Some("replace".to_string())
+            } else {
+                form.mode
+            };
+            write_requirement_doc(
+                state,
+                RequirementDocForm {
+                    req_id: form.req_id,
+                    doc_type,
+                    content: form.content.or(form.text).unwrap_or_default(),
+                    mode,
+                    dry_run: form.dry_run,
+                },
+            )
+            .await
+        }
+        "upsertSection" | "section" => upsert_requirement_section(state, form).await,
+        other => Err(ApiError::bad_request(format!(
+            "unsupported requirement edit operation: {other}"
+        ))),
+    }
+}
+
+fn field_value(fields: &HashMap<String, String>, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| fields.get(*key))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn resolve_doc_type(doc_type: Option<&str>, token: Option<&str>) -> ApiResult<String> {
+    if let Some(doc_type) = clean_optional(doc_type) {
+        requirement_doc_file(&doc_type)?;
+        return Ok(doc_type);
+    }
+    let token = token.ok_or_else(|| ApiError::bad_request("missing token or docType"))?;
+    requirement_doc_type_for_token(token)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!("token is not a writable markdown doc: {token}"))
+        })
+}
+
+async fn upsert_requirement_section(
+    state: &AppState,
+    form: RequirementEditForm,
+) -> ApiResult<Value> {
+    let req = get_real_requirement(state, &form.req_id).await?;
+    let dir = req_dir_path(&req)?;
+    ensure_requirement_dir_writable(state, &dir).await?;
+    let doc_type = resolve_doc_type(form.doc_type.as_deref(), form.token.as_deref())?;
+    let doc_file = requirement_doc_file(&doc_type)?;
+    let heading = clean_required_opt(form.heading.as_deref(), "heading")?;
+    let merged_content = form.content.or(form.text);
+    let content = clean_required_opt(merged_content.as_deref(), "content")?;
+    ensure_text_size(&content, "content")?;
+    let dry_run = form.dry_run.unwrap_or(false);
+    let path = dir.join(doc_file);
+    let raw = fs::read_to_string(&path)
+        .await
+        .unwrap_or_else(|_| format!("# {} {}\n", req.id, doc_file));
+    let next = upsert_markdown_section(&raw, &heading, &content);
+    if !dry_run {
+        atomic_write_text(&path, &next).await?;
+    }
+    let validation = if dry_run {
+        json!({ "ok": true, "dryRun": true, "problems": [], "warnings": [] })
+    } else {
+        let refreshed = get_real_requirement(state, &req.id).await?;
+        validate_requirement(state, &refreshed).await?
+    };
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req.id,
+        "operation": "upsertSection",
+        "docType": doc_type,
+        "heading": heading,
+        "file": path.to_string_lossy(),
+        "bytes": next.len(),
+        "validation": validation,
+    }))
+}
+
+fn upsert_markdown_section(raw: &str, heading: &str, content: &str) -> String {
+    let target = normalize_heading_text(heading);
+    let heading_line = if heading.trim_start().starts_with('#') {
+        heading.trim().to_string()
+    } else {
+        format!("## {}", heading.trim())
+    };
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut start: Option<(usize, usize)> = None;
+    for (idx, line) in lines.iter().enumerate() {
+        if let Some((level, text)) = parse_markdown_heading(line) {
+            if normalize_heading_text(&text) == target {
+                start = Some((idx, level));
+                break;
+            }
+        }
+    }
+    let new_block = format!("{}\n{}", heading_line, content.trim());
+    if let Some((start_idx, level)) = start {
+        let mut end_idx = lines.len();
+        for (idx, line) in lines.iter().enumerate().skip(start_idx + 1) {
+            if let Some((next_level, _)) = parse_markdown_heading(line) {
+                if next_level <= level {
+                    end_idx = idx;
+                    break;
+                }
+            }
+        }
+        let mut out = Vec::new();
+        out.extend(lines[..start_idx].iter().map(|s| s.to_string()));
+        out.push(new_block);
+        out.extend(lines[end_idx..].iter().map(|s| s.to_string()));
+        format!("{}\n", out.join("\n").trim_end())
+    } else {
+        format!("{}\n\n{}\n", raw.trim_end(), new_block)
+    }
+}
+
+fn parse_markdown_heading(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim_start();
+    let level = trimmed.chars().take_while(|c| *c == '#').count();
+    if level == 0
+        || level > 6
+        || !trimmed
+            .chars()
+            .nth(level)
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        return None;
+    }
+    Some((
+        level,
+        trimmed[level..].trim().trim_matches('#').trim().to_string(),
+    ))
+}
+
+fn normalize_heading_text(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .trim_matches('#')
+        .trim()
+        .to_lowercase()
+}
+
 async fn validate_requirement(state: &AppState, req: &Requirement) -> ApiResult<Value> {
     let dir = req_dir_path(req)?;
     ensure_requirement_dir_writable(state, &dir).await?;
@@ -4255,6 +5040,10 @@ fn clean_required(value: &str, field: &str) -> ApiResult<String> {
     clean_optional(Some(value)).ok_or_else(|| ApiError::bad_request(format!("missing {field}")))
 }
 
+fn clean_required_opt(value: Option<&str>, field: &str) -> ApiResult<String> {
+    clean_optional(value).ok_or_else(|| ApiError::bad_request(format!("missing {field}")))
+}
+
 fn clean_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -4625,12 +5414,14 @@ async fn write_injection_context(
     fs::create_dir_all(&dir).await?;
     let path = dir.join(format!("{}.md", session_id));
     let body = format!(
-        "# Agent Panel Requirement Context\n\n- Req ID: {}\n- Title: {}\n- Status: {}\n- Directory: {}\n\n{}\n\n请先阅读需求目录中的 memory.md、alignment.md、branch.md、test.md 和 notes.md；不要假设已完成工作，等待用户下一步指令。\n",
+        "# Agent Panel Requirement Context\n\n- Req ID: {}\n- Title: {}\n- Status: {}\n- Directory: {}\n\n{}\n\nAgent workflow:\n1. For requirement edits, call `GET /api/requirement/edit-plan?id={}&intent=<intent>` before choosing files.\n2. For context, call `GET /api/requirement/context?id={}&intent=<intent>&budget=2000` instead of reading large markdown files directly.\n3. For writes, prefer `POST /api/requirement/edit`, then validate with `POST /api/requirement/validate`.\n4. Only read files directly when the API is unavailable or the task explicitly requires raw content.\n",
         req.id,
         req.title,
         req.status,
         req.req_dir.clone().unwrap_or_default(),
-        req.description
+        req.description,
+        req.id,
+        req.id
     );
     atomic_write_text(&path, &body).await?;
     Ok(path)

@@ -6,12 +6,13 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 
 # Agent Panel Requirement API
 
-用于：通过本机 Agent Panel API 操作需求，包括创建需求、查询需求、更新受控字段/文档、追加 notes、更新状态、关联 session 和确认服务状态。
+用于：通过本机 Agent Panel API 操作需求，包括创建需求、查询需求、按 intent 获取低 token 上下文、结构化编辑需求文件、追加 notes、更新状态、关联 session 和确认服务状态。
 
 适用：
 - 用户说“创建需求”/“新建需求”/“登记需求”时，通过 API 创建标准需求目录和文件
 - 用户说“更新需求”/“修改需求标题/owner/计划上线/ONES/项目”等受控字段时，通过 API 更新
-- 用户说“补充 notes/background/test/impact/config-changes”等需求文档时，通过 API 追加或替换白名单文档
+- 用户说“补充 notes/background/test/impact/config-changes”等需求文档时，优先走 `edit-plan -> context -> edit -> validate` 协议
+- 用户要求“根据需求文件继续工作”/“看看需求上下文”/“补充自测证据/分支/配置变更/影响面”时，先用低 token context 接口，不直接读大文件
 - 用户说“校验需求文件”/“检查需求结构”时，通过 API validate
 - 用户说“把需求状态改成/推进到 <状态>”“推到待上线”“状态更新接口在哪”
 - 用户要求查询 Agent Panel 需求、按状态筛选需求、确认需求是否存在
@@ -41,12 +42,16 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 
 | 用途 | 方法 | 端点 | 说明 |
 |---|---|---|---|
+| 查协议 schema | GET | `/api/requirement/schema` | 返回稳定 token、intent、允许操作和推荐流程 |
+| 获取编辑计划 | GET | `/api/requirement/edit-plan?id=<reqId>&intent=<intent>` | 返回本 intent 应读/写的 token、文件路径、大小和示例写法 |
+| 获取低 token 上下文 | GET | `/api/requirement/context?id=<reqId>&intent=<intent>&budget=2000` | 按 intent 和 budget 返回压缩上下文；可选 `tokens=req.meta,req.test` |
+| 结构化编辑 | POST | `/api/requirement/edit` | JSON/form body: `reqId`, `operation`; 支持 `setStatus`, `setCategory`, `patchMeta`, `appendNote`, `writeDoc`, `upsertSection` |
 | 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
 | 查单需求 | GET | `/api/requirement?id=<reqId>` | 返回 `{ requirement }` |
-| 更新受控字段 | PATCH | `/api/requirement` | JSON/form body: `reqId`; 可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun` |
+| 更新受控字段 | PATCH | `/api/requirement` | JSON/form body: `reqId`; 可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` |
 | 更新受控字段兼容 | POST | `/api/requirement/update` | 同 PATCH `/api/requirement`，给不方便发 PATCH 的 agent/client 使用 |
-| 追加 notes | POST | `/api/requirement/notes` | JSON/form body: `reqId`, `text`; 可选 `title`, `sessionId`, `dryRun` |
-| 写受控文档 | PUT/POST | `/api/requirement/doc` | JSON/form body: `reqId`, `docType`, `content`; 可选 `mode=replace|append`, `dryRun` |
+| 追加 notes | POST | `/api/requirement/notes` | JSON/form body: `reqId`, `text`; 可选 `title`, `sessionId`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` + `operation=appendNote` |
+| 写受控文档 | PUT/POST | `/api/requirement/doc` | JSON/form body: `reqId`, `docType`, `content`; 可选 `mode=replace|append`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` + `writeDoc/upsertSection` |
 | 校验需求 | POST | `/api/requirement/validate` | JSON/form body: `reqId`，返回 problems/warnings/files |
 | 列需求 | GET | `/api/requirements` | 返回 `{ requirements: [...] }`，客户端自行按 `status` 过滤 |
 | 更新状态 | POST | `/api/requirement/status` | form body: `reqId`, `status`, 可选 `note`, `redirect` |
@@ -83,6 +88,59 @@ curl -sS -H 'Content-Type: application/json' \
 
 ```text
 需求对齐 / 方案设计 / 开发中 / 自测中 / 测试中 / 待上线 / 已完成
+```
+
+## Agent File Protocol
+
+需求文件统一通过稳定 token 访问，agent 不需要猜文件路径：
+
+| Token | 文件 | 用途 | 推荐写操作 |
+|---|---|---|---|
+| `req.meta` | `meta.md` | 标题、owner、project、ONES 等稳定身份信息 | `patchMeta` |
+| `req.state` | `state.json` | 状态/类别/历史的唯一真源 | `setStatus` / `setCategory` |
+| `req.background` | `background.md` | 目标、背景、范围、关键决策 | `writeDoc` / `upsertSection` |
+| `req.memory` | `memory.md` | 面向 agent 的短摘要上下文 | `writeDoc` / `upsertSection` |
+| `req.branch` | `branch.md` | 人类可读分支说明 | `writeDoc` / `upsertSection` |
+| `req.branchScope` | `branches.json` | 机器可读 repo/branch 范围 | `req-branches-update` 维护 |
+| `req.configChanges` | `config-changes.md` | DB/Apollo/Nacos/RocketMQ 等配置变更 | `writeDoc` / `upsertSection` |
+| `req.impact` | `impact.md` | 影响面、核心链路风险、回滚方案 | `writeDoc` / `upsertSection` |
+| `req.test` | `test.md` | 测试场景、自测/UAT 证据 | `writeDoc` / `upsertSection` |
+| `req.notes` | `notes.md` | 追加型进展、决策、踩坑 | `appendNote` 优先 |
+| `req.review` | `review.md` | 代码审查摘要 | `writeDoc` / `upsertSection` |
+| `req.codeReview` | `code-review.json` | 大体积代码差异/审查产物 | 仅显式 review intent 读取 |
+
+标准 intent：`overview` / `status` / `progress` / `branch` / `self-test` / `release-check` / `design` / `config` / `review`。
+
+推荐流程：
+
+1. 非简单状态变更前，先调 `/api/requirement/edit-plan?id=<reqId>&intent=<intent>`。
+2. 再调 `/api/requirement/context?id=<reqId>&intent=<intent>&budget=2000` 获取压缩上下文；不要默认直接读 `notes.md` 或 `code-review.json`。
+3. 写入用 `/api/requirement/edit`，优先 `appendNote` 和 `upsertSection`，避免整篇覆盖。
+4. 写完调 `/api/requirement/validate`。
+
+结构化编辑示例：
+
+```bash
+# 获取自测编辑计划
+curl -sS 'http://localhost:7331/api/requirement/edit-plan?id=<req-id>&intent=self-test'
+
+# 获取低 token 自测上下文
+curl -sS 'http://localhost:7331/api/requirement/context?id=<req-id>&intent=self-test&budget=2000'
+
+# 追加进展
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/edit \
+  -d '{"reqId":"<req-id>","operation":"appendNote","title":"进展","text":"完成影响面梳理。"}'
+
+# upsert test.md 的自测证据 section
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/edit \
+  -d '{"reqId":"<req-id>","operation":"upsertSection","token":"req.test","heading":"自测证据","content":"- Kibana tid=... 验证通过"}'
+
+# 设置状态（写 state.json，不手改文件）
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/edit \
+  -d '{"reqId":"<req-id>","operation":"setStatus","status":"自测中","note":"开发自测开始"}'
 ```
 
 ## Workflow
@@ -139,6 +197,27 @@ curl -sS -H 'Content-Type: application/json' \
 
 成功返回包含 `reqDir`、`files` 和 `validation`。如果返回 `validation.ok=false`，先处理 `problems` 再继续。
 
+### 3A. 低 token 读取与结构化编辑（推荐）
+
+当任务不是单纯创建需求，优先使用协议接口，而不是直接读写需求目录：
+
+```bash
+curl -sS "http://localhost:7331/api/requirement/edit-plan?id=<req-id>&intent=<intent>"
+curl -sS "http://localhost:7331/api/requirement/context?id=<req-id>&intent=<intent>&budget=2000"
+```
+
+根据 `edit-plan.write` 选择 token 后写入：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/edit \
+  -d '{"reqId":"<req-id>","operation":"upsertSection","token":"req.impact","heading":"影响面评估","content":"- ..."}'
+
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirement/validate \
+  -d '{"reqId":"<req-id>"}'
+```
+
 ### 4. 更新需求字段
 
 ```bash
@@ -153,7 +232,7 @@ curl -sS -H 'Content-Type: application/json' \
   }'
 ```
 
-字段范围只包括受控字段；状态和类别也可走 PATCH，但单纯状态流转仍推荐下方专用状态接口。
+字段范围只包括受控字段；状态和类别也可走 PATCH，但单纯状态流转推荐 `/api/requirement/edit` 的 `setStatus`。
 
 ### 5. 追加 notes / 写受控文档
 
@@ -231,6 +310,8 @@ curl -s -o /dev/null -w "%{http_code}" \
 ## Required Checks
 
 - 创建/修改需求优先走 Agent Panel API；Agent Panel 不可用时才 fallback 到 `req-create` 直接写文件。
+- 非简单更新先走 `/api/requirement/edit-plan` + `/api/requirement/context`，不要默认直接读取大文件。
+- 写入优先走 `/api/requirement/edit`；旧 `/notes` 和 `/doc` 仅作兼容。
 - 不直接编辑 `state.json` 或 `meta.md` 的状态字段。
 - `reqId` 只能使用 ASCII 字母、数字和单个连字符，不能包含空格、中文、路径分隔符或 `..`。
 - 写文档只能使用 `/api/requirement/doc` 的白名单 `docType`；不要把任意文件路径传给 API 或直接写路径。
