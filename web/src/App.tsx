@@ -177,8 +177,12 @@ interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; rev
 interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null }
 interface ProdMrPayload { ok: boolean; reqId: string; generatedAt: number; branchScope?: BranchScope | null; results: ProdMrResult[] }
 type MergeTarget = "test" | "uat"
+type MergeRepoKind = "frontend" | "backend"
+interface MergeOption { value: string; label: string; target: MergeTarget | string }
+interface MergeKindOptions { repoKind: MergeRepoKind | string; options: MergeOption[]; defaultValue?: string | null }
+interface MergeOptionsPayload { ok: boolean; reqId: string; status: ReqStatus | string; generatedAt: number; branchScope?: BranchScope | null; options: { frontend: MergeKindOptions; backend: MergeKindOptions } }
 interface MergeBranchResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: MergeTarget | string; targetBranch?: string | null; status: "merged" | "upToDate" | "conflict" | "failed" | "skipped" | "idle" | "pending" | string; message?: string | null; conflictFiles?: string[]; worktreePath?: string | null; warnings?: string[]; commands?: string[] }
-interface MergeBranchPayload { ok: boolean; reqId: string; target?: MergeTarget | string; status: string; generatedAt: number; branchScope?: BranchScope | null; results: MergeBranchResult[] }
+interface MergeBranchPayload { ok: boolean; reqId: string; target?: MergeTarget | string; targetBranch?: string | null; repoKind?: MergeRepoKind | string | null; status: string; generatedAt: number; branchScope?: BranchScope | null; results: MergeBranchResult[] }
 interface DiffLine { type: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string }
 interface DiffFileView { repo: CodeReviewRepoSnapshot; file: CodeReviewFile; diff: string; lines: DiffLine[] }
 
@@ -610,32 +614,54 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
 }
 
 function MergeBranchPanel({ req }: { req: Requirement }) {
-  const [payload, setPayload] = useState<MergeBranchPayload | null>(null)
-  const [loadingTarget, setLoadingTarget] = useState<MergeTarget | null>(null)
+  const optionData = useFetch<MergeOptionsPayload>(`/api/requirement/merge-options?id=${encodeURIComponent(req.id)}`, [req.id])
+  const [payloads, setPayloads] = useState<MergeBranchPayload[]>([])
+  const [frontendBranch, setFrontendBranch] = useState("")
+  const [backendBranch, setBackendBranch] = useState("")
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const runMerge = async (target: MergeTarget) => {
-    if (loadingTarget) return
-    setLoadingTarget(target)
+  useEffect(() => {
+    const options = optionData.data?.options
+    if (!options) return
+    setFrontendBranch(options.frontend?.defaultValue || "")
+    setBackendBranch(options.backend?.defaultValue || "")
+  }, [optionData.data?.generatedAt, req.id])
+  const runMerge = async () => {
+    if (loading) return
+    const jobs: Array<{ kind: MergeRepoKind; branch: string; target: string }> = []
+    const frontendOption = optionData.data?.options.frontend.options.find((item) => item.value === frontendBranch)
+    const backendOption = optionData.data?.options.backend.options.find((item) => item.value === backendBranch)
+    if (frontendBranch && frontendOption) jobs.push({ kind: "frontend", branch: frontendBranch, target: frontendOption.target })
+    if (backendBranch && backendOption) jobs.push({ kind: "backend", branch: backendBranch, target: backendOption.target })
+    if (!jobs.length) { setError("请先选择前端或后端目标分支"); return }
+    setLoading(true)
     setError(null)
     try {
-      const next = await postForm<MergeBranchPayload>("/api/requirement/merge-branch", { reqId: req.id, target })
-      setPayload(next)
+      const next: MergeBranchPayload[] = []
+      for (const job of jobs) {
+        next.push(await postForm<MergeBranchPayload>("/api/requirement/merge-branch", { reqId: req.id, repoKind: job.kind, targetBranch: job.branch, target: job.target }))
+      }
+      setPayloads(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setLoadingTarget(null)
+      setLoading(false)
     }
   }
-  const results = payload?.results || []
+  const results = payloads.flatMap((item) => item.results || [])
   const conflictCount = results.filter((item) => item.status === "conflict").length
   const mergedCount = results.filter((item) => item.status === "merged" || item.status === "upToDate").length
-  const chip = payload ? payload.status : "需求分支 → 环境分支"
+  const latestAt = Math.max(0, ...payloads.map((item) => item.generatedAt || 0))
+  const chip = payloads.length ? payloads.map((item) => item.status).join(" / ") : "选择环境分支"
+  const selectBranch = (kind: MergeRepoKind, value: string, onChange: (v: string) => void, options?: MergeKindOptions) => <label className="react-merge-select"><span>{kind === "frontend" ? "前端分支" : "后端分支"}</span><select value={value} onChange={(e) => onChange(e.target.value)} disabled={loading || optionData.loading || !options?.options?.length}><option value="">不合并</option>{(options?.options || []).map((item) => <option key={`${kind}-${item.value}`} value={item.value}>{item.label}</option>)}</select></label>
   return <section className="react-panel react-merge-panel"><PanelHead kicker="Branch Merge" title="合并到测试 / UAT" chip={chip} />
-    <p className="react-muted">按 <code>branches.json</code> 的应用与需求分支自动合并：test 默认合并到 <code>test</code>，UAT 前端合并到 <code>master</code>、后端自动选择最新 <code>UAT-*</code> 分支；PDA 客户端默认跳过。</p>
-    <div className="react-actions"><button onClick={() => runMerge("test")} disabled={!!loadingTarget}><GitMerge size={15} />{loadingTarget === "test" ? "合并中…" : "合并到 test"}</button><button onClick={() => runMerge("uat")} disabled={!!loadingTarget}><GitMerge size={15} />{loadingTarget === "uat" ? "合并中…" : "合并到 UAT"}</button><a href={`/requirement-merge?id=${encodeURIComponent(req.id)}`}><AlertTriangle size={15} />查看冲突 / 合并状态</a>{payload?.generatedAt ? <span className="react-muted">更新 {formatDateTime(payload.generatedAt)}</span> : null}</div>
+    <p className="react-muted">选择要合并的环境分支后执行；未选择的前端/后端不会合并。自测中默认选 test，测试中默认选 UAT 分支，其他状态默认不选择。</p>
+    {optionData.error ? <p className="react-effort-error">分支选项加载失败：{optionData.error}</p> : null}
+    <div className="react-merge-select-grid">{selectBranch("frontend", frontendBranch, setFrontendBranch, optionData.data?.options.frontend)}{selectBranch("backend", backendBranch, setBackendBranch, optionData.data?.options.backend)}</div>
+    <div className="react-actions"><button onClick={runMerge} disabled={loading || optionData.loading || (!frontendBranch && !backendBranch)}><GitMerge size={15} />{loading ? "合并中…" : "合并所选分支"}</button><a href={`/requirement-merge?id=${encodeURIComponent(req.id)}`}><AlertTriangle size={15} />查看冲突 / 合并状态</a>{latestAt ? <span className="react-muted">更新 {formatDateTime(latestAt)}</span> : null}</div>
     {error ? <p className="react-effort-error">合并失败：{error}</p> : null}
-    {payload ? <div className="react-review-summary"><span>{results.length} repo/branch</span><span className="react-review-add">{mergedCount} merged</span><span className={conflictCount ? "react-review-del" : undefined}>{conflictCount} conflict</span><span>{payload.target || "-"}</span></div> : null}
-    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>冲突 / 位置</th></tr></thead><tbody>{results.map((item, index) => <tr key={`${item.repoName}-${item.sourceBranch}-${item.target}-${index}`}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch || item.target}</code></td><td><span className={`react-merge-status ${item.status}`}>{mergeStatusLabel(item.status)}</span>{item.message ? <em>{item.message}</em> : null}</td><td>{item.status === "conflict" ? <a href={`/requirement-merge?id=${encodeURIComponent(req.id)}&target=${encodeURIComponent(String(item.target))}`}>{item.conflictFiles?.length || 0} 个冲突文件</a> : item.worktreePath ? <code>{item.worktreePath}</code> : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : payload ? <p className="react-muted">未返回合并结果，请检查 <code>branches.json</code>。</p> : null}
+    {payloads.length ? <div className="react-review-summary"><span>{results.length} repo/branch</span><span className="react-review-add">{mergedCount} merged</span><span className={conflictCount ? "react-review-del" : undefined}>{conflictCount} conflict</span><span>{[frontendBranch, backendBranch].filter(Boolean).join(" / ") || "-"}</span></div> : null}
+    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>冲突 / 位置</th></tr></thead><tbody>{results.map((item, index) => <tr key={`${item.repoName}-${item.sourceBranch}-${item.target}-${index}`}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch || item.target}</code></td><td><span className={`react-merge-status ${item.status}`}>{mergeStatusLabel(item.status)}</span>{item.message ? <em>{item.message}</em> : null}</td><td>{item.status === "conflict" ? <a href={`/requirement-merge?id=${encodeURIComponent(req.id)}&target=${encodeURIComponent(String(item.target))}`}>{item.conflictFiles?.length || 0} 个冲突文件</a> : item.worktreePath ? <code>{item.worktreePath}</code> : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : payloads.length ? <p className="react-muted">未返回合并结果，请检查 <code>branches.json</code>。</p> : null}
   </section>
 }
 

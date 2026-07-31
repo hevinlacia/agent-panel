@@ -60,7 +60,8 @@ bun run start:backend     # cargo run（开发后端）
 - `PUT|POST /api/requirement/doc` — 写入受控文档，`docType=background|memory|branch|config-changes|impact|test|notes|review|alignment|prd`，`mode=replace|append`
 - `POST /api/requirement/validate` — 校验 `meta.md`、`state.json`、标准文件和 `branches.json` 基本结构
 - `POST /api/requirement/master-diff` — 按 `branches.json` 对比需求分支和指定基准分支
-- `POST /api/requirement/merge-branch` — 按 `branches.json` 将需求分支合并到 `test` 或 `uat` 环境分支；无冲突则自动推送，冲突则返回 `conflictFiles` 和保留的 `worktreePath`
+- `GET /api/requirement/merge-options?id=<req>` — 返回前端/后端可选环境分支和按需求状态计算的默认选中值
+- `POST /api/requirement/merge-branch` — 按 `branches.json` 将需求分支合并到选择的 `targetBranch`；无冲突则自动推送，冲突则返回 `conflictFiles` 和保留的 `worktreePath`
 - `GET /api/requirement/merge-status?id=<req>&target=test|uat` — 查看未完成合并 worktree / 冲突状态，供详情页和 agent 续处理
 - `POST /api/requirement/prod-mrs` — 按 `branches.json` 创建或复用生产 MR
 - `POST /api/requirement/status`
@@ -123,10 +124,13 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/requirement/validate \
   -d '{"reqId":"WMS-001-demo"}'
 
-# 按 branches.json 合并需求分支到 test 环境分支；UAT 使用 target=uat
+# 查询前端/后端可选合并分支与默认选中值
+curl -sS 'http://localhost:7331/api/requirement/merge-options?id=WMS-001-demo'
+
+# 按 branches.json 合并所选类型到指定环境分支；repoKind=frontend|backend
 curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/requirement/merge-branch \
-  -d '{"reqId":"WMS-001-demo","target":"test"}'
+  -d '{"reqId":"WMS-001-demo","repoKind":"backend","targetBranch":"test","target":"test"}'
 
 # 查询合并/冲突状态；返回值中的 worktreePath + conflictFiles 可直接交给 agent 或人工处理
 curl -sS 'http://localhost:7331/api/requirement/merge-status?id=WMS-001-demo&target=test'
@@ -134,11 +138,13 @@ curl -sS 'http://localhost:7331/api/requirement/merge-status?id=WMS-001-demo&tar
 
 ## 环境分支合并
 
-需求详情页提供“合并到 test / 合并到 UAT”按钮，后端按 `branches.json` 固定执行合并，减少 agent 自行推断和手写 git 步骤：
+需求详情页提供“前端分支 / 后端分支”两个选择框，后端按 `branches.json` 固定执行合并，减少 agent 自行推断和手写 git 步骤：
 
-- `target=test`：默认目标分支为 `test`。
-- `target=uat`：前端目标分支为 `master`；后端会刷新并选择最新 `origin/UAT-*`；PDA 客户端默认跳过，因为 PDA 不通过环境分支部署。
-- `branches.json` 可为特殊仓库显式指定 `testTargetBranch` / `uatTargetBranch` 覆盖默认规则。
+- 默认选中：除 `自测中` / `测试中` 外不默认选择；`自测中` 默认前端/后端都选 `test`；`测试中` 默认前端选 `master`、后端选最新 `UAT-*`。
+- 前端下拉框：仅展示 `test` 和 `master`。
+- 后端下拉框：仅展示 `test` 和最新的 `UAT-*` 分支。
+- 未选择的前端/后端不会合并；提交时接口传 `repoKind=frontend|backend` 和 `targetBranch=<branch>`。
+- PDA 客户端默认跳过，因为 PDA 不通过环境分支部署。
 - 合并在仓库兄弟目录 `.agent-panel-merge-worktrees/<repo>/<target>/...` 中创建临时 worktree；成功推送后自动清理。
 - 发生冲突时接口返回 `status=conflict`、`conflictFiles`、`worktreePath` 并保留 worktree。人工可打开 `/requirement-merge?id=<req>` 查看冲突；agent 调用接口时可用同一结构化返回继续处理冲突。
 

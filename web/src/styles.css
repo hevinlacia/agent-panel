@@ -614,6 +614,10 @@ button, input, select, textarea { font: inherit; }
 .react-merge-status.skipped,
 .react-merge-status.pending { color: #fcd34d; border-color: rgba(245,158,11,.38); background: rgba(245,158,11,.12); }
 .react-merge-status.idle { color: var(--react-muted); border-color: var(--react-border); background: rgba(255,255,255,.035); }
+.react-merge-select-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.react-merge-select { display: flex; flex-direction: column; gap: 7px; color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-merge-select select { width: 100%; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,.045); color: var(--react-text); outline: none; }
+.react-merge-select select:disabled { opacity: .55; cursor: not-allowed; }
 .react-merge-result-list { margin-top: 14px; }
 .react-merge-card-conflict { border-color: rgba(239,68,68,.38); box-shadow: 0 22px 64px rgba(127,29,29,.18), inset 0 1px 0 rgba(255,255,255,.04); }
 .react-merge-card-merged,
@@ -678,5 +682,5 @@ button, input, select, textarea { font: inherit; }
 .react-gitai-agent-info code { color: var(--react-cyan); word-break: break-all; }
 .react-fix-note-btn { border: 1px solid rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; color: #fcd34d !important; border-radius: 999px !important; padding: 7px 12px !important; font: 800 .74rem var(--react-mono) !important; cursor: pointer; }
 .react-fix-note-btn:disabled { opacity: .5; cursor: not-allowed; }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } }
-@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } }
+@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }

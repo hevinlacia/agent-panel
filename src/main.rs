@@ -434,7 +434,12 @@ struct ProdMrForm {
 #[serde(rename_all = "camelCase")]
 struct MergeBranchForm {
     req_id: String,
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    target_branch: Option<String>,
+    #[serde(default)]
+    repo_kind: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -581,6 +586,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
+        )
+        .route(
+            "/api/requirement/merge-options",
+            get(api_requirement_merge_options),
         )
         .route(
             "/api/requirement/merge-branch",
@@ -919,12 +928,34 @@ async fn api_requirement_master_diff(
     ))
 }
 
+async fn api_requirement_merge_options(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let options = build_merge_options(&branch_scope, &req.status).await;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "status": req.status,
+        "generatedAt": now_ms(),
+        "branchScope": branch_scope,
+        "options": options,
+    })))
+}
+
 async fn api_requirement_merge_branch(
     State(state): State<AppState>,
     form: FormOrJson<MergeBranchForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
-    let target = normalize_merge_target(&body.target)?;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
@@ -932,12 +963,15 @@ async fn api_requirement_merge_branch(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
         ))
     })?;
-    let results = merge_requirement_branches(&branch_scope, &target).await;
+    let merge_request = normalize_merge_request(&body)?;
+    let results = merge_requirement_branches(&branch_scope, &merge_request).await;
     let status = merge_overall_status(&results);
     Ok(Json(json!({
         "ok": matches!(status, "merged" | "skipped" | "empty"),
         "reqId": req.id,
-        "target": target,
+        "target": merge_request.target,
+        "targetBranch": merge_request.target_branch,
+        "repoKind": merge_request.repo_kind,
         "status": status,
         "generatedAt": now_ms(),
         "branchScope": branch_scope,
@@ -3170,6 +3204,159 @@ fn normalize_merge_target(raw: &str) -> ApiResult<String> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct MergeRequest {
+    target: String,
+    target_branch: String,
+    repo_kind: Option<String>,
+}
+
+fn normalize_merge_request(form: &MergeBranchForm) -> ApiResult<MergeRequest> {
+    let explicit_branch = form
+        .target_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string);
+    let target = if let Some(target) = form
+        .target
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        normalize_merge_target(target)?
+    } else if let Some(branch) = explicit_branch.as_deref() {
+        target_from_branch(branch)?
+    } else {
+        return Err(ApiError::bad_request("targetBranch is required"));
+    };
+    let target_branch = explicit_branch
+        .unwrap_or_else(|| if target == "test" { "test" } else { "uat" }.to_string());
+    let repo_kind = form
+        .repo_kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(normalize_repo_kind)
+        .transpose()?;
+    Ok(MergeRequest {
+        target,
+        target_branch,
+        repo_kind,
+    })
+}
+
+fn target_from_branch(branch: &str) -> ApiResult<String> {
+    if branch == "test" {
+        Ok("test".to_string())
+    } else if branch == "master" || branch.starts_with("UAT-") {
+        Ok("uat".to_string())
+    } else {
+        Err(ApiError::bad_request(
+            "targetBranch must be test, master, or UAT-*",
+        ))
+    }
+}
+
+fn normalize_repo_kind(raw: &str) -> ApiResult<String> {
+    let kind = raw.trim().to_lowercase();
+    match kind.as_str() {
+        "frontend" | "front" | "web" | "前端" => Ok("frontend".to_string()),
+        "backend" | "back" | "server" | "后端" => Ok("backend".to_string()),
+        _ => Err(ApiError::bad_request(
+            "repoKind must be frontend or backend",
+        )),
+    }
+}
+
+fn merge_option_target(branch: &str) -> &'static str {
+    if branch == "test" {
+        "test"
+    } else {
+        "uat"
+    }
+}
+
+fn merge_option_label(kind: &str, branch: &str) -> String {
+    match (kind, branch) {
+        ("frontend", "test") => "前端 test".to_string(),
+        ("frontend", "master") => "前端 UAT (master)".to_string(),
+        ("backend", "test") => "后端 test".to_string(),
+        ("backend", branch) if branch.starts_with("UAT-") => format!("后端 UAT ({branch})"),
+        _ => branch.to_string(),
+    }
+}
+
+fn default_merge_selection(status: &str, kind: &str, options: &[String]) -> Option<String> {
+    match status {
+        "自测中" => options.iter().find(|v| v.as_str() == "test").cloned(),
+        "测试中" if kind == "frontend" => {
+            options.iter().find(|v| v.as_str() == "master").cloned()
+        }
+        "测试中" if kind == "backend" => options.iter().find(|v| v.starts_with("UAT-")).cloned(),
+        _ => None,
+    }
+}
+
+async fn build_merge_options(scope: &BranchScope, req_status: &str) -> Value {
+    let mut has_frontend = false;
+    let mut has_backend = false;
+    let mut backend_uat: Option<String> = None;
+    for repo in &scope.repos {
+        if is_pda_client_repo(repo) {
+            continue;
+        }
+        let Some(project_path) =
+            resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+        else {
+            continue;
+        };
+        if is_frontend_repo(repo) {
+            has_frontend = true;
+        } else {
+            has_backend = true;
+            if backend_uat.is_none() && project_path.exists() {
+                backend_uat = detect_latest_uat_branch(&project_path).await;
+            }
+        }
+    }
+    let frontend_branches = if has_frontend {
+        vec!["test".to_string(), "master".to_string()]
+    } else {
+        Vec::new()
+    };
+    let mut backend_branches = if has_backend {
+        vec!["test".to_string()]
+    } else {
+        Vec::new()
+    };
+    if let Some(branch) = backend_uat {
+        backend_branches.push(branch);
+    }
+    json!({
+        "frontend": merge_options_for_kind("frontend", &frontend_branches, req_status),
+        "backend": merge_options_for_kind("backend", &backend_branches, req_status),
+    })
+}
+
+fn merge_options_for_kind(kind: &str, branches: &[String], req_status: &str) -> Value {
+    let values = branches
+        .iter()
+        .map(|branch| {
+            json!({
+                "value": branch,
+                "label": merge_option_label(kind, branch),
+                "target": merge_option_target(branch),
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "repoKind": kind,
+        "options": values,
+        "defaultValue": default_merge_selection(req_status, kind, branches),
+    })
+}
+
 fn merge_overall_status(results: &[Value]) -> &'static str {
     let mut has_conflict = false;
     let mut has_failed = false;
@@ -3211,16 +3398,21 @@ fn merge_overall_status(results: &[Value]) -> &'static str {
     }
 }
 
-async fn merge_requirement_branches(scope: &BranchScope, target: &str) -> Vec<Value> {
+async fn merge_requirement_branches(scope: &BranchScope, request: &MergeRequest) -> Vec<Value> {
     let mut results = Vec::new();
     for repo in &scope.repos {
+        if let Some(kind) = request.repo_kind.as_deref() {
+            if repo_kind(repo) != kind {
+                continue;
+            }
+        }
         let branches = if repo.branches.is_empty() {
             vec![String::new()]
         } else {
             repo.branches.clone()
         };
         for branch in branches {
-            results.push(merge_repo_branch(repo, &branch, target).await);
+            results.push(merge_repo_branch(repo, &branch, request).await);
         }
     }
     results
@@ -3250,7 +3442,12 @@ async fn inspect_requirement_merge_status(
     results
 }
 
-async fn merge_repo_branch(repo: &BranchRepo, source_branch: &str, target: &str) -> Value {
+async fn merge_repo_branch(
+    repo: &BranchRepo,
+    source_branch: &str,
+    request: &MergeRequest,
+) -> Value {
+    let target = request.target.as_str();
     let source_branch = source_branch.trim();
     let Some(project_path) =
         resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
@@ -3318,10 +3515,39 @@ async fn merge_repo_branch(repo: &BranchRepo, source_branch: &str, target: &str)
         );
     }
 
-    let Some(target_branch) = merge_target_branch_for_repo(repo, target, &project_path).await
-    else {
-        return merge_result(repo, source_branch, target, None, "skipped", "当前仓库不适用该环境分支合并；如需启用，请在 branches.json 指定 testTargetBranch/uatTargetBranch", Some(&project_path), Vec::new(), Vec::new(), Vec::new());
+    let target_branch = if request.target_branch == "uat" {
+        let Some(resolved) = merge_target_branch_for_repo(repo, target, &project_path).await else {
+            return merge_result(
+                repo,
+                source_branch,
+                target,
+                None,
+                "skipped",
+                "当前仓库不适用该环境分支合并；如需启用，请在下拉框选择具体分支",
+                Some(&project_path),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+        resolved
+    } else {
+        request.target_branch.clone()
     };
+    if !target_branch_matches_repo(repo, &target_branch) {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            None,
+            "skipped",
+            "所选目标分支不适用于当前仓库类型",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
     let worktree_path = merge_worktree_path(&project_path, target, source_branch, &target_branch);
     if worktree_path.exists() {
         let existing = inspect_merge_worktree(
@@ -3763,6 +3989,27 @@ fn is_pda_client_repo(repo: &BranchRepo) -> bool {
     let role = repo.role.as_deref().unwrap_or_default();
     let path = repo.path.as_deref().unwrap_or_default();
     role == "PDA" || path.contains("/pda/") || path.contains("\\pda\\")
+}
+
+fn repo_kind(repo: &BranchRepo) -> &'static str {
+    if is_pda_client_repo(repo) {
+        "pda"
+    } else if is_frontend_repo(repo) {
+        "frontend"
+    } else {
+        "backend"
+    }
+}
+
+fn target_branch_matches_repo(repo: &BranchRepo, target_branch: &str) -> bool {
+    if is_pda_client_repo(repo) {
+        return false;
+    }
+    if is_frontend_repo(repo) {
+        matches!(target_branch, "test" | "master")
+    } else {
+        target_branch == "test" || target_branch.starts_with("UAT-")
+    }
 }
 
 async fn detect_latest_uat_branch(project_path: &Path) -> Option<String> {
