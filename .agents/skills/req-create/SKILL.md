@@ -63,6 +63,7 @@ API 契约详情见 `agent-panel-requirement-api` skill，本 skill 只列与创
 │   │   ├── memory.md
 │   │   ├── branch.md
 │   │   ├── config-changes.md
+│   │   ├── release-manifest.md
 │   │   ├── impact.md
 │   │   ├── test.md
 │   │   ├── notes.md
@@ -90,7 +91,7 @@ API 契约详情见 `agent-panel-requirement-api` skill，本 skill 只列与创
 ---
 req-id: WMS-001-log-refactor
 title: WMS 日志系统重构
-status: 需求对齐
+status: 需求澄清
 project: WMS
 owner: hevin
 start-date: 2026-06-11
@@ -134,12 +135,11 @@ frontmatter 字段规则：
 
 | 值 | 含义 |
 | --- | --- |
-| `需求对齐` | 业务目标、范围和验收口径对齐中 |
-| `方案设计` | 技术方案、影响面和验证路径设计中 |
+| `需求澄清` | 业务背景、PRD 疑问、初步代码调查和影响面澄清中 |
 | `开发中` | 正在开发 |
 | `自测中` | 开发完成，开发自测 |
 | `测试中` | 已提交测试，测试中 |
-| `待上线` | 测试通过，等待上线 |
+| `经验总结` | 测试/发布预检后，沉淀业务知识、经验和 skill 改进 |
 | `已完成` | 已上线，需求关闭 |
 
 ### 其它标准文件
@@ -149,11 +149,12 @@ frontmatter 字段规则：
 | `background.md` | 目标、背景、范围、关键决策（注入新 session 上下文） | 创建时或需求口径澄清后 |
 | `memory.md` | 需求生命周期记忆，供 session 注入 | 持续维护 |
 | `branch.md` | 分支、commit、合并状态 | 代码 push/merge 后 |
-| `config-changes.md` | DB / Apollo / Nacos / RocketMQ 变更 | 配置变更时 |
+| `config-changes.md` | DB / Apollo / Nacos / RocketMQ 低层配置明细 | 配置变更时 |
+| `release-manifest.md` | 上线清单：表、配置、Topic/Group、Job、接口、人工动作总览 | 开发开始后持续维护，发布前复核 |
 | `impact.md` | 编码前影响面评估、核心链路风险、回滚方案 | 编码前 |
 | `test.md` | 测试场景清单 + 分阶段执行记录 | 进入自测前 / 自测中 / UAT |
 | `notes.md` | 进展、决策、踩坑（追加，不覆盖） | 阶段性进展时 |
-| `review.md` | 待上线 Code Review | 按需 |
+| `review.md` | 代码审查门禁结论（Review Gate: PASS/BLOCKED/WAIVED）和审查摘要 | 自测完成、进入测试前 |
 | `state.json` | Agent Panel 管理，**不要手写** | 首次状态切换时 API 自动生成 |
 
 ## Workflow
@@ -174,7 +175,7 @@ curl -sS -H 'Content-Type: application/json' \
     "reqId": "<req-id>",
     "title": "<需求标题>",
     "project": "<project>",
-    "status": "需求对齐",
+    "status": "需求澄清",
     "summary": "<一句话摘要>",
     "dryRun": true
   }'
@@ -198,7 +199,7 @@ curl -sS -H 'Content-Type: application/json' \
     "reqId": "<req-id>",
     "title": "<需求标题>",
     "project": "<project>",
-    "status": "需求对齐",
+    "status": "需求澄清",
     "summary": "<一句话摘要>"
   }'
 ```
@@ -216,7 +217,7 @@ curl -sS -H 'Content-Type: application/json' \
 5. **绑定当前 session**（见下方「Session 绑定」）。
 6. **向用户输出需求文件维护提示**（见下方）。
 
-> 不传 `status` 时默认 `需求对齐`；不要在创建后立刻手改 `meta.md` 的 status，状态流转走 `/api/requirement/status`。
+> 不传 `status` 时默认 `需求澄清`；不要在创建后立刻手改 `meta.md` 的 status，状态流转走 `/api/requirement/status`。
 
 ### 2. 创建子需求
 
@@ -261,7 +262,7 @@ curl -sS -H 'Content-Type: application/json' \
   -d '{"reqId":"<req-id>","title":"进展","text":"完成方案梳理。","sessionId":"<可选>"}'
 ```
 
-- **替换或追加白名单文档**（`docType` 仅支持 `background`/`memory`/`branch`/`config-changes`/`impact`/`test`/`notes`/`review`/`alignment`/`prd`）：
+- **替换或追加白名单文档**（`docType` 仅支持 `background`/`memory`/`branch`/`config-changes`/`release-manifest`/`impact`/`test`/`notes`/`review`/`alignment`/`prd`）：
 
 ```bash
 curl -sS -H 'Content-Type: application/json' \
@@ -299,7 +300,7 @@ curl -sS -H 'Content-Type: application/json' \
    - 子需求：`<scanRoot>/.agents/req/<parent-project>/<parent-req-id>/<child-req-id>/`
 2. `mkdir -p <path>`
 3. 按「File Specs」生成 `meta.md`（必填，含 frontmatter，`status` 严格匹配 7 个值之一，`req-id` 与目录名一致）。
-4. 生成 `background.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`（可先写占位模板，不写真实 token/密码/Cookie/私钥）。
+4. 生成 `background.md`、`memory.md`、`branch.md`、`config-changes.md`、`release-manifest.md`、`impact.md`、`test.md`、`notes.md`（可先写占位模板，不写真实 token/密码/Cookie/私钥）。
 5. **不要创建 `state.json`**；`meta.md` 的 `status` 字段作为兜底状态来源，Agent Panel 恢复后会以 `state.json` 优先、`meta.md` 次之读取。
 6. 绑定当前 session（API 恢复后再补绑，或本 skill 的 session 绑定脚本）。
 7. 在最终回复标注「兜底路径」，并提示用户恢复 Agent Panel 后跑一次 `/api/requirement/validate` 校验兜底写入的文件。
@@ -363,7 +364,7 @@ else:
 - 完成 PRD/需求口径澄清 -> /doc 写 memory.md + background.md
 - 代码 push 或 merge 成功 -> /doc 写 branch.md（分支名、commit、合并状态）
 - 需求分支首次 push / 涉及仓库或分支变动 -> branches.json（加载 `req-branches-update` skill，或跑 `python3 ~/.agents/scripts/req-branches-scan.py <req-id>`）
-- 新增/修改 DB / Apollo / Nacos 配置 -> /doc 写 config-changes.md
+- 新增/修改 DB / Apollo / Nacos 配置 -> /doc 写 config-changes.md，并同步维护 release-manifest.md 的上线总览
 - 明确测试场景或回归范围 -> /doc 写 test.md
 - 编码前或影响面变化 -> /doc 写 impact.md（核心链路风险）
 - 完成阶段性进展、关键决策、踩坑 -> /notes 追加 notes.md（不要覆盖）

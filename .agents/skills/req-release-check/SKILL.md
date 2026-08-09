@@ -1,17 +1,17 @@
 ---
 name: req-release-check
-description: 批量检查待上线需求的分支、配置、测试、Review 和回滚风险，并生成 release-check.md。
+description: 批量检查经验总结阶段需求的分支、配置、测试、Review 和回滚风险，并生成 release-check.md。
 allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 ---
 
 # Req Release Check
 
-用于：批量或单个检查“待上线”需求的发布就绪状态，聚焦分支、应用归属、DB/Apollo/Nacos、测试证据、Review 结论和回滚方案，并把结论写入 `release-check.md`。
+用于：批量或单个检查准备进入「经验总结」阶段的需求发布就绪状态，聚焦分支、应用归属、DB/Apollo/Nacos、测试证据、Review 结论和回滚方案，并把结论写入 `release-check.md`。
 
 适用：
-- 用户说“上线检查”“检查待上线需求”“上线前预检”“release check”
-- 用户给了 Agent Panel `?status=待上线` 链接或要求检查某个待上线需求
-- 用户说“生成 release-check.md 后把需求推进到待上线”
+- 用户说“上线检查”“检查经验总结阶段需求”“上线前预检”“release check”
+- 用户给了 Agent Panel `?status=经验总结` 链接或要求检查某个经验总结阶段需求
+- 用户说“生成 release-check.md 后把需求推进到经验总结”
 
 不适用：
 - 单个需求的开发过程跟踪（用 `req-tracker`）
@@ -20,10 +20,10 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 
 ## Trigger
 
-- “上线检查” / “检查待上线需求” / “release check”
+- “上线检查” / “检查经验总结阶段需求” / “release check”
 - “生成 release-check.md”
 - “这批上线 N 个需求，检查一下”
-- “先做 release check，再推到待上线”
+- “先做 release check，再推到经验总结”
 
 ## Workflow
 
@@ -36,12 +36,12 @@ curl -sf http://localhost:7331/api/requirements | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 for r in data.get("requirements", []):
-    if r.get("status") == "待上线":
+    if r.get("status") == "经验总结":
         print(f"{r.get('id')}\t{r.get('project')}\t{r.get('title')}")
 '
 ```
 
-如果 Agent Panel 不可用，回退扫描 `~/.agents/req/**/state.json`，筛选 `status == "待上线"`。若用户指定单个 req-id，则只检查该需求。
+如果 Agent Panel 不可用，回退扫描 `~/.agents/req/**/state.json`，筛选 `status == "经验总结"`。若用户指定单个 req-id，则只检查该需求。
 
 ### Step 2: 收集需求材料
 
@@ -51,7 +51,7 @@ for r in data.get("requirements", []):
 - `config-changes.md`：DB、Apollo、Nacos、MQ 或其他发布前配置
 - `test.md`：自测/UAT 证据、失败项、反向检查
 - `impact.md`：核心链路、风险等级、回滚方案
-- `review.md` / `code-review.json`：待上线 review 结论和未关闭问题
+- `review.md` / `code-review.json`：发布前 review 结论和未关闭问题
 
 ### Step 3: 执行检查
 
@@ -100,7 +100,7 @@ for r in data.get("requirements", []):
 
 ### Step 5: 汇总给用户
 
-按需求汇总阻塞项和需关注项。若用户要求“生成后推进到待上线”，在 `release-check.md` 写入成功后调用 `agent-panel-requirement-api` 更新状态。
+按需求汇总阻塞项和需关注项。若用户要求“生成后推进到经验总结”，在 `release-check.md` 写入成功后调用 `agent-panel-requirement-api` 更新状态。
 
 ## Required Checks
 

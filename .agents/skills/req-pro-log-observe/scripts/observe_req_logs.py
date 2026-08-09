@@ -10,8 +10,8 @@ Usage:
   uv run python observe_req_logs.py --req-ids WMS-003,WMS-009 \
     --start-time "2026-06-30 21:09:00"
 
-  # Auto-discover "待上线" requirements
-  uv run python observe_req_logs.py --status 待上线 \
+  # Auto-discover "经验总结" requirements
+  uv run python observe_req_logs.py --status 经验总结 \
     --start-time "2026-06-30 21:09:00"
 
   # Only SEA, with extra keywords
@@ -471,7 +471,7 @@ def parse_args():
     parser.add_argument(
         "--req-ids", default=None, help="Comma-separated requirement IDs (prefix match)"
     )
-    parser.add_argument("--status", default=None, help="Filter by status (e.g. 待上线)")
+    parser.add_argument("--status", default=None, help="Filter by status (e.g. 经验总结)")
     parser.add_argument(
         "--start-time", required=True, help="Start time BJT (YYYY-MM-DD HH:MM:SS)"
     )

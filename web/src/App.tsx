@@ -16,6 +16,8 @@ import {
   GitBranch,
   GitMerge,
   LayoutDashboard,
+  Library,
+  Lightbulb,
   ListChecks,
   RefreshCw,
   Search,
@@ -28,20 +30,22 @@ import type { DashboardStatsPayload, RequirementDuration, StatusCount } from "./
 
 interface AppProps { apiPath: string }
 
-type ReqStatus = "需求对齐" | "方案设计" | "开发中" | "自测中" | "测试中" | "待上线" | "已完成"
+type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "经验总结" | "已完成"
 type ReqCategory = "需求" | "线上问题"
 
-const REQ_STATUSES: ReqStatus[] = ["需求对齐", "方案设计", "开发中", "自测中", "测试中", "待上线", "已完成"]
+const REQ_STATUSES: ReqStatus[] = ["需求澄清", "开发中", "自测中", "测试中", "经验总结", "已完成"]
 const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题"]
 
 const statusMeta: Record<string, { color: string; soft: string }> = {
-  需求对齐: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
-  方案设计: { color: "#f59e0b", soft: "rgba(245, 158, 11, 0.14)" },
+  需求澄清: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
   开发中: { color: "#22d3ee", soft: "rgba(34, 211, 238, 0.14)" },
   自测中: { color: "#3b82f6", soft: "rgba(59, 130, 246, 0.14)" },
   测试中: { color: "#a855f7", soft: "rgba(168, 85, 247, 0.14)" },
-  待上线: { color: "#eab308", soft: "rgba(234, 179, 8, 0.14)" },
+  经验总结: { color: "#eab308", soft: "rgba(234, 179, 8, 0.14)" },
   已完成: { color: "#22c55e", soft: "rgba(34, 197, 94, 0.14)" },
+  需求对齐: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
+  方案设计: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
+  待上线: { color: "#eab308", soft: "rgba(234, 179, 8, 0.14)" },
 }
 
 interface EffortEstimate {
@@ -63,8 +67,23 @@ interface Requirement {
   groupPath?: string[]
   createdAt: number
   updatedAt: number
+  completedAt?: number
   sessionIds: string[]
   reqDir?: string
+  metaPath?: string
+  alignmentPath?: string
+  backgroundPath?: string
+  memoryPath?: string
+  branchPath?: string
+  testPath?: string
+  notesPath?: string
+  configPath?: string
+  impactPath?: string
+  reviewPath?: string
+  releaseManifestPath?: string
+  releaseCheckPath?: string
+  experienceSummaryPath?: string
+  prdPath?: string
   ones?: string
   effortEstimate?: EffortEstimate
 }
@@ -92,6 +111,7 @@ interface SessionInfo {
   cost?: number
 }
 
+interface RequirementDocPayload { ok: boolean; reqId: string; docType: string; file: string; path: string; exists: boolean; content: string }
 interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 interface ConfigPayload {
   requirementScanRoots?: string[]
@@ -102,7 +122,44 @@ interface ConfigPayload {
   branchScopePiModel?: string
   effortEstimatePiModel?: string
   effortEstimateBaseHours?: number
+  cainiaoMockEnabled?: boolean
+  cainiaoMockPort?: number
 }
+
+interface CainiaoMockStatus { enabled: boolean; running: boolean; port: number }
+
+type KnowledgeKind = "businessKnowledge" | "experience"
+interface KnowledgeItem {
+  id: string
+  title: string
+  kind: KnowledgeKind | string
+  type?: string
+  domain?: string
+  project?: string
+  scope?: string
+  status?: string
+  confidence?: string
+  tags?: string[]
+  triggerTerms?: string[]
+  relatedSkills?: string[]
+  relatedRepos?: string[]
+  relatedTables?: string[]
+  relatedApis?: string[]
+  source?: string
+  createdAt?: string
+  updatedAt?: string
+  lastVerifiedAt?: string
+  validUntil?: string
+  summary?: string
+  details?: string | null
+  detailsTruncated?: boolean
+  path?: string
+  score?: number
+  whyMatched?: string[]
+}
+interface KnowledgeListPayload { items: KnowledgeItem[]; generatedAt?: number }
+interface KnowledgeSavePayload { ok: boolean; item: KnowledgeItem }
+type KnowledgeDraft = Partial<KnowledgeItem> & { details?: string; root?: string }
 interface PiConfigFileSnapshot { file: string; label: string; path: string; sensitive: boolean; description: string; content: string; updatedAt: number | null }
 interface PiModelOption { providerId: string; modelId: string; label: string; name?: string; contextWindow?: number | null; reasoning?: boolean; thinkingLevels: string[] }
 interface PiProviderSummary { id: string; api?: string; baseUrl?: string; modelCount: number; hasApiKey: boolean; models: PiModelOption[] }
@@ -173,8 +230,11 @@ interface CodeReviewRepoSnapshot {
 }
 interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; repos: CodeReviewRepoSnapshot[] }
 interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
+interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; checkedAt: number; actions: string[] } }
 interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
-interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null }
+interface SyncBaseResult { repoName: string; ok: boolean; status: string; baseRef?: string; remoteRef?: string; localBranch?: string; currentBranch?: string; beforeCommit?: string; afterCommit?: string; message: string; warnings?: string[] }
+interface SyncBasePayload { ok: boolean; generatedAt: number; results: SyncBaseResult[] }
+interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | "no_diff" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null; diffFiles?: number | null; diffAdditions?: number | null; diffDeletions?: number | null }
 interface ProdMrPayload { ok: boolean; reqId: string; generatedAt: number; branchScope?: BranchScope | null; results: ProdMrResult[] }
 type MergeTarget = "test" | "uat"
 type MergeRepoKind = "frontend" | "backend"
@@ -194,23 +254,31 @@ const cardVariants = {
 const navItems = [
   { href: "/dashboard", label: "状态看板", short: "DB", icon: <LayoutDashboard size={16} /> },
   { href: "/projects", label: "需求看板", short: "PR", icon: <ListChecks size={16} /> },
+  { href: "/business-knowledge", label: "业务知识", short: "BK", icon: <Library size={16} /> },
+  { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
   { href: "/schedulers", label: "Schedulers", short: "SC", icon: <Activity size={16} /> },
   { href: "/git-ai", label: "Git AI", short: "AI", icon: <GitBranch size={16} /> },
+  { href: "/testdata", label: "造数", short: "TD", icon: <Sparkles size={16} /> },
   { href: "/settings", label: "Settings", short: "ST", icon: <Settings size={16} /> },
 ]
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
   if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge"
+  if (href === "/business-knowledge") return path === "/business-knowledge"
+  if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/git-ai") return path === "/git-ai"
+  if (href === "/testdata") return path === "/testdata"
   return path === href
 }
 
 function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/" || path === "/dashboard") return { eyebrow: "Dashboard", title: "状态看板" }
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
+  if (path === "/business-knowledge") return { eyebrow: "Business Knowledge", title: "业务知识" }
+  if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
   if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
   if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
@@ -219,12 +287,13 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/git-ai") return { eyebrow: "Git AI", title: "漏标检查" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
+  if (path === "/testdata") return { eyebrow: "Test Data", title: "测试造数" }
   return { eyebrow: "Agent Panel", title: "React + Rust" }
 }
 
-function AppShell({ path, children }: { path: string; children: React.ReactNode }) {
+function AppShell({ path, children, project, onProjectChange }: { path: string; children: React.ReactNode; project: string; onProjectChange: (v: string) => void }) {
   const meta = titleForPath(path)
-  return <div className="react-shell"><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><span>RUST BACKEND</span><strong>localhost:7331</strong><em>PTY removed</em></div></aside><div className="react-content-shell"><header className="react-topbar"><div><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div><div className="react-topbar-actions"><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
+  return <div className="react-shell"><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><span>RUST BACKEND</span><strong>localhost:7331</strong><em>PTY removed</em></div></aside><div className="react-content-shell"><header className="react-topbar"><div><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div><div className="react-topbar-actions"><label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
 }
 
 function useLocationKey() {
@@ -260,6 +329,25 @@ async function postForm<T>(url: string, data: Record<string, string>): Promise<T
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(data),
   })
+}
+
+const PROJECT_FILTER_KEY = "agent-panel.project"
+const PROJECT_OPTIONS = [
+  { value: "", label: "全部" },
+  { value: "WMS", label: "WMS" },
+]
+
+function readProjectFilter(): string {
+  try { return localStorage.getItem(PROJECT_FILTER_KEY) || "" } catch { return "" }
+}
+
+function useProjectFilter() {
+  const [project, setProjectState] = useState<string>(readProjectFilter)
+  const setProject = (v: string) => {
+    setProjectState(v)
+    try { localStorage.setItem(PROJECT_FILTER_KEY, v) } catch { /* ignore */ }
+  }
+  return { project, setProject }
 }
 
 function useFetch<T>(url: string | null, deps: unknown[] = []) {
@@ -314,7 +402,7 @@ function relAge(ms?: number): string {
 }
 
 function statusPill(status: string) {
-  const meta = statusMeta[status] || statusMeta["需求对齐"]
+  const meta = statusMeta[status] || statusMeta["需求澄清"]
   return <span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}55` }}>{status}</span>
 }
 
@@ -344,6 +432,126 @@ function onesBadge(ones?: string) {
   if (!ref) return <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联 ONES</span>
   if (ref.url) return <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={ref.raw}>🔗 ONES</a>
   return <span className="react-ones-badge react-ones-id" title={ref.label}>ONES</span>
+}
+
+function splitCsvText(value?: string | string[]): string[] {
+  if (Array.isArray(value)) return value.map((v) => v.trim()).filter(Boolean)
+  return (value || "").split(/[，,\n]/).map((v) => v.trim()).filter(Boolean)
+}
+
+function joinList(value?: string[]): string {
+  return (value || []).join(", ")
+}
+
+function emptyKnowledgeDraft(kind: KnowledgeKind): KnowledgeDraft {
+  return {
+    kind,
+    title: "",
+    domain: "general",
+    project: "",
+    scope: "project",
+    status: "active",
+    confidence: "medium",
+    tags: [],
+    triggerTerms: [],
+    relatedSkills: [],
+    relatedRepos: [],
+    relatedTables: [],
+    relatedApis: [],
+    source: "manual",
+    summary: "",
+    details: kind === "businessKnowledge" ? "## 概述\n\n## 规则\n\n## 相关接口\n\n## 相关表\n\n## 注意事项" : "## 现象\n\n## 根因\n\n## 处理方式\n\n## 验证方式\n\n## 过期风险",
+  }
+}
+
+function knowledgeStatusPill(status?: string) {
+  const s = status || "active"
+  const color = s === "active" ? "#22c55e" : s === "stale" ? "#f59e0b" : s === "deprecated" ? "#ef4444" : "#94a3b8"
+  const soft = s === "active" ? "rgba(34,197,94,.14)" : s === "stale" ? "rgba(245,158,11,.14)" : s === "deprecated" ? "rgba(239,68,68,.14)" : "rgba(148,163,184,.14)"
+  return <span className="react-status-pill" style={{ color, background: soft, borderColor: `${color}66` }}>{s}</span>
+}
+
+function confidencePill(confidence?: string) {
+  const value = confidence || "medium"
+  return <span className="react-effort-badge">confidence {value}</span>
+}
+
+function KnowledgePage({ kind }: { kind: KnowledgeKind }) {
+  const isBiz = kind === "businessKnowledge"
+  const label = isBiz ? "业务知识" : "经验"
+  const [query, setQuery] = useState("")
+  const [domain, setDomain] = useState("")
+  const [status, setStatus] = useState("")
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<KnowledgeDraft>(() => emptyKnowledgeDraft(kind))
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const params = new URLSearchParams({ kind, limit: "100" })
+  if (query) params.set("q", query)
+  if (domain) params.set("domain", domain)
+  if (status) params.set("status", status)
+  const list = useFetch<KnowledgeListPayload>(`/api/knowledge?${params.toString()}`, [kind, query, domain, status])
+  const items = list.data?.items || []
+  const domains = useMemo(() => Array.from(new Set(items.map((i) => i.domain).filter(Boolean) as string[])).sort(), [items])
+  const selected = selectedId ? items.find((item) => item.id === selectedId) || null : null
+  useEffect(() => { setDraft(emptyKnowledgeDraft(kind)); setSelectedId(null); setMessage(null) }, [kind])
+  const editItem = async (item: KnowledgeItem) => {
+    setSelectedId(item.id)
+    try {
+      const full = await fetchJson<{ item: KnowledgeItem }>(`/api/knowledge/item?id=${encodeURIComponent(item.id)}`)
+      setDraft({ ...full.item, details: full.item.details || "" })
+    } catch {
+      setDraft({ ...item, details: item.summary || "" })
+    }
+  }
+  const resetDraft = () => { setSelectedId(null); setDraft(emptyKnowledgeDraft(kind)); setMessage(null) }
+  const save = async () => {
+    if (!draft.title?.trim() || saving) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      const payload = {
+        id: selectedId || draft.id || undefined,
+        kind,
+        title: draft.title,
+        domain: draft.domain || "general",
+        project: draft.project || "",
+        scope: draft.scope || "project",
+        status: draft.status || "active",
+        confidence: draft.confidence || "medium",
+        tags: splitCsvText(draft.tags),
+        triggerTerms: splitCsvText(draft.triggerTerms),
+        relatedSkills: splitCsvText(draft.relatedSkills),
+        relatedRepos: splitCsvText(draft.relatedRepos),
+        relatedTables: splitCsvText(draft.relatedTables),
+        relatedApis: splitCsvText(draft.relatedApis),
+        source: draft.source || "manual",
+        summary: draft.summary || "",
+        details: draft.details || "",
+      }
+      const saved = await postJson<KnowledgeSavePayload>("/api/knowledge", payload)
+      setSelectedId(saved.item.id)
+      setDraft({ ...saved.item, details: saved.item.details || draft.details || "" })
+      setMessage("已保存")
+      list.refresh()
+    } catch (err) {
+      setMessage(`保存失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+  const apiHint = `POST /api/agent/knowledge/query\n{\n  "kind": "${kind}",\n  "intent": "${query || (isBiz ? "状态流转 / 接口字段" : "排障现象 / 错误信息")}",\n  "domain": "${domain || "wms"}",\n  "limit": 5,\n  "tokensBudget": 2200\n}`
+  return <PageChrome icon={isBiz ? <Library size={15} /> : <Lightbulb size={15} />} eyebrow={isBiz ? "Business Knowledge" : "Experiences"} title={label} description={isBiz ? "维护短保质期的业务事实、规则、接口和表关系；Agent 默认只查询摘要。" : "维护特化排障经验、踩坑记录和历史处理方式；成熟稳定后再提升为 skill。"} actions={<button onClick={list.refresh}><RefreshCw size={15} />刷新</button>}><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>关键词<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={isBiz ? "状态 / 接口 / 表 / 字段" : "现象 / 报错 / 模块 / 处理方式"} /></label><label>Domain<input list="knowledge-domains" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="wms / general" /><datalist id="knowledge-domains">{domains.map((d) => <option key={d} value={d} />)}</datalist></label><label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部</option><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>接口提示<textarea readOnly rows={4} value={apiHint} /></label></div><div className="react-actions"><button onClick={resetDraft}>新建{label}</button><a href={isBiz ? "/experiences" : "/business-knowledge"}>{isBiz ? "切到经验" : "切到业务知识"}</a></div></section>{list.error ? <ErrorCard error={list.error} /> : <div className="react-knowledge-layout"><section className="react-card-list">{list.loading ? <LoadingCard /> : items.length === 0 ? <EmptyCard>暂无{label}记录。</EmptyCard> : items.map((item, index) => <KnowledgeCard key={item.id} item={item} selected={item.id === selectedId} index={index} onEdit={() => editItem(item)} />)}</section><KnowledgeEditor kind={kind} draft={draft} setDraft={setDraft} saving={saving} selected={selected} message={message} onSave={save} onReset={resetDraft} /></div>}</PageChrome>
+}
+
+function KnowledgeCard({ item, selected, index, onEdit }: { item: KnowledgeItem; selected: boolean; index: number; onEdit: () => void }) {
+  return <motion.article className={`react-list-card react-knowledge-card ${selected ? "active" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{item.id}</span><h3>{item.title}</h3><p>{item.summary || "暂无摘要"}</p><div className="react-card-meta"><span>{item.domain || "general"}</span>{item.project ? <span>{item.project}</span> : null}<span>{item.scope || "project"}</span><span>更新 {item.updatedAt || "-"}</span>{item.whyMatched?.length ? <span>match: {item.whyMatched.join(" / ")}</span> : null}</div><div className="react-chip-list">{(item.tags || []).slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</div></div><div className="react-card-side">{knowledgeStatusPill(item.status)}{confidencePill(item.confidence)}<button type="button" className="react-copy-link-btn" onClick={onEdit}>编辑</button></div></motion.article>
+}
+
+function KnowledgeEditor({ kind, draft, setDraft, saving, selected, message, onSave, onReset }: { kind: KnowledgeKind; draft: KnowledgeDraft; setDraft: (draft: KnowledgeDraft) => void; saving: boolean; selected: KnowledgeItem | null; message: string | null; onSave: () => void; onReset: () => void }) {
+  const isBiz = kind === "businessKnowledge"
+  const set = (patch: KnowledgeDraft) => setDraft({ ...draft, ...patch })
+  return <section className="react-panel react-knowledge-editor"><PanelHead kicker={selected ? "Edit" : "Create"} title={selected ? selected.title : `新建${isBiz ? "业务知识" : "经验"}`} chip={draft.id || "new"} /><div className="react-knowledge-form"><label>标题<input value={draft.title || ""} onChange={(e) => set({ title: e.target.value })} placeholder={isBiz ? "例如：WMS 出库单状态流转" : "例如：波次取消后库存占用未释放排查"} /></label><label>Domain<input value={draft.domain || ""} onChange={(e) => set({ domain: e.target.value })} placeholder="wms" /></label><label>Project<input value={draft.project || ""} onChange={(e) => set({ project: e.target.value })} placeholder="可选" /></label><label>Scope<select value={draft.scope || "project"} onChange={(e) => set({ scope: e.target.value })}><option value="project">project</option><option value="global">global</option></select></label><label>Status<select value={draft.status || "active"} onChange={(e) => set({ status: e.target.value })}><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>Confidence<select value={draft.confidence || "medium"} onChange={(e) => set({ confidence: e.target.value })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label><label>Tags<input value={joinList(draft.tags)} onChange={(e) => set({ tags: splitCsvText(e.target.value) })} placeholder="逗号分隔" /></label><label>Trigger Terms<input value={joinList(draft.triggerTerms)} onChange={(e) => set({ triggerTerms: splitCsvText(e.target.value) })} placeholder="Agent 查询关键词" /></label><label>Related Skills<input value={joinList(draft.relatedSkills)} onChange={(e) => set({ relatedSkills: splitCsvText(e.target.value) })} placeholder="skill-name" /></label><label>Related Repos<input value={joinList(draft.relatedRepos)} onChange={(e) => set({ relatedRepos: splitCsvText(e.target.value) })} placeholder="yl-cwhsea-wms-web" /></label><label>Related Tables<input value={joinList(draft.relatedTables)} onChange={(e) => set({ relatedTables: splitCsvText(e.target.value) })} placeholder="shipment_header" /></label><label>Related APIs<input value={joinList(draft.relatedApis)} onChange={(e) => set({ relatedApis: splitCsvText(e.target.value) })} placeholder="POST /wms-web/... 或 api-* id" /></label><label>Source<input value={draft.source || ""} onChange={(e) => set({ source: e.target.value })} placeholder="manual / code / test / session" /></label><label className="react-knowledge-wide">摘要<textarea rows={3} value={draft.summary || ""} onChange={(e) => set({ summary: e.target.value })} placeholder="给 Agent 默认返回的一句话或短段摘要" /></label><label className="react-knowledge-wide">详情<textarea rows={14} value={draft.details || ""} onChange={(e) => set({ details: e.target.value })} placeholder="Markdown 正文" /></label></div><div className="react-actions"><button onClick={onSave} disabled={saving || !draft.title?.trim()}>{saving ? "保存中…" : "保存"}</button><button type="button" onClick={onReset}>重置</button></div>{message ? <p className={message.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{message}</p> : null}<p className="react-muted">保存后写入 <code>{isBiz ? ".agents/business-knowledge/" : ".agents/experiences/"}</code> 或全局 <code>~/.agents/</code> 对应目录，自动维护 created_at / updated_at。</p></section>
 }
 
 function PageChrome({ icon, eyebrow, title, description, actions, children }: { icon: React.ReactNode; eyebrow: string; title: string; description?: string; actions?: React.ReactNode; children: React.ReactNode }) {
@@ -381,13 +589,14 @@ function PipelineBar({ item, index }: { item: StatusCount; index: number }) {
 }
 
 function DurationRow({ item, max, index }: { item: RequirementDuration; max: number; index: number }) {
-  const meta = statusMeta[item.req.status] || statusMeta["需求对齐"]
+  const meta = statusMeta[item.req.status] || statusMeta["需求澄清"]
   const pct = Math.min(100, (item.durationMs / Math.max(max, 1)) * 100)
   return <motion.tr initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 + index * 0.035 }}><td><a href={`/requirement?id=${encodeURIComponent(item.req.id)}`}>{item.req.title}</a><div className="react-duration-id">{item.req.id}</div></td><td><span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}55` }}>{item.req.status}</span></td><td className="react-muted">{(item.req.projects?.length ? item.req.projects : [item.req.project]).filter(Boolean).join(" / ") || "-"}</td><td className="react-muted">{formatDate(item.req.createdAt)}</td><td className="react-duration-cell"><motion.div className="react-duration-fill" initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.8, delay: 0.2 + index * 0.025 }} /><span>{formatDuration(item.durationMs)}</span></td></motion.tr>
 }
 
-function DashboardPage({ apiPath }: { apiPath: string }) {
-  const { data: payload, error, loading, refresh } = useFetch<DashboardStatsPayload>(apiPath)
+function DashboardPage({ apiPath, project }: { apiPath: string; project: string }) {
+  const url = project ? `${apiPath}${apiPath.includes("?") ? "&" : "?"}project=${encodeURIComponent(project)}` : apiPath
+  const { data: payload, error, loading, refresh } = useFetch<DashboardStatsPayload>(url, [project])
   const stats = payload?.stats
   const completionRate = useMemo(() => (!stats || stats.total === 0) ? 0 : Math.round((stats.completedCount / stats.total) * 100), [stats])
   const activeRate = useMemo(() => (!stats || stats.total === 0) ? 0 : Math.round((stats.inProgressCount / stats.total) * 100), [stats])
@@ -398,20 +607,39 @@ function DurationTable({ durations, max }: { durations: RequirementDuration[]; m
   return <div className="react-table-wrap"><table className="react-duration-table"><thead><tr><th>需求</th><th>状态</th><th>项目</th><th>创建时间</th><th>交付时长</th></tr></thead><tbody>{durations.map((item, index) => <DurationRow key={item.req.id} item={item} max={max} index={index} />)}</tbody></table></div>
 }
 
-function ProjectsPage() {
+function billableWindow(): { from: number; to: number; label: string } {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  const to = new Date(y, m, 20, 23, 59, 59, 999)
+  const from = new Date(y, m - 1, 20, 0, 0, 0, 0)
+  const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  return { from: from.getTime(), to: to.getTime(), label: `${fmt(from)} ~ ${fmt(to)}` }
+}
+
+function ProjectsPage({ globalProject }: { globalProject: string }) {
   const { data, error, loading } = useFetch<{ requirements: Requirement[] }>("/api/requirements")
   const params = new URLSearchParams(window.location.search)
-  const [project, setProject] = useState(params.get("project") || "")
+  const [project, setProject] = useState(params.get("project") || readProjectFilter())
+  useEffect(() => {
+    if (!globalProject) return
+    setProject(globalProject)
+    const q = new URLSearchParams(window.location.search)
+    q.set("project", globalProject)
+    window.history.replaceState(null, "", `${window.location.pathname}?${q.toString()}`)
+  }, [globalProject])
   const [createdFrom, setCreatedFrom] = useState(params.get("createdFrom") || "")
   const [createdTo, setCreatedTo] = useState(params.get("createdTo") || "")
   const [statuses, setStatuses] = useState<string[]>(params.getAll("status"))
   const [category, setCategory] = useState<string>(params.get("category") || "")
   const [keyword, setKeyword] = useState(params.get("q") || "")
+  const [billableOnly, setBillableOnly] = useState(false)
   const reqs = data?.requirements || []
+  const win = useMemo(() => billableWindow(), [])
   const projects = useMemo(() => [...new Set(reqs.flatMap((r) => r.projects?.length ? r.projects : [r.project]).filter(Boolean))].sort(), [reqs])
   const counts = useMemo(() => Object.fromEntries(REQ_STATUSES.map((s) => [s, reqs.filter((r) => r.status === s).length])), [reqs]) as Record<string, number>
   const filtered = useMemo(() => reqs.filter((r) => {
-    if (statuses.length === 0 && r.status === "已完成") return false
+    if (!billableOnly && statuses.length === 0 && r.status === "已完成") return false
     if (statuses.length && !statuses.includes(r.status)) return false
     if (category && (r.category ?? "需求") !== category) return false
     if (project && !(r.projects?.length ? r.projects : [r.project]).includes(project)) return false
@@ -422,8 +650,17 @@ function ProjectsPage() {
       const haystack = [r.id, r.title, r.description || "", projectsOf(r)].join(" ").toLowerCase()
       if (!haystack.includes(kw)) return false
     }
+    if (billableOnly) {
+      if (parseOnesRef(r.ones)) return false
+      if ((r.category ?? "需求") === "线上问题") return false
+      if (r.status === "已完成") {
+        const doneAt = r.completedAt ?? r.updatedAt
+        if (doneAt < win.from || doneAt > win.to) return false
+      }
+    }
     return true
-  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, category, project, createdFrom, createdTo, keyword])
+  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, category, project, createdFrom, createdTo, keyword, billableOnly, win])
+  const billableHours = useMemo(() => filtered.reduce((sum, r) => sum + (r.effortEstimate?.estimatedHours || 0), 0), [filtered])
   const apply = () => {
     const q = new URLSearchParams()
     if (createdFrom) q.set("createdFrom", createdFrom)
@@ -434,7 +671,7 @@ function ProjectsPage() {
     for (const s of statuses) q.append("status", s)
     window.location.href = `/projects${q.toString() ? `?${q}` : ""}`
   }
-  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 pi session 和最近更新。"><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>类别<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label>创建开始<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建结束<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述" /></label></div><div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a></div></section>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} />)}</div>}</PageChrome>
+  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 pi session 和最近更新。"><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>类别<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label>创建开始<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建结束<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述" /></label></div><div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a><button type="button" className={`react-toggle-btn ${billableOnly ? "active" : ""}`} onClick={() => setBillableOnly((v) => !v)} title="筛选：未关联 ONES、非线上问题、完成时间在上月20到本月20之间或未完成">本月可结算业务工时</button></div></section>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>{billableOnly ? <div className="react-billable-summary"><span>本月可结算业务工时</span><strong>{billableHours.toFixed(1)}h</strong><span>{filtered.length} 条需求</span><span className="react-muted">{win.label}</span></div> : null}<div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} />)}</div></>}</PageChrome>
 }
 
 function RequirementCard({ req, index }: { req: Requirement; index: number }) {
@@ -572,9 +809,12 @@ function diffDomId(key: string): string {
 
 function CodeReviewPanel({ req }: { req: Requirement }) {
   const { data, error, loading, refresh } = useFetch<CodeReviewPayload>(`/api/requirement/code-review?id=${encodeURIComponent(req.id)}`, [req.id])
+  const gate = useFetch<ReviewGatePayload>(`/api/requirement/review-gate?id=${encodeURIComponent(req.id)}`, [req.id])
   const [refreshing, setRefreshing] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncPayload, setSyncPayload] = useState<SyncBasePayload | null>(null)
   const scope = data?.branchScope || null
   const review = data?.review || null
   const stats = reviewStats(review)
@@ -584,16 +824,37 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
     setRefreshing(true)
     setActionError(null)
     try {
-      await postForm<CodeReviewPayload>("/api/requirement/code-review", { reqId: req.id })
+      const payload = await postForm<CodeReviewPayload & { sync?: SyncBasePayload }>("/api/requirement/code-review", { reqId: req.id })
+      if (payload.sync?.results?.length) setSyncPayload(payload.sync)
       refresh()
+      gate.refresh()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
       setRefreshing(false)
     }
   }
-  return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Diff" title="代码差异" chip={review ? `${stats.fileCount} files` : canScan ? "ready" : "missing scope"} />
-    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新代码差异" : "生成代码差异"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
+  const syncBase = async () => {
+    if (!canScan || syncing) return
+    setSyncing(true)
+    setActionError(null)
+    try {
+      const payload = await postForm<SyncBasePayload>("/api/requirement/sync-base", { reqId: req.id })
+      setSyncPayload(payload)
+      refresh()
+      gate.refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+  return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Review Gate" title="代码审查门禁" chip={gate.data?.gate?.label || (gate.loading ? "loading" : "gate")} />
+    <div className={`react-review-gate react-review-gate-${gate.data?.gate?.status || "unknown"}`}><strong>{gate.data?.gate?.label || "读取中"}</strong><span>{gate.data?.gate?.reason || "自测中推进到测试中前必须完成代码审查门禁。"}</span>{gate.data?.gate?.source ? <em>source: {gate.data.gate.source}</em> : null}</div>
+    {gate.data?.gate?.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{gate.data.gate.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
+    {gate.error ? <p className="react-effort-error">门禁加载失败：{gate.error}</p> : null}
+    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新代码差异" : "生成代码差异"}</button><button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
+    {syncPayload?.results?.length ? <details className="react-review-repo" open><summary><span><strong>生产基线同步</strong><em>{formatDateTime(syncPayload.generatedAt)}</em></span><span className="react-review-size">{syncPayload.results.filter((r) => r.ok).length}/{syncPayload.results.length} ok</span></summary><div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>应用</th><th>本地分支</th><th>状态</th><th>before</th><th>after</th><th>说明</th></tr></thead><tbody>{syncPayload.results.map((r) => <tr key={r.repoName}><td><strong>{r.repoName}</strong></td><td><code>{r.localBranch || r.baseRef || "-"}</code></td><td><span className={`react-merge-status ${r.ok ? "merged" : "conflict"}`}>{r.status}</span></td><td><code>{r.beforeCommit || "-"}</code></td><td><code>{r.afterCommit || "-"}</code></td><td>{r.message}{r.warnings?.length ? <em>{r.warnings.join("; ")}</em> : null}</td></tr>)}</tbody></table></div></details> : null}
     {error ? <p className="react-effort-error">加载失败：{error}</p> : null}{actionError ? <p className="react-effort-error">刷新失败：{actionError}</p> : null}
     {loading ? <LoadingCard label="正在加载代码差异…" /> : <>
       <div className="react-branch-scope">
@@ -707,12 +968,13 @@ function ProdMrPanel({ req }: { req: Requirement }) {
   }
   const results = payload?.results || []
   const okCount = results.filter((item) => item.webUrl).length
-  const chip = payload ? `${okCount}/${results.length} ready` : "test/uat → prod"
+  const noDiffCount = results.filter((item) => item.status === "no_diff").length
+  const chip = payload ? `${okCount}/${results.length} ready${noDiffCount ? ` · ${noDiffCount} 无差异` : ""}` : "test/uat → prod"
   return <section className="react-panel react-prod-mr-panel"><PanelHead kicker="Production MR" title="生产 MR" chip={chip} />
-    <p className="react-muted">按 <code>branches.json</code> 中每个应用的每个需求分支创建生产 MR；后端目标 <code>master</code>，前端目标 <code>production</code>。再次点击会重新扫描并复用已存在的 open MR。</p>
+    <p className="react-muted">按 <code>branches.json</code> 中每个应用的每个需求分支创建生产 MR；后端目标 <code>master</code>，前端目标 <code>production</code>。生成前先比对需求分支与生产分支的差异，<strong>无差异的仓库自动跳过 MR</strong>。再次点击会重新扫描并复用已存在的 open MR。</p>
     <div className="react-actions"><button onClick={createMrs} disabled={loading}><GitBranch size={15} />{loading ? "生成中…" : payload ? "重新生成 / 复用 MR" : "生成生产 MR 链接"}</button>{payload?.generatedAt ? <span className="react-muted">更新 {formatDateTime(payload.generatedAt)}</span> : null}</div>
     {error ? <p className="react-effort-error">生成失败：{error}</p> : null}
-    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>MR</th><th>复制</th></tr></thead><tbody>{results.map((item, index) => { const key = `${item.repoName}-${item.sourceBranch}-${index}`; return <tr key={key}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch}</code></td><td><span className={`react-prod-mr-status ${item.status}`}>{item.status === "created" ? "新建" : item.status === "reused" ? "复用" : item.status === "skipped" ? "跳过" : "失败"}</span>{item.error ? <em>{item.error}</em> : null}</td><td>{item.webUrl ? <a href={item.webUrl} target="_blank" rel="noopener noreferrer">!{item.iid || "MR"}</a> : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <button type="button" className="react-copy-link-btn" onClick={() => copyMrLink(item, index)}>{copiedKey === key ? "已复制" : "复制链接"}</button> : <span className="react-muted">-</span>}</td></tr> })}</tbody></table></div> : payload ? <p className="react-muted">未生成 MR，请检查 <code>branches.json</code> 是否包含应用和分支。</p> : null}
+    {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>生产差异</th><th>MR</th><th>复制</th></tr></thead><tbody>{results.map((item, index) => { const key = `${item.repoName}-${item.sourceBranch}-${index}`; return <tr key={key}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch}</code></td><td><span className={`react-prod-mr-status ${item.status}`}>{item.status === "created" ? "新建" : item.status === "reused" ? "复用" : item.status === "skipped" ? "跳过" : item.status === "no_diff" ? "无差异" : "失败"}</span>{item.error ? <em>{item.error}</em> : null}</td><td>{item.diffFiles != null ? (item.diffFiles === 0 ? <span className="react-muted">无</span> : <span><span className="react-review-add">+{item.diffAdditions ?? 0}</span> / <span className="react-review-del">-{item.diffDeletions ?? 0}</span> <span className="react-muted">({item.diffFiles})</span></span>) : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <a href={item.webUrl} target="_blank" rel="noopener noreferrer">!{item.iid || "MR"}</a> : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <button type="button" className="react-copy-link-btn" onClick={() => copyMrLink(item, index)}>{copiedKey === key ? "已复制" : "复制链接"}</button> : <span className="react-muted">-</span>}</td></tr> })}</tbody></table></div> : payload ? <p className="react-muted">未生成 MR，请检查 <code>branches.json</code> 是否包含应用和分支。</p> : null}
   </section>
 }
 
@@ -823,6 +1085,44 @@ function RequirementMergePage() {
   </PageChrome>
 }
 
+function markdownPreview(content: string, expanded: boolean, max = 2600): { text: string; truncated: boolean } {
+  const clean = (content || "").trim()
+  if (!clean) return { text: "", truncated: false }
+  if (expanded || clean.length <= max) return { text: clean, truncated: false }
+  return { text: `${clean.slice(0, max)}\n…`, truncated: true }
+}
+
+function RequirementDocPanel({ id, req, docType, title, kicker, description, path, actions }: { id: string; req: Requirement; docType: string; title: string; kicker: string; description: string; path?: string; actions?: React.ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
+  const doc = useFetch<RequirementDocPayload>(req.reqDir ? `/api/requirement/doc?id=${encodeURIComponent(req.id)}&file=${encodeURIComponent(docType)}` : null, [req.id, docType])
+  const content = doc.data?.content || ""
+  const preview = markdownPreview(content, expanded)
+  const chip = doc.loading ? "loading" : doc.data?.exists ? doc.data.file : path ? "path only" : "missing"
+  return <section id={id} className="react-panel react-doc-panel"><PanelHead kicker={kicker} title={title} chip={chip} />
+    <p className="react-muted">{description}</p>
+    <div className="react-actions">{actions}{path || doc.data?.path ? <code className="react-doc-path">{doc.data?.path || path}</code> : null}</div>
+    {doc.error ? <p className="react-effort-error">加载失败：{doc.error}</p> : doc.loading ? <LoadingCard label="正在加载文档…" /> : preview.text ? <><pre className="react-doc-preview">{preview.text}</pre>{preview.truncated || expanded ? <div className="react-actions"><button type="button" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全文"}</button></div> : null}</> : <p className="react-muted">暂无内容。可在需求澄清阶段生成或更新该文档。</p>}
+  </section>
+}
+
+function RequirementFilesPanel({ req }: { req: Requirement }) {
+  const rows = [
+    ["alignment.md", req.alignmentPath || (req.reqDir ? `${req.reqDir}/alignment.md` : "-")],
+    ["background.md", req.backgroundPath || (req.reqDir ? `${req.reqDir}/background.md` : "-")],
+    ["memory.md", req.memoryPath || (req.reqDir ? `${req.reqDir}/memory.md` : "-")],
+    ["impact.md", req.impactPath || (req.reqDir ? `${req.reqDir}/impact.md` : "-")],
+    ["branch.md", req.branchPath || (req.reqDir ? `${req.reqDir}/branch.md` : "-")],
+    ["test.md", req.testPath || (req.reqDir ? `${req.reqDir}/test.md` : "-")],
+    ["release-manifest.md", req.releaseManifestPath || (req.reqDir ? `${req.reqDir}/release-manifest.md` : "-")],
+    ["release-check.md", req.releaseCheckPath || (req.reqDir ? `${req.reqDir}/release-check.md` : "-")],
+    ["experience-summary.md", req.experienceSummaryPath || (req.reqDir ? `${req.reqDir}/experience-summary.md` : "-")],
+    ["notes.md", req.notesPath || (req.reqDir ? `${req.reqDir}/notes.md` : "-")],
+  ]
+  return <section className="react-panel"><PanelHead kicker="Files" title="需求文件" />
+    <div className="react-meta-grid">{rows.flatMap(([name, value]) => [<span key={`${name}-n`}>{name}</span>, <span key={`${name}-v`}>{value}</span>])}</div>
+  </section>
+}
+
 function RequirementPage() {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const { data, error, loading, refresh } = RequirementsData()
@@ -832,11 +1132,48 @@ function RequirementPage() {
   const [category, setCategory] = useState<ReqCategory | "">("")
   const [savingStatus, setSavingStatus] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [command, setCommand] = useState("")
-  const submitStatus = async () => { if (!req || !status || savingStatus) return; setSavingStatus(true); try { await postForm("/api/requirement/status", { reqId: req.id, status, note }); refresh() } finally { setSavingStatus(false) } }
-  const submitCategory = async () => { if (!req || !category || savingCategory) return; setSavingCategory(true); try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() } finally { setSavingCategory(false) } }
-  const newSession = async () => { if (!req) return; const res = await postForm<{ command: string }>("/api/requirement/new-session", { reqId: req.id }); setCommand(res.command) }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、代码差异与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section><CodeReviewPanel req={req} /><MergeBranchPanel req={req} /><ProdMrPanel req={req} /><OnesPanel req={req} onSaved={refresh} /><section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><div className="react-inline-form"><select value={status} onChange={(e) => setStatus(e.target.value as ReqStatus)}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div><div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section><section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section><section className="react-panel"><PanelHead kicker="Files" title="需求文件" /><div className="react-meta-grid"><span>memory.md</span><span>{req.reqDir ? `${req.reqDir}/memory.md` : "-"}</span><span>branch.md</span><span>{req.reqDir ? `${req.reqDir}/branch.md` : "-"}</span><span>test.md</span><span>{req.reqDir ? `${req.reqDir}/test.md` : "-"}</span><span>review.md</span><span>{req.reqDir ? `${req.reqDir}/review.md` : "-"}</span></div></section></div>}</PageChrome>
+  const submitStatus = async () => {
+    if (!req || !status || savingStatus) return
+    setSavingStatus(true)
+    setStatusMessage(null)
+    try {
+      await postForm("/api/requirement/status", { reqId: req.id, status, note })
+      setStatusMessage("状态已保存")
+      refresh()
+    } catch (err) {
+      setStatusMessage(`状态保存失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSavingStatus(false)
+    }
+  }
+  const submitCategory = async () => {
+    if (!req || !category || savingCategory) return
+    setSavingCategory(true)
+    try { await postForm("/api/requirement/category", { reqId: req.id, category }); refresh() }
+    finally { setSavingCategory(false) }
+  }
+  const newSession = async () => {
+    if (!req) return
+    const res = await postForm<{ command: string }>("/api/requirement/new-session", { reqId: req.id })
+    setCommand(res.command)
+  }
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、上线清单、业务背景、经验总结与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#business-background"><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
+      <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
+      <RequirementDocPanel id="release-manifest" req={req} docType="release-manifest" title="上线清单" kicker="Release Manifest" path={req.releaseManifestPath} description="贯穿需求全流程维护：集中展示 DB 表、配置、Topic/Group、Job、开关、接口和上线人工动作，避免发布时遗漏。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=release-check&tokens=req.releaseManifest,req.configChanges,req.branchScope&budget=3000`} target="_blank" rel="noreferrer">清单上下文</a></>} />
+      <RequirementDocPanel id="business-background" req={req} docType="background" title="业务背景文档" kicker="Business Context" path={req.backgroundPath} description="给不熟悉业务的开发/测试快速理解背景，也作为后续经验总结的参考材料。" actions={<><a href="/business-knowledge"><Library size={15} />业务知识库</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=clarification&budget=3000`} target="_blank" rel="noreferrer">澄清上下文</a></>} />
+      <RequirementDocPanel id="experience-summary" req={req} docType="experience-summary" title="经验总结闭环" kicker="Capability Evolution" path={req.experienceSummaryPath} description="记录本次需求暴露出的业务知识、经验、skill 和流程改进，让下一次需求执行更快更稳。" actions={<><a href="/experiences"><Lightbulb size={15} />经验库</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=experience-summary&budget=3000`} target="_blank" rel="noreferrer">总结上下文</a></>} />
+      <CodeReviewPanel req={req} />
+      <MergeBranchPanel req={req} />
+      <ProdMrPanel req={req} />
+      <OnesPanel req={req} onSaved={refresh} />
+      <section className="react-panel"><PanelHead kicker="Status" title="状态切换" /><p className="react-muted">新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }}><option value="">选择状态</option>{REQ_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button></div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section>
+      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section>
+      <RequirementFilesPanel req={req} />
+    </div>}
+  </PageChrome>
 }
 
 function modelOptions(pi: PiConfigSummary | null): string[] {
@@ -846,6 +1183,7 @@ function modelOptions(pi: PiConfigSummary | null): string[] {
 function SettingsPage() {
   const dashboard = useFetch<ConfigPayload>("/api/config")
   const piConfig = useFetch<PiConfigSummary>("/api/pi-config")
+  const cainiaoStatus = useFetch<CainiaoMockStatus>("/api/cainiao-mock/status")
   const [scanRootsText, setScanRootsText] = useState("")
   const [draft, setDraft] = useState<ConfigPayload>({})
   const [fileContent, setFileContent] = useState("")
@@ -856,9 +1194,10 @@ function SettingsPage() {
   const options = modelOptions(piConfig.data)
   const saveScanRoots = async () => { await postJson("/api/config", { requirementScanRoots: scanRootsText.split(/[\n,]/).map((v) => v.trim()).filter(Boolean) }); dashboard.refresh(); setSavedHint("扫描目录已保存") }
   const saveModels = async () => { await postJson("/api/config", draft); dashboard.refresh(); setSavedHint("配置已保存") }
+  const saveCainiaoMock = async () => { await postJson("/api/config", { cainiaoMockEnabled: draft.cainiaoMockEnabled, cainiaoMockPort: draft.cainiaoMockPort }); dashboard.refresh(); cainiaoStatus.refresh(); setSavedHint("菜鸟打印 Mock 已保存") }
   const savePiFile = async () => { const next = await postJson<PiConfigFileSnapshot>("/api/pi-config/file", { file: "settings", content: fileContent }); setFileSnapshot(next); setFileContent(next.content); setSavedHint("Pi settings.json 已保存") }
   const selectModel = (key: keyof ConfigPayload) => <select value={String(draft[key] || "")} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}><option value="">选择 Pi 模型</option>{options.map((m) => <option key={m} value={m}>{m}</option>)}</select>
-  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置需求扫描目录、Pi 任务模型和 Pi settings。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Scan Roots" title="需求扫描目录" chip={savedHint || undefined} /><p className="react-muted">每个目录会自动查找其下的 <code>.agents/req/</code> 或 <code>req/</code>。</p><label className="react-editor-label">扫描目录<textarea value={scanRootsText} onChange={(e) => setScanRootsText(e.target.value)} rows={5} placeholder="/home/hevin/Developer/company/WMS" /></label><div className="react-actions"><button onClick={saveScanRoots}>保存扫描目录</button></div></section><section className="react-panel"><PanelHead kicker="Models" title="Pi 任务模型" chip={piConfig.loading ? "loading" : `${options.length} models`} /><p className="react-muted">模型选项来自 <code>~/.pi/agent/models.json</code>，只读取 provider/model 名称，不回显 API Key。</p><div className="react-settings-grid"><label>Code Review{selectModel("codeReviewPiModel")}</label><label>Branch Scope{selectModel("branchScopePiModel")}</label><label>Effort Estimate{selectModel("effortEstimatePiModel")}</label><label>基础工时<input type="number" value={draft.effortEstimateBaseHours || 4} onChange={(e) => setDraft({ ...draft, effortEstimateBaseHours: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveModels}>保存模型配置</button><button type="button" onClick={piConfig.refresh}>刷新模型列表</button></div>{piConfig.error ? <ErrorCard error={piConfig.error} /> : <div className="react-model-list">{(piConfig.data?.providers || []).map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 5).map((m) => m.modelId).join(" / ")}{p.models.length > 5 ? " …" : ""}</p></div>)}</div>}</section><section className="react-panel react-config-editor"><PanelHead kicker="Pi File" title="settings.json" chip={fileSnapshot?.path || "~/.pi/agent/settings.json"} /><textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile}>保存 settings.json</button></div></section></div>}</PageChrome>
+  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置需求扫描目录、Pi 任务模型和 Pi settings。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Scan Roots" title="需求扫描目录" chip={savedHint || undefined} /><p className="react-muted">每个目录会自动查找其下的 <code>.agents/req/</code> 或 <code>req/</code>。</p><label className="react-editor-label">扫描目录<textarea value={scanRootsText} onChange={(e) => setScanRootsText(e.target.value)} rows={5} placeholder="/home/hevin/Developer/company/WMS" /></label><div className="react-actions"><button onClick={saveScanRoots}>保存扫描目录</button></div></section><section className="react-panel"><PanelHead kicker="Models" title="Pi 任务模型" chip={piConfig.loading ? "loading" : `${options.length} models`} /><p className="react-muted">模型选项来自 <code>~/.pi/agent/models.json</code>，只读取 provider/model 名称，不回显 API Key。</p><div className="react-settings-grid"><label>Code Review{selectModel("codeReviewPiModel")}</label><label>Branch Scope{selectModel("branchScopePiModel")}</label><label>Effort Estimate{selectModel("effortEstimatePiModel")}</label><label>基础工时<input type="number" value={draft.effortEstimateBaseHours || 4} onChange={(e) => setDraft({ ...draft, effortEstimateBaseHours: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveModels}>保存模型配置</button><button type="button" onClick={piConfig.refresh}>刷新模型列表</button></div>{piConfig.error ? <ErrorCard error={piConfig.error} /> : <div className="react-model-list">{(piConfig.data?.providers || []).map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 5).map((m) => m.modelId).join(" / ")}{p.models.length > 5 ? " …" : ""}</p></div>)}</div>}</section><section className="react-panel"><PanelHead kicker="Cainiao" title="菜鸟打印 Mock" chip={cainiaoStatus.data ? (cainiaoStatus.data.running ? "运行中" : "已停止") : "..."} /><p className="react-muted">内置 mock 菜鸟云打印客户端，监听 <code>ws://127.0.0.1:{draft.cainiaoMockPort || 13528}</code>，让 WMS 前端以为打印成功（getPrinters / print 返回 success）。</p><label className="react-switch"><input type="checkbox" checked={Boolean(draft.cainiaoMockEnabled)} onChange={(e) => setDraft({ ...draft, cainiaoMockEnabled: e.target.checked })} />启用菜鸟打印 Mock</label><div className="react-settings-grid"><label>监听端口<input type="number" value={draft.cainiaoMockPort || 13528} onChange={(e) => setDraft({ ...draft, cainiaoMockPort: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveCainiaoMock}>保存并应用</button><button type="button" onClick={cainiaoStatus.refresh}>刷新状态</button></div></section><section className="react-panel react-config-editor"><PanelHead kicker="Pi File" title="settings.json" chip={fileSnapshot?.path || "~/.pi/agent/settings.json"} /><textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile}>保存 settings.json</button></div></section></div>}</PageChrome>
 }
 
 function SchedulersPage() {
@@ -924,6 +1263,147 @@ function GitAiPage() {
   return <PageChrome icon={<GitBranch size={15} />} eyebrow="Git AI" title="AI 标记漏标检查" description="刷新会调用公司 ai-stats/check-commit 接口；git-ai 是否打标以公司接口结果为准。" actions={<button onClick={refreshCompany} disabled={refreshingCompany}><RefreshCw size={15} />{refreshingCompany ? "公司检查中…" : "刷新公司检查"}</button>}><section className="react-kpi-grid"><KpiCard icon={<AlertTriangle size={20} />} label="疑似记录" value={stats?.total ?? "-"} sub="待判定" tone="avg" /><KpiCard icon={<Clock3 size={20} />} label="待确认" value={stats?.pending ?? "-"} sub="pending company check" tone="active" /><KpiCard icon={<AlertTriangle size={20} />} label="确认缺失" value={stats?.missingAi ?? "-"} sub="company says missing" tone="total" /><KpiCard icon={<CheckCircle2 size={20} />} label="已标记" value={stats?.confirmedAi ?? "-"} sub="company says tagged" tone="done" /></section><section className="react-panel"><PanelHead kicker="Health" title="git-ai 状态" chip={health.data?.cli?.daemonOk ? "ok" : (health.data?.piExtension?.status || "unknown")} />{health.error ? <ErrorCard error={health.error} /> : <div className="react-meta-grid"><span>Store</span><span><code>{health.data?.storePath || "-"}</code></span><span>git-ai binary</span><span><code>{health.data?.cli?.binaryPath || "missing"}</code></span><span>CLI version</span><span>{health.data?.cli?.version || "-"}</span><span>Daemon</span><span>{health.data?.cli?.daemonOk ? "running" : (health.data?.cli?.daemonMessage || "not running")}</span><span>Trace2 socket</span><span>{health.data?.cli?.trace2SocketExists ? "ok" : "missing"} <code>{health.data?.cli?.trace2Socket || "-"}</code></span><span>Hooks path</span><span><code>{health.data?.cli?.hooksPath || "-"}</code></span><span>post-commit hook</span><span>{health.data?.cli?.postCommitHook?.mode || "-"} · record={String(Boolean(health.data?.cli?.postCommitHook?.recordsToAgentPanel))}</span><span>pre-push hook</span><span>{health.data?.cli?.prePushHook?.mode || "-"} · record={String(Boolean(health.data?.cli?.prePushHook?.recordsToAgentPanel))}</span><span>Pi extension</span><span>{health.data?.piExtension?.status || "unknown"} · {health.data?.piExtension?.message || "-"}</span><span>Tracked tools</span><span>{health.data?.piExtension?.tracksTools?.join(" / ") || "-"}</span></div>}<div className="react-tab-row"><button className={status === "all" ? "active" : ""} onClick={() => setStatus("all")}>疑似待处理</button>{(Object.keys(gitAiStatusMeta) as GitAiCompanyStatus[]).map((s) => <button key={s} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>{gitAiStatusMeta[s].label}</button>)}<select className="react-tab-select" value={author} onChange={(e) => setAuthor(e.target.value)} aria-label="按提交人筛选"><option value="">全部提交人</option>{authors.map((a) => <option key={a} value={a}>{a}</option>)}</select></div></section>{feed.error ? <ErrorCard error={feed.error} /> : feed.loading ? <LoadingCard /> : <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的疑似漏标记录。</EmptyCard> : filtered.map((r, i) => <motion.article key={r.id || `${r.projectName}-${r.commitSha}`} className="react-list-card react-session-card react-gitai-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{r.projectName} · {r.shortSha || r.commitSha?.slice(0, 12)}</span><h3>{r.commitWebUrl ? <a href={r.commitWebUrl} target="_blank" rel="noopener noreferrer">{r.commitTitle || r.subject || r.commitSha}</a> : (r.commitTitle || r.subject || r.commitSha)}</h3><p>{r.repoPath || r.remoteUrl || "repo path n/a"}</p><div className="react-card-meta"><span>{gitAiStatusPill(r.companyStatus || "pending")}</span>{r.authorName ? <span>提交人 {authorShort(r.authorName)}</span> : null}<span>hook: {(r.eventSources || []).join(" / ") || "-"}</span><span>本地 note: {r.localNoteState || "unknown"}</span><span>记录 {relAge(r.lastSeenAt)}</span>{r.companyCheckedAt ? <span>公司检查 {relAge(r.companyCheckedAt)}</span> : null}{typeof r.aiRate === "number" ? <span>AI rate {r.aiRate}%</span> : null}</div>{r.companyError ? <p className="react-error">{r.companyError}</p> : null}{fixResults[r.id] ? <div className="react-gitai-fix-result">{fixResults[r.id].pushSteps?.length ? <details className="react-review-commits"><summary>重推 notes 步骤（{fixResults[r.id].pushSteps!.filter((s) => s.ok).length}/{fixResults[r.id].pushSteps!.length} 成功）</summary><pre>{fixResults[r.id].pushSteps!.map((s) => `${s.ok ? "✓" : "✗"} ${s.label} — ${s.command}\n${s.stderr || s.stdout || ""}`).join("\n")}</pre></details> : null}{!fixResults[r.id].stillMissing ? <p className="react-effort-error react-fix-ok">✅ 重推 notes 后公司接口已确认标记。</p> : fixResults[r.id].piAgent ? <div className="react-gitai-agent-info"><span>{fixResults[r.id].piAgent!.dispatched ? "🤖" : "⚠️"} {fixResults[r.id].piAgent!.message}</span>{fixResults[r.id].piAgent!.sessionId ? <code>pi --session {fixResults[r.id].piAgent!.sessionId}</code> : null}</div> : null}</div> : null}</div><div className="react-card-side"><span className="react-effort-badge">{r.aiLines ?? 0} AI / {r.humanLines ?? 0} human</span><span className="react-muted">{r.branch || "branch n/a"}</span><code>{(r.commitSha || "").slice(0, 12)}</code>{canFix(r) ? <button className="react-fix-note-btn" onClick={() => fixNote(r)} disabled={!!fixingId}>{fixingId === r.id ? "补标中…" : "一键补标"}</button> : null}</div></motion.article>)}</div>}</PageChrome>
 }
 
+interface TestdataTarget {
+  name: string
+  status_code: number | null
+  label: string
+  verified: boolean
+}
+
+interface TestdataCliField {
+  required?: boolean
+  choices?: string[]
+  default?: string | number
+}
+
+interface TestdataCapabilityItem {
+  id: string
+  domain: string
+  object: string
+  execution: string
+  purpose: string
+  script: string
+  cli?: Record<string, TestdataCliField>
+  targets?: TestdataTarget[]
+}
+
+interface TestdataCapabilitiesPayload {
+  ok: boolean
+  project: string
+  capabilities: TestdataCapabilityItem[]
+}
+
+interface TestdataCapabilityPayload {
+  ok: boolean
+  capability: TestdataCapabilityItem & { pitfalls?: string[]; notes?: unknown[] }
+}
+
+interface TestdataRunPayload {
+  ok: boolean
+  dryRun: boolean
+  executed: boolean
+  project?: string
+  capabilityId?: string
+  target?: string
+  command: string
+  cwd: string
+  stdout?: string
+  stderr?: string
+  exitCode?: number | null
+  safety?: { env?: string; note?: string }
+}
+
+function TestdataPage() {
+  const project = "WMS"
+  const caps = useFetch<TestdataCapabilitiesPayload>(`/api/capabilities?project=${project}`)
+  const [selectedId, setSelectedId] = useState<string>("")
+  const [detail, setDetail] = useState<TestdataCapabilityPayload | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [target, setTarget] = useState("")
+  const [env, setEnv] = useState("test")
+  const [params, setParams] = useState<Record<string, string>>({})
+  const [runResult, setRunResult] = useState<TestdataRunPayload | null>(null)
+  const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
+
+  const createCaps = (caps.data?.capabilities || []).filter((c) => c.domain === "outbound" || c.domain === "inbound")
+
+  const loadDetail = async (id: string) => {
+    if (!id) { setDetail(null); return }
+    setDetailLoading(true)
+    setRunResult(null)
+    setRunError(null)
+    try {
+      const d = await fetchJson<TestdataCapabilityPayload>(`/api/capability?id=${encodeURIComponent(id)}&project=${project}`)
+      setDetail(d)
+      const firstTarget = (d.capability?.targets || []).find((t) => t.verified) || (d.capability?.targets || [])[0]
+      setTarget(firstTarget?.name || "")
+      const init: Record<string, string> = {}
+      for (const [key, spec] of Object.entries(d.capability?.cli || {})) {
+        if (key === "target" || key === "env") continue
+        if (spec.default !== undefined) init[key] = String(spec.default)
+      }
+      setParams(init)
+    } catch (e) {
+      setDetail(null)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  useEffect(() => { if (selectedId) loadDetail(selectedId) }, [selectedId])
+
+  const currentCap = createCaps.find((c) => c.id === selectedId)
+  const cliFields = detail?.capability?.cli || {}
+
+  const run = async (execute: boolean) => {
+    if (!selectedId || !target) return
+    setRunning(true)
+    setRunError(null)
+    try {
+      const res = await postJson<TestdataRunPayload>("/api/testdata/run", {
+        project,
+        capabilityId: selectedId,
+        target,
+        env,
+        params,
+        dryRun: !execute,
+        execute,
+      })
+      setRunResult(res)
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return <PageChrome icon={<Sparkles size={15} />} eyebrow="Test Data" title="测试造数" description="选择能力，在 WMS test 环境创建指定状态的测试单据。Agent Panel 调用项目内 capability pack 脚本，真实创建数据。" actions={<><a href="/dashboard"><ArrowLeft size={15} />返回</a><button onClick={() => caps.refresh()} disabled={caps.loading}><RefreshCw size={15} className={caps.loading ? "react-spin" : ""} />刷新能力</button></>}>
+    <section className="react-panel"><PanelHead kicker="Project" title="项目选择" chip={project} />
+      <div className="react-tab-row"><button className="active">WMS</button><button disabled>其他项目（敬请期待）</button></div>
+    </section>
+    {caps.error ? <ErrorCard error={caps.error} /> : caps.loading ? <LoadingCard /> : <section className="react-panel"><PanelHead kicker="Capability" title="选择造数能力" chip={`${createCaps.length} available`} />
+      <div className="react-card-list">{createCaps.length === 0 ? <EmptyCard>暂无出库/入库造数能力。</EmptyCard> : createCaps.map((c) => <article key={c.id} className={`react-list-card ${selectedId === c.id ? "react-cap-active" : ""}`} onClick={() => setSelectedId(c.id)} style={{ cursor: "pointer" }}><div><span className="react-card-id">{c.domain}</span><h3>{c.purpose}</h3><p className="react-muted">{c.id} · {c.execution}</p></div><div className="react-card-side"><span className="react-effort-badge">{c.script ? "script" : "recipe"}</span></div></article>)}</div>
+    </section>}
+    {selectedId ? <section className="react-panel"><PanelHead kicker="Configure" title="配置造数参数" chip={detailLoading ? "loading" : currentCap?.id} />
+      {detailLoading ? <LoadingCard /> : detail?.capability ? <><div className="react-meta-grid"><span>能力</span><span>{detail.capability.purpose}</span><span>目标对象</span><span>{detail.capability.object}</span><span>验证环境</span><span>test</span></div>
+        <div className="react-tab-row"><button className={env === "test" ? "active" : ""} onClick={() => setEnv("test")}>test 环境</button><button className={env === "uat-cn" ? "active" : ""} onClick={() => setEnv("uat-cn")}>UAT-CN 环境</button></div>
+        <label className="react-editor-label">目标状态 (target)<select value={target} onChange={(e) => setTarget(e.target.value)}>{(detail.capability.targets || []).map((t) => <option key={t.name} value={t.name}>{t.name} ({t.label}{t.verified ? "" : "·待验证"})</option>)}</select></label>
+        <div className="react-settings-grid">{Object.entries(cliFields).filter(([k]) => k !== "target" && k !== "env").map(([key, spec]) => <label key={key}>{key}{spec.choices ? <select value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })}>{spec.choices.map((c) => <option key={c} value={c}>{c}</option>)}</select> : <input value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })} placeholder={spec.default !== undefined ? String(spec.default) : ""} />}</label>)}</div>
+        <div className="react-actions"><button onClick={() => run(false)} disabled={running || !target}>预览命令 (dry-run)</button><button onClick={() => run(true)} disabled={running || !target} className="react-fix-note-btn">{running ? "执行中…" : "执行造数 (test 环境)"}</button></div>
+        <p className="react-muted">⚠️ {env === "uat-cn" ? "UAT 环境造数为真实数据，且 MySQL 只读（Archery）；" : "test 环境造数为真实数据；"}建议先预览命令，确认无误再执行。</p>
+      </> : <EmptyCard>未加载能力详情</EmptyCard>}
+    </section> : null}
+    {runError ? <ErrorCard error={runError} /> : runResult ? <section className="react-panel"><PanelHead kicker="Result" title={runResult.executed ? "执行结果" : "命令预览"} chip={runResult.executed ? `exit ${runResult.exitCode ?? "-"}` : "dry-run"} />
+      <code className="react-command">{runResult.command}</code>
+      <p className="react-muted">cwd: {runResult.cwd}</p>
+      {runResult.executed && runResult.stdout ? <details className="react-review-commits" open><summary>stdout</summary><pre>{runResult.stdout}</pre></details> : null}
+      {runResult.executed && runResult.stderr ? <details className="react-review-commits"><summary>stderr</summary><pre>{runResult.stderr}</pre></details> : null}
+      {runResult.safety?.note ? <p className="react-muted">{runResult.safety.note}</p> : null}
+    </section> : null}
+  </PageChrome>
+}
+
 function RemovedPage({ title, detail }: { title: string; detail: string }) {
   return <PageChrome icon={<AlertTriangle size={15} />} eyebrow="Removed" title={title} description={detail}><EmptyCard>该页面属于旧 OpenCode / PTY 功能，已在 Rust + React 重写中移除。</EmptyCard></PageChrome>
 }
@@ -933,8 +1413,11 @@ function NotFoundPage() { return <PageChrome icon={<Search size={15} />} eyebrow
 export function App({ apiPath }: AppProps) {
   const key = useLocationKey()
   const path = window.location.pathname
-  const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} />
-    : path === "/projects" || path === "/requirements" ? <ProjectsPage />
+  const { project, setProject } = useProjectFilter()
+  const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
+    : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
+    : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
+    : path === "/experiences" ? <KnowledgePage kind="experience" />
     : path === "/sessions" ? <SessionsPage />
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
@@ -942,10 +1425,11 @@ export function App({ apiPath }: AppProps) {
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/git-ai" ? <GitAiPage />
+    : path === "/testdata" ? <TestdataPage />
     : path === "/settings" ? <SettingsPage />
     : path === "/reports" || path === "/report" ? <RemovedPage title="Experience Reports 已移除" detail="OpenCode 经验报告、confirm/reject 和 auto-summary 链路不再保留。" />
     : path === "/env-vars" ? <RemovedPage title="Env Vars 已移除" detail="Rust 版暂未恢复浏览器环境变量编辑。" />
     : <NotFoundPage />
 
-  return <AppShell path={path}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>{page}</motion.div></AnimatePresence></AppShell>
+  return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>{page}</motion.div></AnimatePresence></AppShell>
 }

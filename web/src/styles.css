@@ -132,7 +132,29 @@ button, input, select, textarea { font: inherit; }
 .react-topbar div:first-child { display: flex; flex-direction: column; gap: 2px; }
 .react-topbar span { color: var(--react-cyan); font: 800 .66rem var(--react-mono); letter-spacing: .16em; text-transform: uppercase; }
 .react-topbar strong { color: #fff; font-size: 1.04rem; }
-.react-topbar-actions { display: flex; gap: 9px; }
+.react-topbar-actions { display: flex; gap: 9px; align-items: center; }
+.react-project-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(34,211,238,.26);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: rgba(34,211,238,.08);
+  color: var(--react-cyan);
+  font: 800 .68rem var(--react-mono);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.react-project-select select {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--react-text);
+  font: 700 .74rem var(--react-mono);
+  cursor: pointer;
+}
+.react-project-select select option { background: #0b1018; color: var(--react-text); }
 .react-topbar-actions a,
 .react-topbar-actions button {
   border: 1px solid rgba(34,211,238,.26);
@@ -453,9 +475,23 @@ button, input, select, textarea { font: inherit; }
 .react-detail-desc { color: var(--react-muted); line-height: 1.65; }
 .react-tool-links,
 .react-chip-list { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
-.react-chip-list a { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; background: rgba(255,255,255,.04); font: 0.76rem var(--react-mono); }
+.react-chip-list a,
+.react-chip-list span { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; background: rgba(255,255,255,.04); font: 0.76rem var(--react-mono); }
 .react-chip-toggle { color: var(--react-cyan); font: 800 .72rem var(--react-mono); border: 1px solid rgba(34,211,238,.3); background: rgba(34,211,238,.08); border-radius: 999px; padding: 6px 10px; cursor: pointer; }
 .react-inline-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.react-filter-grid textarea { width: 100%; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(4,8,14,0.72); color: var(--react-text); outline: none; font: 0.74rem/1.45 var(--react-mono); resize: vertical; }
+.react-knowledge-layout { display: grid; grid-template-columns: minmax(0, .94fr) minmax(380px, .72fr); gap: 18px; align-items: start; }
+.react-knowledge-card { border-color: rgba(34,211,238,.16); }
+.react-knowledge-card.active { border-color: rgba(34,211,238,.48); background: linear-gradient(180deg, rgba(34,211,238,.12), rgba(10,14,21,.9)); }
+.react-knowledge-card .react-card-side button { border: 1px solid rgba(34,211,238,.38); border-radius: 999px; padding: 7px 11px; background: rgba(34,211,238,.1); color: var(--react-cyan); font: 800 .7rem var(--react-mono); cursor: pointer; }
+.react-knowledge-editor { position: sticky; top: 92px; }
+.react-knowledge-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.react-knowledge-form label { display: flex; flex-direction: column; gap: 6px; color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-knowledge-form input,
+.react-knowledge-form select,
+.react-knowledge-form textarea { width: 100%; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,.045); color: var(--react-text); outline: none; }
+.react-knowledge-form textarea { background: rgba(4,8,14,.72); font: .82rem/1.55 var(--react-mono); resize: vertical; text-transform: none; letter-spacing: 0; }
+.react-knowledge-wide { grid-column: 1 / -1; }
 .react-category-form { margin-top: 10px; align-items: center; }
 .react-category-form label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
 .react-effort-panel { border-color: rgba(34,211,238,.18); }
@@ -516,6 +552,19 @@ button, input, select, textarea { font: inherit; }
 .react-saved-pill { color: var(--react-green); font: 800 .68rem var(--react-mono); }
 .react-warn-pill { color: #fca5a5; font: 800 .68rem var(--react-mono); }
 .react-command { display: block; margin-top: 12px; padding: 10px 12px; border-radius: 12px; word-break: break-all; }
+.react-doc-panel { grid-column: 1 / -1; border-color: rgba(250,204,21,.18); }
+.react-doc-path { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid rgba(34,211,238,.22); border-radius: 999px; padding: 7px 10px; color: var(--react-cyan); background: rgba(34,211,238,.06); font: .7rem var(--react-mono); }
+.react-doc-preview { max-height: 420px; overflow: auto; margin: 14px 0 0; border: 1px solid var(--react-border); border-radius: 18px; padding: 16px; background: rgba(4,8,14,.78); color: var(--react-text); white-space: pre-wrap; word-break: break-word; font: .82rem/1.62 var(--react-mono); }
+.react-doc-preview + .react-actions { margin-top: 12px; }
+.react-review-gate { display: grid; gap: 6px; margin: 12px 0; border: 1px solid var(--react-border); border-radius: 16px; padding: 12px 14px; background: rgba(255,255,255,.035); }
+.react-review-gate strong { color: #fff; font: 850 .82rem var(--react-mono); }
+.react-review-gate span { color: var(--react-muted); line-height: 1.5; }
+.react-review-gate em { color: var(--react-faint); font: .7rem var(--react-mono); font-style: normal; }
+.react-review-gate-passed { border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08); }
+.react-review-gate-waived { border-color: rgba(234,179,8,.36); background: rgba(234,179,8,.08); }
+.react-review-gate-blocked,
+.react-review-gate-missing,
+.react-review-gate-pending { border-color: rgba(239,68,68,.34); background: rgba(127,29,29,.12); }
 .react-check-card { grid-template-columns: auto 1fr; align-items: flex-start; }
 .react-check-card input { margin-top: 5px; accent-color: var(--react-cyan); }
 .react-drive-toolbar,
@@ -682,5 +731,10 @@ button, input, select, textarea { font: inherit; }
 .react-gitai-agent-info code { color: var(--react-cyan); word-break: break-all; }
 .react-fix-note-btn { border: 1px solid rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; color: #fcd34d !important; border-radius: 999px !important; padding: 7px 12px !important; font: 800 .74rem var(--react-mono) !important; cursor: pointer; }
 .react-fix-note-btn:disabled { opacity: .5; cursor: not-allowed; }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } }
-@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
+.react-toggle-btn.active { border-color: rgba(34,197,94,.5) !important; background: rgba(34,197,94,.16) !important; color: #86efac !important; }
+.react-billable-summary { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 16px 0 4px; padding: 14px 18px; border: 1px solid rgba(34,197,94,.32); border-radius: 18px; background: linear-gradient(180deg, rgba(34,197,94,.14), rgba(34,197,94,.05)); color: var(--react-text); }
+.react-billable-summary span:first-child { font: 800 .78rem var(--react-mono); color: #bbf7d0; letter-spacing: .02em; }
+.react-billable-summary strong { font: 850 1.5rem var(--react-mono); color: #4ade80; }
+.react-billable-summary .react-muted { color: var(--react-muted); font: .74rem var(--react-mono); }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
+@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }

@@ -55,14 +55,14 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 
 | 文件 | 必填 | 用途 |
 | --- | --- | --- |
-| `meta.md` | 是 | 顶部 YAML frontmatter(`req-id` / `title` / `status` / `project` / `owner` / `start-date` / `plan-release`)供 opencode-dashboard 解析,正文记录改动范围摘要、相关人/群;`status` 取值:`待设计` / `待开发` / `开发中` / `自测中` / `测试中` / `待上线` / `已完成` |
+| `meta.md` | 是 | 顶部 YAML frontmatter(`req-id` / `title` / `status` / `project` / `owner` / `start-date` / `plan-release`)供 Agent Panel 解析,正文记录改动范围摘要、相关人/群;`status` 取值:`需求澄清` / `开发中` / `自测中` / `测试中` / `经验总结` / `已完成` |
 | `memory.md` | 是 | dashboard 新 session 的首要记忆入口:当前目标、当前进展、关键决策、已完成改动、待办/风险、影响范围、session 摘要索引 |
 | `branch.md` | 是 | 源分支、目标分支、PR/CR 链接、关键 commit 区间 |
 | `config-changes.md` | 是 | DB 变更(DDL/DML/数据订正)、Apollo / Nacos namespace+key、RocketMQ Topic/Group、阿里云控制台配置、灰度和回滚 |
 | `impact.md` | 是 | 编码前影响面评估:风险等级、核心链路、影响入口、数据影响、阻塞风险、自测清单、回滚方案 |
 | `test.md` | 是 | 测试用例、测试方法、测试环境、前置数据、自测记录、A/B/C/D 证据结论、回归范围 |
 | `notes.md` | 是 | 注意事项、踩坑、改动动机、上线后复盘、session 过程摘要追加 |
-| `review.md` | 按需 | 待上线 Code Review 范围、发现项、用户确认和复查结论 |
+| `review.md` | 按需 | 发布前 Code Review 范围、发现项、用户确认和复查结论 |
 | `release-check.md` | 发布前生成 | 预检 checklist、是否合并、是否需要执行 SQL、是否需要推送配置 |
 
 模板在 `references/` 下,首次创建需求时按模板生成空文件,再让用户填实际内容。
@@ -76,7 +76,7 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 - 询问:需求号、需求标题、源分支、目标分支、负责人、计划发布日期、关联项目路径、项目分组(`project` 字段,例如 `WMS后端`)
 - 询问需求归属哪个项目目录(例如 `WMS`、`opencode-dashboard`);若用户给的项目目录不存在,确认后新建;无明确归属时落到 `_default/`
 - 在 `~/.agents/req/<project>/<req-id>/` 下创建目录:`mkdir -p ~/.agents/req/<project>/<req-id>/`,按模板生成 `meta.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`,按需生成 `review.md`
-- `meta.md` 顶部使用 YAML frontmatter,`status` 默认填 `开发中`(刚登记尚未进入开发可填 `待设计`),`project` 字段可选,留空时按父目录名作为项目分组
+- `meta.md` 顶部使用 YAML frontmatter,`status` 默认填 `需求澄清`,`project` 字段可选,留空时按父目录名作为项目分组
 - meta.md 顶部的 YAML frontmatter 供 opencode-dashboard 解析需求状态和项目分组,正文部分供人阅读
 - `memory.md` / `branch.md` / `config-changes.md` / `impact.md` / `test.md` / `notes.md` / `review.md` 会被 dashboard 智能提取读取并维护；文件可以先写占位模板,后续由 agent 按会话事实更新
 - `branch.md` 里的关键 commit 区间可以后续在代码 push 后用 `git log` 回填
@@ -102,7 +102,7 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
    - 灰度策略是否正确
    - 是否需要回滚预案
 4. **测试结论** — 读 `test.md`,按 `conventions-wms-agent-self-test-evidence.md` 检查核心 case 是否有触发证据、`tid` 日志链路、DB 结果、副作用、反向证据和 A/B/C/D 置信度；只有接口成功或单点日志/DB 时标为“需关注/证据不足”
-5. **影响面和 Review** — 读 `impact.md` 和 `review.md`,确认高风险链路是否已覆盖自测/回归,待上线 review 发现项是否已关闭或用户确认
+5. **影响面和 Review** — 读 `impact.md` 和 `review.md`,确认高风险链路是否已覆盖自测/回归,发布前 review 发现项是否已关闭或用户确认
 6. **回滚方案** — `notes.md` / `impact.md` / `config-changes.md` 里有没有写明回滚步骤(SQL 回滚、配置回滚、代码 revert)
 
 把结果写回 `release-check.md`,并打印一份简洁的发布前 checklist 给用户。

@@ -20,7 +20,12 @@
    - 平衡改动量与性能：不要求为性能大改架构，但要点出明显会拖慢接口/SQL 的问题并给出最小改动建议；非必要不扩范围。
 
 ## 输出
-将审查结果写入需求目录下的 {{OUTPUT_FILE}}（覆盖已有内容），Markdown 格式，包含以下小节：
+将审查结果写入需求目录下的 {{OUTPUT_FILE}}（覆盖已有内容），Markdown 格式，包含以下小节。文件顶部必须给出门禁结论：`Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`（仅用户明确豁免时使用）。
+
+## Review Gate
+- Result: PASS / BLOCKED / WAIVED
+- Reason: <一句话原因>
+- Source: AI code review
 
 ## 审查概览
 （需求标题、变更仓库与文件数、审查模型、时间、本次扩大阅读了哪些文件/目录）
@@ -31,6 +36,7 @@
 
 要求：
 - 具体到文件与代码片段，引用关键行；每条问题标注 [逻辑] 或 [性能]，并写明触发条件与最小修复建议。
+- 若存在必须修复的严重问题，Review Gate 必须写 `BLOCKED`；若严重问题为“无”，Review Gate 写 `PASS`。
 - 某小节无内容写「无」，不要泛泛而谈或凑数。
 
 ## 约束

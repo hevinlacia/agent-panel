@@ -8,7 +8,7 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 
 用于：需求发布到 CN/SEA PRO 后，自动从需求文件提取日志关键字并查询 Kibana，验证代码是否按预期执行、排查发布引入的异常。
 
-适用：需求发布后观察日志、批量验证多个待上线需求的线上表现、按关键字确认开关/消费者/生产者日志是否出现。
+适用：需求发布后观察日志、批量验证多个经验总结阶段需求的线上表现、按关键字确认开关/消费者/生产者日志是否出现。
 
 不适用：发布前预检（用 `req-release-check`）、打捞日志 payload 做补偿（用 `wms-kibana-bsearch-payload-query`）、排查已知 bug 根因（用 `log-code-debug`）。
 
@@ -23,7 +23,7 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 
 ### 1. 确认需求和时间窗口
 
-- 确认要观察的需求：用户指定 req-id，或从 dashboard 获取"待上线"需求。
+- 确认要观察的需求：用户指定 req-id，或从 dashboard 获取"经验总结"需求。
 - 确认发布时间（日志窗口起点）：用户告知或用 `date` 获取当前时间往前推。
 - 默认窗口终点为当前时间。
 
@@ -37,7 +37,7 @@ uv run python scripts/observe_req_logs.py \
 
 常用参数：
 - `--req-ids`：逗号分隔的需求 ID（支持前缀匹配，如 `WMS-003` 匹配 `WMS-003-set-bi-picking-status`）
-- `--status 待上线`：按状态自动筛选需求
+- `--status 经验总结`：按状态自动筛选需求
 - `--start-time`：北京时间，格式 `YYYY-MM-DD HH:MM:SS`
 - `--end-time`：北京时间，默认当前时间
 - `--envs`：`cn`、`sea` 或 `all`（默认 all）

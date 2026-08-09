@@ -42,7 +42,7 @@
 | --- | --- | --- |
 | req-id | string | 需求 ID，与目录名一致 |
 | title | string | 需求标题，30字以内 |
-| status | enum | 待设计 / 待开发 / 开发中 / 自测中 / 测试中 / 待上线 / 已完成 |
+| status | enum | 需求澄清 / 开发中 / 自测中 / 测试中 / 经验总结 / 已完成 |
 | project | string | 项目目录名（如 WMS） |
 | owner | string | 负责人 |
 | start-date | string | YYYY-MM-DD 或 unknown |
