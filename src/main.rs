@@ -76,13 +76,20 @@ static REQ_STATUSES: &[&str] = &[
     "测试中",
     "经验总结",
     "已完成",
+    // Lightweight statuses for category=线上问题; no strict requirement lifecycle gate.
+    "排查中",
+    "已确认",
 ];
+static ISSUE_STATUSES: &[&str] = &["排查中", "已确认"];
 static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("需求对齐", "需求澄清"),
     ("方案设计", "需求澄清"),
     ("待设计", "需求澄清"),
     ("待开发", "需求澄清"),
     ("待上线", "经验总结"),
+    ("线上排查", "排查中"),
+    ("问题排查", "排查中"),
+    ("问题确认", "已确认"),
 ];
 static REQ_CATEGORIES: &[&str] = &["需求", "线上问题"];
 
@@ -217,6 +224,7 @@ struct Requirement {
     impact_path: Option<String>,
     memory_path: Option<String>,
     review_path: Option<String>,
+    technical_plan_path: Option<String>,
     release_manifest_path: Option<String>,
     release_check_path: Option<String>,
     experience_summary_path: Option<String>,
@@ -326,6 +334,14 @@ struct StatusForm {
 struct CategoryForm {
     req_id: String,
     category: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConvertIssueForm {
+    req_id: String,
+    #[serde(default)]
+    note: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -614,6 +630,24 @@ struct RequirementEventForm {
     #[serde(default)]
     related_files: Vec<String>,
     #[serde(default)]
+    related_knowledge_ids: Vec<String>,
+    #[serde(default)]
+    trigger_terms: Vec<String>,
+    #[serde(default)]
+    related_repos: Vec<String>,
+    #[serde(default)]
+    related_tables: Vec<String>,
+    #[serde(default)]
+    related_apis: Vec<String>,
+    #[serde(default)]
+    candidate_type: Option<String>,
+    #[serde(default)]
+    dedupe_key: Option<String>,
+    #[serde(default)]
+    confidence: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
     test_cases: Vec<RequirementEventTestCase>,
     #[serde(default)]
     status: Option<String>,
@@ -797,6 +831,10 @@ async fn main() -> Result<()> {
         .route("/api/requirement/update", post(api_requirement_update))
         .route("/api/requirement/schema", get(api_requirement_schema))
         .route("/api/requirement/context", get(api_requirement_context))
+        .route(
+            "/api/requirement/experience-summary-context",
+            get(api_requirement_experience_summary_context),
+        )
         .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
         .route("/api/requirement/edit", post(api_requirement_edit))
         .route("/api/requirement/events", post(api_requirement_events))
@@ -814,6 +852,10 @@ async fn main() -> Result<()> {
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route("/api/requirement/category", post(api_requirement_category))
+        .route(
+            "/api/requirement/convert-issue",
+            post(api_requirement_convert_issue),
+        )
         .route("/api/requirement/ones", post(api_requirement_ones))
         .route(
             "/api/requirement/associate",
@@ -1078,6 +1120,11 @@ async fn api_requirement_doc_get(
     } else {
         String::new()
     };
+    let template = if exists {
+        String::new()
+    } else {
+        requirement_doc_template(&req, doc_file)
+    };
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
@@ -1086,6 +1133,7 @@ async fn api_requirement_doc_get(
         "path": path.to_string_lossy(),
         "exists": exists,
         "content": content,
+        "template": template,
     })))
 }
 
@@ -1147,6 +1195,98 @@ async fn api_requirement_context(
     Ok(Json(value))
 }
 
+async fn api_requirement_experience_summary_context(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let dir = req_dir_path(&req)?;
+    let events = read_recent_requirement_events(
+        &dir.join(REQUIREMENT_EVENTS_FILE),
+        query.limit.unwrap_or(200).clamp(20, 500),
+    )
+    .await;
+    let mut referenced_ids = Vec::<String>::new();
+    let mut references = Vec::<Value>::new();
+    let mut learning_candidates = Vec::<Value>::new();
+    let mut skill_candidates = Vec::<Value>::new();
+    let mut other_candidates = Vec::<Value>::new();
+    for event in &events {
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match event_type {
+            "knowledgeReference" => {
+                if let Some(ids) = event.get("relatedKnowledgeIds").and_then(Value::as_array) {
+                    referenced_ids.extend(ids.iter().filter_map(Value::as_str).map(str::to_string));
+                }
+                references.push(event.clone());
+            }
+            "learningCandidate" => learning_candidates.push(event.clone()),
+            "skillImprovementCandidate" => skill_candidates.push(event.clone()),
+            _ => {
+                if event.get("dedupeKey").and_then(Value::as_str).is_some()
+                    || event.get("candidateType").and_then(Value::as_str).is_some()
+                {
+                    other_candidates.push(event.clone());
+                }
+            }
+        }
+    }
+    let referenced_ids = unique_strings(referenced_ids);
+    let duplicate_hints: Vec<Value> = learning_candidates
+        .iter()
+        .chain(skill_candidates.iter())
+        .chain(other_candidates.iter())
+        .map(|event| {
+            let ids: Vec<String> = event
+                .get("relatedKnowledgeIds")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            let overlaps: Vec<String> = ids
+                .iter()
+                .filter(|id| referenced_ids.contains(id))
+                .cloned()
+                .collect();
+            json!({
+                "eventId": event.get("id").cloned().unwrap_or(Value::Null),
+                "summary": event.get("summary").cloned().unwrap_or(Value::Null),
+                "dedupeKey": event.get("dedupeKey").cloned().unwrap_or(Value::Null),
+                "relatedKnowledgeIds": ids,
+                "overlapsReferencedKnowledge": overlaps,
+                "suggestion": if overlaps.is_empty() { "review-and-possibly-land" } else { "likely-duplicate-or-update-existing" }
+            })
+        })
+        .collect();
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "category": req.category,
+        "status": req.status,
+        "eventsPath": dir.join(REQUIREMENT_EVENTS_FILE).to_string_lossy(),
+        "referencedKnowledgeIds": referenced_ids,
+        "knowledgeReferences": references,
+        "learningCandidates": learning_candidates,
+        "skillImprovementCandidates": skill_candidates,
+        "otherCandidates": other_candidates,
+        "duplicateHints": duplicate_hints,
+        "recommendedWorkflow": [
+            "1. Review knowledgeReferences first: do not recreate existing knowledge/experience.",
+            "2. For each learningCandidate, search Agent Panel knowledge/experience by triggerTerms and relatedKnowledgeIds.",
+            "3. Update existing item when duplicate or supplemental; create new item only when reusable and evidenced.",
+            "4. Mark inferred facts as draft/needs-confirmation instead of active.",
+            "5. Write final decisions to experience-summary.md."
+        ],
+        "recommendedWrites": [
+            {"method":"POST","path":"/api/knowledge","purpose":"land business knowledge or experience after dedupe"},
+            {"method":"POST","path":"/api/requirement/doc","body":{"reqId": req.id, "docType":"experience-summary", "mode":"replace", "content":"# ..."}}
+        ]
+    })))
+}
+
 async fn api_requirement_edit(
     State(state): State<AppState>,
     form: FormOrJson<RequirementEditForm>,
@@ -1186,7 +1326,88 @@ async fn api_requirement_category(
     let req = get_real_requirement(&state, &body.req_id).await?;
     let st = write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), &body.category)
         .await?;
-    Ok(Json(json!({ "ok": true, "state": st })))
+    let mut status_state = Value::Null;
+    if body.category == "线上问题" && !ISSUE_STATUSES.contains(&req.status.as_str()) {
+        status_state = write_requirement_status(
+            req.req_dir.as_deref().unwrap_or_default(),
+            "排查中",
+            Some("切换为线上问题，进入轻量排查流程"),
+        )
+        .await?;
+    } else if body.category == "需求" && ISSUE_STATUSES.contains(&req.status.as_str()) {
+        status_state = write_requirement_status(
+            req.req_dir.as_deref().unwrap_or_default(),
+            "需求澄清",
+            Some("从线上问题切回需求流程"),
+        )
+        .await?;
+    }
+    Ok(Json(
+        json!({ "ok": true, "state": st, "statusState": status_state }),
+    ))
+}
+
+async fn api_requirement_convert_issue(
+    State(state): State<AppState>,
+    form: FormOrJson<ConvertIssueForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let category_state =
+        write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), "需求").await?;
+    let status_state = write_requirement_status(
+        req.req_dir.as_deref().unwrap_or_default(),
+        "需求澄清",
+        body.note
+            .as_deref()
+            .or(Some("线上问题已确认需要代码/需求流程承接")),
+    )
+    .await?;
+    let event = record_requirement_event(
+        &state,
+        RequirementEventForm {
+            req_id: req.id.clone(),
+            event_type: Some("decision".to_string()),
+            title: Some("线上问题转需求".to_string()),
+            summary: Some("线上问题已转为普通需求流程".to_string()),
+            details: body.note,
+            evidence: Vec::new(),
+            decisions: vec![
+                "category: 线上问题 -> 需求".to_string(),
+                "status: 需求澄清".to_string(),
+            ],
+            todos: Vec::new(),
+            related_files: vec![STATE_FILE.to_string()],
+            related_knowledge_ids: Vec::new(),
+            trigger_terms: Vec::new(),
+            related_repos: Vec::new(),
+            related_tables: Vec::new(),
+            related_apis: Vec::new(),
+            candidate_type: None,
+            dedupe_key: None,
+            confidence: None,
+            target: None,
+            test_cases: Vec::new(),
+            status: Some("需求澄清".to_string()),
+            risk_level: None,
+            tags: vec![
+                "online-issue".to_string(),
+                "convert-to-requirement".to_string(),
+            ],
+            session_id: None,
+            idempotency_key: Some(format!("{}-convert-issue-{}", req.id, now_ms())),
+            append_note: Some(true),
+            dry_run: Some(false),
+        },
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "categoryState": category_state,
+        "statusState": status_state,
+        "event": event,
+    })))
 }
 
 async fn api_requirement_ones(
@@ -1271,25 +1492,14 @@ async fn api_requirement_code_review_post(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
         ))
     })?;
-    // 先刷新本地生产基线分支到最新远端(fetch + reset/更新本地 base 分支),
-    // 确保 diff 基线(origin/master / origin/production)与本地 base 分支都是最新,
-    // 否则扫描是纯只读的,会用陈旧的 remote-tracking ref 计算 diff(看起来像没刷新)。
-    let mut sync_results = Vec::new();
-    for repo in &branch_scope.repos {
-        sync_results.push(sync_repo_base_branch(repo).await);
-    }
+    // 刷新代码差异时不再同步生产基线分支;
+    // 如需同步本地 base 分支到最新远端,由独立的“同步生产基线”按钮触发(/api/requirement/sync-base)。
     let review = run_code_review_scan(&req_dir, &req.id, &branch_scope).await?;
-    Ok(Json(
-        json!({
-            "ok": true,
-            "branchScope": branch_scope,
-            "sync": json!({
-                "generatedAt": now_ms(),
-                "results": sync_results,
-            }),
-            "review": review,
-        }),
-    ))
+    Ok(Json(json!({
+        "ok": true,
+        "branchScope": branch_scope,
+        "review": review,
+    })))
 }
 
 async fn api_requirement_review_gate(
@@ -2374,10 +2584,7 @@ async fn api_config_post(
 async fn sync_cainiao_mock(state: &AppState) {
     let cfg = read_config(state).await.unwrap_or_default();
     let mut guard = state.cainiao_mock.lock().await;
-    let running = guard
-        .as_ref()
-        .map(|h| !h.is_finished())
-        .unwrap_or(false);
+    let running = guard.as_ref().map(|h| !h.is_finished()).unwrap_or(false);
     if cfg.cainiao_mock_enabled && !running {
         let port = cfg.cainiao_mock_port;
         let handle = tokio::spawn(async move {
@@ -2394,9 +2601,7 @@ async fn sync_cainiao_mock(state: &AppState) {
     }
 }
 
-async fn api_cainiao_mock_status(
-    State(state): State<AppState>,
-) -> ApiResult<Json<Value>> {
+async fn api_cainiao_mock_status(State(state): State<AppState>) -> ApiResult<Json<Value>> {
     let cfg = read_config(&state).await?;
     let running = {
         let guard = state.cainiao_mock.lock().await;
@@ -5281,6 +5486,7 @@ async fn load_requirement_from_dir(
         impact_path: path_if_exists(dir.join("impact.md")),
         memory_path: path_if_exists(dir.join("memory.md")),
         review_path: path_if_exists(dir.join("review.md")),
+        technical_plan_path: path_if_exists(dir.join("technical-plan.md")),
         release_manifest_path: path_if_exists(dir.join("release-manifest.md")),
         release_check_path: path_if_exists(dir.join("release-check.md")),
         experience_summary_path: path_if_exists(dir.join("experience-summary.md")),
@@ -5365,6 +5571,7 @@ fn default_requirement(session_ids: Vec<String>) -> Requirement {
         impact_path: None,
         memory_path: None,
         review_path: None,
+        technical_plan_path: None,
         release_manifest_path: None,
         release_check_path: None,
         experience_summary_path: None,
@@ -7807,12 +8014,6 @@ fn short_err(result: &GitCommandResult) -> String {
 
 async fn create_requirement(state: &AppState, form: RequirementCreateForm) -> ApiResult<Value> {
     let title = clean_required(&form.title, "title")?;
-    let status = form
-        .status
-        .as_deref()
-        .and_then(normalize_status_value)
-        .unwrap_or_else(|| "需求澄清".to_string());
-    ensure_status(&status)?;
     let category = form
         .category
         .as_deref()
@@ -7820,6 +8021,21 @@ async fn create_requirement(state: &AppState, form: RequirementCreateForm) -> Ap
         .trim()
         .to_string();
     ensure_category(&category)?;
+    let mut status = form
+        .status
+        .as_deref()
+        .and_then(normalize_status_value)
+        .unwrap_or_else(|| {
+            if category == "线上问题" {
+                "排查中".to_string()
+            } else {
+                "需求澄清".to_string()
+            }
+        });
+    if category == "线上问题" && form.status.is_none() {
+        status = "排查中".to_string();
+    }
+    ensure_status(&status)?;
     let dry_run = form.dry_run.unwrap_or(false);
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
     let (req_id, target_dir) =
@@ -8065,6 +8281,15 @@ async fn record_requirement_event(
         "decisions": clean_string_vec(form.decisions),
         "todos": clean_string_vec(form.todos),
         "relatedFiles": clean_string_vec(form.related_files),
+        "relatedKnowledgeIds": clean_string_vec(form.related_knowledge_ids),
+        "triggerTerms": clean_string_vec(form.trigger_terms),
+        "relatedRepos": clean_string_vec(form.related_repos),
+        "relatedTables": clean_string_vec(form.related_tables),
+        "relatedApis": clean_string_vec(form.related_apis),
+        "candidateType": clean_optional(form.candidate_type.as_deref()),
+        "dedupeKey": clean_optional(form.dedupe_key.as_deref()),
+        "confidence": clean_optional(form.confidence.as_deref()),
+        "target": clean_optional(form.target.as_deref()),
         "testCases": form.test_cases,
         "status": clean_optional(form.status.as_deref()),
         "riskLevel": clean_optional(form.risk_level.as_deref()),
@@ -8174,6 +8399,11 @@ fn requirement_section_default_doc_type(section: &str) -> Option<&'static str> {
         Some("memory")
     } else if matches!(s.as_str(), "config" | "configchanges") {
         Some("config-changes")
+    } else if matches!(
+        s.as_str(),
+        "technicalplan" | "techplan" | "implementation" | "implementationplan" | "solution"
+    ) {
+        Some("technical-plan")
     } else if matches!(s.as_str(), "release" | "manifest" | "releasemanifest") {
         Some("release-manifest")
     } else if matches!(s.as_str(), "review" | "codereview") {
@@ -8198,6 +8428,9 @@ fn requirement_section_default_heading(section: &str) -> &str {
         "decision" | "decisions" => "关键决策",
         "summary" | "agentcontext" => "Agent 摘要",
         "config" | "configchanges" => "配置变更",
+        "technicalplan" | "techplan" | "implementation" | "implementationplan" | "solution" => {
+            "技术方案"
+        }
         "release" | "manifest" | "releasemanifest" => "上线清单",
         "review" | "codereview" => "代码审查结论",
         "progress" => "进展记录",
@@ -8225,6 +8458,17 @@ fn normalize_requirement_event_type(raw: Option<&str>) -> String {
         "fix" | "solution" | "方案" | "修复" => "solution".to_string(),
         "test" | "test_result" | "验证" | "自测" => "testResult".to_string(),
         "decision" | "决策" => "decision".to_string(),
+        "knowledge_reference" | "knowledgereference" | "知识引用" | "已有知识" => {
+            "knowledgeReference".to_string()
+        }
+        "learning_candidate" | "learningcandidate" | "经验候选" | "知识候选" | "沉淀候选" => {
+            "learningCandidate".to_string()
+        }
+        "skill_improvement"
+        | "skillimprovement"
+        | "skill_improvement_candidate"
+        | "skillimprovementcandidate"
+        | "skill改进" => "skillImprovementCandidate".to_string(),
         "todo" | "next" | "后续" => "todo".to_string(),
         "risk" | "风险" => "risk".to_string(),
         "status_transition" | "statustransition" | "phase_transition" | "phasetransition"
@@ -8242,6 +8486,9 @@ fn requirement_event_label(event_type: &str) -> &str {
         "solution" => "方案落地",
         "testResult" => "测试验证",
         "decision" => "关键决策",
+        "knowledgeReference" => "已参考知识/经验",
+        "learningCandidate" => "知识/经验沉淀候选",
+        "skillImprovementCandidate" => "Skill 改进候选",
         "todo" => "后续事项",
         "risk" => "风险记录",
         "statusTransition" => "状态切换",
@@ -8318,6 +8565,15 @@ async fn record_status_transition_event(
                 vec!["补查被跳过阶段的 entry checks，缺失项作为风险或待办记录。".to_string()]
             },
             related_files: vec![STATE_FILE.to_string()],
+            related_knowledge_ids: Vec::new(),
+            trigger_terms: Vec::new(),
+            related_repos: Vec::new(),
+            related_tables: Vec::new(),
+            related_apis: Vec::new(),
+            candidate_type: None,
+            dedupe_key: None,
+            confidence: None,
+            target: None,
             test_cases: Vec::new(),
             status: Some(to.to_string()),
             risk_level: if skipped.is_empty() {
@@ -8379,6 +8635,30 @@ fn render_requirement_event_note(event: &Value) -> String {
     push_event_array(&mut lines, event, "decisions", "Decisions");
     push_event_array(&mut lines, event, "todos", "TODO");
     push_event_array(&mut lines, event, "relatedFiles", "Related files");
+    push_event_array(
+        &mut lines,
+        event,
+        "relatedKnowledgeIds",
+        "Related knowledge/experience IDs",
+    );
+    push_event_array(&mut lines, event, "triggerTerms", "Trigger terms");
+    push_event_array(&mut lines, event, "relatedRepos", "Related repos");
+    push_event_array(&mut lines, event, "relatedTables", "Related tables");
+    push_event_array(&mut lines, event, "relatedApis", "Related APIs");
+    for (key, label) in [
+        ("candidateType", "Candidate type"),
+        ("dedupeKey", "Dedupe key"),
+        ("confidence", "Confidence"),
+        ("target", "Target"),
+    ] {
+        if let Some(value) = event
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+        {
+            lines.push(format!("- {}: {}", label, value.trim()));
+        }
+    }
     if let Some(test_cases) = event
         .get("testCases")
         .and_then(Value::as_array)
@@ -8472,42 +8752,46 @@ fn requirement_api_schema() -> Value {
         "categoryValues": REQ_CATEGORIES,
         "tokens": requirement_token_specs_json(),
         "intents": [
-            {"intent": "overview", "readTokens": intent_read_tokens("overview"), "writeTokens": ["req.memory", "req.notes"]},
-            {"intent": "clarification", "readTokens": intent_read_tokens("clarification"), "writeTokens": ["req.alignment", "req.background", "req.releaseManifest", "req.impact", "req.memory", "req.notes"]},
-            {"intent": "status", "readTokens": intent_read_tokens("status"), "writeTokens": ["req.state", "req.notes"]},
-            {"intent": "progress", "readTokens": intent_read_tokens("progress"), "writeTokens": ["req.notes", "req.memory"]},
-            {"intent": "branch", "readTokens": intent_read_tokens("branch"), "writeTokens": ["req.branchScope", "req.branch"]},
-            {"intent": "self-test", "readTokens": intent_read_tokens("self-test"), "writeTokens": ["req.test", "req.releaseManifest", "req.notes", "req.memory"]},
-            {"intent": "release-check", "readTokens": intent_read_tokens("release-check"), "writeTokens": ["req.releaseCheck", "req.releaseManifest", "req.configChanges", "req.test", "req.impact", "req.review", "req.notes"]},
+            {"intent": "overview", "readTokens": intent_read_tokens("overview"), "writeTokens": intent_write_tokens("overview")},
+            {"intent": "clarification", "readTokens": intent_read_tokens("clarification"), "writeTokens": intent_write_tokens("clarification")},
+            {"intent": "status", "readTokens": intent_read_tokens("status"), "writeTokens": intent_write_tokens("status")},
+            {"intent": "progress", "readTokens": intent_read_tokens("progress"), "writeTokens": intent_write_tokens("progress")},
+            {"intent": "branch", "readTokens": intent_read_tokens("branch"), "writeTokens": intent_write_tokens("branch")},
+            {"intent": "self-test", "readTokens": intent_read_tokens("self-test"), "writeTokens": intent_write_tokens("self-test")},
+            {"intent": "release-check", "readTokens": intent_read_tokens("release-check"), "writeTokens": intent_write_tokens("release-check")},
             {"intent": "design", "readTokens": intent_read_tokens("design"), "writeTokens": intent_write_tokens("design")},
-            {"intent": "config", "readTokens": intent_read_tokens("config"), "writeTokens": ["req.configChanges", "req.releaseManifest", "req.impact"]},
-            {"intent": "review", "readTokens": intent_read_tokens("review"), "writeTokens": ["req.review", "req.notes"]},
-            {"intent": "experience-summary", "readTokens": intent_read_tokens("experience-summary"), "writeTokens": ["req.experienceSummary", "req.releaseManifest", "req.memory", "req.notes"]}
+            {"intent": "config", "readTokens": intent_read_tokens("config"), "writeTokens": intent_write_tokens("config")},
+            {"intent": "review", "readTokens": intent_read_tokens("review"), "writeTokens": intent_write_tokens("review")},
+            {"intent": "experience-summary", "readTokens": intent_read_tokens("experience-summary"), "writeTokens": intent_write_tokens("experience-summary")}
         ],
         "operations": [
             {"operation": "setStatus", "writes": ["req.state"], "required": ["reqId", "status"], "optional": ["note", "dryRun"]},
             {"operation": "setCategory", "writes": ["req.state"], "required": ["reqId", "category"], "optional": ["dryRun"]},
             {"operation": "patchMeta", "writes": ["req.meta"], "required": ["reqId", "fields"], "allowedFields": ["title", "project", "owner", "startDate", "planRelease", "ones"]},
             {"operation": "appendNote", "writes": ["req.notes"], "required": ["reqId", "text"], "optional": ["title", "sessionId", "dryRun"]},
-            {"operation": "recordEvent", "endpoint": "POST /api/requirement/events", "writes": ["events.jsonl", "req.notes"], "required": ["reqId", "type", "summary"], "optional": ["details", "evidence", "decisions", "todos", "relatedFiles", "testCases", "idempotencyKey", "appendNote", "dryRun"]},
+            {"operation": "recordEvent", "endpoint": "POST /api/requirement/events", "writes": ["events.jsonl", "req.notes"], "required": ["reqId", "type", "summary"], "optional": ["details", "evidence", "decisions", "todos", "relatedFiles", "relatedKnowledgeIds", "triggerTerms", "relatedRepos", "relatedTables", "relatedApis", "candidateType", "dedupeKey", "confidence", "target", "testCases", "idempotencyKey", "appendNote", "dryRun"]},
             {"operation": "writeDoc", "writes": ["token/docType"], "required": ["reqId", "token or docType", "content"], "optional": ["mode=replace|append", "dryRun"]},
             {"operation": "upsertSection", "writes": ["token/docType"], "required": ["reqId", "token or docType", "heading", "content"], "optional": ["dryRun"]},
             {"operation": "upsertNamedSection", "endpoint": "POST /api/requirement/sections/{section}", "writes": ["mapped doc section"], "required": ["reqId", "content"], "optional": ["heading", "docType", "token", "dryRun"]}
         ],
+        "eventTypes": ["progress", "decision", "knowledgeReference", "learningCandidate", "skillImprovementCandidate", "issueFound", "rootCause", "testResult", "statusTransition"],
         "agentContext": {
             "endpoint": "GET /api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000",
             "description": "returns compressed summary docs, recent structured events and recommended write APIs"
         },
         "rules": [
-            "需求澄清阶段合并旧的需求对齐和方案设计：先读业务知识/经验，再初步调查代码，输出 alignment.md、background.md、impact.md 的最小闭环。",
+            "需求澄清阶段合并旧的需求对齐和方案设计：先读业务知识/经验，再初步调查代码，输出 background.md、technical-plan.md、notes.md 的最小闭环；alignment/impact/memory 仅历史兼容。" ,
             "经验总结阶段替代旧待上线状态：识别本次需求暴露的 skill、业务知识、经验和流程改进，并把已落地/待落地区分记录到 experience-summary.md。",
             "Agent should call context with for=agent for most work; use token context only when the compressed summary is insufficient.",
             "Use recordEvent for facts, evidence, test results, decisions and todos; it stores events.jsonl and can append notes.md.",
             "Use sections/{section} or upsertSection for targeted document updates instead of replacing full markdown files.",
+            "Maintain req.technicalPlan throughout implementation: update the global approach before/after non-trivial code changes so humans can review direction before reading diffs.",
+            "During clarification, record referenced knowledge/experience IDs as knowledgeReference events; during execution, record reusable findings as learningCandidate or skillImprovementCandidate events.",
+            "Online issue requirements use lightweight statuses 排查中/已确认 and do not need the strict normal requirement lifecycle unless converted to category=需求.",
             "Agent should call edit-plan before selecting files for non-trivial requirement edits.",
             "state.json is the source of truth for status/category; do not direct-edit it.",
             "Use appendNote for free-form progress logs; avoid replacing notes.md.",
-            "Use branches.json as machine-readable branch scope; branch.md is human-readable narrative."
+            "Use branches.json as machine-readable branch scope; branch.md is legacy/human narrative when present."
         ]
     })
 }
@@ -8575,6 +8859,14 @@ fn requirement_token_specs_json() -> Vec<Value> {
             "release-manifest.md",
             Some("release-manifest"),
             "always-visible release change manifest: DB tables, configs, topics, groups, jobs, APIs and manual release actions",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.technicalPlan",
+            "technical-plan.md",
+            Some("technical-plan"),
+            "agent-maintained implementation plan for global design, touched code, risks and validation before human diff review",
             true,
             vec!["writeDoc", "upsertSection"],
         ),
@@ -8760,22 +9052,18 @@ fn ensure_requirement_intent(intent: &str) -> ApiResult<()> {
 fn intent_read_tokens(intent: &str) -> Vec<&'static str> {
     match intent {
         "status" => vec!["req.meta", "req.state", "req.notes"],
-        "progress" => vec!["req.meta", "req.memory", "req.notes"],
+        "progress" => vec!["req.meta", "req.technicalPlan", "req.notes"],
         "clarification" | "design" => vec![
             "req.meta",
             "req.prd",
-            "req.alignment",
             "req.background",
-            "req.memory",
-            "req.releaseManifest",
-            "req.impact",
+            "req.technicalPlan",
             "req.notes",
         ],
-        "branch" => vec!["req.meta", "req.branchScope", "req.branch"],
+        "branch" => vec!["req.meta", "req.branchScope", "req.branch", "req.notes"],
         "self-test" => vec![
             "req.meta",
-            "req.memory",
-            "req.branch",
+            "req.technicalPlan",
             "req.releaseManifest",
             "req.test",
             "req.notes",
@@ -8784,89 +9072,78 @@ fn intent_read_tokens(intent: &str) -> Vec<&'static str> {
             "req.meta",
             "req.state",
             "req.branchScope",
-            "req.branch",
-            "req.configChanges",
             "req.releaseManifest",
+            "req.technicalPlan",
             "req.test",
-            "req.impact",
             "req.review",
             "req.releaseCheck",
+            "req.notes",
         ],
         "config" => vec![
             "req.meta",
-            "req.configChanges",
             "req.releaseManifest",
-            "req.impact",
+            "req.technicalPlan",
+            "req.configChanges",
             "req.notes",
         ],
         "experience-summary" => vec![
             "req.meta",
             "req.background",
-            "req.memory",
             "req.notes",
             "req.test",
-            "req.impact",
             "req.review",
-            "req.releaseCheck",
             "req.releaseManifest",
+            "req.technicalPlan",
             "req.experienceSummary",
         ],
         "review" => vec![
             "req.meta",
             "req.branchScope",
             "req.review",
+            "req.technicalPlan",
             "req.codeReview",
         ],
         _ => vec![
             "req.meta",
             "req.state",
-            "req.memory",
             "req.background",
-            "req.alignment",
-            "req.releaseManifest",
-            "req.impact",
-            "req.branch",
+            "req.technicalPlan",
             "req.test",
             "req.notes",
         ],
     }
 }
-
 fn intent_write_tokens(intent: &str) -> Vec<&'static str> {
     match intent {
         "status" => vec!["req.state", "req.notes"],
-        "progress" => vec!["req.notes", "req.memory"],
-        "branch" => vec!["req.branchScope", "req.branch"],
-        "self-test" => vec!["req.test", "req.releaseManifest", "req.notes", "req.memory"],
+        "progress" => vec!["req.technicalPlan", "req.notes"],
+        "branch" => vec!["req.branchScope", "req.notes"],
+        "self-test" => vec![
+            "req.test",
+            "req.technicalPlan",
+            "req.releaseManifest",
+            "req.notes",
+        ],
         "release-check" => vec![
             "req.releaseCheck",
             "req.releaseManifest",
-            "req.configChanges",
+            "req.technicalPlan",
             "req.test",
-            "req.impact",
             "req.review",
             "req.notes",
         ],
-        "config" => vec!["req.configChanges", "req.releaseManifest", "req.impact"],
-        "clarification" | "design" => vec![
-            "req.alignment",
-            "req.background",
-            "req.releaseManifest",
-            "req.impact",
-            "req.memory",
-            "req.notes",
-        ],
-        "review" => vec!["req.review", "req.notes"],
+        "config" => vec!["req.releaseManifest", "req.technicalPlan", "req.notes"],
+        "clarification" | "design" => vec!["req.background", "req.technicalPlan", "req.notes"],
+        "review" => vec!["req.review", "req.technicalPlan", "req.notes"],
         "experience-summary" => vec![
             "req.experienceSummary",
             "req.releaseManifest",
-            "req.memory",
+            "req.technicalPlan",
             "req.notes",
         ],
-        _ => vec!["req.memory", "req.notes"],
+        _ => vec!["req.technicalPlan", "req.notes"],
     }
 }
-
 fn parse_token_list(raw: &str) -> Vec<&'static str> {
     raw.split([',', '，', ' '])
         .filter_map(canonical_requirement_token)
@@ -8889,6 +9166,9 @@ fn canonical_requirement_token(raw: &str) -> Option<&'static str> {
         "branchscope" | "branches" | "branchesjson" => Some("req.branchScope"),
         "config" | "configchanges" => Some("req.configChanges"),
         "releasemanifest" | "manifest" | "deploymanifest" => Some("req.releaseManifest"),
+        "technicalplan" | "techplan" | "implementationplan" | "solution" => {
+            Some("req.technicalPlan")
+        }
         "impact" => Some("req.impact"),
         "test" => Some("req.test"),
         "notes" | "note" => Some("req.notes"),
@@ -8912,6 +9192,7 @@ fn requirement_token_file(token: &str) -> Option<&'static str> {
         "req.branchScope" => Some(BRANCH_SCOPE_FILE),
         "req.configChanges" => Some("config-changes.md"),
         "req.releaseManifest" => Some("release-manifest.md"),
+        "req.technicalPlan" => Some("technical-plan.md"),
         "req.impact" => Some("impact.md"),
         "req.test" => Some("test.md"),
         "req.notes" => Some("notes.md"),
@@ -8932,6 +9213,7 @@ fn requirement_doc_type_for_token(token: &str) -> Option<&'static str> {
         "req.branch" => Some("branch"),
         "req.configChanges" => Some("config-changes"),
         "req.releaseManifest" => Some("release-manifest"),
+        "req.technicalPlan" => Some("technical-plan"),
         "req.impact" => Some("impact"),
         "req.test" => Some("test"),
         "req.notes" => Some("notes"),
@@ -8985,6 +9267,7 @@ fn build_requirement_edit_plan(req: &Requirement, intent: &str) -> Value {
         ],
         "writeExamples": {
             "appendNote": {"operation": "appendNote", "reqId": req.id, "title": "进展", "text": "..."},
+            "upsertTechnicalPlanSection": {"operation": "upsertSection", "reqId": req.id, "token": "req.technicalPlan", "heading": "总体实现方案", "content": "- ..."},
             "upsertTestSection": {"operation": "upsertSection", "reqId": req.id, "token": "req.test", "heading": "自测证据", "content": "- ..."},
             "setStatus": {"operation": "setStatus", "reqId": req.id, "status": "自测中", "note": "..."}
         },
@@ -9111,7 +9394,8 @@ async fn build_requirement_agent_context(
             "If the session started in an earlier phase, do not keep following the startup prompt; refresh context with for=agent and follow phaseRuntime.currentPhasePrompt.",
             "Skipped phase gaps are risk flags, not hard blockers: record them and continue the user's current task unless a safety gate blocks it.",
             "Prefer recordEvent for facts/status/evidence/decisions; it stores events.jsonl and can append notes.md.",
-            "Prefer sections/{section} or upsertSection for targeted impact/test/background updates.",
+            "Prefer sections/{section} or upsertSection for targeted impact/test/background/technical-plan updates.",
+            "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
             "Read full docs only when this compressed context is insufficient."
         ]
     }))
@@ -9228,6 +9512,8 @@ fn default_intent_for_status(status: &str) -> &'static str {
         "自测中" => "self-test",
         "测试中" => "self-test",
         "经验总结" => "experience-summary",
+        "排查中" => "progress",
+        "已确认" => "experience-summary",
         "已完成" => "overview",
         _ => "overview",
     }
@@ -9236,34 +9522,42 @@ fn default_intent_for_status(status: &str) -> &'static str {
 fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
     match status {
         "需求澄清" => vec![
+            file_check(dir, "background.md", "业务背景、范围和验收口径", true),
             file_check(
                 dir,
-                "alignment.md",
-                "澄清目标、范围、验收口径和待确认问题",
+                "technical-plan.md",
+                "技术方案可供人工先判断实现方向",
                 true,
             ),
-            file_check(dir, "background.md", "业务背景可被开发/测试继承", true),
-            file_check(dir, "impact.md", "初步影响面、核心链路和验证方向", true),
-            file_check(dir, "memory.md", "压缩阶段结论和下一步入口", true),
+            file_check(dir, "notes.md", "关键沟通和待确认项可追溯", true),
         ],
         "开发中" => vec![
             file_check(
                 dir,
-                "alignment.md",
+                "background.md",
                 "已明确做什么、不做什么和验收标准",
                 true,
             ),
-            file_check(dir, "impact.md", "开发前复核核心链路风险与回退策略", true),
-            file_check(dir, "branch.md", "需求分支和提交记录可追踪", true),
+            file_check(
+                dir,
+                "technical-plan.md",
+                "实现方案、影响范围、风险和验证计划持续维护",
+                true,
+            ),
             file_check(dir, BRANCH_SCOPE_FILE, "repo/branch 机器可读映射", false),
-            file_check(dir, "release-manifest.md", "上线清单持续维护", true),
-            file_check(dir, "config-changes.md", "配置/DB/MQ 变更集中记录", false),
+            file_check(dir, "release-manifest.md", "有上线资产时按需维护", false),
+            file_check(dir, "test.md", "进入自测前按需创建验证场景", false),
         ],
         "自测中" => vec![
-            file_check(dir, "branch.md", "需求分支已提交并同步", true),
             file_check(dir, BRANCH_SCOPE_FILE, "可计算 diff / 部署影响", false),
             file_check(dir, "test.md", "自测场景、tid、DB/副作用和反向证据", true),
-            file_check(dir, "release-manifest.md", "上线清单完成自检", true),
+            file_check(
+                dir,
+                "technical-plan.md",
+                "实际实现与方案一致或已同步修正",
+                true,
+            ),
+            file_check(dir, "release-manifest.md", "有上线资产时完成自检", false),
             any_file_check(
                 dir,
                 &["review.md", "code-review-ai.md", CODE_REVIEW_FILE],
@@ -9279,7 +9573,18 @@ fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "代码审查门禁已通过或豁免",
                 true,
             ),
-            file_check(dir, "release-manifest.md", "待测版本的上线清单完整", true),
+            file_check(
+                dir,
+                "technical-plan.md",
+                "测试修复后的实现方案仍可审查",
+                true,
+            ),
+            file_check(
+                dir,
+                "release-manifest.md",
+                "有上线资产时待测版本清单完整",
+                false,
+            ),
             file_check(dir, BRANCH_SCOPE_FILE, "test/UAT 合并目标可计算", false),
         ],
         "经验总结" => vec![
@@ -9289,10 +9594,29 @@ fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "业务知识、经验、skill 和流程改进闭环",
                 true,
             ),
-            file_check(dir, "memory.md", "本需求最终摘要", true),
             file_check(dir, "test.md", "验证结果和证据可复用", true),
-            file_check(dir, "release-manifest.md", "发布相关变更无遗漏", true),
+            file_check(dir, "technical-plan.md", "最终实现方案可追溯", true),
+            file_check(dir, "release-manifest.md", "有上线资产时变更无遗漏", false),
             file_check(dir, "notes.md", "关键决策和坑点可追溯", false),
+        ],
+        "已确认" => vec![
+            file_check(dir, "notes.md", "线上问题排查过程和确认结论", true),
+            file_check(
+                dir,
+                "technical-plan.md",
+                "根因、影响、后续修复建议或转需求判断",
+                true,
+            ),
+        ],
+        "排查中" => vec![
+            file_check(dir, "notes.md", "线上问题排查过程", true),
+            file_check(dir, "background.md", "问题现象、影响范围和触发条件", false),
+            file_check(
+                dir,
+                "technical-plan.md",
+                "排查假设、证据链和根因判断",
+                false,
+            ),
         ],
         "已完成" => vec![
             file_check(
@@ -9303,12 +9627,17 @@ fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             ),
             file_check(dir, "release-check.md", "发布/完成前检查记录", false),
             file_check(dir, "test.md", "最终验证证据", true),
-            file_check(dir, "release-manifest.md", "最终上线清单", true),
+            file_check(dir, "technical-plan.md", "最终技术方案", true),
+            file_check(
+                dir,
+                "release-manifest.md",
+                "有上线资产时最终上线清单",
+                false,
+            ),
         ],
-        _ => vec![file_check(dir, "memory.md", "需求摘要", false)],
+        _ => vec![file_check(dir, "technical-plan.md", "需求技术方案", false)],
     }
 }
-
 fn file_check(dir: &Path, file: &str, label: &str, required: bool) -> Value {
     let path = dir.join(file);
     let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
@@ -9350,32 +9679,26 @@ fn any_file_check(dir: &Path, files: &[&str], label: &str, required: bool) -> Va
 
 fn agent_context_tokens(intent: &str) -> Vec<&'static str> {
     match intent {
-        "self-test" => vec!["req.memory", "req.test", "req.impact", "req.notes"],
-        "release-check" => vec![
-            "req.memory",
-            "req.releaseManifest",
+        "self-test" => vec![
+            "req.technicalPlan",
             "req.test",
-            "req.impact",
-            "req.releaseCheck",
-        ],
-        "config" => vec![
-            "req.memory",
-            "req.configChanges",
             "req.releaseManifest",
-            "req.impact",
-        ],
-        "review" => vec!["req.memory", "req.review", "req.impact"],
-        "progress" | "status" => vec!["req.memory", "req.notes"],
-        _ => vec![
-            "req.memory",
-            "req.background",
-            "req.impact",
-            "req.test",
             "req.notes",
         ],
+        "release-check" => vec![
+            "req.releaseManifest",
+            "req.technicalPlan",
+            "req.test",
+            "req.review",
+            "req.releaseCheck",
+        ],
+        "config" => vec!["req.releaseManifest", "req.technicalPlan", "req.notes"],
+        "review" => vec!["req.technicalPlan", "req.review", "req.codeReview"],
+        "progress" | "status" => vec!["req.technicalPlan", "req.notes"],
+        "clarification" | "design" => vec!["req.background", "req.technicalPlan", "req.notes"],
+        _ => vec!["req.background", "req.technicalPlan", "req.notes"],
     }
 }
-
 fn summarize_requirement_doc(raw: &str, max_chars: usize) -> (Value, bool) {
     if raw.trim().is_empty() {
         return (json!({ "headings": [], "excerpt": "" }), false);
@@ -9425,14 +9748,25 @@ fn recommended_requirement_writes(intent: &str) -> Vec<Value> {
     match intent {
         "self-test" => vec![
             json!({"method":"POST","path":"/api/requirement/events","body":{"operation":"implicit","type":"testResult","reqId":"<req-id>","summary":"...","testCases":[{"name":"...","result":"pass|fail","evidence":"..."}]}}),
+            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用验证/排查方法","candidateType":"experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed","target":"experiences"}}),
             json!({"method":"POST","path":"/api/requirement/sections/test","body":{"reqId":"<req-id>","heading":"测试场景","content":"..."}}),
         ],
         "clarification" | "design" => vec![
+            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"knowledgeReference","reqId":"<req-id>","summary":"已参考相关知识/经验","relatedKnowledgeIds":["..."],"triggerTerms":["..."]}}),
             json!({"method":"POST","path":"/api/requirement/events","body":{"type":"decision","reqId":"<req-id>","summary":"...","decisions":["..."]}}),
-            json!({"method":"POST","path":"/api/requirement/sections/impact","body":{"reqId":"<req-id>","heading":"影响面评估","content":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/sections/background","body":{"reqId":"<req-id>","heading":"范围与验收口径","content":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/sections/technical-plan","body":{"reqId":"<req-id>","heading":"总体实现方案","content":"..."}}),
+        ],
+        "experience-summary" => vec![
+            json!({"method":"GET","path":"/api/requirement/experience-summary-context?id=<req-id>&limit=200"}),
+            json!({"method":"POST","path":"/api/knowledge","body":{"kind":"experience|businessKnowledge","title":"...","summary":"...","details":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/doc","body":{"reqId":"<req-id>","docType":"experience-summary","mode":"replace","content":"# ..."}}),
         ],
         _ => vec![
             json!({"method":"POST","path":"/api/requirement/events","body":{"type":"progress","reqId":"<req-id>","summary":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用经验/业务知识候选","candidateType":"business-knowledge|experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed|inferred|needs-confirmation","target":"business-knowledge|experiences"}}),
+            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"skillImprovementCandidate","reqId":"<req-id>","summary":"skill 改进候选","candidateType":"skill-improvement","triggerTerms":["..."],"evidence":["..."],"target":"skill"}}),
+            json!({"method":"POST","path":"/api/requirement/sections/technical-plan","body":{"reqId":"<req-id>","heading":"方案摘要","content":"..."}}),
             json!({"method":"POST","path":"/api/requirement/edit","body":{"operation":"appendNote","reqId":"<req-id>","title":"进展","text":"..."}}),
         ],
     }
@@ -9930,25 +10264,37 @@ async fn validate_requirement(state: &AppState, req: &Requirement) -> ApiResult<
     let mut problems = Vec::<String>::new();
     let mut warnings = Vec::<String>::new();
     let mut files = HashMap::<String, bool>::new();
-    for file in [
+    let required_files = [
         "meta.md",
-        "alignment.md",
+        STATE_FILE,
         "background.md",
+        "technical-plan.md",
+        "notes.md",
+    ];
+    let optional_files = [
+        BRANCH_SCOPE_FILE,
+        "test.md",
+        "release-manifest.md",
+        "review.md",
+        "code-review-ai.md",
+        CODE_REVIEW_FILE,
+        "release-check.md",
+        "experience-summary.md",
+        "prd.md",
+        // Legacy compatibility: readable when present, no longer required for new requirements.
+        "alignment.md",
+        "impact.md",
         "memory.md",
         "branch.md",
         "config-changes.md",
-        "release-manifest.md",
-        "impact.md",
-        "test.md",
-        "notes.md",
-        "experience-summary.md",
-    ] {
+    ];
+    for file in required_files.into_iter().chain(optional_files.into_iter()) {
         let exists = dir.join(file).is_file();
         files.insert(file.to_string(), exists);
         if file == "meta.md" && !exists {
             problems.push("missing meta.md".into());
-        } else if file != "meta.md" && !exists {
-            warnings.push(format!("missing {file}"));
+        } else if required_files.contains(&file) && !exists {
+            warnings.push(format!("missing core file {file}"));
         }
     }
     let meta_path = dir.join("meta.md");
@@ -10405,20 +10751,14 @@ fn requirement_create_files(
     );
     vec![
         ("meta.md", meta),
-        ("alignment.md", template_alignment(req_id)),
+        (STATE_FILE, template_state(status, category)),
         (
             "background.md",
             background
                 .map(str::to_string)
                 .unwrap_or_else(|| template_background(req_id)),
         ),
-        ("memory.md", template_memory(req_id, title)),
-        ("branch.md", template_branch(req_id)),
-        ("config-changes.md", template_config_changes(req_id)),
-        ("release-manifest.md", template_release_manifest(req_id)),
-        ("impact.md", template_impact(req_id)),
-        ("test.md", template_test(req_id)),
-        ("experience-summary.md", template_experience_summary(req_id)),
+        ("technical-plan.md", template_technical_plan(req_id)),
         (
             "notes.md",
             notes
@@ -10473,6 +10813,20 @@ fn build_meta_doc(
     )
 }
 
+fn template_state(status: &str, category: &str) -> String {
+    serde_json::to_string_pretty(&json!({
+        "version": 1,
+        "status": status,
+        "previousStatus": Value::Null,
+        "changed": true,
+        "lastTransition": Value::Null,
+        "category": category,
+        "updatedAt": now_ms(),
+        "history": [{"status": status, "from": Value::Null, "at": now_ms(), "note": "created", "skippedStatuses": []}]
+    }))
+    .unwrap_or_else(|_| format!("{{\n  \"version\": 1,\n  \"status\": \"{}\"\n}}\n", status))
+}
+
 fn template_alignment(req_id: &str) -> String {
     format!("# {req_id} 需求澄清\n\n## 业务目标\n- 待补充：这次需求要解决的业务问题和成功标准。\n\n## 场景与角色\n- 待补充：涉及的业务角色、对象、入口和主流程。\n\n## PRD 解读\n- 来源：待补充\n- 已确认：待补充\n- 不确定：待补充\n\n## 初步代码调查\n- 相关仓库/模块：待补充\n- 现有系统行为：待补充\n- 初步实现方向：待补充\n\n## 范围与非目标\n- Include：待补充\n- Exclude：待补充\n\n## 待确认问题\n- [ ] 待补充\n")
 }
@@ -10495,6 +10849,10 @@ fn template_config_changes(req_id: &str) -> String {
 
 fn template_release_manifest(req_id: &str) -> String {
     format!("# {req_id} 上线清单\n\n> 贯穿需求全流程维护；用于上线前快速确认本次改了哪些配置、表、Topic、Group、Job、接口和人工动作，避免发布遗漏。\n\n## Summary\n- 结论：暂无上线资产变更 / 待补充\n- 最后更新：待补充\n- 负责人：待补充\n\n## DB / 表变更\n| 类型 | 表/库 | 变更内容 | 环境 | 是否需上线执行 | 回滚/备注 |\n| --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | 否 | - |\n\n## 配置变更\n| 类型 | Namespace/配置源 | Key/名称 | 变更内容 | 环境 | 是否已发布 | 备注 |\n| --- | --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | - | 否 | - |\n\n## MQ / Topic / Group\n| 类型 | Topic | Group/Tag | 生产者 | 消费者 | 控制台动作 | 备注 |\n| --- | --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | - | 否 | - |\n\n## Job / 定时任务 / 开关\n| 类型 | 名称 | 动作 | 环境 | 是否需人工处理 | 备注 |\n| --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | 否 | - |\n\n## API / 外部依赖\n| 类型 | 接口/系统 | 变更 | 是否需通知 | 备注 |\n| --- | --- | --- | --- | --- |\n| 无 | - | - | 否 | - |\n\n## 上线人工动作\n- [ ] 暂无\n\n## 风险与回滚提醒\n- 待补充\n")
+}
+
+fn template_technical_plan(req_id: &str) -> String {
+    format!("# {req_id} 技术方案\n\n> Agent 在执行需求过程中持续维护；用于人工在看代码差异前快速判断实现方向、影响范围、风险控制和验证路径。\n\n## 方案摘要\n- 当前结论：待补充\n- 最后更新：待补充\n- 实现状态：待设计 / 开发中 / 已实现 / 待验证\n\n## 实现目标与非目标\n- 目标：待补充\n- 非目标：待补充\n\n## 总体实现方案\n- 方案路径：待补充\n- 选择原因：待补充\n- 替代方案与取舍：待补充\n\n## 影响范围\n| 应用/模块 | 关键文件/类 | 改动类型 | 说明 |\n| --- | --- | --- | --- |\n| 待补充 | 待补充 | 新增/修改/删除 | - |\n\n## 核心流程变化\n- 改造前：待补充\n- 改造后：待补充\n- 关键状态/数据流：待补充\n\n## 数据、配置与兼容性\n- DB/表字段：暂无 / 待补充\n- 配置/Apollo/Nacos：暂无 / 待补充\n- MQ/Job/外部接口：暂无 / 待补充\n- 兼容性：待补充\n\n## 风险、灰度与回滚\n- 核心链路风险：待评估\n- 性能/并发/幂等风险：待评估\n- 灰度/开关：待补充\n- 回滚方案：待补充\n\n## 验证计划\n- 单测：待补充\n- 接口/链路自测：待补充\n- 回归范围：待补充\n- 观测日志/DB 证据：待补充\n\n## 人工审查关注点\n- 待补充\n\n## 待确认问题\n- 待补充\n")
 }
 
 fn template_impact(req_id: &str) -> String {
@@ -10534,6 +10892,23 @@ fn update_meta_summary_line(raw: &str, label: &str, value: &str) -> String {
     }
 }
 
+fn requirement_doc_template(req: &Requirement, doc_file: &str) -> String {
+    match doc_file {
+        "alignment.md" => template_alignment(&req.id),
+        "background.md" => template_background(&req.id),
+        "memory.md" => template_memory(&req.id, &req.title),
+        "branch.md" => template_branch(&req.id),
+        "config-changes.md" => template_config_changes(&req.id),
+        "release-manifest.md" => template_release_manifest(&req.id),
+        "technical-plan.md" => template_technical_plan(&req.id),
+        "impact.md" => template_impact(&req.id),
+        "test.md" => template_test(&req.id),
+        "experience-summary.md" => template_experience_summary(&req.id),
+        "notes.md" => template_notes(&req.id),
+        _ => String::new(),
+    }
+}
+
 fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
     match doc_type.trim() {
         "background" | "background.md" => Ok("background.md"),
@@ -10543,6 +10918,14 @@ fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         "release-manifest" | "releasemanifest" | "manifest" | "release-manifest.md" => {
             Ok("release-manifest.md")
         }
+        "technical-plan"
+        | "technicalplan"
+        | "implementation-plan"
+        | "implementationplan"
+        | "tech-plan"
+        | "techplan"
+        | "solution"
+        | "technical-plan.md" => Ok("technical-plan.md"),
         "impact" | "impact.md" => Ok("impact.md"),
         "test" | "test.md" => Ok("test.md"),
         "notes" | "notes.md" => Ok("notes.md"),
@@ -10648,7 +11031,10 @@ fn experience_summary_entered_at_from_state(state: &Value, fallback_updated_at: 
                 .map(|s| s == "经验总结")
                 .unwrap_or(false);
             if is_experience {
-                return entry.get("at").and_then(Value::as_i64).unwrap_or(fallback_updated_at);
+                return entry
+                    .get("at")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(fallback_updated_at);
             }
         }
     }
@@ -10712,7 +11098,10 @@ async fn expire_stale_experience_summary(state: &AppState) -> Result<usize> {
         )
         .await?;
         // 事件记录失败不阻断推进，仅告警（避免单个需求写失败阻塞整个扫描）。
-        if let Err(e) = record_status_transition_event(state, &req, &st, Some(EXPERIENCE_AUTO_COMPLETE_NOTE)).await {
+        if let Err(e) =
+            record_status_transition_event(state, &req, &st, Some(EXPERIENCE_AUTO_COMPLETE_NOTE))
+                .await
+        {
             tracing::warn!(req_id = %req.id, "auto-complete event record failed: {e:?}");
         } else {
             tracing::info!(req_id = %req.id, "auto-completed requirement after staying in 经验总结 >48h");
@@ -10724,12 +11113,15 @@ async fn expire_stale_experience_summary(state: &AppState) -> Result<usize> {
 
 /// 常驻后台任务：每隔固定周期扫描一次，自动推进超期停留在经验总结状态的需求。
 async fn expire_stale_experience_summary_loop(state: AppState) {
-    let mut ticker = tokio::time::interval(Duration::from_secs(EXPERIENCE_AUTO_COMPLETE_INTERVAL_SECS));
+    let mut ticker =
+        tokio::time::interval(Duration::from_secs(EXPERIENCE_AUTO_COMPLETE_INTERVAL_SECS));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         ticker.tick().await;
         match expire_stale_experience_summary(&state).await {
-            Ok(n) => tracing::info!("experience summary auto-complete scan: {n} requirement(s) advanced to 已完成"),
+            Ok(n) => tracing::info!(
+                "experience summary auto-complete scan: {n} requirement(s) advanced to 已完成"
+            ),
             Err(e) => tracing::warn!("experience summary auto-complete scan failed: {e:#}"),
         }
     }
@@ -10844,7 +11236,7 @@ async fn write_injection_context(
     fs::create_dir_all(&dir).await?;
     let path = dir.join(format!("{}.md", session_id));
     let body = format!(
-        "# Agent Panel Requirement Startup Context\n\n- Req ID: {}\n- Title: {}\n- Startup Status: {}\n- Directory: {}\n\n{}\n\n## 重要：阶段提示词实时刷新\n\n这个文件只在 session 创建时注入一次，不能作为长期阶段真相。每轮开始、状态切换后、或任务意图变化时，优先调用：\n\n`GET /api/requirement/context?id={}&for=agent&intent=<intent>&budget=2000`\n\n返回值里的 `phaseRuntime.currentPhasePrompt` 才是当前状态独有提示词；`phaseRuntime.transitionMemory` 会给出状态历史、跳状态风险和缺失前置项。\n\n## Agent workflow\n1. 非简单需求编辑先调用 `GET /api/requirement/edit-plan?id={}&intent=<intent>`，再选择读写范围。\n2. 读取上下文优先调用 `GET /api/requirement/context?id={}&for=agent&intent=<intent>&budget=2000`，不要默认通读大 Markdown。\n3. 状态可以跳转；进入新状态后执行 `phaseRuntime.entryChecks`，缺失项作为风险记录，不自动回退状态。\n4. 需求澄清阶段使用 `intent=clarification`，产出/更新 `alignment.md`、`background.md`、`impact.md`、`memory.md`。\n5. 经验总结阶段使用 `intent=experience-summary`，产出/更新 `experience-summary.md`，并把已确认的新业务知识、经验或 skill 改进落地。\n6. 写入优先调用 `POST /api/requirement/edit`，完成后调用 `POST /api/requirement/validate`。\n7. 只有 API 不可用或任务明确要求原文时，才直接读取需求目录文件。\n",
+        "# Agent Panel Requirement Startup Context\n\n- Req ID: {}\n- Title: {}\n- Startup Status: {}\n- Directory: {}\n\n{}\n\n## 重要：阶段提示词实时刷新\n\n这个文件只在 session 创建时注入一次，不能作为长期阶段真相。每轮开始、状态切换后、或任务意图变化时，优先调用：\n\n`GET /api/requirement/context?id={}&for=agent&intent=<intent>&budget=2000`\n\n返回值里的 `phaseRuntime.currentPhasePrompt` 才是当前状态独有提示词；`phaseRuntime.transitionMemory` 会给出状态历史、跳状态风险和缺失前置项。\n\n## Agent workflow\n1. 非简单需求编辑先调用 `GET /api/requirement/edit-plan?id={}&intent=<intent>`，再选择读写范围。\n2. 读取上下文优先调用 `GET /api/requirement/context?id={}&for=agent&intent=<intent>&budget=2000`，不要默认通读大 Markdown。\n3. 状态可以跳转；进入新状态后执行 `phaseRuntime.entryChecks`，缺失项作为风险记录，不自动回退状态。\n4. 需求澄清阶段使用 `intent=clarification`，维护 `background.md`、`technical-plan.md`、`notes.md`；历史 `alignment.md/impact.md/memory.md` 仅在已有内容或明确需要时读取/更新。\n5. 开发与修复过程中持续维护 `technical-plan.md`：实现方向、关键改动文件/类、流程变化、风险/灰度/回滚、验证计划发生变化时同步更新，让人工先看方案再看 diff。\n6. 自测/提测阶段按需创建 `test.md`、`release-manifest.md`、`review.md`；发布前才生成 `release-check.md`，经验总结阶段才生成 `experience-summary.md`。\n7. 写入优先调用 `POST /api/requirement/edit`，完成后调用 `POST /api/requirement/validate`。\n8. 只有 API 不可用或任务明确要求原文时，才直接读取需求目录文件。\n",
         req.id,
         req.title,
         req.status,
@@ -10872,6 +11264,7 @@ fn phase_prompt_file(status: &str) -> &'static str {
         "开发中" => "prompts/phase-dev.md",
         "自测中" => "prompts/phase-selftest.md",
         "测试中" => "prompts/phase-testing.md",
+        "排查中" | "已确认" => "prompts/phase-online-issue.md",
         "经验总结" | "待上线" => "prompts/phase-experience-summary.md",
         "已完成" => "prompts/phase-done.md",
         _ => "prompts/phase-dev.md",
@@ -11358,15 +11751,21 @@ fn parse_ones_ref(raw: &str) -> Option<Value> {
     if value.is_empty() {
         return None;
     }
-    if value.starts_with("http://") || value.starts_with("https://") {
+    // A pasted value may carry extra text around the ONES link
+    // (e.g. "JTYC-1347611 上架策略新增指定库位 https://.../issue/JTYC-1347611"),
+    // so search for the first http(s) URL anywhere instead of requiring it at the start.
+    if let Some(url) = Regex::new(r#"https?://[^\s<>"']+"#)
+        .ok()
+        .and_then(|re| re.find(value).map(|m| m.as_str().to_string()))
+    {
         let label = Regex::new(r"(?:^|/)issue/([^/?#]+)")
             .ok()
             .and_then(|re| {
-                re.captures(value)
+                re.captures(&url)
                     .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
             })
-            .unwrap_or_else(|| value.rsplit('/').next().unwrap_or(value).to_string());
-        Some(json!({ "raw": value, "url": value, "label": label }))
+            .unwrap_or_else(|| url.rsplit('/').next().unwrap_or(&url).to_string());
+        Some(json!({ "raw": value, "url": url, "label": label }))
     } else {
         Some(json!({ "raw": value, "url": null, "label": value }))
     }
@@ -11565,6 +11964,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_ones_ref_extracts_url_from_pasted_text_with_prefix() {
+        // 复制的整段文本：编号 + 标题 + 链接，应从链接中提取编号
+        let raw = "JTYC-1347611 上架策略新增指定库位 https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347611";
+        let r = parse_ones_ref(raw).unwrap();
+        assert_eq!(r["raw"], raw);
+        assert_eq!(
+            r["url"],
+            "https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347611"
+        );
+        assert_eq!(r["label"], "JTYC-1347611");
+    }
+
+    #[test]
+    fn parse_ones_ref_pure_url_extracts_issue_label() {
+        let raw = "https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347611";
+        let r = parse_ones_ref(raw).unwrap();
+        assert_eq!(r["url"], raw);
+        assert_eq!(r["label"], "JTYC-1347611");
+    }
+
+    #[test]
+    fn parse_ones_ref_plain_id_has_no_url() {
+        let r = parse_ones_ref("JTYC-1347611").unwrap();
+        assert_eq!(r["url"], Value::Null);
+        assert_eq!(r["label"], "JTYC-1347611");
+    }
+
+    #[test]
+    fn parse_ones_ref_empty_input_is_none() {
+        assert!(parse_ones_ref("").is_none());
+        assert!(parse_ones_ref("   ").is_none());
+    }
+
+    #[test]
     fn experience_summary_entered_at_picks_last_history_entry() {
         // 多次进入经验总结时取最后一次进入时间。
         let state = json!({
@@ -11588,7 +12021,10 @@ mod tests {
             "status": "经验总结",
             "history": [{"status": "开发中", "from": null, "at": 1000}]
         });
-        assert_eq!(experience_summary_entered_at_from_state(&no_exp, 5555), 5555);
+        assert_eq!(
+            experience_summary_entered_at_from_state(&no_exp, 5555),
+            5555
+        );
     }
 
     #[test]
@@ -11596,9 +12032,17 @@ mod tests {
         let now = 1_800_000_000_000i64; // ~2027，真实毫秒时间戳量级
         let day_ms = 24 * 3600 * 1000i64;
         // 恰好 48h 之前进入 -> 视为超期（>= 阈值）。
-        assert!(experience_summary_overdue(now - 2 * day_ms, now, 2 * day_ms));
+        assert!(experience_summary_overdue(
+            now - 2 * day_ms,
+            now,
+            2 * day_ms
+        ));
         // 超期更久 -> 超期。
-        assert!(experience_summary_overdue(now - 3 * day_ms, now, 2 * day_ms));
+        assert!(experience_summary_overdue(
+            now - 3 * day_ms,
+            now,
+            2 * day_ms
+        ));
         // 48h 内 -> 未超期。
         assert!(!experience_summary_overdue(now - day_ms, now, 2 * day_ms));
         // 未来时间戳（时钟异常）-> 不超期。
@@ -11616,24 +12060,44 @@ mod tests {
             "history": [{"status": "经验总结", "from": "测试中", "at": now - 3 * day_ms}]
         });
         // 真实状态为经验总结且超期 -> 推进。
-        assert!(should_auto_complete_experience_summary(&stale, now, now, 2 * day_ms));
+        assert!(should_auto_complete_experience_summary(
+            &stale,
+            now,
+            now,
+            2 * day_ms
+        ));
         // 真实状态为经验总结但未超期 -> 不推进。
         let fresh = json!({
             "status": "经验总结",
             "history": [{"status": "经验总结", "from": "测试中", "at": now - day_ms}]
         });
-        assert!(!should_auto_complete_experience_summary(&fresh, now, now, 2 * day_ms));
+        assert!(!should_auto_complete_experience_summary(
+            &fresh,
+            now,
+            now,
+            2 * day_ms
+        ));
         // 真实状态为待上线（历史遗留，normalize 为经验总结）即使超期也不推进。
         let waiting = json!({
             "status": "待上线",
             "history": [{"status": "待上线", "from": "测试中", "at": now - 10 * day_ms}]
         });
-        assert!(!should_auto_complete_experience_summary(&waiting, now, now, 2 * day_ms));
+        assert!(!should_auto_complete_experience_summary(
+            &waiting,
+            now,
+            now,
+            2 * day_ms
+        ));
         // 真实状态为已完成 -> 不推进。
         let done = json!({
             "status": "已完成",
             "history": [{"status": "已完成", "from": "经验总结", "at": now - 3 * day_ms}]
         });
-        assert!(!should_auto_complete_experience_summary(&done, now, now, 2 * day_ms));
+        assert!(!should_auto_complete_experience_summary(
+            &done,
+            now,
+            now,
+            2 * day_ms
+        ));
     }
 }

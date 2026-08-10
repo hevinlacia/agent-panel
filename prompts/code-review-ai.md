@@ -2,7 +2,7 @@
 需求目录：{{REQ_DIR}}
 
 ## 审查材料
-1. 首选材料：需求目录下的 code-review.json（repos[].diff 是每个仓库相对生产基线的逐文件 unified diff）与需求上下文文件（meta.md、background.md、branch.md、impact.md、test.md、config-changes.md、notes.md）。
+1. 首选材料：需求目录下的 code-review.json（repos[].diff 是每个仓库相对生产基线的逐文件 unified diff）与核心需求上下文文件（meta.md、background.md、technical-plan.md、test.md、release-manifest.md、notes.md）；历史 branch.md / impact.md / config-changes.md 若存在可作为辅助材料。
 2. 扩大阅读：仅看 diff 往往不足以判断改动是否正确。必要时用 rg / read 读取仓库里改动文件及其调用方、被调用方、相关常量与配置的完整源码，理解上下文后再下结论。code-review.json 的 repos[].projectPath 是各仓库本地路径。
    - 例：新增/修改一个方法，读它的调用处确认参数、返回值、异常处理是否契合；改了 Mapper/SQL，读对应 Mapper XML 与调用链确认索引、N+1、事务边界；改了 MQ/定时任务，读消费/触发链路确认幂等与重试。
    - 扩大阅读以「能准确判断问题」为度，不必通读整个仓库；读完的在概览里列出。

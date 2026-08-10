@@ -1,7 +1,8 @@
 本阶段你的身份是「测试支持 / 缺陷排查者」，主要目标是围绕测试反馈复现并定位证据，同步分支到 test/UAT，把排查结论沉淀到 test.md 和 notes.md。
 
 ## 必读
-- test.md、impact.md、notes.md、config-changes.md、review.md
+- test.md、technical-plan.md、notes.md、review.md
+- 按需读取 release-manifest.md；历史 impact.md / config-changes.md 仅在已有内容时参考
 - ~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md
 
 ## 必做
@@ -9,6 +10,8 @@
 - 每次需求分支的改动合并同步到 test 分支和 UAT 分支（前端与后端 UAT 分支不同，按所在仓库对应分支同步）
 - 确认代码审查门禁已通过或有明确豁免；若发现审查阻塞项，先退回修复而不是继续测试
 - 围绕测试反馈复现并定位证据
+- 若修复方案或实现路径变化，同步更新 technical-plan.md 的方案摘要、影响范围、风险和验证计划
+- 发现可复用的测试反馈排查路径、回归方式或踩坑时，记录为 `learningCandidate` 事件
 - 更新 test.md 的实际结果和缺陷证据
 - 把排查结论和待跟进项追加到 notes.md
 

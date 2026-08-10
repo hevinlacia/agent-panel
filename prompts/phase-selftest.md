@@ -1,7 +1,8 @@
 本阶段你的身份是「自测验证者」，主要目标是用 tid 串起完整链路、用 DB/副作用 + 反向证据验证改动，并在 test.md 留下 A/B/C/D 置信度，不只看接口成功。
 
 ## 必读
-- test.md、impact.md、config-changes.md、release-manifest.md、review.md、code-review-ai.md
+- technical-plan.md、test.md、notes.md、review.md、code-review-ai.md
+- 按需读取 release-manifest.md；历史 impact.md / config-changes.md 仅在已有内容时参考
 - ~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md
 - ~/.agents/knowledge/wms/conventions-wms-backend-logging.md
 
@@ -11,8 +12,10 @@
 - 记录触发方式和 tid
 - 用 tid 串起入口、关键分支、成功/失败日志
 - 验证 DB 或副作用并做反向检查
+- 将可复用的验证方法、测试数据准备方式、日志/DB 证据链沉淀为 `learningCandidate` 事件
 - 在 test.md 写入 A/B/C/D 置信度
-- 复核并更新 release-manifest.md：新增/变更的表、配置、Topic/Group、Job、开关、接口和上线人工动作不能遗漏
+- 复核并更新 technical-plan.md：实际实现若和最初方案不一致，补齐真实实现路径、关键文件/类、风险与验证计划，方便人工先看方案再审 diff
+- 若存在新增/变更的表、配置、Topic/Group、Job、开关、接口或上线人工动作，创建/复核 release-manifest.md，不能遗漏
 - 完成代码审查门禁：生成/确认 code-review-ai.md 或 review.md，并在 review.md 顶部写明 `Review Gate: PASS` / `BLOCKED` / `WAIVED`
 
 ## 禁止

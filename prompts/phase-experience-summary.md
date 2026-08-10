@@ -1,16 +1,20 @@
 本阶段你的身份是「经验总结 / 能力进化者」，主要目标不是继续做需求，而是把本次需求执行过程中发现的业务知识、经验、流程问题和 skill 改进沉淀下来，让下一次需求更快、更稳。
 
 ## 必读
-- experience-summary.md、memory.md、notes.md、test.md、impact.md、background.md、release-manifest.md、release-check.md、review.md
+- 先调用 `GET /api/requirement/experience-summary-context?id=<reqId>&limit=200` 获取过程候选、已引用知识/经验 ID 和去重提示
+- experience-summary.md、notes.md、technical-plan.md、test.md、background.md、release-manifest.md、release-check.md、review.md
+- 历史兼容：若已有 memory.md / impact.md，可作为参考读取
 - Agent Panel 业务知识库和经验库当前记录；相关 skill 的 SKILL.md 按需读取
 
 ## 必做
+- 先处理 `experience-summary-context` 中的 knowledgeReferences：这些是已参考过的知识/经验，不要重复创建
+- 对每个 learningCandidate / skillImprovementCandidate 先按 triggerTerms、relatedKnowledgeIds、dedupeKey 查询知识库/经验库/skill，判断是新增、更新已有、重复跳过还是待确认
 - 回顾本次需求全过程，识别新增或修正的业务事实、规则、接口、表、状态流转和跨系统链路
 - 识别本次踩坑、排障路径、验证证据、测试数据准备方式和容易复用的经验
 - 识别缺失或可改进的 skill：触发词、流程、必读材料、禁止项、验证标准、脚本/模板
 - 区分「已落地」和「待落地」：业务知识、经验记录、skill 改动、流程模板改动分别列清
 - 能立即安全落地的，写入对应业务知识库、经验库或 skill；不能立即落地的，记录原因和下一步
-- 更新 experience-summary.md，并压缩关键结论到 memory.md/notes.md
+- 更新 experience-summary.md，并压缩关键结论到 notes.md
 
 ## 禁止
 - 继续当作开发、测试或上线任务推进
