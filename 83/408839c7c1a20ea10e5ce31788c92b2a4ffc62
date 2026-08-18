@@ -1,0 +1,180 @@
+src/main.rs
+  870321b482797a00 67,77-80,125-126,150,173,179-180,202-220,301
+  9e6777aec42aa399 65,68,261-263
+  6fe44d26c9bfd48e 134,302
+  19d1a3249052fd12 1,3,5-6,11,13
+  7ccde2390aeddb3f 153
+src/pi_config.rs
+  19d1a3249052fd12 120-157
+prompts/code-review-ai.md
+  9e6777aec42aa399 5-8,33,45,58-60
+  25ccda33fc8e23f4 44,46-56
+src/requirement_context.rs
+  19d1a3249052fd12 2039
+web/src/App.tsx
+  870321b482797a00 68-90,119,149-152,163-165,356-357,376-391,448-482,559-563,635-689,773,782-789,791,813,825,829,847-899,1370,1409-1422,1437,1439,1441,1466,1474
+  2a030f449441f7e7 777,811
+  6fe44d26c9bfd48e 14,22,31-33,288,303,908-957,1176-1203,1373-1374,1407,1423-1433,1435,1440,1447,1698
+  9e6777aec42aa399 254-256,986-989,991,1014-1027,1047,1050,1057,1061
+  25ccda33fc8e23f4 984-985,1045-1046,1065
+  7ccde2390aeddb3f 1438
+src/git_workflow.rs
+  19d1a3249052fd12 695
+AGENTS.md
+  19d1a3249052fd12 9-30,55-56
+web/src/styles.css
+  870321b482797a00 427-432,623-635
+  6fe44d26c9bfd48e 564-566,571-622
+  25ccda33fc8e23f4 637-638,640
+prompts/phase-common.md
+  9e6777aec42aa399 1-31
+web/src/markdown.tsx
+  6fe44d26c9bfd48e 1-219
+prompts/phase-testing.md
+  9e6777aec42aa399 14
+src/sessions.rs
+  19d1a3249052fd12 123
+prompts/phase-selftest.md
+  9e6777aec42aa399 15
+src/tests.rs
+  19d1a3249052fd12 2
+README.md
+  9e6777aec42aa399 91,98,139,212-213,239,244,261
+  25ccda33fc8e23f4 99,245
+src/knowledge.rs
+  19d1a3249052fd12 2-1401
+prompts/phase-online-issue.md
+  9e6777aec42aa399 12
+prompts/phase-dev.md
+  9e6777aec42aa399 12
+src/requirement_api.rs
+  19d1a3249052fd12 20
+src/http.rs
+  19d1a3249052fd12 12-33
+src/config.rs
+  19d1a3249052fd12 136-230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "83408839c7c1a20ea10e5ce31788c92b2a4ffc62",
+  "prompts": {
+    "19d1a3249052fd12": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0142a-ef7d-7748-8f0f-a02b4dfd49e0",
+        "model": "openai-gpt-5.5-hevin"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 69,
+      "total_deletions": 65,
+      "accepted_lines": 55,
+      "overriden_lines": 0
+    },
+    "25ccda33fc8e23f4": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "e70ed984-7128-4c8a-af6e-3f49934229ed",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 7,
+      "accepted_lines": 23,
+      "overriden_lines": 0
+    },
+    "26c85443b6dd3a99": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019ff03b-0d9b-7cf9-807c-17f510867933",
+        "model": "openai-gpt-5.5-hevin"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 241,
+      "total_deletions": 14,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "2a030f449441f7e7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019feb11-d312-79da-9f1f-5c9a1cd304f6",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 2,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "6fe44d26c9bfd48e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019ff677-6480-797e-86d2-53e05c79be7b",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 441,
+      "total_deletions": 14,
+      "accepted_lines": 381,
+      "overriden_lines": 0
+    },
+    "7bf3c747a563e2aa": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0143f-216a-7cab-9367-7d1240f56eb3",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 165,
+      "total_deletions": 70,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "7ccde2390aeddb3f": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019ff4e9-24db-74a2-8785-5201eb8371ab",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 634,
+      "total_deletions": 14,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    },
+    "870321b482797a00": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01365-1a9c-7ea4-afca-7e0d1d2b251d",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1356,
+      "total_deletions": 41,
+      "accepted_lines": 281,
+      "overriden_lines": 0
+    },
+    "9e6777aec42aa399": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "019ff624-29f9-7af4-b8e1-02411ca7d360",
+        "model": "openai-gpt-5.5-hevin"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 947,
+      "total_deletions": 134,
+      "accepted_lines": 84,
+      "overriden_lines": 0
+    }
+  }
+}
