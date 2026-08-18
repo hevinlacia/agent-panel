@@ -88,14 +88,15 @@ Agent Panel 目前做的是**只读能力接入**：
 - `GET /api/requirement/schema` — 返回需求文件 token、intent、允许操作和推荐流程，供 agent 无需翻源码即可理解协议
 - `GET /api/requirement/edit-plan?id=<req>&intent=<intent>` — 按意图返回应该读/写的 token、文件路径、大小和示例写法
 - `GET /api/requirement/context?id=<req>&intent=<intent>&budget=2000` — 按 token budget 返回压缩上下文，避免 agent 直接读取超大 `notes.md` / `code-review.json`
-- `GET /api/requirement/context?id=<req>&for=agent&intent=<intent>&budget=2000` — 返回 agent 专用摘要：关键文档摘要、最近结构化事件、推荐写入 API，以及按最新需求状态实时生成的 `phaseRuntime.currentPhasePrompt`
+- `GET /api/requirement/context?id=<req>&for=agent&intent=<intent>&budget=2000` — 返回 agent 专用摘要：关键文档摘要、最近结构化事件、推荐写入 API，以及按最新需求状态实时生成的 `phaseRuntime.fixedPhasePrompt` + `phaseRuntime.statePhasePrompt`
 - `POST /api/requirement/events` — 记录结构化事件（问题、根因、测试、决策、TODO 等）到 `events.jsonl`，默认同步追加 `notes.md`
 - `POST|PATCH /api/requirement/sections/{section}` — 按语义章节 upsert 文档块，例如 `impact`、`test`、`boxCodeIssue`
 - `POST /api/requirement/edit` — 统一结构化编辑入口，支持 `setStatus`、`setCategory`、`patchMeta`、`appendNote`、`writeDoc`、`upsertSection`
 - `POST /api/requirement/notes` — 追加 `notes.md` 进展块，不覆盖原文
 - `GET|PUT|POST /api/requirement/doc` — GET 读取受控文档；PUT/POST 写入受控文档，`docType/file=background|memory|branch|config-changes|release-manifest|impact|test|notes|review|release-check|experience-summary|alignment|prd`，`mode=replace|append`
 - `POST /api/requirement/validate` — 校验 `meta.md`、`state.json`、标准文件和 `branches.json` 基本结构
-- `GET /api/requirement/review-gate?id=<req>` — 读取代码审查门禁状态；自测中推进到测试中时，后端会强制要求 PASS 或 WAIVED
+- `POST /api/requirement/code-review/incremental` — 在已有审查快照过期时生成 `code-review-incremental.json`：按 reviewed `targetCommit` → current HEAD 生成新增提交/文件/diff，用于测试中追加代码后的快速复审，避免重审全量分支
+- `GET /api/requirement/review-gate?id=<req>` — 读取代码审查门禁状态；自测中推进到测试中时，后端会强制要求 PASS 或 WAIVED。响应 `gate` 含 `riskTags` / `inventoryRisk`：命中库存风险时，即使 review 写 PASS，若未包含库存账本专项评估，门禁仍为 `inventory-pending`（不允许推进）
 - `POST /api/requirement/master-diff` — 按 `branches.json` 对比需求分支和指定基准分支
 - `GET /api/requirement/merge-options?id=<req>` — 返回前端/后端可选环境分支和按需求状态计算的默认选中值
 - `POST /api/requirement/merge-branch` — 按 `branches.json` 将需求分支合并到选择的 `targetBranch`；无冲突则自动推送，冲突则返回 `conflictFiles` 和保留的 `worktreePath`
@@ -135,7 +136,7 @@ curl -sS -H 'Content-Type: application/json' \
   -X PUT http://localhost:7331/api/requirement/doc \
   -d '{"reqId":"WMS-001-demo","docType":"test","mode":"replace","content":"# WMS-001-demo Test\\n\\n## 测试场景清单\\n- 待补充"}'
 
-# Agent 专用上下文：推荐给 agent 继续需求工作，优先于全文读取；返回 phaseRuntime.currentPhasePrompt / entryChecks / phaseGaps
+# Agent 专用上下文：推荐给 agent 继续需求工作，优先于全文读取；返回 phaseRuntime.fixedPhasePrompt / statePhasePrompt / entryChecks / phaseGaps
 curl -sS 'http://localhost:7331/api/requirement/context?id=WMS-001-demo&for=agent&intent=self-test&budget=2000'
 
 # 低 token 获取编辑计划：intent 可用 overview/clarification/status/progress/branch/self-test/release-check/experience-summary/design/config/review
@@ -208,7 +209,8 @@ curl -sS 'http://localhost:7331/api/requirement/merge-status?id=WMS-001-demo&tar
 - 事实、状态、证据、测试结果、决策、TODO 写入 `POST /api/requirement/events`，服务端保存 `events.jsonl` 并可同步追加 `notes.md`。
 - 章节级文档更新使用 `POST /api/requirement/sections/{section}` 或 `/api/requirement/edit` 的 `upsertSection`。
 - 自由说明仍可使用 `notes.md` / Markdown 文档，但 agent 默认先读 `context?for=agent` 的摘要上下文。
-- 状态独有提示词不绑定 session 创建时刻；agent 每轮应重新读取 `context?for=agent`，以 `phaseRuntime.currentPhasePrompt` 作为当前导航。
+- 阶段提示词分为固定提示词和状态独有提示词：`prompts/phase-common.md` 适用于每个状态，`prompts/phase-*.md` 只描述当前状态身份、必读、必做和完成标准。agent 每轮应重新读取 `context?for=agent`，同时遵循 `phaseRuntime.fixedPhasePrompt` 与 `phaseRuntime.statePhasePrompt`；`currentPhasePrompt` 仅作为兼容字段。
+- Pi 扩展 `agent-panel-context.ts` 会在每轮 `before_agent_start` 自动读取当前 session 绑定需求的最新 `context?for=agent`，并注入隐藏上下文；因此同一个 session 内切换需求状态后，下一轮 agent 会自动获得最新固定提示词和状态独有提示词。修改扩展后需要 `/reload` 或重启 pi 才生效。
 - 状态跳转允许跨阶段推进；服务端会在 `state.json.history[].skippedStatuses` 和 `events.jsonl` 记录跳过阶段，并在 `phaseRuntime.phaseGaps` 暴露缺失 entry checks，作为风险提示而非自动回退。
 
 Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文件名即可定位读写范围：
@@ -234,11 +236,13 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 
 推荐 agent 流程：
 
-- **每轮刷新阶段上下文**：先调用 `GET /api/requirement/context?id=<req>&for=agent&intent=<intent>&budget=2000`；同一 session 从澄清推进到开发/测试时，以返回的 `phaseRuntime.currentPhasePrompt` 为准，不沿用 session 启动 prompt。
+- **每轮刷新阶段上下文**：先调用 `GET /api/requirement/context?id=<req>&for=agent&intent=<intent>&budget=2000`；同一 session 从澄清推进到开发/测试时，同时遵循 `phaseRuntime.fixedPhasePrompt` 和 `phaseRuntime.statePhasePrompt`，不沿用 session 启动 prompt。若 Pi 已加载 `agent-panel-context.ts` 扩展，这一步会在每轮开始前自动注入，agent 仍可手动调用接口获取完整 JSON。
 - **跳状态处理**：允许从任意状态跳到目标状态；进入新状态后执行 `phaseRuntime.entryChecks`，`phaseRuntime.phaseGaps.missingRequiredEntryChecks` 作为风险/待办记录，除代码审查等安全门禁外不阻塞当前任务。
 - **需求澄清**：使用 `intent=clarification`，先查业务知识库/经验库，再初步调查代码，产出 `alignment.md`、`background.md`、`impact.md` 和 `memory.md`。
 - **上线清单**：`release-manifest.md` 是贯穿全流程维护的发布资产总览，需求详情页常驻展示；开发、自测、发布前都要同步更新。
 - **代码审查门禁**：不新增主状态；作为 `自测中 → 测试中` 的 gate。`review.md` 或 `code-review-ai.md` 需要明确写 `Review Gate: PASS` / `BLOCKED` / `WAIVED`，否则后端拒绝推进到 `测试中`。
+- **增量复审**：如果需求已经在 `测试中` 且又追加代码，门禁仍要求覆盖最新 HEAD，但不必重审全量 diff；优先调用 `POST /api/requirement/code-review/incremental` 生成 `code-review-incremental.json`，只审上次已审 `targetCommit` → 当前 HEAD 的新增提交。若增量包提示 `linearHistory=false`（rebase/force-push/非祖先关系），再回退全量 `code-review.json`。
+- **风险感知门禁**：`code-review.json` 扫描时为每个文件打风险标签（测试/API/Service/DB/MQ/配置/大改动/**库存**），并按仓库、需求聚合出 `riskTags` 与 `inventoryRisk`。命中 `库存` 风险（InventoryCacheService、ShipmentHeaderService、ShipmentDetailService、location_inventory、shipment_alloc_request、onHandQty/allocatedQty 等）时，review 必须补 `库存账本评估`（活跃/死亡单、DB 库存、redis 可用量、重复释放、遗漏占用、幂等、验证证据），否则即使 PASS 门禁也判定为 `inventory-pending` 并阻断推进。
 - **经验总结**：使用 `intent=experience-summary`，把本次需求暴露的业务知识、经验和 skill 改进写入 `experience-summary.md`，并尽量落地到知识库/经验库/skill。
 
 1. `GET /api/requirement/edit-plan?id=<req>&intent=<intent>` 获取读写计划。
@@ -254,7 +258,7 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 - 每个扫描 root 下会查找 `.agents/req/` 和 `req/`。
 - 需求目录以 `meta.md` 识别，`state.json` 管理状态和类别。
 - 关联关系存储在 `~/.local/share/agent-panel/associations.json`。
-- 新建 session 只生成命令，不再内嵌终端；生成的启动上下文只负责绑定需求和提示 agent 去实时刷新 `context?for=agent`，不再内嵌一次性的阶段提示词：
+- 新建 session 只生成命令，不再内嵌终端；生成的启动上下文会通过 `--append-system-prompt @<ctx-file>` 注入需求压缩背景、当前阶段 prompt、核心文档摘要、最近结构化事件和刷新 URL，让新 agent 第一轮就具备需求背景。启动上下文仍是一次性快照；后续同 session 状态切换由 Pi 扩展 `agent-panel-context.ts` 在每轮自动注入最新上下文，未加载扩展时应手动刷新 `context?for=agent`：
 
 ```bash
 pi --session-id <uuid> --name '<需求标题>' --append-system-prompt @<ctx-file>

@@ -42,3 +42,28 @@ export interface DashboardStatsPayload {
   generatedAt: number
   stats: DashboardStats
 }
+
+export interface CodeReviewFile { path: string; status: string; additions: number; deletions: number; riskTags?: string[] }
+export interface CodeReviewRepoSnapshot {
+  repoName: string
+  projectPath?: string
+  branch: string
+  resolvedTargetRef?: string
+  targetCommit?: string | null
+  baseRef: string
+  baseCommit?: string | null
+  coverageFromCommit?: string | null
+  coverageToCommit?: string | null
+  linearHistory?: boolean
+  currentBranch?: string
+  dirty?: boolean
+  commits?: string[]
+  files: CodeReviewFile[]
+  additions: number
+  deletions: number
+  diff?: string
+  diffTruncated?: boolean
+  warnings?: string[]
+  error?: string | null
+}
+export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; repos: CodeReviewRepoSnapshot[] }

@@ -6,8 +6,28 @@
 
 Current architecture:
 
-- `src/main.rs` — Rust/Axum backend, static SPA serving, JSON APIs, pi JSONL scanning, requirement file reads/writes.
-- `web/src/App.tsx` — React SPA pages for dashboard, requirements, sessions, and settings.
+- `src/main.rs` — Rust/Axum backend bootstrap, central router, shared `AppState` / query DTOs, SPA fallback, and dashboard stats endpoint.
+- `src/config.rs` — Runtime config DTOs, `/api/config` handlers, scan-root normalization, and config persistence.
+- `src/http.rs` — Shared HTTP infrastructure: `ApiError`, `ApiResult`, `FormOrJson`, health/notification stubs, and contextual API error help.
+- `src/util.rs` — Cross-module utility helpers for time, string cleanup, status/category normalization, JSON/text atomic writes, path/list conversion, ONES parsing, and shell quoting.
+- `src/markdown.rs` — Markdown/frontmatter parsing and HTML rendering helpers.
+- `src/capability.rs` — Capability/testdata pack read-only APIs and runner preview/dispatch logic.
+- `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
+- `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
+- `src/git_ai.rs` — Git AI health checks, suspect record refresh, note re-push, and fix-note agent dispatch.
+- `src/git_workflow.rs` — Requirement branch scope, code-review diff generation, sync-base, merge status, and GitLab MR helpers.
+- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration.
+- `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
+- `src/requirement_service.rs` — Requirement create/update/edit/doc/event/state validation and write helpers.
+- `src/requirement_context.rs` — Requirement schema, token context, phase runtime, review gate, and context HTML rendering.
+- `src/experience_summary.rs` — Experience-summary job state, auto-dispatch loops, completion fallback, and startup context injection.
+- `src/sessions.rs` — Pi session JSONL scanning, timeline parsing, and session APIs.
+- `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
+- `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
+- `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
+- `web/src/App.tsx` — React SPA router/pages; still large, but shared diff logic/types are being extracted.
+- `web/src/lib/diff.ts` — Unified diff parsing/stat helpers.
+- `web/src/types.ts` — Shared browser-side API DTOs.
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
 
@@ -32,6 +52,8 @@ Removed architecture:
 - Keep frontend as a Vite React SPA. Use browser fetches to `/api/*`; do not add SSR.
 - Scope CSS with `.react-*` selectors.
 - Prefer small JSON APIs and plain file formats that agents can inspect.
+- When splitting large files, extract low-coupling leaf modules first (pure markdown/frontmatter helpers, capability adapters, mock servers, config screens) and run `cargo test` / frontend typecheck after each step.
+- Keep shared frontend API DTOs in `web/src/types.ts`; feature utilities such as diff parsing should import those DTOs instead of duplicating near-miss types.
 - Generated bundle `public/dashboard-react/` and Rust `target/` are build outputs.
 
 ## Toolchain

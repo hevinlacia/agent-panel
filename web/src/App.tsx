@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock3,
+  Copy,
   FileCode2,
   Gauge,
   GitBranch,
@@ -18,6 +19,7 @@ import {
   LayoutDashboard,
   Library,
   Lightbulb,
+  List,
   ListChecks,
   RefreshCw,
   Search,
@@ -26,7 +28,10 @@ import {
   Sparkles,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { DashboardStatsPayload, RequirementDuration, StatusCount } from "./types"
+import { createPortal } from "react-dom"
+import type { CodeReviewSnapshot, DashboardStatsPayload, RequirementDuration, StatusCount } from "./types"
+import { Markdown } from "./markdown"
+import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "./lib/diff"
 
 interface AppProps { apiPath: string }
 
@@ -60,6 +65,29 @@ interface EffortEstimate {
   updatedAt?: number
 }
 
+interface ExperienceSummaryJob {
+  version?: number
+  reqId?: string
+  status?: "pending" | "running" | "completed" | "failed" | "skipped" | string
+  sessionId?: string | null
+  model?: string | null
+  startedAt?: number | null
+  finishedAt?: number | null
+  attempts?: number
+  error?: string | null
+  reportPath?: string | null
+  updatedAt?: number
+}
+interface ExperienceSummaryJobsPayload {
+  ok: boolean
+  generatedAt: number
+  config: { enabled: boolean; model?: string; maxAgents: number }
+  stats: { total: number; available: number; running: number; completed: number; failed: number; skipped: number }
+  items: { req: Requirement; stage: string }[]
+}
+interface ExperienceSummaryDispatchPayload { ok: boolean; report: { enabled: boolean; maxAgents: number; active: number; queued: number; completed: number; failed: number; dispatched: unknown[]; skipped: unknown[] } }
+interface ExperienceSummaryReportPayload { ok: boolean; reqId: string; path: string; exists: boolean; content: string; job?: ExperienceSummaryJob | null }
+
 interface Requirement {
   id: string
   title: string
@@ -88,6 +116,7 @@ interface Requirement {
   releaseManifestPath?: string
   releaseCheckPath?: string
   experienceSummaryPath?: string
+  experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
   effortEstimate?: EffortEstimate
@@ -117,6 +146,10 @@ interface SessionInfo {
 }
 
 interface RequirementDocPayload { ok: boolean; reqId: string; docType: string; file: string; path: string; exists: boolean; content: string; template?: string }
+interface SessionLogTool { kind?: string; name?: string; id?: string }
+interface SessionLogEntry { line: number; type: string; timestamp?: number | null; title?: string; text?: string; tools?: SessionLogTool[]; usage?: Record<string, unknown> | null; rawType?: string }
+interface SessionLogPayload { ok: boolean; sessionId: string; path: string; cursor: number; total: number; hasMore: boolean; updatedAt: number; entries: SessionLogEntry[] }
+
 interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 interface ConfigPayload {
   requirementScanRoots?: string[]
@@ -127,6 +160,9 @@ interface ConfigPayload {
   branchScopePiModel?: string
   effortEstimatePiModel?: string
   effortEstimateBaseHours?: number
+  autoExperienceSummary?: boolean
+  experienceSummaryPiModel?: string
+  experienceSummaryMaxAgents?: number
   cainiaoMockEnabled?: boolean
   cainiaoMockPort?: number
 }
@@ -215,27 +251,9 @@ interface GitAiHealthPayload {
 interface AutoDrivePayload { jobs: unknown[]; active: number; blocked: number; queue: { active: number; queued: number }; message?: string }
 interface BranchRepo { repoName: string; branches: string[]; role?: string; path?: string; baseRef?: string; testTargetBranch?: string; uatTargetBranch?: string }
 interface BranchScope { version: number; updatedAt: number; repos: BranchRepo[]; fallback?: boolean }
-interface CodeReviewFile { path: string; status: string; additions: number; deletions: number; riskTags?: string[] }
-interface CodeReviewRepoSnapshot {
-  repoName: string
-  projectPath?: string
-  branch: string
-  resolvedTargetRef?: string
-  baseRef: string
-  currentBranch?: string
-  dirty?: boolean
-  commits?: string[]
-  files: CodeReviewFile[]
-  additions: number
-  deletions: number
-  diff?: string
-  diffTruncated?: boolean
-  warnings?: string[]
-  error?: string | null
-}
-interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; repos: CodeReviewRepoSnapshot[] }
-interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
-interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; checkedAt: number; actions: string[] } }
+interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null; incrementalReview?: CodeReviewSnapshot | null }
+interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
+interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[] } }
 interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
 interface SyncBaseResult { repoName: string; ok: boolean; status: string; baseRef?: string; remoteRef?: string; localBranch?: string; currentBranch?: string; beforeCommit?: string; afterCommit?: string; message: string; warnings?: string[] }
 interface SyncBasePayload { ok: boolean; generatedAt: number; results: SyncBaseResult[] }
@@ -248,9 +266,6 @@ interface MergeKindOptions { repoKind: MergeRepoKind | string; options: MergeOpt
 interface MergeOptionsPayload { ok: boolean; reqId: string; status: ReqStatus | string; generatedAt: number; branchScope?: BranchScope | null; options: { frontend: MergeKindOptions; backend: MergeKindOptions } }
 interface MergeBranchResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: MergeTarget | string; targetBranch?: string | null; status: "merged" | "upToDate" | "conflict" | "failed" | "skipped" | "idle" | "pending" | string; message?: string | null; conflictFiles?: string[]; worktreePath?: string | null; warnings?: string[]; commands?: string[] }
 interface MergeBranchPayload { ok: boolean; reqId: string; target?: MergeTarget | string; targetBranch?: string | null; repoKind?: MergeRepoKind | string | null; status: string; generatedAt: number; branchScope?: BranchScope | null; results: MergeBranchResult[] }
-interface DiffLine { type: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string }
-interface DiffFileView { repo: CodeReviewRepoSnapshot; file: CodeReviewFile; diff: string; lines: DiffLine[] }
-
 const cardVariants = {
   hidden: { opacity: 0, y: 18, scale: 0.98 },
   show: { opacity: 1, y: 0, scale: 1 },
@@ -270,7 +285,7 @@ const navItems = [
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
-  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge"
+  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc"
   if (href === "/business-knowledge") return path === "/business-knowledge"
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
@@ -285,6 +300,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/business-knowledge") return { eyebrow: "Business Knowledge", title: "业务知识" }
   if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
+  if (path === "/requirement-doc") return { eyebrow: "Requirement Doc", title: "需求文档" }
   if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
   if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
@@ -337,6 +353,8 @@ async function postForm<T>(url: string, data: Record<string, string>): Promise<T
 }
 
 const PROJECT_FILTER_KEY = "agent-panel.project"
+const PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.projects.defaultExcludedStatuses"
+const FALLBACK_DEFAULT_EXCLUDED_STATUSES = ["已完成"]
 const PROJECT_OPTIONS = [
   { value: "", label: "全部" },
   { value: "WMS", label: "WMS" },
@@ -353,6 +371,22 @@ function useProjectFilter() {
     try { localStorage.setItem(PROJECT_FILTER_KEY, v) } catch { /* ignore */ }
   }
   return { project, setProject }
+}
+
+function readDefaultExcludedStatuses(): string[] {
+  try {
+    const raw = localStorage.getItem(PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY)
+    if (!raw) return FALLBACK_DEFAULT_EXCLUDED_STATUSES
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return FALLBACK_DEFAULT_EXCLUDED_STATUSES
+    return parsed.filter((s) => typeof s === "string" && REQ_STATUSES.includes(s as ReqStatus))
+  } catch {
+    return FALLBACK_DEFAULT_EXCLUDED_STATUSES
+  }
+}
+
+function persistDefaultExcludedStatuses(statuses: string[]) {
+  try { localStorage.setItem(PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY, JSON.stringify(statuses)) } catch { /* ignore */ }
 }
 
 function useFetch<T>(url: string | null, deps: unknown[] = []) {
@@ -409,6 +443,41 @@ function relAge(ms?: number): string {
 function statusPill(status: string) {
   const meta = statusMeta[status] || statusMeta["需求澄清"]
   return <span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}55` }}>{status}</span>
+}
+
+function experienceSummaryStage(req: Requirement): "available" | "running" | "completed" | "failed" | "skipped" | "none" {
+  const status = req.experienceSummaryJob?.status || ""
+  if (status === "completed") return "completed"
+  if (status === "running" || status === "pending") return "running"
+  if (status === "failed") return "failed"
+  if (status === "skipped") return "skipped"
+  if (req.status === "经验总结") return "available"
+  return "none"
+}
+
+function experienceSummaryPill(req: Requirement) {
+  const stage = experienceSummaryStage(req)
+  if (stage === "none") return null
+  const meta: Record<string, { label: string; color: string; soft: string }> = {
+    available: { label: "可经验总结", color: "#facc15", soft: "rgba(250, 204, 21, .14)" },
+    running: { label: req.experienceSummaryJob?.status === "pending" ? "自动总结排队中" : "自动经验总结中", color: "#22d3ee", soft: "rgba(34, 211, 238, .14)" },
+    completed: { label: "自动总结完毕", color: "#22c55e", soft: "rgba(34, 197, 94, .14)" },
+    failed: { label: "自动总结失败", color: "#ef4444", soft: "rgba(239, 68, 68, .14)" },
+    skipped: { label: "跳过总结", color: "#94a3b8", soft: "rgba(148, 163, 184, .14)" },
+  }
+  const item = meta[stage]
+  return <span className="react-status-pill react-exp-summary-pill" style={{ color: item.color, background: item.soft, borderColor: `${item.color}66` }}>{item.label}</span>
+}
+
+function experienceSummaryStageLabel(stage: string): string {
+  switch (stage) {
+    case "available": return "可经验总结"
+    case "running": return "自动总结中"
+    case "completed": return "总结完毕"
+    case "failed": return "总结失败"
+    case "skipped": return "已跳过"
+    default: return "其他"
+  }
 }
 
 function projectsOf(req: Requirement): string {
@@ -487,6 +556,11 @@ function confidencePill(confidence?: string) {
 }
 
 function KnowledgePage({ kind }: { kind: KnowledgeKind }) {
+  if (kind === "experience") return <ExperiencesPage />
+  return <KnowledgeEditorPage kind={kind} />
+}
+
+function KnowledgeEditorPage({ kind }: { kind: KnowledgeKind }) {
   const isBiz = kind === "businessKnowledge"
   const label = isBiz ? "业务知识" : "经验"
   const [query, setQuery] = useState("")
@@ -556,6 +630,61 @@ function KnowledgePage({ kind }: { kind: KnowledgeKind }) {
 
 function KnowledgeCard({ item, selected, index, onEdit }: { item: KnowledgeItem; selected: boolean; index: number; onEdit: () => void }) {
   return <motion.article className={`react-list-card react-knowledge-card ${selected ? "active" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{item.id}</span><h3>{item.title}</h3><p>{item.summary || "暂无摘要"}</p><div className="react-card-meta"><span>{item.domain || "general"}</span>{item.project ? <span>{item.project}</span> : null}<span>{item.scope || "project"}</span><span>更新 {item.updatedAt || "-"}</span>{item.whyMatched?.length ? <span>match: {item.whyMatched.join(" / ")}</span> : null}</div><div className="react-chip-list">{(item.tags || []).slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</div></div><div className="react-card-side">{knowledgeStatusPill(item.status)}{confidencePill(item.confidence)}<button type="button" className="react-copy-link-btn" onClick={onEdit}>编辑</button></div></motion.article>
+}
+
+function ExperiencesPage() {
+  const params = new URLSearchParams(window.location.search)
+  const initialTab = params.get("tab") === "knowledge" ? "knowledge" : "summary"
+  const [tab, setTab] = useState<"summary" | "knowledge">(initialTab)
+  const switchTab = (next: "summary" | "knowledge") => {
+    setTab(next)
+    const q = new URLSearchParams(window.location.search)
+    if (next === "knowledge") q.set("tab", "knowledge"); else q.delete("tab")
+    window.history.replaceState(null, "", `/experiences${q.toString() ? `?${q}` : ""}`)
+  }
+  return <PageChrome icon={<Lightbulb size={15} />} eyebrow="Experiences" title="经验" description="集中查看需求经验自动总结进度，也可维护长期经验库条目。"><div className="react-tab-row"><button className={tab === "summary" ? "active" : ""} onClick={() => switchTab("summary")}>需求总结</button><button className={tab === "knowledge" ? "active" : ""} onClick={() => switchTab("knowledge")}>经验库</button></div>{tab === "summary" ? <ExperienceSummaryJobsPage /> : <KnowledgeEditorPage kind="experience" />}</PageChrome>
+}
+
+function ExperienceSummaryJobsPage() {
+  const [stage, setStage] = useState("all")
+  const [refreshing, setRefreshing] = useState(false)
+  const jobs = useFetch<ExperienceSummaryJobsPayload>(`/api/experience-summary/jobs${stage === "all" ? "" : `?status=${encodeURIComponent(stage)}`}`, [stage])
+  const items = jobs.data?.items || []
+  const stats = jobs.data?.stats
+  const dispatchNow = async () => {
+    setRefreshing(true)
+    try {
+      await postJson<ExperienceSummaryDispatchPayload>("/api/experience-summary/jobs/dispatch", {})
+      jobs.refresh()
+    } finally {
+      setRefreshing(false)
+    }
+  }
+  return <>
+    <section className="react-kpi-grid">
+      <KpiCard icon={<Lightbulb size={20} />} label="可总结" value={stats?.available ?? "-"} sub="需求已进入经验总结" tone="avg" />
+      <KpiCard icon={<Activity size={20} />} label="总结中" value={stats?.running ?? "-"} sub={`并发 ${jobs.data?.config?.maxAgents ?? 3}`} tone="active" />
+      <KpiCard icon={<CheckCircle2 size={20} />} label="已完成" value={stats?.completed ?? "-"} sub="可查看报告" tone="done" />
+      <KpiCard icon={<AlertTriangle size={20} />} label="失败" value={stats?.failed ?? "-"} sub="可重试" tone="total" />
+    </section>
+    <section className="react-panel react-filter-panel"><PanelHead kicker="Auto Summary" title="自动经验总结队列" chip={jobs.data?.config?.enabled ? "ON" : "OFF"} /><p className="react-muted">当需求状态进入“经验总结”后，Agent Panel 会按设置中的模型和并发数自动派发 pi agent，总结完成后写入 experience-summary.md 并标记完成。</p><div className="react-tab-row"><button className={stage === "all" ? "active" : ""} onClick={() => setStage("all")}>全部</button>{["available", "running", "completed", "failed", "skipped"].map((s) => <button key={s} className={stage === s ? "active" : ""} onClick={() => setStage(s)}>{experienceSummaryStageLabel(s)}</button>)}<button onClick={dispatchNow} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />立即派发</button><a href="/settings">配置</a></div></section>
+    {jobs.error ? <ErrorCard error={jobs.error} /> : jobs.loading ? <LoadingCard /> : <div className="react-card-list">{items.length === 0 ? <EmptyCard>暂无可展示的需求总结任务。</EmptyCard> : items.map((item, index) => <ExperienceSummaryJobCard key={item.req.id} req={item.req} stage={item.stage} index={index} onChanged={jobs.refresh} />)}</div>}
+  </>
+}
+
+function ExperienceSummaryJobCard({ req, stage, index, onChanged }: { req: Requirement; stage: string; index: number; onChanged: () => void }) {
+  const [working, setWorking] = useState(false)
+  const retry = async () => {
+    setWorking(true)
+    try {
+      await postJson("/api/experience-summary/jobs/retry", { reqId: req.id, note: "UI 手动重试自动经验总结" })
+      onChanged()
+    } finally {
+      setWorking(false)
+    }
+  }
+  const job = req.experienceSummaryJob
+  return <motion.article className={`react-list-card react-exp-job-card react-exp-job-${stage}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{job?.error || req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{experienceSummaryStageLabel(stage)}</span>{job?.sessionId ? <span>session {job.sessionId.slice(0, 8)}…</span> : null}{job?.updatedAt ? <span>更新 {relAge(job.updatedAt)}</span> : <span>需求更新 {relAge(req.updatedAt)}</span>}{job?.attempts ? <span>attempts {job.attempts}</span> : null}</div>{job?.model ? <code className="react-command">{job.model}</code> : null}</div><div className="react-card-side">{experienceSummaryPill(req) || statusPill(req.status)}<a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=experience-summary&title=${encodeURIComponent("经验总结报告")}`}>查看报告</a>{job?.sessionId ? <a href={`/session?id=${encodeURIComponent(job.sessionId)}`}>总结 Agent</a> : null}<button onClick={retry} disabled={working}>{working ? "派发中…" : stage === "failed" ? "重试" : "重新总结"}</button></div></motion.article>
 }
 
 function KnowledgeEditor({ kind, draft, setDraft, saving, selected, message, onSave, onReset }: { kind: KnowledgeKind; draft: KnowledgeDraft; setDraft: (draft: KnowledgeDraft) => void; saving: boolean; selected: KnowledgeItem | null; message: string | null; onSave: () => void; onReset: () => void }) {
@@ -641,15 +770,25 @@ function ProjectsPage({ globalProject }: { globalProject: string }) {
   const [createdFrom, setCreatedFrom] = useState(params.get("createdFrom") || "")
   const [createdTo, setCreatedTo] = useState(params.get("createdTo") || "")
   const [statuses, setStatuses] = useState<string[]>(params.getAll("status"))
+  const [defaultExcludedStatuses, setDefaultExcludedStatusesState] = useState<string[]>(readDefaultExcludedStatuses)
   const [category, setCategory] = useState<string>(params.get("category") || "")
   const [keyword, setKeyword] = useState(params.get("q") || "")
   const [billableOnly, setBillableOnly] = useState(false)
+  const [noOnesOnly, setNoOnesOnly] = useState(false)
   const reqs = data?.requirements || []
   const win = useMemo(() => billableWindow(), [])
   const projects = useMemo(() => [...new Set(reqs.flatMap((r) => r.projects?.length ? r.projects : [r.project]).filter(Boolean))].sort(), [reqs])
   const counts = useMemo(() => Object.fromEntries(REQ_STATUSES.map((s) => [s, reqs.filter((r) => r.status === s).length])), [reqs]) as Record<string, number>
+  const setDefaultExcludedStatuses = (updater: (current: string[]) => string[]) => {
+    setDefaultExcludedStatusesState((current) => {
+      const next = updater(current).filter((s, i, arr) => REQ_STATUSES.includes(s as ReqStatus) && arr.indexOf(s) === i)
+      persistDefaultExcludedStatuses(next)
+      return next
+    })
+  }
+  const resetDefaultExcludedStatuses = () => setDefaultExcludedStatuses(() => FALLBACK_DEFAULT_EXCLUDED_STATUSES)
   const filtered = useMemo(() => reqs.filter((r) => {
-    if (!billableOnly && statuses.length === 0 && r.status === "已完成") return false
+    if (!billableOnly && statuses.length === 0 && defaultExcludedStatuses.includes(r.status)) return false
     if (statuses.length && !statuses.includes(r.status)) return false
     if (category && (r.category ?? "需求") !== category) return false
     if (!category && (r.category ?? "需求") === "线上问题" && !statuses.length) return false
@@ -669,8 +808,9 @@ function ProjectsPage({ globalProject }: { globalProject: string }) {
         if (doneAt < win.from || doneAt > win.to) return false
       }
     }
+    if (noOnesOnly && parseOnesRef(r.ones)) return false
     return true
-  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, category, project, createdFrom, createdTo, keyword, billableOnly, win])
+  }).sort((a, b) => b.updatedAt - a.updatedAt), [reqs, statuses, defaultExcludedStatuses, category, project, createdFrom, createdTo, keyword, billableOnly, noOnesOnly, win])
   const billableHours = useMemo(() => filtered.reduce((sum, r) => sum + (r.effortEstimate?.estimatedHours || 0), 0), [filtered])
   const apply = () => {
     const q = new URLSearchParams()
@@ -682,11 +822,11 @@ function ProjectsPage({ globalProject }: { globalProject: string }) {
     for (const s of statuses) q.append("status", s)
     window.location.href = `/projects${q.toString() ? `?${q}` : ""}`
   }
-  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 pi session 和最近更新。"><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>类别<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label>创建开始<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建结束<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述" /></label></div><div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a><button type="button" className={`react-toggle-btn ${billableOnly ? "active" : ""}`} onClick={() => setBillableOnly((v) => !v)} title="筛选：未关联 ONES、非线上问题、完成时间在上月20到本月20之间或未完成">本月可结算业务工时</button></div></section>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>{billableOnly ? <div className="react-billable-summary"><span>本月可结算业务工时</span><strong>{billableHours.toFixed(1)}h</strong><span>{filtered.length} 条需求</span><span className="react-muted">{win.label}</span></div> : null}<div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} />)}</div></>}</PageChrome>
+  return <PageChrome icon={<ListChecks size={15} />} eyebrow="Requirements" title="需求进度看板" description="按项目、状态和创建时间筛选需求，查看关联 pi session 和最近更新。"><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label><label>类别<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部类别</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label>创建开始<input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} /></label><label>创建结束<input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} /></label><label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述" /></label></div><div className="react-filter-section-head"><span>状态筛选</span><em>勾选后只显示选中状态，会覆盖默认排除</em></div><div className="react-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={(e) => setStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-filter-section-head"><span>默认排除状态</span><em>未选择上方状态筛选时自动生效，勾选后立即保存</em></div><div className="react-status-options react-excluded-status-options">{REQ_STATUSES.map((s) => <label key={s} className={`react-status-option react-excluded-status-option ${defaultExcludedStatuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={defaultExcludedStatuses.includes(s)} onChange={(e) => setDefaultExcludedStatuses((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-actions"><button onClick={apply}>应用筛选</button><a href="/projects">重置</a><button type="button" onClick={resetDefaultExcludedStatuses}>默认排除恢复默认</button><button type="button" className={`react-toggle-btn ${noOnesOnly ? "active" : ""}`} onClick={() => setNoOnesOnly((v) => !v)} title="筛选：未关联 ONES 任务的需求，可与其他筛选条件叠加">未关联 ONES</button><button type="button" className={`react-toggle-btn ${billableOnly ? "active" : ""}`} onClick={() => setBillableOnly((v) => !v)} title="筛选：未关联 ONES、非线上问题、完成时间在上月20到本月20之间或未完成">本月可结算业务工时</button>{defaultExcludedStatuses.length ? <span className="react-muted">默认排除：{defaultExcludedStatuses.join(" / ")}</span> : <span className="react-muted">默认不排除任何状态</span>}</div></section>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>{billableOnly ? <div className="react-billable-summary"><span>本月可结算业务工时</span><strong>{billableHours.toFixed(1)}h</strong><span>{filtered.length} 条需求</span><span className="react-muted">{win.label}</span></div> : null}<div className="react-card-list">{filtered.length === 0 ? <EmptyCard>暂无符合条件的需求。</EmptyCard> : filtered.map((req, index) => <RequirementCard key={req.id} req={req} index={index} />)}</div></>}</PageChrome>
 }
 
 function RequirementCard({ req, index }: { req: Requirement; index: number }) {
-  return <motion.article className="react-list-card react-req-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span></div></div><div className="react-card-side">{req.effortEstimate ? <span className="react-effort-badge">{req.effortEstimate.estimatedHours}h</span> : null}{req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}{statusPill(req.status)}{onesBadge(req.ones)}</div></motion.article>
+  return <motion.article className="react-list-card react-req-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "暂无描述"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span><span>{req.sessionIds?.length || 0} session(s)</span><span>更新 {relAge(req.updatedAt)}</span></div></div><div className="react-card-side">{req.effortEstimate ? <span className="react-effort-badge">{req.effortEstimate.estimatedHours}h</span> : null}{req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}{experienceSummaryPill(req)}{statusPill(req.status)}{onesBadge(req.ones)}</div></motion.article>
 }
 
 function SessionsPage() {
@@ -704,13 +844,117 @@ function SessionPage() {
   const id = new URLSearchParams(window.location.search).get("id") || ""
   const { data, error, loading } = useFetch<{ session: SessionInfo | null; terminalRemoved?: boolean }>(id ? `/api/session?id=${encodeURIComponent(id)}` : null, [id])
   const session = data?.session
-  return <PageChrome icon={<Server size={15} />} eyebrow="Session" title={session?.title || id || "Session"} description="新版仅保留 pi session 元数据浏览；terminal/PTY 已删除。" actions={<a href="/sessions"><ArrowLeft size={15} />返回 Sessions</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !session ? <EmptyCard>Session not found.</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="Session 信息" chip={statusPill(session.status)} /><div className="react-meta-grid"><span>ID <code>{session.id}</code></span><span>Agent {session.agent || "pi"}</span><span>Model {session.model || session.modelId || "-"}</span><span>Updated {formatDateTime(session.updated || session.created)}</span><span>Worktree {session.worktree || "-"}</span><span>Messages {session.messageCount || 0}</span></div><p className="react-detail-desc">{session.directory || "-"}</p></section><section className="react-panel"><PanelHead kicker="Removed" title="Terminal 已移除" /><p className="react-muted">PTY / xterm bridge 不再随 Agent Panel 提供。需要继续会话时，请在本机终端运行 pi 自身命令。</p><code className="react-command">pi --session {session.id}</code></section></div>}</PageChrome>
+  return <PageChrome icon={<Server size={15} />} eyebrow="Session" title={session?.title || id || "Session"} description="只读实时查看 pi session JSONL；关闭页面不会影响后台 agent。" actions={<a href="/sessions"><ArrowLeft size={15} />返回 Sessions</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !session ? <EmptyCard>Session not found.</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="Session 信息" chip={statusPill(session.status)} /><div className="react-meta-grid"><span>ID <code>{session.id}</code></span><span>Agent {session.agent || "pi"}</span><span>Model {session.model || session.modelId || "-"}</span><span>Updated {formatDateTime(session.updated || session.created)}</span><span>Worktree {session.worktree || "-"}</span><span>Messages {session.messageCount || 0}</span></div><p className="react-detail-desc">{session.directory || "-"}</p></section><section className="react-panel"><PanelHead kicker="Read Only" title="打开终端（可选）" /><p className="react-muted">页面日志是只读的，不会启动第二个 pi 进程。若你需要手动接管，可复制命令打开；关闭该终端不会影响 Agent Panel 已派发的后台总结进程。</p><code className="react-command">pi --session {session.id}</code></section><SessionLogPanel sessionId={session.id} /></div>}</PageChrome>
+}
+
+function SessionLogPanel({ sessionId }: { sessionId: string }) {
+  const [entries, setEntries] = useState<SessionLogEntry[]>([])
+  const [cursor, setCursor] = useState(0)
+  const [total, setTotal] = useState(0)
+  const [path, setPath] = useState("")
+  const [live, setLive] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const load = async (reset = false) => {
+    if (!sessionId || loading) return
+    setLoading(true)
+    setError(null)
+    const nextCursor = reset ? 0 : cursor
+    try {
+      const payload = await fetchJson<SessionLogPayload>(`/api/session/log?id=${encodeURIComponent(sessionId)}&cursor=${nextCursor}&limit=120`)
+      setPath(payload.path)
+      setTotal(payload.total)
+      setCursor(payload.cursor)
+      setEntries((cur) => reset ? payload.entries : [...cur, ...payload.entries.filter((e) => !cur.some((x) => x.line === e.line))])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { setEntries([]); setCursor(0); setTotal(0); setPath(""); setError(null); setLive(true) }, [sessionId])
+  useEffect(() => { if (sessionId) load(true) }, [sessionId])
+  useEffect(() => {
+    if (!live || !sessionId) return
+    const timer = window.setInterval(() => { load(false) }, 2000)
+    return () => window.clearInterval(timer)
+  }, [live, sessionId, cursor, loading])
+  useEffect(() => {
+    if (!live) return
+    const el = document.getElementById("session-log-bottom")
+    el?.scrollIntoView({ block: "end" })
+  }, [entries.length, live])
+  const copyCommand = async () => {
+    await navigator.clipboard.writeText(`pi --session ${sessionId}`)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
+  }
+  return <section className="react-panel react-session-log-panel"><PanelHead kicker="Live Log" title="实时过程（只读）" chip={live ? "LIVE" : "PAUSED"} /><p className="react-muted">从 pi session JSONL 增量读取，不向 session 写入任何内容；适合观察自动经验总结 agent 的完整过程。</p><div className="react-actions"><button onClick={() => load(false)} disabled={loading}><RefreshCw size={15} className={loading ? "react-spin" : ""} />刷新</button><button type="button" onClick={() => setLive((v) => !v)}>{live ? "暂停实时" : "继续实时"}</button><button type="button" onClick={() => load(true)}>重新读取</button><button type="button" onClick={copyCommand}><Copy size={13} />{copied ? "已复制" : "复制终端命令"}</button>{path ? <code className="react-doc-path">{path}</code> : null}</div>{error ? <ErrorCard error={error} /> : null}<div className="react-session-log"><div className="react-card-meta"><span>{entries.length}/{total} entries</span><span>cursor {cursor}</span></div>{entries.length === 0 && loading ? <LoadingCard label="正在读取 session 日志…" /> : entries.length === 0 ? <EmptyCard>暂无日志内容。</EmptyCard> : entries.map((entry) => <SessionLogEntryView key={entry.line} entry={entry} />)}<div id="session-log-bottom" /></div></section>
+}
+
+function SessionLogEntryView({ entry }: { entry: SessionLogEntry }) {
+  const kind = entry.type || "event"
+  const text = (entry.text || "").trim()
+  return <article className={`react-session-log-entry react-session-log-${kind}`}><header><span>{kind}</span><strong>{entry.title || kind}</strong><em>#{entry.line}{entry.timestamp ? ` · ${formatDateTime(entry.timestamp)}` : ""}</em></header>{entry.tools?.length ? <div className="react-chip-list">{entry.tools.map((tool, i) => <span key={`${entry.line}-${i}-${tool.id || tool.name}`}>{tool.kind === "result" ? "✓" : "↪"} {tool.name || "tool"}</span>)}</div> : null}{text ? <pre>{text}</pre> : <p className="react-muted">无文本内容</p>}</article>
 }
 
 function RequirementsData() { return useFetch<{ requirements: Requirement[] }>("/api/requirements") }
 
 function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
   return <div className="react-chip-list">{sessionIds.map((sid) => <a key={sid} href={`/session?id=${encodeURIComponent(sid)}`}>{sid.slice(0, 8)}…</a>)}</div>
+}
+
+function SessionListModal({ sessionIds, onClose }: { sessionIds: string[]; onClose: () => void }) {
+  const { data, loading, error } = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(sessionIds.length ? `/api/sessions/resolve?ids=${encodeURIComponent(sessionIds.join(","))}` : null, [sessionIds.join(",")])
+  const byId = useMemo(() => {
+    const map = new Map<string, SessionInfo>()
+    for (const s of data?.sessions || []) map.set(s.id, s)
+    return map
+  }, [data])
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const copyOpen = async (sid: string) => {
+    try {
+      await navigator.clipboard.writeText(`pi --session ${sid}`)
+      setCopiedId(sid)
+      window.setTimeout(() => setCopiedId((cur) => cur === sid ? null : cur), 1600)
+    } catch {
+      setCopiedId(null)
+    }
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  const sessions = sessionIds.map((sid) => byId.get(sid) ?? { id: sid, title: "(未知 session)", status: "" })
+  return createPortal(
+    <div className="react-modal-backdrop" onClick={onClose}>
+      <div className="react-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="react-modal-head">
+          <div><span>Sessions</span><h3>关联 Session（{sessions.length}）</h3></div>
+          <button type="button" className="react-modal-close" onClick={onClose} aria-label="关闭">×</button>
+        </div>
+        {loading ? <LoadingCard label="正在加载 session 列表…" /> : error ? <ErrorCard error={error} /> : sessions.length === 0 ? <div className="react-modal-body"><p className="react-muted">暂无关联 session。</p></div> : (
+          <ul className="react-session-list">
+            {sessions.map((s) => (
+              <li key={s.id} className="react-session-row">
+                <div className="react-session-info">
+                  <strong title={s.title}>{s.title || "(无标题)"}</strong>
+                  <code>{s.id}</code>
+                </div>
+                <div className="react-session-actions">
+                  <a href={`/session?id=${encodeURIComponent(s.id)}`} title="查看 session 详情">详情</a>
+                  <button type="button" className="react-copy-link-btn" onClick={() => copyOpen(s.id)} title="复制打开命令到剪贴板"><Copy size={13} />{copiedId === s.id ? "已复制" : "复制命令"}</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
 }
 
 function OnesPanel({ req, onSaved }: { req: Requirement; onSaved: () => void }) {
@@ -734,94 +978,17 @@ function OnesPanel({ req, onSaved }: { req: Requirement; onSaved: () => void }) 
   return <section className="react-panel"><PanelHead kicker="ONES" title="ONES 任务关联" chip={onesBadge(req.ones)} /><p className="react-muted">粘贴 ONES 网址、编号，或直接从 ONES 复制的整段文本（编号 + 标题 + 链接），会自动识别为可点击引用；留空保存可清除关联。</p><div className="react-inline-form"><input value={ones} onChange={(e) => { setOnes(e.target.value); setFeedback(null) }} placeholder="ONES 网址 / 编号 / 带链接的复制文本" /><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button></div>{feedback ? <p className="react-save-hint">{feedback}</p> : null}</section>
 }
 
-function reviewStats(review?: CodeReviewSnapshot | null) {
-  const repos = review?.repos || []
-  return {
-    repoCount: repos.length,
-    fileCount: repos.reduce((n, r) => n + (r.files?.length || 0), 0),
-    additions: repos.reduce((n, r) => n + (r.additions || 0), 0),
-    deletions: repos.reduce((n, r) => n + (r.deletions || 0), 0),
-  }
-}
-
-function parseUnifiedDiffFiles(review?: CodeReviewSnapshot | null): DiffFileView[] {
-  if (!review) return []
-  const rows: DiffFileView[] = []
-  for (const repo of review.repos || []) {
-    const chunks = splitUnifiedDiff(repo.diff || "")
-    for (const file of repo.files || []) {
-      const diff = chunks.get(file.path) || ""
-      rows.push({ repo, file, diff, lines: parseDiffLines(diff) })
-    }
-  }
-  return rows
-}
-
-function splitUnifiedDiff(diff: string): Map<string, string> {
-  const files = new Map<string, string>()
-  let currentPath = ""
-  let buffer: string[] = []
-  const flush = () => {
-    if (currentPath) files.set(currentPath, buffer.join("\n"))
-  }
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("diff --git ")) {
-      flush()
-      const match = line.match(/^diff --git a\/(.*?) b\/(.*)$/)
-      currentPath = match?.[2] || ""
-      buffer = [line]
-      continue
-    }
-    if (currentPath) buffer.push(line)
-  }
-  flush()
-  return files
-}
-
-function parseDiffLines(diff: string): DiffLine[] {
-  const lines: DiffLine[] = []
-  let oldNo = 0
-  let newNo = 0
-  for (const raw of diff.split("\n")) {
-    const hunk = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/)
-    if (hunk) {
-      oldNo = Number(hunk[1])
-      newNo = Number(hunk[2])
-      lines.push({ type: "hunk", oldNo: "", newNo: "", text: raw })
-      continue
-    }
-    if (!raw || raw.startsWith("diff --git") || raw.startsWith("index ") || raw.startsWith("--- ") || raw.startsWith("+++ ")) continue
-    if (raw.startsWith("+")) {
-      lines.push({ type: "add", oldNo: "", newNo: String(newNo++), text: raw.slice(1) })
-    } else if (raw.startsWith("-")) {
-      lines.push({ type: "del", oldNo: String(oldNo++), newNo: "", text: raw.slice(1) })
-    } else {
-      lines.push({ type: "ctx", oldNo: String(oldNo++), newNo: String(newNo++), text: raw.startsWith(" ") ? raw.slice(1) : raw })
-    }
-  }
-  return lines
-}
-
-function shortFileName(path: string): string {
-  const parts = path.split("/").filter(Boolean)
-  return parts.slice(-1)[0] || path
-}
-
-function compactPath(path: string, max = 52): string {
-  if (path.length <= max) return path
-  const parts = path.split("/")
-  if (parts.length <= 3) return `…${path.slice(-(max - 1))}`
-  return `${parts[0]}/…/${parts.slice(-3).join("/")}`
-}
-
-function diffDomId(key: string): string {
-  return `diff-file-${encodeURIComponent(key).replace(/%/g, "_")}`
-}
-
 function CodeReviewPanel({ req }: { req: Requirement }) {
   const { data, error, loading, refresh } = useFetch<CodeReviewPayload>(`/api/requirement/code-review?id=${encodeURIComponent(req.id)}`, [req.id])
   const gate = useFetch<ReviewGatePayload>(`/api/requirement/review-gate?id=${encodeURIComponent(req.id)}`, [req.id])
+  const inventoryRisk = Boolean(gate.data?.gate?.inventoryRisk)
+  const gateRiskTags = gate.data?.gate?.riskTags || []
+  const staleRepos = gate.data?.gate?.staleRepos || []
+  const gateStale = gate.data?.gate?.status === "stale"
+  const incrementalReview = data?.incrementalReview || gate.data?.gate?.incrementalReview || null
+  const incrementalStats = reviewStats(incrementalReview)
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshingIncremental, setRefreshingIncremental] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -844,6 +1011,20 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
       setRefreshing(false)
     }
   }
+  const refreshIncrementalScan = async () => {
+    if (!canScan || refreshingIncremental) return
+    setRefreshingIncremental(true)
+    setActionError(null)
+    try {
+      await postForm<CodeReviewPayload>("/api/requirement/code-review/incremental", { reqId: req.id })
+      refresh()
+      gate.refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRefreshingIncremental(false)
+    }
+  }
   const syncBase = async () => {
     if (!canScan || syncing) return
     setSyncing(true)
@@ -861,23 +1042,27 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
   }
   return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Review Gate" title="代码审查门禁" chip={gate.data?.gate?.label || (gate.loading ? "loading" : "gate")} />
     <div className={`react-review-gate react-review-gate-${gate.data?.gate?.status || "unknown"}`}><strong>{gate.data?.gate?.label || "读取中"}</strong><span>{gate.data?.gate?.reason || "自测中推进到测试中前必须完成代码审查门禁。"}</span>{gate.data?.gate?.source ? <em>source: {gate.data.gate.source}</em> : null}</div>
+    {gateRiskTags.length ? <div className="react-review-risk-tags"><strong>风险标签</strong>{gateRiskTags.map((tag) => <span key={tag} className="react-review-tag">{tag}</span>)}</div> : null}
+    {inventoryRisk ? <div className="react-review-gate react-review-gate-blocked"><strong>⚠ 库存高危风险</strong><span>本次改动命中库存相关文件/表，门禁强制要求库存账本专项评估：单据活跃/死亡、DB 库存(onHand/allocated/临时库位/回库单)、redis 可用量(建单-、真取消+、恢复-、回退保持占用)、重复释放、遗漏占用、幂等、验证证据(DB/redis/日志/单测)。未补充前即使 PASS 也不通过。</span></div> : null}
+    {gateStale ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong>{staleRepos.length ? <ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul> : null}<p>优先生成增量审查包，只审上次已审 commit 到当前 HEAD 的新增 diff；非线性历史再回退全量审查。</p></div> : null}
     {gate.data?.gate?.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{gate.data.gate.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
     {gate.error ? <p className="react-effort-error">门禁加载失败：{gate.error}</p> : null}
-    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新代码差异" : "生成代码差异"}</button><button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
+    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新全量差异" : "生成代码差异"}</button>{gateStale ? <button onClick={refreshIncrementalScan} disabled={!canScan || refreshingIncremental}><RefreshCw size={15} className={refreshingIncremental ? "react-spin" : ""} />生成增量审查包</button> : null}<button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
     {syncPayload?.results?.length ? <details className="react-review-repo" open><summary><span><strong>生产基线同步</strong><em>{formatDateTime(syncPayload.generatedAt)}</em></span><span className="react-review-size">{syncPayload.results.filter((r) => r.ok).length}/{syncPayload.results.length} ok</span></summary><div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>应用</th><th>本地分支</th><th>状态</th><th>before</th><th>after</th><th>说明</th></tr></thead><tbody>{syncPayload.results.map((r) => <tr key={r.repoName}><td><strong>{r.repoName}</strong></td><td><code>{r.localBranch || r.baseRef || "-"}</code></td><td><span className={`react-merge-status ${r.ok ? "merged" : "conflict"}`}>{r.status}</span></td><td><code>{r.beforeCommit || "-"}</code></td><td><code>{r.afterCommit || "-"}</code></td><td>{r.message}{r.warnings?.length ? <em>{r.warnings.join("; ")}</em> : null}</td></tr>)}</tbody></table></div></details> : null}
     {error ? <p className="react-effort-error">加载失败：{error}</p> : null}{actionError ? <p className="react-effort-error">刷新失败：{actionError}</p> : null}
     {loading ? <LoadingCard label="正在加载代码差异…" /> : <>
       <div className="react-branch-scope">
         {scope?.repos?.length ? scope.repos.map((repo) => <div key={`${repo.repoName}-${repo.branches?.join("/")}`} className="react-branch-card"><strong>{repo.repoName}</strong><span>{repo.role || "repo"}</span><code>{repo.branches?.join(" / ") || "未指定分支"}</code><em>{repo.baseRef || (repo.role === "前端" ? "origin/production" : "origin/master")}</em></div>) : <p className="react-muted">未找到 <code>branches.json</code>，无法生成代码差异；请先运行 <code>req-branches-update</code>。</p>}
       </div>
+      {incrementalReview ? <details className="react-review-repo" open><summary><span><strong>增量审查包</strong><em>{incrementalReview.baseDescription || "reviewed commit → current HEAD"}</em></span><span className="react-review-size">{incrementalStats.repoCount} repo / {incrementalStats.fileCount} files / +{incrementalStats.additions} / -{incrementalStats.deletions}</span></summary><p className="react-muted">供二次 AI 审查优先读取 <code>code-review-incremental.json</code>；审完后在 <code>code-review-ai.md</code> 或 <code>review.md</code> 注明增量覆盖范围并重新写明 Review Gate。</p>{incrementalReview.repos.map((repo, index) => <div key={`${repo.repoName}-${repo.branch}-${index}`} className="react-branch-card"><strong>{repo.repoName}</strong><code>{repo.branch}</code><span>{repo.coverageFromCommit?.slice(0, 12) || repo.baseCommit?.slice(0, 12) || "base?"} → {repo.coverageToCommit?.slice(0, 12) || repo.targetCommit?.slice(0, 12) || "head?"}</span><em>{repo.linearHistory === false ? "非线性历史：建议全量审查" : `+${repo.additions || 0} / -${repo.deletions || 0}`}</em></div>)}</details> : null}
       {review ? <div className="react-review-summary"><span>{stats.repoCount} repo/branch</span><span>{stats.fileCount} files</span><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span><span>更新 {formatDateTime(review.updatedAt)}</span></div> : <p className="react-muted">暂无 <code>code-review.json</code> 快照；点击“生成代码差异”后会读取本地 git diff 并写回需求目录。</p>}
       {review?.repos?.map((repo, index) => <details key={`${repo.repoName}-${repo.branch}-${index}`} className="react-review-repo" open={index === 0}>
         <summary><span><strong>{repo.repoName}</strong><em>{repo.branch}</em></span><span className="react-review-size">+{repo.additions || 0} / -{repo.deletions || 0}</span></summary>
-        <div className="react-card-meta"><span>base {repo.baseRef || review.baseRef}</span><span>current {repo.currentBranch || "-"}</span><span>{repo.dirty ? "工作区有未提交改动" : "工作区干净"}</span><span>{repo.projectPath || "path n/a"}</span></div>
+        <div className="react-card-meta"><span>base {repo.baseRef || review.baseRef}{repo.baseCommit ? ` @ ${repo.baseCommit.slice(0, 12)}` : ""}</span><span>target {repo.resolvedTargetRef || repo.branch}{repo.targetCommit ? ` @ ${repo.targetCommit.slice(0, 12)}` : ""}</span><span>current {repo.currentBranch || "-"}</span><span>{repo.dirty ? "工作区有未提交改动" : "工作区干净"}</span><span>{repo.projectPath || "path n/a"}</span></div>
         {repo.error ? <p className="react-effort-error">{repo.error}</p> : null}
         {repo.warnings?.length ? <div className="react-drive-blockers"><strong>Warnings</strong><ul>{repo.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div> : null}
         {repo.commits?.length ? <details className="react-review-commits"><summary>提交列表（{repo.commits.length}）</summary><pre>{repo.commits.join("\n")}</pre></details> : null}
-        {repo.files?.length ? <div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>状态</th><th>增删</th><th>风险</th></tr></thead><tbody>{repo.files.map((file) => <tr key={file.path}><td><code>{file.path}</code></td><td>{file.status}</td><td><span className="react-review-add">+{file.additions}</span> / <span className="react-review-del">-{file.deletions}</span></td><td>{file.riskTags?.length ? file.riskTags.map((tag) => <span key={tag} className="react-review-tag">{tag}</span>) : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : <p className="react-muted">没有文件级差异。</p>}
+        {repo.files?.length ? <div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>状态</th><th>增删</th><th>风险</th></tr></thead><tbody>{repo.files.map((file) => <tr key={file.path}><td><code>{file.path}</code></td><td>{file.status}</td><td><span className="react-review-add">+{file.additions}</span> / <span className="react-review-del">-{file.deletions}</span></td><td>{file.riskTags?.length ? file.riskTags.map((tag) => <span key={tag} className="react-review-tag" data-risk={tag}>{tag}</span>) : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : <p className="react-muted">没有文件级差异。</p>}
         {showDiff && repo.diff ? <pre className="react-diff-preview">{repo.diff}{repo.diffTruncated ? "\n… diff 已截断" : ""}</pre> : null}
       </details>)}
     </>}
@@ -986,6 +1171,34 @@ function ProdMrPanel({ req }: { req: Requirement }) {
     {error ? <p className="react-effort-error">生成失败：{error}</p> : null}
     {results.length ? <div className="react-table-wrap react-prod-mr-wrap"><table className="react-code-file-table react-prod-mr-table"><thead><tr><th>应用</th><th>源分支</th><th>目标</th><th>状态</th><th>生产差异</th><th>MR</th><th>复制</th></tr></thead><tbody>{results.map((item, index) => { const key = `${item.repoName}-${item.sourceBranch}-${index}`; return <tr key={key}><td><strong>{item.repoName}</strong><span>{item.role || "repo"}</span></td><td><code>{item.sourceBranch}</code></td><td><code>{item.targetBranch}</code></td><td><span className={`react-prod-mr-status ${item.status}`}>{item.status === "created" ? "新建" : item.status === "reused" ? "复用" : item.status === "skipped" ? "跳过" : item.status === "no_diff" ? "无差异" : "失败"}</span>{item.error ? <em>{item.error}</em> : null}</td><td>{item.diffFiles != null ? (item.diffFiles === 0 ? <span className="react-muted">无</span> : <span><span className="react-review-add">+{item.diffAdditions ?? 0}</span> / <span className="react-review-del">-{item.diffDeletions ?? 0}</span> <span className="react-muted">({item.diffFiles})</span></span>) : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <a href={item.webUrl} target="_blank" rel="noopener noreferrer">!{item.iid || "MR"}</a> : <span className="react-muted">-</span>}</td><td>{item.webUrl ? <button type="button" className="react-copy-link-btn" onClick={() => copyMrLink(item, index)}>{copiedKey === key ? "已复制" : "复制链接"}</button> : <span className="react-muted">-</span>}</td></tr> })}</tbody></table></div> : payload ? <p className="react-muted">未生成 MR，请检查 <code>branches.json</code> 是否包含应用和分支。</p> : null}
   </section>
+}
+
+const DOC_TITLES: Record<string, string> = {
+  "background": "业务背景文档",
+  "technical-plan": "技术方案",
+  "release-manifest": "上线清单",
+  "experience-summary": "经验总结闭环",
+  "review": "代码审查",
+  "release-check": "发布预检",
+  "test": "测试用例",
+  "notes": "执行笔记",
+  "meta": "需求信息",
+}
+
+function RequirementDocPage() {
+  const params = new URLSearchParams(window.location.search)
+  const id = params.get("id") || params.get("reqId") || ""
+  const docType = params.get("doc") || params.get("file") || "background"
+  const doc = useFetch<RequirementDocPayload>(id ? `/api/requirement/doc?id=${encodeURIComponent(id)}&file=${encodeURIComponent(docType)}` : null, [id, docType])
+  const title = DOC_TITLES[docType] ?? docType
+  return <PageChrome icon={<Library size={15} />} eyebrow="Requirement Doc" title={title} description={id ? `需求 ${id}` : undefined} actions={<><a href={id ? `/requirement?id=${encodeURIComponent(id)}` : "/projects"}><ArrowLeft size={15} />返回需求</a></>}>
+    <section className="react-panel react-doc-page-panel">
+      <PanelHead kicker="Document" title={title} chip={doc.loading ? "loading" : doc.data?.file || docType} />
+      {doc.error ? <ErrorCard error={doc.error} /> : doc.loading ? <LoadingCard label="正在加载文档…" /> : !doc.data?.exists ? (
+        <EmptyCard>暂无内容。可在需求澄清阶段生成或更新该文档。</EmptyCard>
+      ) : <Markdown text={doc.data.content || ""} />}
+    </section>
+  </PageChrome>
 }
 
 function RequirementDiffPage() {
@@ -1154,8 +1367,11 @@ function RequirementPage() {
   const [category, setCategory] = useState<ReqCategory | "">("")
   const [savingStatus, setSavingStatus] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
+  const [summaryWorking, setSummaryWorking] = useState(false)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [command, setCommand] = useState("")
+  const [copied, setCopied] = useState(false)
+  const [showSessions, setShowSessions] = useState(false)
   const statusOptions = req?.category === "线上问题" ? ISSUE_STATUSES : REQ_FLOW_STATUSES
   const isOnlineIssue = req?.category === "线上问题"
   const convertIssue = async () => {
@@ -1188,20 +1404,47 @@ function RequirementPage() {
     if (!req) return
     const res = await postForm<{ command: string }>("/api/requirement/new-session", { reqId: req.id })
     setCommand(res.command)
+    setCopied(false)
   }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#business-background"><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
+  const retrySummary = async () => {
+    if (!req || summaryWorking) return
+    setSummaryWorking(true)
+    setStatusMessage(null)
+    try {
+      await postJson("/api/experience-summary/jobs/retry", { reqId: req.id, note: "需求详情页手动派发经验总结" })
+      setStatusMessage("自动经验总结已派发")
+      refresh()
+    } catch (err) {
+      setStatusMessage(`派发失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSummaryWorking(false)
+    }
+  }
+  const copyCommand = async () => {
+    if (!command) return
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch (err) {
+      setCopied(false)
+      // eslint-disable-next-line no-console
+      console.error("复制失败", err)
+    }
+  }
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 pi session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
-      <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={statusPill(req.status)} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
-      <RequirementDocPanel id="technical-plan" req={req} docType="technical-plan" title="技术方案" kicker="Implementation Plan" path={req.technicalPlanPath} description="Agent 执行需求过程中持续维护：先看总体实现路径、影响范围、风险、灰度/回滚和验证计划，再进入代码差异人工审查。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=design&tokens=req.technicalPlan,req.impact,req.branchScope,req.codeReview&budget=4000`} target="_blank" rel="noreferrer">方案上下文</a></>} />
-      <RequirementDocPanel id="release-manifest" req={req} docType="release-manifest" title="上线清单" kicker="Release Manifest" path={req.releaseManifestPath} description="贯穿需求全流程维护：集中展示 DB 表、配置、Topic/Group、Job、开关、接口和上线人工动作，避免发布时遗漏。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=release-check&tokens=req.releaseManifest,req.configChanges,req.branchScope&budget=3000`} target="_blank" rel="noreferrer">清单上下文</a></>} />
-      <RequirementDocPanel id="business-background" req={req} docType="background" title="业务背景文档" kicker="Business Context" path={req.backgroundPath} description="给不熟悉业务的开发/测试快速理解背景，也作为后续经验总结的参考材料。" actions={<><a href="/business-knowledge"><Library size={15} />业务知识库</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=clarification&budget=3000`} target="_blank" rel="noreferrer">澄清上下文</a></>} />
-      <RequirementDocPanel id="experience-summary" req={req} docType="experience-summary" title="经验总结闭环" kicker="Capability Evolution" path={req.experienceSummaryPath} description="记录本次需求暴露出的业务知识、经验、skill 和流程改进，让下一次需求执行更快更稳。" actions={<><a href="/experiences"><Lightbulb size={15} />经验库</a><a href={`/api/requirement/experience-summary-context?id=${encodeURIComponent(req.id)}&limit=200`} target="_blank" rel="noreferrer">候选汇总</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=experience-summary&budget=3000`} target="_blank" rel="noreferrer">总结上下文</a></>} />
+      <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={<>{statusPill(req.status)}{experienceSummaryPill(req)}</>} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
+      <RequirementDocPanel id="technical-plan" req={req} docType="technical-plan" title="技术方案" kicker="Implementation Plan" path={req.technicalPlanPath} description="Agent 执行需求过程中持续维护：先看总体实现路径、影响范围、风险、灰度/回滚和验证计划，再进入代码差异人工审查。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=design&tokens=req.technicalPlan,req.impact,req.branchScope,req.codeReview&budget=4000&format=html`} target="_blank" rel="noreferrer">方案上下文</a></>} />
+      <RequirementDocPanel id="release-manifest" req={req} docType="release-manifest" title="上线清单" kicker="Release Manifest" path={req.releaseManifestPath} description="贯穿需求全流程维护：集中展示 DB 表、配置、Topic/Group、Job、开关、接口和上线人工动作，避免发布时遗漏。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=release-check&tokens=req.releaseManifest,req.attachments,req.configChanges,req.branchScope&budget=5000&format=html`} target="_blank" rel="noreferrer">清单上下文</a></>} />
+      <section id="business-background" className="react-panel react-doc-panel"><PanelHead kicker="Business Context" title="业务背景文档" chip="新页面查看" /><p className="react-muted">给不熟悉业务的开发/测试快速理解背景，也作为后续经验总结的参考材料。点击下方按钮在独立页面查看渲染后的完整文档。</p><div className="react-actions"><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />查看业务背景文档</a><a href="/business-knowledge"><Library size={15} />业务知识库</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=clarification&budget=3000&format=html`} target="_blank" rel="noreferrer">澄清上下文</a></div></section>
+      <RequirementDocPanel id="experience-summary" req={req} docType="experience-summary" title="经验总结闭环" kicker="Capability Evolution" path={req.experienceSummaryPath} description="记录本次需求暴露出的业务知识、经验、skill 和流程改进，让下一次需求执行更快更稳。" actions={<><a href="/experiences"><Lightbulb size={15} />需求总结</a><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=experience-summary&title=${encodeURIComponent("经验总结报告")}`}><Library size={15} />查看总结报告</a>{req.experienceSummaryJob?.sessionId ? <a href={`/session?id=${encodeURIComponent(req.experienceSummaryJob.sessionId)}`}>总结 Agent</a> : null}<button type="button" onClick={retrySummary} disabled={summaryWorking}>{summaryWorking ? "派发中…" : req.experienceSummaryJob?.status === "failed" ? "重试总结" : "重新总结"}</button><a href={`/api/requirement/experience-summary-context?id=${encodeURIComponent(req.id)}&limit=200`} target="_blank" rel="noreferrer">候选汇总</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=experience-summary&budget=3000&format=html`} target="_blank" rel="noreferrer">总结上下文</a></>} />
       <CodeReviewPanel req={req} />
       <MergeBranchPanel req={req} />
       <ProdMrPanel req={req} />
       <OnesPanel req={req} onSaved={refresh} />
       <section className="react-panel"><PanelHead kicker="Status" title={isOnlineIssue ? "线上问题状态" : "状态切换"} /><p className="react-muted">{isOnlineIssue ? "线上问题轻流程：排查中 → 已确认；用于记录排查过程，不强制需求阶段门禁。若确认需要代码修复，可一键转普通需求流程。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>转为普通需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section>
-      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={`${req.sessionIds?.length || 0}`} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <code className="react-command">{command}</code> : null}</section>
+      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{req.sessionIds.length}</button> : "0"} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>生成新 pi session 命令</button></div>{command ? <div className="react-command-wrap"><code className="react-command">{command}</code><button type="button" className="react-copy-link-btn" onClick={copyCommand} title="复制命令到剪贴板"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div> : null}{showSessions && req.sessionIds?.length ? <SessionListModal sessionIds={req.sessionIds} onClose={() => setShowSessions(false)} /> : null}</section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>
@@ -1220,7 +1463,7 @@ function SettingsPage() {
   const [fileContent, setFileContent] = useState("")
   const [fileSnapshot, setFileSnapshot] = useState<PiConfigFileSnapshot | null>(null)
   const [savedHint, setSavedHint] = useState<string | null>(null)
-  useEffect(() => { if (dashboard.data) { setDraft(dashboard.data); setScanRootsText((dashboard.data.requirementScanRoots || []).join("\n")) } }, [dashboard.data])
+  useEffect(() => { if (dashboard.data) { setDraft({ ...dashboard.data, experienceSummaryMaxAgents: dashboard.data.experienceSummaryMaxAgents || 3 }); setScanRootsText((dashboard.data.requirementScanRoots || []).join("\n")) } }, [dashboard.data])
   useEffect(() => { fetchJson<PiConfigFileSnapshot>("/api/pi-config/file?file=settings").then((s) => { setFileSnapshot(s); setFileContent(s.content) }).catch(() => undefined) }, [savedHint])
   const options = modelOptions(piConfig.data)
   const saveScanRoots = async () => { await postJson("/api/config", { requirementScanRoots: scanRootsText.split(/[\n,]/).map((v) => v.trim()).filter(Boolean) }); dashboard.refresh(); setSavedHint("扫描目录已保存") }
@@ -1228,7 +1471,7 @@ function SettingsPage() {
   const saveCainiaoMock = async () => { await postJson("/api/config", { cainiaoMockEnabled: draft.cainiaoMockEnabled, cainiaoMockPort: draft.cainiaoMockPort }); dashboard.refresh(); cainiaoStatus.refresh(); setSavedHint("菜鸟打印 Mock 已保存") }
   const savePiFile = async () => { const next = await postJson<PiConfigFileSnapshot>("/api/pi-config/file", { file: "settings", content: fileContent }); setFileSnapshot(next); setFileContent(next.content); setSavedHint("Pi settings.json 已保存") }
   const selectModel = (key: keyof ConfigPayload) => <select value={String(draft[key] || "")} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}><option value="">选择 Pi 模型</option>{options.map((m) => <option key={m} value={m}>{m}</option>)}</select>
-  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置需求扫描目录、Pi 任务模型和 Pi settings。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Scan Roots" title="需求扫描目录" chip={savedHint || undefined} /><p className="react-muted">每个目录会自动查找其下的 <code>.agents/req/</code> 或 <code>req/</code>。</p><label className="react-editor-label">扫描目录<textarea value={scanRootsText} onChange={(e) => setScanRootsText(e.target.value)} rows={5} placeholder="/home/hevin/Developer/company/WMS" /></label><div className="react-actions"><button onClick={saveScanRoots}>保存扫描目录</button></div></section><section className="react-panel"><PanelHead kicker="Models" title="Pi 任务模型" chip={piConfig.loading ? "loading" : `${options.length} models`} /><p className="react-muted">模型选项来自 <code>~/.pi/agent/models.json</code>，只读取 provider/model 名称，不回显 API Key。</p><div className="react-settings-grid"><label>Code Review{selectModel("codeReviewPiModel")}</label><label>Branch Scope{selectModel("branchScopePiModel")}</label><label>Effort Estimate{selectModel("effortEstimatePiModel")}</label><label>基础工时<input type="number" value={draft.effortEstimateBaseHours || 4} onChange={(e) => setDraft({ ...draft, effortEstimateBaseHours: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveModels}>保存模型配置</button><button type="button" onClick={piConfig.refresh}>刷新模型列表</button></div>{piConfig.error ? <ErrorCard error={piConfig.error} /> : <div className="react-model-list">{(piConfig.data?.providers || []).map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 5).map((m) => m.modelId).join(" / ")}{p.models.length > 5 ? " …" : ""}</p></div>)}</div>}</section><section className="react-panel"><PanelHead kicker="Cainiao" title="菜鸟打印 Mock" chip={cainiaoStatus.data ? (cainiaoStatus.data.running ? "运行中" : "已停止") : "..."} /><p className="react-muted">内置 mock 菜鸟云打印客户端，监听 <code>ws://127.0.0.1:{draft.cainiaoMockPort || 13528}</code>，让 WMS 前端以为打印成功（getPrinters / print 返回 success）。</p><label className="react-switch"><input type="checkbox" checked={Boolean(draft.cainiaoMockEnabled)} onChange={(e) => setDraft({ ...draft, cainiaoMockEnabled: e.target.checked })} />启用菜鸟打印 Mock</label><div className="react-settings-grid"><label>监听端口<input type="number" value={draft.cainiaoMockPort || 13528} onChange={(e) => setDraft({ ...draft, cainiaoMockPort: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveCainiaoMock}>保存并应用</button><button type="button" onClick={cainiaoStatus.refresh}>刷新状态</button></div></section><section className="react-panel react-config-editor"><PanelHead kicker="Pi File" title="settings.json" chip={fileSnapshot?.path || "~/.pi/agent/settings.json"} /><textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile}>保存 settings.json</button></div></section></div>}</PageChrome>
+  return <PageChrome icon={<Settings size={15} />} eyebrow="Settings" title="Settings" description="配置需求扫描目录、Pi 任务模型和 Pi settings。">{dashboard.error ? <ErrorCard error={dashboard.error} /> : dashboard.loading ? <LoadingCard /> : <div className="react-settings-layout"><section className="react-panel"><PanelHead kicker="Scan Roots" title="需求扫描目录" chip={savedHint || undefined} /><p className="react-muted">每个目录会自动查找其下的 <code>.agents/req/</code> 或 <code>req/</code>。</p><label className="react-editor-label">扫描目录<textarea value={scanRootsText} onChange={(e) => setScanRootsText(e.target.value)} rows={5} placeholder="/home/hevin/Developer/company/WMS" /></label><div className="react-actions"><button onClick={saveScanRoots}>保存扫描目录</button></div></section><section className="react-panel"><PanelHead kicker="Models" title="Pi 任务模型" chip={piConfig.loading ? "loading" : `${options.length} models`} /><p className="react-muted">模型选项来自 <code>~/.pi/agent/models.json</code>，只读取 provider/model 名称，不回显 API Key。</p><div className="react-settings-grid"><label>Code Review{selectModel("codeReviewPiModel")}</label><label>Branch Scope{selectModel("branchScopePiModel")}</label><label>Effort Estimate{selectModel("effortEstimatePiModel")}</label><label>基础工时<input type="number" value={draft.effortEstimateBaseHours || 4} onChange={(e) => setDraft({ ...draft, effortEstimateBaseHours: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveModels}>保存模型配置</button><button type="button" onClick={piConfig.refresh}>刷新模型列表</button></div>{piConfig.error ? <ErrorCard error={piConfig.error} /> : <div className="react-model-list">{(piConfig.data?.providers || []).map((p) => <div key={p.id} className="react-model-card"><strong>{p.id}</strong><span>{p.modelCount} models · key {p.hasApiKey ? "set" : "missing"}</span><p>{p.models.slice(0, 5).map((m) => m.modelId).join(" / ")}{p.models.length > 5 ? " …" : ""}</p></div>)}</div>}</section><section className="react-panel"><PanelHead kicker="Experience Summary" title="经验自动总结" chip={draft.autoExperienceSummary ? "ON" : "OFF"} /><p className="react-muted">需求状态进入“经验总结”后，按这里的模型和并发数自动派发 pi agent；完成后写入 experience-summary.md 并标记“自动总结完毕”。</p><label className="react-switch"><input type="checkbox" checked={Boolean(draft.autoExperienceSummary)} onChange={(e) => setDraft({ ...draft, autoExperienceSummary: e.target.checked })} />启用自动经验总结</label><div className="react-settings-grid"><label>经验总结模型{selectModel("experienceSummaryPiModel")}</label><label>同时派发 Agent 数<input type="number" min={1} max={8} value={draft.experienceSummaryMaxAgents || 3} onChange={(e) => setDraft({ ...draft, experienceSummaryMaxAgents: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveModels}>保存自动总结配置</button><a href="/experiences">查看总结队列</a></div></section><section className="react-panel"><PanelHead kicker="Cainiao" title="菜鸟打印 Mock" chip={cainiaoStatus.data ? (cainiaoStatus.data.running ? "运行中" : "已停止") : "..."} /><p className="react-muted">内置 mock 菜鸟云打印客户端，监听 <code>ws://127.0.0.1:{draft.cainiaoMockPort || 13528}</code>，让 WMS 前端以为打印成功（getPrinters / print 返回 success）。</p><label className="react-switch"><input type="checkbox" checked={Boolean(draft.cainiaoMockEnabled)} onChange={(e) => setDraft({ ...draft, cainiaoMockEnabled: e.target.checked })} />启用菜鸟打印 Mock</label><div className="react-settings-grid"><label>监听端口<input type="number" value={draft.cainiaoMockPort || 13528} onChange={(e) => setDraft({ ...draft, cainiaoMockPort: Number(e.target.value) })} /></label></div><div className="react-actions"><button onClick={saveCainiaoMock}>保存并应用</button><button type="button" onClick={cainiaoStatus.refresh}>刷新状态</button></div></section><section className="react-panel react-config-editor"><PanelHead kicker="Pi File" title="settings.json" chip={fileSnapshot?.path || "~/.pi/agent/settings.json"} /><textarea className="react-code-textarea" value={fileContent} onChange={(e) => setFileContent(e.target.value)} spellCheck={false} /><div className="react-actions"><button onClick={savePiFile}>保存 settings.json</button></div></section></div>}</PageChrome>
 }
 
 function SchedulersPage() {
@@ -1452,6 +1695,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/sessions" ? <SessionsPage />
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
+    : path === "/requirement-doc" ? <RequirementDocPage />
     : path === "/requirement-diff" ? <RequirementDiffPage />
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />

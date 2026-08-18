@@ -424,7 +424,12 @@ button, input, select, textarea { font: inherit; }
 .react-settings-grid select,
 .react-inline-form input,
 .react-inline-form select { width: 100%; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,0.045); color: var(--react-text); outline: none; }
-.react-status-options { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 10px; margin-top: 16px; }
+.react-status-options { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 10px; margin-top: 12px; }
+.react-filter-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(148,163,184,.12); }
+.react-filter-section-head span { color: var(--react-cyan); font: 900 .68rem var(--react-mono); letter-spacing: .14em; text-transform: uppercase; }
+.react-filter-section-head em { color: var(--react-faint); font: .72rem var(--react-mono); font-style: normal; }
+.react-excluded-status-options { opacity: .94; }
+.react-excluded-status-option.active { border-color: rgba(248,113,113,.48); background: rgba(248,113,113,.12); color: #fecaca; }
 .react-status-option { display: flex; align-items: center; gap: 8px; min-height: 44px; border: 1px solid var(--react-border); border-radius: 15px; padding: 8px 10px; background: rgba(255,255,255,0.04); color: var(--react-muted); cursor: pointer; }
 .react-status-option.active { border-color: var(--react-border-strong); background: rgba(34,211,238,0.1); color: var(--react-text); }
 .react-status-option strong { margin-left: auto; color: var(--react-text); }
@@ -556,12 +561,83 @@ button, input, select, textarea { font: inherit; }
 .react-saved-pill { color: var(--react-green); font: 800 .68rem var(--react-mono); }
 .react-warn-pill { color: #fca5a5; font: 800 .68rem var(--react-mono); }
 .react-command { display: block; margin-top: 12px; padding: 10px 12px; border-radius: 12px; word-break: break-all; }
+.react-command-wrap { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; }
+.react-command-wrap .react-command { flex: 1; margin-top: 0; }
+.react-command-wrap .react-copy-link-btn { display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; }
 .react-doc-panel { grid-column: 1 / -1; border-color: rgba(250,204,21,.18); }
 .react-doc-path { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid rgba(34,211,238,.22); border-radius: 999px; padding: 7px 10px; color: var(--react-cyan); background: rgba(34,211,238,.06); font: .7rem var(--react-mono); }
 .react-doc-preview { max-height: 420px; overflow: auto; margin: 14px 0 0; border: 1px solid var(--react-border); border-radius: 18px; padding: 16px; background: rgba(4,8,14,.78); color: var(--react-text); white-space: pre-wrap; word-break: break-word; font: .82rem/1.62 var(--react-mono); }
 .react-doc-preview + .react-actions { margin-top: 12px; }
+
+/* rendered markdown (requirement doc page) */
+.react-doc-page-panel { grid-column: 1 / -1; }
+.react-md { max-width: 920px; margin: 0 auto; padding: 8px 6px 32px; color: var(--react-text); font-size: .92rem; line-height: 1.78; }
+.react-md-h { color: #fff; font-weight: 800; letter-spacing: .01em; line-height: 1.35; }
+.react-md-h1 { font-size: 1.55rem; margin: 30px 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--react-border); }
+.react-md-h2 { font-size: 1.28rem; margin: 28px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--react-border); }
+.react-md-h3 { font-size: 1.08rem; margin: 22px 0 8px; }
+.react-md-h4 { font-size: .98rem; margin: 18px 0 6px; }
+.react-md-h5, .react-md-h6 { font-size: .92rem; margin: 14px 0 6px; color: var(--react-cyan); }
+.react-md-p { margin: 10px 0; }
+.react-md strong { color: #fff; font-weight: 800; }
+.react-md em { color: #c7d5e8; }
+.react-md-del { color: var(--react-faint); }
+.react-md-link { color: var(--react-cyan); text-decoration: underline; text-underline-offset: 3px; }
+.react-md-link:hover { color: #fff; }
+.react-md-code { padding: 2px 6px; border: 1px solid var(--react-border); border-radius: 6px; background: rgba(34,211,238,.08); color: #7ee7f7; font: .84em var(--react-mono); word-break: break-all; }
+.react-md-pre { margin: 14px 0; padding: 14px 16px; overflow: auto; border: 1px solid var(--react-border); border-left: 3px solid var(--react-cyan); border-radius: 12px; background: rgba(4,8,14,.82); font: .8rem/1.66 var(--react-mono); color: #a8c2dd; white-space: pre; }
+.react-md-pre-code { font-family: inherit; }
+.react-md-ul, .react-md-ol { margin: 10px 0; padding-left: 26px; }
+.react-md-li { margin: 5px 0; }
+.react-md-li::marker { color: var(--react-cyan); }
+.react-md-quote { margin: 14px 0; padding: 10px 16px; border-left: 3px solid var(--react-amber); border-radius: 0 10px 10px 0; background: rgba(245,158,11,.07); color: #e7dfd0; }
+.react-md-quote p { margin: 6px 0; }
+.react-md-hr { margin: 22px 0; border: none; border-top: 1px dashed var(--react-border-strong); }
+.react-md-table-wrap { margin: 14px 0; overflow-x: auto; border: 1px solid var(--react-border); border-radius: 12px; }
+.react-md-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.react-md-table th, .react-md-table td { padding: 8px 12px; border: 1px solid var(--react-border); text-align: left; vertical-align: top; }
+.react-md-table th { background: rgba(34,211,238,.08); color: #fff; font-weight: 800; white-space: nowrap; }
+.react-md-table tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+.react-md-table td code { background: rgba(34,211,238,.07); }
+.react-md > :first-child { margin-top: 0; }
+
+/* session list modal */
+.react-chip-count-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid rgba(34,211,238,.22); border-radius: 999px; background: rgba(34,211,238,.07); color: var(--react-cyan); font: 800 .66rem var(--react-mono); letter-spacing: .08em; cursor: pointer; }
+.react-chip-count-btn:hover { background: rgba(34,211,238,.18); color: #fff; border-color: rgba(34,211,238,.45); }
+.react-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(3,6,10,.72); backdrop-filter: blur(4px); }
+.react-modal { width: min(680px, 100%); max-height: 76vh; display: flex; flex-direction: column; border: 1px solid var(--react-border-strong); border-radius: 18px; background: var(--react-panel-strong); box-shadow: 0 24px 60px rgba(0,0,0,.55); overflow: hidden; }
+.react-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--react-border); }
+.react-modal-head h3 { margin: 2px 0 0; color: #f8fbff; font-size: 1.02rem; letter-spacing: .04em; }
+.react-modal-head span { color: var(--react-cyan); font: 800 .64rem var(--react-mono); letter-spacing: .18em; text-transform: uppercase; }
+.react-modal-close { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--react-border); border-radius: 999px; background: transparent; color: var(--react-muted); font-size: 1.1rem; line-height: 1; cursor: pointer; }
+.react-modal-close:hover { color: #fff; border-color: var(--react-border-strong); }
+.react-session-list { margin: 0; padding: 10px 18px 18px; overflow-y: auto; list-style: none; }
+.react-session-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 4px; border-bottom: 1px solid var(--react-border); }
+.react-session-row:last-child { border-bottom: none; }
+.react-session-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.react-session-info strong { color: #f0f6ff; font-size: .9rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-session-info code { color: var(--react-cyan); font: .7rem var(--react-mono); word-break: break-all; }
+.react-session-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.react-session-actions a { border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 10px; color: var(--react-muted); font: 800 .7rem var(--react-mono); cursor: pointer; }
+.react-session-actions a:hover { color: var(--react-cyan); border-color: var(--react-border-strong); }
+.react-session-log-panel { grid-column: 1 / -1; }
+.react-session-log { display: flex; flex-direction: column; gap: 12px; max-height: 70vh; overflow: auto; margin-top: 14px; padding-right: 4px; }
+.react-session-log-entry { border: 1px solid var(--react-border); border-radius: 16px; padding: 13px 14px; background: rgba(255,255,255,.028); }
+.react-session-log-entry header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.react-session-log-entry header span { color: var(--react-cyan); font: 900 .66rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; }
+.react-session-log-entry header strong { color: #fff; font-size: .86rem; }
+.react-session-log-entry header em { color: var(--react-faint); font: .68rem var(--react-mono); font-style: normal; margin-left: auto; }
+.react-session-log-entry pre { margin: 10px 0 0; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: #dbeafe; font: .8rem/1.62 var(--react-mono); }
+.react-session-log-user { border-color: rgba(96,165,250,.28); background: rgba(59,130,246,.07); }
+.react-session-log-assistant { border-color: rgba(34,211,238,.3); background: rgba(34,211,238,.06); }
+.react-session-log-toolResult { border-color: rgba(34,197,94,.24); background: rgba(34,197,94,.05); }
+.react-session-log-info,
+.react-session-log-session { border-color: rgba(148,163,184,.22); }
 .react-review-gate { display: grid; gap: 6px; margin: 12px 0; border: 1px solid var(--react-border); border-radius: 16px; padding: 12px 14px; background: rgba(255,255,255,.035); }
+.react-review-risk-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 10px; }
+.react-review-risk-tags strong { color: var(--react-muted); font: 700 .72rem var(--react-mono); margin-right: 4px; }
 .react-review-gate strong { color: #fff; font: 850 .82rem var(--react-mono); }
+.react-review-tag[data-risk="库存"] { color: #f87171; border-color: rgba(248,113,113,.45); background: rgba(248,113,113,.08); }
 .react-review-gate span { color: var(--react-muted); line-height: 1.5; }
 .react-review-gate em { color: var(--react-faint); font: .7rem var(--react-mono); font-style: normal; }
 .react-review-gate-passed { border-color: rgba(34,197,94,.35); background: rgba(34,197,94,.08); }
