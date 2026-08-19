@@ -136,6 +136,8 @@ curl -sS 'http://localhost:7331/api/agent/items/full?id=<id>&section=判断接�
 
 ## Write Workflow
 
+> **必须显式传 `root`**：`POST /api/knowledge` 不传 `root` 且 `scope=project` 时，服务端会取第一个 project storage root（可能是 agent-panel 自身仓库），导致 WMS 条目误落到 `~/Developer/tools/agent-panel/.agents/` 下。写 WMS 知识/经验时永远带 `"root": "/home/hevin/Developer/company/WMS"`；更新已有条目（带 `id`）会按 ID 定位原地更新，不受此影响。
+
 新增业务知识：
 
 ```bash
@@ -143,6 +145,7 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/knowledge \
   -d '{
     "kind": "businessKnowledge",
+    "root": "/home/hevin/Developer/company/WMS",
     "title": "WMS 出库单状态流转",
     "domain": "wms",
     "project": "WMS",
@@ -168,6 +171,7 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/knowledge \
   -d '{
     "kind": "experience",
+    "root": "/home/hevin/Developer/company/WMS",
     "title": "WMS 路由前缀导致 302",
     "domain": "wms",
     "project": "WMS",
@@ -218,7 +222,7 @@ python3 scripts/enrich-wms-knowledge-relations.py --write         # 写回 meta 
 ## Required Checks
 
 - 查询类任务：最终说明使用了哪些 `id`，是否展开全文/章节。
-- 写入类任务：确认 `meta` 和 `items` 都存在，`source_path` 可解析；批量补齐关系字段后确认 `index.jsonl` 已重建。
+- 写入类任务：确认 `meta` 和 `items` 都存在，`source_path` 可解析；**新增条目必须检查返回的 `metaPath` 落在目标项目 root 下**（如 `/home/hevin/Developer/company/WMS/.agents/...`），发现落在 agent-panel 自身仓库立即用 `trash-put` 清理重写；批量补齐关系字段后确认 `index.jsonl` 已重建。
 - WMS 任务：不要使用已弃用的 `.agents/knowledge/wms-test` / `.agents/knowledge/wms-graph` 作为默认入口。
 - 服务不可用：报告 `AGENT_PANEL_DOWN`，再按 fallback 文件规则处理。
 

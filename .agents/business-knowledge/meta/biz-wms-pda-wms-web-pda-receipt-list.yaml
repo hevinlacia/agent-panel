@@ -1,0 +1,20 @@
+id: biz-wms-pda-wms-web-pda-receipt-list
+title: "PDA 收货列表接口（/wms-web/pda/receipt-list）"
+kind: businessKnowledge
+type: business_knowledge
+category: api
+domain: wms
+project: WMS
+scope: project
+status: active
+confidence: high
+created_at: 2026-08-19T00:48:41Z
+updated_at: 2026-08-19T00:48:41Z
+source_path: ../items/biz-wms-pda-wms-web-pda-receipt-list.md
+summary: "WMS-020 新增 PDA 收货两个接口速查：POST /wms-web/pda/receipt-list/list（状态筛选 100/101/200，排除 THRK）与 /scan（单号校验，canReceive/blockReason），链路 PDA→wms-web BFF→inbound-api。"
+tags: [pda, inbound, receipt, api, bff]
+trigger_terms: [PDA收货列表接口, pda-receipt-list, receipt-list/scan, PDA扫码校验接口, canReceive, blockReason, 收货列表查询, wms-web/pda/receipt-list]
+related_skills: [wms-test-api-call]
+related_repos: [yl-cwhsea-wms-inbound-api, yl-cwhsea-wms-web, jt-cloudwarehouse]
+related_tables: [receipt_header, company_settings, goods_receiving_record_datail_code]
+related_apis: ["POST /wms-web/pda/receipt-list/list", "POST /wms-web/pda/receipt-list/scan", biz-wms-pda-thrk]

@@ -1,0 +1,19 @@
+id: exp-wms-verify-fix-deployed-commit
+title: "修复验证未生效：先核对环境部署 commit 再怀疑代码"
+kind: experience
+type: experience
+category: pitfall
+domain: wms
+project: WMS
+scope: project
+status: active
+confidence: high
+created_at: 2026-08-19T00:50:16Z
+updated_at: 2026-08-19T00:50:29Z
+source_path: ../meta/../items/exp-wms-verify-fix-deployed-commit.md
+summary: "复验修复未生效时，先用 git branch -r --contains <fix-commit> 核对环境分支是否包含修复，再怀疑代码；WMS-020 THRK 案例：origin/test 未含 2c050138 导致 14 条 THRK 残留。"
+tags: [deploy, verify, test-env, ylops]
+trigger_terms: [修复没生效, 复验失败, test环境未部署, origin/test不含commit, 部署版本核对, "Ylops token过期", THRK过滤没生效]
+related_skills: [ylops-cicd-deploy, wms-test-api-call]
+related_repos: [yl-cwhsea-wms-inbound-api, yl-cwhsea-wms-web]
+related_apis: [biz-wms-pda-wms-web-pda-receipt-list]

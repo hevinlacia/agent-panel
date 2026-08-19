@@ -25,9 +25,15 @@ Current architecture:
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
 - `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
 - `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
-- `web/src/App.tsx` — React SPA router/pages; still large, but shared diff logic/types are being extracted.
+- `web/src/App.tsx` — React SPA router and remaining legacy page modules; still large, but first low-coupling helpers, DTOs, domain constants, shared UI chrome, requirement badges, and Sessions pages have been extracted.
+- `web/src/pages/sessions.tsx` — Sessions list/detail pages and read-only session log viewer.
+- `web/src/components/ui.tsx` — Shared page chrome, feedback cards, panel headers, KPI card, and motion variants.
+- `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
+- `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
+- `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.
+- `web/src/lib/requirements.ts` — Requirement status/category constants and status color metadata.
 - `web/src/lib/diff.ts` — Unified diff parsing/stat helpers.
-- `web/src/types.ts` — Shared browser-side API DTOs.
+- `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
 
@@ -52,8 +58,9 @@ Removed architecture:
 - Keep frontend as a Vite React SPA. Use browser fetches to `/api/*`; do not add SSR.
 - Scope CSS with `.react-*` selectors.
 - Prefer small JSON APIs and plain file formats that agents can inspect.
-- When splitting large files, extract low-coupling leaf modules first (pure markdown/frontmatter helpers, capability adapters, mock servers, config screens) and run `cargo test` / frontend typecheck after each step.
+- When splitting large files, extract low-coupling leaf modules first (API helpers, formatters, DTOs, domain constants, shared UI chrome, pure markdown/frontmatter helpers, capability adapters, mock servers, config screens) and run `cargo test` / frontend typecheck after each step.
 - Keep shared frontend API DTOs in `web/src/types.ts`; feature utilities such as diff parsing should import those DTOs instead of duplicating near-miss types.
+- Keep reusable frontend infrastructure in `web/src/lib/`, cross-page presentational UI in `web/src/components/`, route-level pages in `web/src/pages/`, and feature-specific UI/helpers under `web/src/features/`; page/feature splits should preserve these boundaries.
 - Generated bundle `public/dashboard-react/` and Rust `target/` are build outputs.
 
 ## Toolchain

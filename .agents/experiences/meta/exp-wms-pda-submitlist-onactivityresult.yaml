@@ -1,0 +1,18 @@
+id: exp-wms-pda-submitlist-onactivityresult
+title: "PDA 收货列表前端踩坑（submitList/生命周期/onActivityResult）"
+kind: experience
+type: experience
+category: pitfall
+domain: wms
+project: WMS
+scope: project
+status: active
+confidence: high
+created_at: 2026-08-19T00:48:41Z
+updated_at: 2026-08-19T00:50:29Z
+source_path: ../meta/../items/exp-wms-pda-submitlist-onactivityresult.md
+summary: "jt-cloudwarehouse 列表页 4 个典型坑：自定义 submitList 不触发刷新、onActivityResult 未回写状态、返回列表不刷新（onResume+isFirstResume）、Activity 回收丢 pendingScanResult（onSaveInstanceState 恢复）。"
+tags: [pda, android, jt-cloudwarehouse, ui, lifecycle]
+trigger_terms: [PDA列表不刷新, tab切换不刷新, submitList, notifyDataSetChanged, onActivityResult二次弹窗, onSaveInstanceState, Activity回收丢状态, jt-cloudwarehouse开发]
+related_repos: [jt-cloudwarehouse]
+related_apis: [biz-wms-pda-wms-web-pda-receipt-list]
