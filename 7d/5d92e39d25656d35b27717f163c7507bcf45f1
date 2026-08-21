@@ -1,0 +1,43 @@
+web/src/types.ts
+  e2625986f28806c5 338-423
+web/src/pages/auth-sites.tsx
+  e2625986f28806c5 1-263
+web/src/styles.css
+  e2625986f28806c5 695-705
+AGENTS.md
+  e2625986f28806c5 27,31
+README.md
+  e2625986f28806c5 62,77-100,140-142
+web/src/App.tsx
+  e2625986f28806c5 19,99,126,138,156,199
+src/main.rs
+  e2625986f28806c5 17,20,37,40,335-343
+Cargo.toml
+  e2625986f28806c5 9,16,20
+src/chrome_cookies.rs
+  e2625986f28806c5 1-472
+src/browser_auth.rs
+  e2625986f28806c5 1-844
+src/config.rs
+  e2625986f28806c5 56-57,109,137,209-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7d5d92e39d25656d35b27717f163c7507bcf45f1",
+  "prompts": {
+    "e2625986f28806c5": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a01a0d-0c79-7fc6-986b-b0d018622deb",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1889,
+      "total_deletions": 155,
+      "accepted_lines": 1735,
+      "overriden_lines": 0
+    }
+  }
+}
