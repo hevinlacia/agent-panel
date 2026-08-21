@@ -53,6 +53,8 @@ pub(crate) struct AppConfig {
     pub(crate) cainiao_mock_enabled: bool,
     #[serde(default = "default_cainiao_mock_port")]
     pub(crate) cainiao_mock_port: u16,
+    #[serde(default)]
+    pub(crate) browser_auth: BrowserAuthConfig,
 }
 
 pub(crate) fn default_cainiao_mock_port() -> u16 {
@@ -104,6 +106,7 @@ impl Default for AppConfig {
             env_vars: Vec::new(),
             cainiao_mock_enabled: false,
             cainiao_mock_port: DEFAULT_CAINIAO_MOCK_PORT,
+            browser_auth: BrowserAuthConfig::default(),
         }
     }
 }
@@ -131,6 +134,7 @@ pub(crate) struct ConfigPatch {
     pub(crate) experience_summary_max_agents: Option<usize>,
     pub(crate) cainiao_mock_enabled: Option<bool>,
     pub(crate) cainiao_mock_port: Option<u16>,
+    pub(crate) browser_auth: Option<BrowserAuthConfig>,
 }
 
 pub(crate) async fn api_config(State(state): State<AppState>) -> ApiResult<Json<AppConfig>> {
@@ -201,6 +205,9 @@ pub(crate) async fn api_config_post(
     }
     if let Some(v) = patch.cainiao_mock_port {
         cfg.cainiao_mock_port = v;
+    }
+    if let Some(v) = patch.browser_auth {
+        cfg.browser_auth = normalize_browser_auth_config(v);
     }
     write_config(&state, &cfg).await?;
     sync_cainiao_mock(&state).await;

@@ -16,6 +16,7 @@ import {
   Gauge,
   GitBranch,
   GitMerge,
+  KeyRound,
   LayoutDashboard,
   Library,
   Lightbulb,
@@ -95,6 +96,7 @@ import { SessionPage, SessionsPage } from "./pages/sessions"
 import { SessionChipList, SessionListModal } from "./pages/sessions"
 import { SettingsPage } from "./pages/settings"
 import { SchedulersPage } from "./pages/schedulers"
+import { AuthSitesPage } from "./pages/auth-sites"
 import { RequirementDocPage, RequirementDiffPage, RequirementMergePage, RequirementPage } from "./pages/requirement"
 
 
@@ -121,6 +123,7 @@ const navItems = [
   { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
   { href: "/schedulers", label: "Schedulers", short: "SC", icon: <Activity size={16} /> },
+  { href: "/auth-sites", label: "登录态", short: "AU", icon: <KeyRound size={16} /> },
   { href: "/git-ai", label: "Git AI", short: "AI", icon: <GitBranch size={16} /> },
   { href: "/testdata", label: "造数", short: "TD", icon: <Sparkles size={16} /> },
   { href: "/settings", label: "Settings", short: "ST", icon: <Settings size={16} /> },
@@ -132,6 +135,7 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/business-knowledge") return path === "/business-knowledge"
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
+  if (href === "/auth-sites") return path === "/auth-sites"
   if (href === "/git-ai") return path === "/git-ai"
   if (href === "/testdata") return path === "/testdata"
   return path === href
@@ -149,6 +153,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
+  if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
   if (path === "/git-ai") return { eyebrow: "Git AI", title: "漏标检查" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
   if (path === "/testdata") return { eyebrow: "Test Data", title: "测试造数" }
@@ -191,6 +196,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/requirement-diff" ? <RequirementDiffPage />
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
+    : path === "/auth-sites" ? <AuthSitesPage />
     : path === "/git-ai" ? <GitAiPage />
     : path === "/testdata" ? <TestdataPage />
     : path === "/settings" ? <SettingsPage />

@@ -335,3 +335,89 @@ export interface TestdataRunPayload {
   exitCode?: number | null
   safety?: { env?: string; note?: string }
 }
+
+// --- Browser Auth (Chrome 登录态复用) ---
+export interface BrowserAuthLoginCheck {
+  method?: string
+  path?: string
+  expect?: number
+}
+
+export interface BrowserAuthSite {
+  id: string
+  label?: string
+  enabled?: boolean
+  baseUrl?: string
+  cookieDomains?: string[]
+  allowedHosts?: string[]
+  allowedPathPrefixes?: string[]
+  defaultHeaders?: Record<string, string>
+  loginCheck?: BrowserAuthLoginCheck | null
+  status?: {
+    ok?: boolean
+    cookieCount?: number
+    matchedDomains?: string[]
+    hasCookieValue?: boolean
+  }
+}
+
+export interface BrowserAuthSitesPayload {
+  generatedAt: number
+  config: { cdpUrl?: string; sites: BrowserAuthSite[] }
+  cdp: { connected: boolean; source?: string; message: string }
+  sites: (BrowserAuthSite & { status: BrowserAuthSite["status"] } & {
+    label: string
+    enabled: boolean
+    baseUrl: string
+    allowedHosts: string[]
+    allowedPathPrefixes: string[]
+    cookieDomains: string[]
+    loginCheck: BrowserAuthLoginCheck | null
+  })[]
+  security: {
+    returnsSecrets: boolean
+    tokenPersistence: string
+    auditFile: string
+    allowlistEnforced?: boolean
+    cookieAllowlist?: string[]
+    effectiveAllowlist?: string[]
+    heldCookieCount?: number
+  }
+}
+
+export interface BrowserAuthCheckPayload {
+  ok: boolean
+  generatedAt: number
+  site: string
+  status: { ok?: boolean; cookieCount?: number; matchedDomains?: string[]; hasCookieValue?: boolean }
+  login: {
+    ok?: boolean
+    status?: number
+    expected?: number
+    contentType?: string | null
+    bodyPreview?: string
+    error?: string
+    skipped?: boolean
+    reason?: string
+  }
+}
+
+export interface BrowserAuthRequestPayload {
+  method?: string
+  path: string
+  headers?: Record<string, string>
+  json?: unknown
+  body?: string
+}
+
+export interface BrowserAuthRequestResult {
+  ok: boolean
+  status: number
+  url?: string
+  contentType?: string | null
+  headers?: Record<string, string>
+  bodyText?: string
+  bodyJson?: unknown
+  truncated?: boolean
+  secretsReturned?: boolean
+}

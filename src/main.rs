@@ -14,8 +14,10 @@ use tokio::{fs, sync::Mutex, task::JoinHandle};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 mod attachments;
+mod browser_auth;
 mod cainiao_mock;
 mod capability;
+mod chrome_cookies;
 mod config;
 mod experience_summary;
 mod git_ai;
@@ -32,8 +34,10 @@ mod sessions;
 mod util;
 
 use attachments::*;
+use browser_auth::*;
 use cainiao_mock::*;
 use capability::*;
+use chrome_cookies::*;
 use config::*;
 use experience_summary::*;
 use git_ai::*;
@@ -328,6 +332,15 @@ async fn main() -> Result<()> {
             get(api_testdata_capabilities),
         )
         .route("/api/config", get(api_config).post(api_config_post))
+        .route("/api/auth-sites", get(api_auth_sites))
+        .route(
+            "/api/auth-sites/:site/check",
+            get(api_auth_site_check).post(api_auth_site_check),
+        )
+        .route(
+            "/api/auth-sites/:site/request",
+            post(api_auth_site_request),
+        )
         .route("/api/cainiao-mock/status", get(api_cainiao_mock_status))
         .route("/api/pi-config", get(api_pi_config))
         .route(

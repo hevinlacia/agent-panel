@@ -59,6 +59,7 @@ Agent Panel 目前做的是**只读能力接入**：
 | `/requirement?id=<req>` | 需求详情、业务背景文档、经验总结、状态/类别/ONES、关联 session、新 pi session 命令 |
 | `/sessions` | pi session 列表 |
 | `/session?id=<uuid>` | pi session 元数据详情（无 terminal） |
+| `/auth-sites` | Chrome 登录态复用：CDP 连接、站点登录状态、白名单接口请求、Auth 配置 |
 | `/settings` | 需求扫描目录、模型偏好、Pi `settings.json` 编辑、菜鸟打印 Mock 开关 |
 
 ## 菜鸟打印 Mock
@@ -72,6 +73,30 @@ Agent Panel 目前做的是**只读能力接入**：
 - 运行状态可查 `GET /api/cainiao-mock/status`。
 
 > 原 `tools/fake-cainiao` 仓库为 Node 独立实现，功能已并入 agent-panel 后不再需要单独启动。
+
+## Chrome 登录态复用（Browser Auth）
+
+`/auth-sites` 页把本机 Chrome 的登录 cookie 复用能力收进 Agent Panel，让 agent/skill 无需账号密码、不打开新页面即可代发已登录站点接口请求。
+
+**设计要点**
+
+- **默认 Cookie 数据库直读（零弹窗）**：首选拷贝 Chrome 的 `Cookies` SQLite 快照（含 `-wal/-shm`）+ 从系统 keyring（Secret Service / KWallet，`secret-tool` 读 `Chrome Safe Storage`）取主密钥，按 Chromium `freedesktop_secret_key_provider` 算法（PBKDF2-SHA1 1 迭代 + AES-128-CBC + PKCS7）解密。全程不建立 CDP 连接，**Chrome 不会弹出 “Allow remote debugging?” 确认框**，也不打开新页面。
+- **CDP 仅作兜底**：当 keyring 不可用/DB 不可读时才回退到 CDP（该路径可能触发 Chrome 144+ 的允许远程调试确认）。当前读取方式（`db`/`cdp`）在 `/auth-sites` 页可见。
+- **自动识别活动 profile**：通过 `Local State` 的 `profile.last_used` 选择当前正在使用的 Chrome profile，也自动扫描 `Profile N`。
+- **只读复用**：不重新登录、不写回浏览器。
+- **权限控制 · Cookie 白名单（默认启用）**：只有白名单内的域名才会被自动获取/解密登录态，其余域名一律不读取、不解密、不进内存（硬过滤，非白名单 cookie 连解密都不发生）。空白名单 = 不获取任何站点登录态。未显式配置时回退为所有启用站点 `cookieDomains` 的并集。
+- **白名单**：每个 site 配置 `allowedHosts` 和 `allowedPathPrefixes`，路径不在前缀内的请求直接拒绝（HTTP 400）。
+- **不泄漏 secrets**：API 响应只返回目标接口结果，不返回 cookie/token；`Set-Cookie`/`Authorization` 等敏感响应头被剥离；token 不做持久化。
+- **审计**：每次代理请求追加 `~/.local/share/agent-panel/auth-audit.jsonl`（只记录站点/方法/路径/状态码，不记录 cookie）。
+- **配置**：站点元信息（id、baseUrl、cookieDomains、allowedHosts、allowedPathPrefixes、defaultHeaders、loginCheck）存放在 `~/.local/share/agent-panel/config.json` 的 `browserAuth` 字段，可在 `/auth-sites` 页 JSON 编辑保存。
+
+**接口**
+
+- `GET /api/auth-sites` — CDP 连接状态、cookie 数量、各站点登录状态与配置
+- `POST /api/auth-sites/:site/check` — 按 `loginCheck` 验证站点登录态
+- `POST /api/auth-sites/:site/request` — 白名单代发请求（`method` / `path` / `headers` / `json` / `body`）
+
+后续可把需要登录的 skill（Kibana、Grafana、Apollo、Nacos、Ylops 等）统一改为走这套 API，避免各自读 cookie。
 
 旧页面 `/reports`、`/report`、`/schedulers`、`/env-vars`、`/git-ai` 会显示“已移除”说明。
 
@@ -112,6 +137,9 @@ Agent Panel 目前做的是**只读能力接入**：
 - `GET /api/session?id=<uuid>`
 - `GET/POST /api/config`
 - `GET/POST /api/pi-config/file?file=settings`
+- `GET /api/auth-sites` — Chrome 登录态复用：CDP 状态、cookie 数量、站点登录状态（详见上文「Chrome 登录态复用」）
+- `POST /api/auth-sites/:site/check` — 按 loginCheck 验证站点登录态
+- `POST /api/auth-sites/:site/request` — 白名单代发请求，不返回 cookie/token
 
 示例：
 

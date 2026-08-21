@@ -24,9 +24,11 @@ Current architecture:
 - `src/sessions.rs` — Pi session JSONL scanning, timeline parsing, and session APIs.
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
 - `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
+- `src/browser_auth.rs` — Chrome 登录态复用（Browser Auth）：CDP cookie 读取、站点白名单、代发请求、审计日志。
 - `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
 - `web/src/App.tsx` — React SPA router and remaining legacy page modules; still large, but first low-coupling helpers, DTOs, domain constants, shared UI chrome, requirement badges, and Sessions pages have been extracted.
 - `web/src/pages/sessions.tsx` — Sessions list/detail pages and read-only session log viewer.
+- `web/src/pages/auth-sites.tsx` — Chrome 登录态复用页：CDP 状态、站点登录状态、白名单请求、Auth 配置编辑。
 - `web/src/components/ui.tsx` — Shared page chrome, feedback cards, panel headers, KPI card, and motion variants.
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
