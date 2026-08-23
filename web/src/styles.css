@@ -155,6 +155,37 @@ button, input, select, textarea { font: inherit; }
   cursor: pointer;
 }
 .react-project-select select option { background: #0b1018; color: var(--react-text); }
+.react-harness-switcher { position: relative; }
+.react-harness-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px 6px 8px; border: 1px solid rgba(34,211,238,.28); border-radius: 999px; background: rgba(34,211,238,.08); color: var(--react-text); font: 800 .72rem var(--react-mono); cursor: pointer; max-width: 320px; }
+.react-harness-trigger.open { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.14); }
+.react-harness-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; font: 800 .66rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; border: 1px solid; }
+.react-harness-badge.pi { color: #7dd3fc; border-color: rgba(125,211,252,.38); background: rgba(125,211,252,.12); }
+.react-harness-badge.dsh { color: #c4b5fd; border-color: rgba(196,181,253,.38); background: rgba(196,181,253,.12); }
+.react-harness-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; color: var(--react-text); }
+.react-harness-trigger svg.rot { transform: rotate(180deg); }
+.react-harness-menu { position: absolute; top: calc(100% + 10px); right: 0; width: min(420px, 90vw); max-height: 72vh; overflow: auto; border: 1px solid rgba(148,163,184,.18); border-radius: 18px; background: linear-gradient(180deg, rgba(18,24,36,.98), rgba(10,14,22,.98)); box-shadow: 0 24px 60px rgba(0,0,0,.42); padding: 10px; display: flex; flex-direction: column; gap: 10px; z-index: 30; }
+.react-harness-menu-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 4px 2px; color: var(--react-muted); font: 800 .66rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-harness-menu-head em { color: var(--react-cyan); font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+.react-harness-group { border: 1px solid rgba(148,163,184,.14); border-radius: 14px; background: rgba(255,255,255,.025); overflow: hidden; }
+.react-harness-group.active { border-color: rgba(34,211,238,.32); background: rgba(34,211,238,.07); }
+.react-harness-group-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 12px; border: 0; background: transparent; color: var(--react-text); font: 800 .76rem var(--react-mono); cursor: pointer; }
+.react-harness-group-head:disabled { opacity: .6; cursor: wait; }
+.react-harness-group-label { display: inline-flex; align-items: center; gap: 8px; }
+.react-harness-group-label small { color: var(--react-faint); font: 800 .66rem var(--react-mono); }
+.react-harness-current { color: var(--react-cyan); font: 800 .66rem var(--react-mono); padding: 3px 7px; border: 1px solid rgba(34,211,238,.3); border-radius: 999px; background: rgba(34,211,238,.1); }
+.react-harness-switch-hint { color: var(--react-muted); font: 800 .66rem var(--react-mono); }
+.react-harness-models { display: flex; flex-direction: column; gap: 4px; padding: 0 8px 8px; }
+.react-harness-model-row { display: inline-flex; align-items: center; gap: 7px; width: 100%; padding: 7px 8px; border: 1px solid transparent; border-radius: 10px; background: rgba(255,255,255,.02); color: var(--react-muted); font: 700 .72rem var(--react-mono); cursor: pointer; text-align: left; }
+.react-harness-model-row:hover { border-color: rgba(34,211,238,.22); background: rgba(34,211,238,.08); color: var(--react-text); }
+.react-harness-model-row.selected { border-color: rgba(34,211,238,.42); background: rgba(34,211,238,.14); color: #fff; }
+.react-harness-model-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.react-harness-model-row em { color: var(--react-cyan); font: 800 .62rem var(--react-mono); font-style: normal; }
+.react-harness-model-row strong { color: var(--react-cyan); }
+.react-harness-more, .react-harness-empty { padding: 6px 4px; color: var(--react-faint); font: .7rem var(--react-mono); }
+.react-harness-foot { display: flex; justify-content: space-between; gap: 10px; padding: 6px 2px 2px; border-top: 1px solid rgba(148,163,184,.12); }
+.react-harness-foot a, .react-harness-foot button { border: 1px solid rgba(34,211,238,.22); border-radius: 999px; padding: 6px 10px; background: rgba(34,211,238,.06); color: var(--react-cyan); font: 800 .68rem var(--react-mono); cursor: pointer; }
+.react-harness-pill { color: var(--react-muted); font: 800 .68rem var(--react-mono); }
+
 .react-topbar-actions a,
 .react-topbar-actions button {
   border: 1px solid rgba(34,211,238,.26);

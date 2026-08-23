@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    io::Read,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -56,17 +57,49 @@ pub(crate) struct SessionInfo {
     pub(crate) thinking_level: Option<String>,
 }
 
+pub(crate) fn current_harness(state: &AppState) -> String {
+    // Mirrors harness.rs: persisted agent-panel config `harness` field, default pi.
+    let path = state.data_dir.join("config.json");
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+            if let Some(h) = v.get("harness").and_then(Value::as_str) {
+                let h = h.trim().to_ascii_lowercase();
+                if h == "dsh" || h == "deepseek-harness" || h == "deepseek_harness" {
+                    return "dsh".into();
+                }
+            }
+        }
+    }
+    "pi".into()
+}
+
+pub(crate) async fn scan_sessions_for_current_harness(
+    state: &AppState,
+    days: Option<i64>,
+) -> Result<Vec<SessionInfo>> {
+    if current_harness(state) == "dsh" {
+        scan_dsh_sessions(state, days).await
+    } else {
+        scan_pi_sessions(state, days).await
+    }
+}
+
 pub(crate) async fn api_sessions(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
-    let sessions = scan_pi_sessions(&state, query.days).await?;
+    let harness = current_harness(&state);
+    let sessions = if harness == "dsh" {
+        scan_dsh_sessions(&state, query.days).await?
+    } else {
+        scan_pi_sessions(&state, query.days).await?
+    };
     let mut summary: HashMap<String, usize> = HashMap::new();
     for s in &sessions {
         *summary.entry(s.status.clone()).or_default() += 1;
     }
     Ok(Json(
-        json!({ "summary": summary, "sessions": sessions, "harness": "pi", "days": query.days.unwrap_or(7) }),
+        json!({ "summary": summary, "sessions": sessions, "harness": harness, "days": query.days.unwrap_or(7) }),
     ))
 }
 
@@ -75,11 +108,27 @@ pub(crate) async fn api_session(
     Query(query): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
     let id = query.id.unwrap_or_default();
-    let session = scan_pi_sessions(&state, None)
-        .await?
-        .into_iter()
-        .find(|s| s.id == id);
-    Ok(Json(json!({ "session": session, "terminalRemoved": true })))
+    let harness = current_harness(&state);
+    let session = if harness == "dsh" {
+        scan_dsh_sessions(&state, None)
+            .await?
+            .into_iter()
+            .find(|s| s.id == id)
+    } else {
+        scan_pi_sessions(&state, None)
+            .await?
+            .into_iter()
+            .find(|s| s.id == id)
+    };
+    // Fallback: if not found in current harness, try the other one so direct links still resolve.
+    let session = if session.is_some() {
+        session
+    } else if harness == "dsh" {
+        scan_pi_sessions(&state, None).await?.into_iter().find(|s| s.id == id)
+    } else {
+        scan_dsh_sessions(&state, None).await?.into_iter().find(|s| s.id == id)
+    };
+    Ok(Json(json!({ "session": session, "terminalRemoved": true, "harness": harness })))
 }
 
 pub(crate) async fn api_session_log(
@@ -89,24 +138,40 @@ pub(crate) async fn api_session_log(
     let id = clean_required_opt(query.id.as_deref(), "id")?;
     let cursor = query.cursor.unwrap_or(0);
     let limit = query.limit.unwrap_or(80).clamp(1, 300);
-    let Some(path) = find_pi_session_path(&state, &id).await? else {
+    // Try both roots so log works regardless of current harness.
+    let path = find_pi_session_path(&state, &id)
+        .await?
+        .or(find_dsh_session_path(&state, &id).await?);
+    let Some(path) = path else {
         return Err(ApiError::bad_request(format!("session not found: {id}")));
     };
+    let is_dsh = path.extension().and_then(|s| s.to_str()) == Some("zstd")
+        || path.to_string_lossy().contains(".dsh/");
     let meta = fs::metadata(&path).await.ok();
     let updated_at = meta
         .as_ref()
         .and_then(|m| m.modified().ok())
         .map(system_time_to_ms)
         .unwrap_or(0);
-    let raw = fs::read_to_string(&path).await.unwrap_or_default();
-    let lines: Vec<&str> = raw.lines().filter(|line| !line.trim().is_empty()).collect();
+    let raw = if is_dsh {
+        read_dsh_session_text(&path).await.unwrap_or_default()
+    } else {
+        fs::read_to_string(&path).await.unwrap_or_default()
+    };
+    let lines: Vec<String> = raw.lines().filter(|line| !line.trim().is_empty()).map(|s| s.to_string()).collect();
     let total = lines.len();
     let start = cursor.min(total);
     let end = (start + limit).min(total);
     let entries: Vec<Value> = lines[start..end]
         .iter()
         .enumerate()
-        .filter_map(|(idx, line)| parse_session_log_entry(start + idx, line))
+        .filter_map(|(idx, line)| {
+            if is_dsh {
+                parse_dsh_log_entry(start + idx, line)
+            } else {
+                parse_session_log_entry(start + idx, line)
+            }
+        })
         .collect();
     Ok(Json(json!({
         "ok": true,
@@ -138,7 +203,23 @@ pub(crate) async fn api_sessions_resolve(
         return Ok(Json(json!({ "sessions": [], "missing": [] })));
     }
     let set: HashSet<String> = ids.iter().cloned().collect();
-    let found = scan_pi_sessions_filtered(&state, None, Some(&set)).await?;
+    let harness = current_harness(&state);
+    // Resolve within current harness, then fallback to the other so chips still show.
+    let mut found = if harness == "dsh" {
+        scan_dsh_sessions_filtered(&state, None, Some(&set)).await?
+    } else {
+        scan_pi_sessions_filtered(&state, None, Some(&set)).await?
+    };
+    if found.len() < set.len() {
+        let have: HashSet<String> = found.iter().map(|s| s.id.clone()).collect();
+        let missing_ids: HashSet<String> = set.difference(&have).cloned().collect();
+        let extra = if harness == "dsh" {
+            scan_pi_sessions_filtered(&state, None, Some(&missing_ids)).await?
+        } else {
+            scan_dsh_sessions_filtered(&state, None, Some(&missing_ids)).await?
+        };
+        found.extend(extra);
+    }
     let by_id: HashMap<&str, &SessionInfo> = found.iter().map(|s| (s.id.as_str(), s)).collect();
     let mut sessions: Vec<&SessionInfo> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
@@ -190,6 +271,79 @@ async fn find_pi_session_path(state: &AppState, id: &str) -> Result<Option<PathB
         }
     }
     Ok(None)
+}
+
+async fn find_dsh_session_path(state: &AppState, id: &str) -> Result<Option<PathBuf>> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Ok(None);
+    }
+    let root = state.dsh_session_root.as_ref();
+    if !root.is_dir() {
+        return Ok(None);
+    }
+    // DSH: ~/.dsh/sessions/<workspace>/<sessionId>/session.jsonl.zstd
+    // Workspace dir is encoded cwd (e.g. --home-hevin-Developer--), unknown to caller, so scan.
+    for entry in WalkDir::new(root)
+        .min_depth(2)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name != "session.jsonl.zstd" && name != "session.jsonl" {
+            continue;
+        }
+        // Prefer header id without decompressing full file when possible: dir name often is session id
+        if let Some(parent) = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
+            if parent == id || parent.starts_with(id) || id.starts_with(parent) {
+                return Ok(Some(path.to_path_buf()));
+            }
+        }
+        // Fallback: read header id
+        let raw = read_dsh_session_text(path).await.unwrap_or_default();
+        let Some(first) = raw.lines().find(|l| !l.trim().is_empty()) else {
+            continue;
+        };
+        let Ok(header) = serde_json::from_str::<Value>(first) else {
+            continue;
+        };
+        let sid = header.get("id").and_then(Value::as_str).unwrap_or_default();
+        if sid == id || sid.starts_with(id) || id == sid {
+            return Ok(Some(path.to_path_buf()));
+        }
+        // Also handle legacy "session-xxx" dir names
+        if sid.trim_start_matches("session-") == id.trim_start_matches("session-") {
+            // exact compare already above; this covers bare uuid vs session-<uuid>
+            let a = sid.trim_start_matches("session-");
+            let b = id.trim_start_matches("session-");
+            if a == b {
+                return Ok(Some(path.to_path_buf()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn read_dsh_session_text(path: &Path) -> Result<String> {
+    let bytes = fs::read(path).await?;
+    // session.jsonl.zstd is zstd-compressed; session.jsonl is plain
+    if path.extension().and_then(|s| s.to_str()) == Some("zstd") {
+        let text = tokio::task::spawn_blocking(move || {
+            let mut dec = zstd::stream::Decoder::new(bytes.as_slice())?;
+            let mut out = String::new();
+            dec.read_to_string(&mut out)?;
+            Ok::<String, anyhow::Error>(out)
+        })
+        .await??;
+        Ok(text)
+    } else {
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    }
 }
 
 fn parse_session_log_entry(line_no: usize, line: &str) -> Option<Value> {
@@ -295,6 +449,189 @@ fn parse_session_log_entry(line_no: usize, line: &str) -> Option<Value> {
     }
 }
 
+fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    let entry_type = value.get("type").and_then(Value::as_str).unwrap_or("unknown");
+    // DSH uses numeric `time` (ms since epoch), not RFC3339 `timestamp`
+    let timestamp = value
+        .get("time")
+        .and_then(Value::as_i64)
+        .or_else(|| value.get("timestamp").and_then(Value::as_str).and_then(parse_date_ms));
+    let data = value.get("data");
+    match entry_type {
+        "session" => Some(json!({
+            "line": line_no,
+            "type": "session",
+            "timestamp": timestamp,
+            "title": "Session started",
+            "text": value.get("cwd").and_then(Value::as_str).unwrap_or_default(),
+            "rawType": entry_type,
+        })),
+        "session/title" => Some(json!({
+            "line": line_no,
+            "type": "info",
+            "timestamp": timestamp,
+            "title": "Session title",
+            "text": data.and_then(|d| d.get("title")).and_then(Value::as_str).unwrap_or_default(),
+            "rawType": entry_type,
+        })),
+        "user/message" => {
+            let d = data?;
+            let content = d.get("content").and_then(Value::as_array);
+            let mut text = String::new();
+            if let Some(parts) = content {
+                for p in parts {
+                    if p.get("type").and_then(Value::as_str) == Some("text") {
+                        if let Some(t) = p.get("text").and_then(Value::as_str) {
+                            if !text.is_empty() { text.push_str("\n\n"); }
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+            // source kind for hint
+            let source_kind = d.get("source").and_then(|s| s.get("kind")).and_then(Value::as_str).unwrap_or("user");
+            Some(json!({
+                "line": line_no,
+                "type": "user",
+                "timestamp": timestamp,
+                "title": if source_kind == "user" { "user".to_string() } else { format!("user ({source_kind})") },
+                "text": text,
+                "rawType": entry_type,
+            }))
+        }
+        "assistant/message" => {
+            let d = data?;
+            let msg = d.get("message")?;
+            let role = msg.get("role").and_then(Value::as_str).unwrap_or("assistant");
+            let mut text_parts: Vec<String> = Vec::new();
+            let mut tools: Vec<Value> = Vec::new();
+            if let Some(parts) = msg.get("content").and_then(Value::as_array) {
+                for p in parts {
+                    match p.get("type").and_then(Value::as_str).unwrap_or("") {
+                        "text" => {
+                            if let Some(t) = p.get("text").and_then(Value::as_str) {
+                                text_parts.push(t.to_string());
+                            }
+                        }
+                        "tool-call" | "tool_call" => {
+                            tools.push(json!({
+                                "kind": "call",
+                                "name": p.get("name").or_else(|| p.get("toolName")).and_then(Value::as_str).unwrap_or("tool"),
+                                "id": p.get("id").or_else(|| p.get("toolCallId")).and_then(Value::as_str).unwrap_or_default(),
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let usage = d.get("usage").cloned().or_else(|| msg.get("usage").cloned()).unwrap_or(Value::Null);
+            let provider = msg.get("source").and_then(|s| s.get("provider")).and_then(Value::as_str)
+                .or_else(|| d.get("provider").and_then(Value::as_str))
+                .unwrap_or("");
+            let model = msg.get("source").and_then(|s| s.get("model")).and_then(Value::as_str)
+                .or_else(|| d.get("model").and_then(Value::as_str))
+                .unwrap_or("");
+            let meta = if !provider.is_empty() || !model.is_empty() {
+                format!("{provider}/{model}")
+            } else { String::new() };
+            Some(json!({
+                "line": line_no,
+                "type": role,
+                "timestamp": timestamp,
+                "title": if meta.is_empty() { role.to_string() } else { format!("{role} · {meta}") },
+                "text": text_parts.join("\n\n"),
+                "tools": tools,
+                "usage": usage,
+                "rawType": entry_type,
+            }))
+        }
+        "tool/call" => {
+            let d = data?;
+            let name = d.get("name").and_then(Value::as_str).unwrap_or("tool");
+            let args = d.get("arguments").and_then(Value::as_str).unwrap_or("");
+            Some(json!({
+                "line": line_no,
+                "type": "tool_call",
+                "timestamp": timestamp,
+                "title": format!("tool/call · {name}"),
+                "text": args.chars().take(4000).collect::<String>(),
+                "tools": [{"kind": "call", "name": name, "id": d.get("callId").and_then(Value::as_str).unwrap_or_default()}],
+                "rawType": entry_type,
+            }))
+        }
+        "tool/result" => {
+            let d = data?;
+            let msg = d.get("message");
+            let mut text = String::new();
+            if let Some(content) = msg.and_then(|m| m.get("content")).and_then(Value::as_array) {
+                for p in content {
+                    // tool-result content is often [{type:"tool-result", content:[{type:"text", text:"..."}]}]
+                    if let Some(inner) = p.get("content").and_then(Value::as_array) {
+                        for c in inner {
+                            if let Some(t) = c.get("text").and_then(Value::as_str) {
+                                if !text.is_empty() { text.push_str("\n\n"); }
+                                text.push_str(t);
+                            }
+                        }
+                    } else if let Some(t) = p.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() { text.push_str("\n\n"); }
+                        text.push_str(t);
+                    }
+                    if let Some(s) = p.get("content").and_then(Value::as_str) {
+                        if !text.is_empty() { text.push_str("\n\n"); }
+                        text.push_str(&s);
+                    }
+                }
+            }
+            if text.is_empty() {
+                text = compact(&line.to_string(), 2000).unwrap_or_default();
+            } else {
+                text = text.chars().take(4000).collect();
+            }
+            Some(json!({
+                "line": line_no,
+                "type": "tool_result",
+                "timestamp": timestamp,
+                "title": "tool/result",
+                "text": text,
+                "tools": [{"kind": "result", "name": "tool", "id": d.get("message").and_then(|m| m.get("source")).and_then(|s| s.get("callId")).and_then(Value::as_str).unwrap_or_default()}],
+                "rawType": entry_type,
+            }))
+        }
+        "request/header" | "request/context" | "session/title-llm-request" | "permission/preset" | "sandbox/mode" | "approval/policy" | "agent/inbox/spliced" | "turn/start" | "turn/end" | "step/start" | "step/end" => {
+            let text = data.map(|d| compact(&d.to_string(), 1200).unwrap_or_default()).unwrap_or_default();
+            Some(json!({
+                "line": line_no,
+                "type": "event",
+                "timestamp": timestamp,
+                "title": entry_type,
+                "text": text,
+                "rawType": entry_type,
+            }))
+        }
+        _ if entry_type.starts_with("assistant/chunk") || entry_type == "text-chunks" || entry_type == "tool-call-chunks" => {
+            // Streaming internals — collapse to event to avoid flooding
+            Some(json!({
+                "line": line_no,
+                "type": "event",
+                "timestamp": timestamp,
+                "title": entry_type,
+                "text": compact(&line.to_string(), 1200).unwrap_or_default(),
+                "rawType": entry_type,
+            }))
+        }
+        _ => Some(json!({
+            "line": line_no,
+            "type": "event",
+            "timestamp": timestamp,
+            "title": entry_type,
+            "text": compact(&line.to_string(), 1200).unwrap_or_default(),
+            "rawType": entry_type,
+        })),
+    }
+}
+
 fn tool_result_text(part: &Value) -> Option<String> {
     part.get("text")
         .and_then(Value::as_str)
@@ -357,6 +694,63 @@ async fn scan_pi_sessions_filtered(
         out.truncate(200);
     }
     Ok(out)
+}
+
+async fn scan_dsh_sessions_filtered(
+    state: &AppState,
+    days: Option<i64>,
+    ids: Option<&HashSet<String>>,
+) -> Result<Vec<SessionInfo>> {
+    let root = state.dsh_session_root.as_ref();
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let cutoff = days.filter(|d| *d > 0).map(|d| now_ms() - d * 86_400_000);
+    let mut out = Vec::new();
+    for entry in WalkDir::new(root)
+        .min_depth(2)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if name != "session.jsonl.zstd" && name != "session.jsonl" {
+            continue;
+        }
+        if let Some(session) = read_dsh_session_file(path).await {
+            match ids {
+                Some(ids) => {
+                    // DSH dirs may be `session-<uuid>` while id is bare uuid; normalize both
+                    let bare = session.id.trim_start_matches("session-");
+                    let matches = ids.contains(&session.id) || ids.contains(bare) || ids.iter().any(|q| q.trim_start_matches("session-") == bare);
+                    if matches {
+                        out.push(session);
+                    }
+                }
+                None => {
+                    if cutoff
+                        .map(|c| session.updated >= c || session.created >= c)
+                        .unwrap_or(true)
+                    {
+                        out.push(session);
+                    }
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| b.updated.cmp(&a.updated));
+    if ids.is_none() {
+        out.truncate(200);
+    }
+    Ok(out)
+}
+
+async fn scan_dsh_sessions(state: &AppState, days: Option<i64>) -> Result<Vec<SessionInfo>> {
+    scan_dsh_sessions_filtered(state, days, None).await
 }
 
 async fn read_pi_session_file(path: &Path) -> Option<SessionInfo> {
@@ -515,6 +909,149 @@ async fn read_pi_session_file(path: &Path) -> Option<SessionInfo> {
         message_count,
         user_message_count,
         assistant_message_count,
+        tool_result_count,
+        tool_call_count,
+        thinking_level,
+    })
+}
+
+async fn read_dsh_session_file(path: &Path) -> Option<SessionInfo> {
+    // DSH session file may be zstd-compressed
+    let meta = fs::metadata(path).await.ok()?;
+    let raw = read_dsh_session_text(path).await.ok()?;
+    let mut lines = raw.lines().filter(|l| !l.trim().is_empty());
+    let header: Value = serde_json::from_str(lines.next()?).ok()?;
+    if header.get("type").and_then(Value::as_str) != Some("session") {
+        return None;
+    }
+    let id = header.get("id").and_then(Value::as_str)?.to_string();
+    // DSH ids are uuids (bare) or session-<uuid> dirs; allow both
+    let bare = id.trim_start_matches("session-");
+    if Uuid::parse_str(bare).is_err() {
+        return None;
+    }
+    let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or_default().to_string();
+    let created = header.get("createdAt").and_then(Value::as_i64)
+        .unwrap_or_else(|| system_time_to_ms(meta.created().unwrap_or(UNIX_EPOCH)));
+    let updated = system_time_to_ms(meta.modified().unwrap_or(UNIX_EPOCH));
+    let mut title = String::new();
+    let mut provider: Option<String> = None;
+    let mut model_id: Option<String> = None;
+    let thinking_level: Option<String> = None;
+    let mut message_count: u64 = 0;
+    let mut user_count: u64 = 0;
+    let mut assistant_count: u64 = 0;
+    let mut tool_call_count: u64 = 0;
+    let mut tool_result_count: u64 = 0;
+    let mut tokens_input: u64 = 0;
+    let mut tokens_output: u64 = 0;
+    let mut tokens_reasoning: u64 = 0;
+    let mut tokens_cache_read: u64 = 0;
+    let mut tokens_cache_write: u64 = 0;
+    let mut cost: f64 = 0.0;
+
+    for line in lines {
+        let entry: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let t = entry.get("type").and_then(Value::as_str).unwrap_or("");
+        match t {
+            "session/title" => {
+                let cand = entry.get("data").and_then(|d| d.get("title")).and_then(Value::as_str).unwrap_or("").trim();
+                // Prefer provider-generated title over fallback (later entry wins if more specific)
+                let source_kind = entry.get("data").and_then(|d| d.get("source")).and_then(|s| s.get("kind")).and_then(Value::as_str).unwrap_or("");
+                if !cand.is_empty() {
+                    if source_kind == "provider" || title.is_empty() {
+                        title = cand.chars().take(200).collect();
+                    }
+                }
+            }
+            "request/header" => {
+                let h = entry.get("data").and_then(|d| d.get("header"));
+                if let Some(cfg) = h.and_then(|v| v.get("config")) {
+                    provider = cfg.get("provider").and_then(Value::as_str).map(|s| s.to_string()).or(provider);
+                    model_id = cfg.get("model").and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+                }
+            }
+            "request/context" => {
+                let d = entry.get("data");
+                provider = d.and_then(|v| v.get("provider")).and_then(Value::as_str).map(|s| s.to_string()).or(provider);
+                model_id = d.and_then(|v| v.get("model")).and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+            }
+            "user/message" => {
+                message_count += 1;
+                user_count += 1;
+                if title.is_empty() {
+                    let txt = entry.get("data").and_then(|d| d.get("content")).and_then(Value::as_array)
+                        .map(|arr| arr.iter().filter_map(|p| if p.get("type").and_then(Value::as_str)==Some("text") { p.get("text").and_then(Value::as_str) } else { None }).collect::<Vec<_>>().join(" "))
+                        .unwrap_or_default();
+                    let compact = txt.split_whitespace().collect::<Vec<_>>().join(" ");
+                    if !compact.is_empty() {
+                        title = compact.chars().take(200).collect();
+                    }
+                }
+            }
+            "assistant/message" => {
+                message_count += 1;
+                assistant_count += 1;
+                let d = entry.get("data");
+                let msg = d.and_then(|v| v.get("message"));
+                if let Some(src) = msg.and_then(|m| m.get("source")) {
+                    provider = src.get("provider").and_then(Value::as_str).map(|s| s.to_string()).or(provider);
+                    model_id = src.get("model").and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+                }
+                if let Some(parts) = msg.and_then(|m| m.get("content")).and_then(Value::as_array) {
+                    tool_call_count += parts.iter().filter(|p| p.get("type").and_then(Value::as_str)==Some("tool-call")).count() as u64;
+                }
+                if let Some(u) = d.and_then(|v| v.get("usage")) {
+                    tokens_input += u.get("inputTokens").and_then(Value::as_u64).or_else(|| u.get("input").and_then(Value::as_u64)).unwrap_or(0);
+                    tokens_output += u.get("outputTokens").and_then(Value::as_u64).or_else(|| u.get("output").and_then(Value::as_u64)).unwrap_or(0);
+                    tokens_reasoning += u.get("reasoning").and_then(Value::as_u64).unwrap_or(0);
+                    tokens_cache_read += u.get("cacheReadTokens").and_then(Value::as_u64).or_else(|| u.get("cacheRead").and_then(Value::as_u64)).unwrap_or(0);
+                    tokens_cache_write += u.get("cacheWriteTokens").and_then(Value::as_u64).or_else(|| u.get("cacheWrite").and_then(Value::as_u64)).unwrap_or(0);
+                    cost += u.get("cost").and_then(|c| c.get("total")).and_then(Value::as_f64).unwrap_or(0.0);
+                }
+            }
+            "tool/call" => {
+                tool_call_count += 1;
+            }
+            "tool/result" => {
+                tool_result_count += 1;
+            }
+            _ => {}
+        }
+    }
+    if title.is_empty() {
+        let short = bare.get(..8).unwrap_or(bare);
+        title = format!("dsh {}", short);
+    }
+    let model = model_id.clone();
+    let model_provider = provider.clone();
+    Some(SessionInfo {
+        id: bare.to_string(),
+        title,
+        status: status_from_updated(updated),
+        agent: "dsh".into(),
+        source: "fs".into(),
+        path: path.to_string_lossy().to_string(),
+        directory: cwd.clone(),
+        worktree: derive_worktree(&cwd),
+        created,
+        updated,
+        model_id,
+        model_provider,
+        model,
+        provider,
+        tokens_input,
+        tokens_output,
+        tokens_reasoning,
+        tokens_cache_read,
+        tokens_cache_write,
+        cost,
+        message_count,
+        user_message_count: user_count,
+        assistant_message_count: assistant_count,
         tool_result_count,
         tool_call_count,
         thinking_level,

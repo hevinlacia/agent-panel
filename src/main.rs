@@ -25,6 +25,7 @@ mod git_workflow;
 mod http;
 mod knowledge;
 mod markdown;
+mod harness;
 mod pi_config;
 mod requirement_api;
 mod requirement_context;
@@ -45,6 +46,7 @@ pub(crate) use git_workflow::*;
 use http::*;
 use knowledge::*;
 use markdown::*;
+use harness::*;
 use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
@@ -124,6 +126,7 @@ struct AppState {
     project_root: Arc<PathBuf>,
     data_dir: Arc<PathBuf>,
     pi_session_root: Arc<PathBuf>,
+    dsh_session_root: Arc<PathBuf>,
     /// JoinHandle of the running cainiao print mock server task (None = not running).
     cainiao_mock: Arc<Mutex<Option<JoinHandle<()>>>>,
     /// Serializes auto experience-summary dispatch scans so two triggers do not start duplicate agents.
@@ -167,12 +170,14 @@ async fn main() -> Result<()> {
     let home = home_dir()?;
     let data_dir = home.join(".local/share/agent-panel");
     let pi_session_root = home.join(".pi/agent/sessions");
+    let dsh_session_root = home.join(".dsh/sessions");
     fs::create_dir_all(&data_dir).await.ok();
 
     let state = AppState {
         project_root: Arc::new(project_root.clone()),
         data_dir: Arc::new(data_dir),
         pi_session_root: Arc::new(pi_session_root),
+        dsh_session_root: Arc::new(dsh_session_root),
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
     };
@@ -343,6 +348,10 @@ async fn main() -> Result<()> {
         )
         .route("/api/cainiao-mock/status", get(api_cainiao_mock_status))
         .route("/api/pi-config", get(api_pi_config))
+        .route("/api/harness/list", get(api_harness_list))
+        .route("/api/harness/current", get(api_harness_current))
+        .route("/api/harness/switch", post(api_harness_switch))
+        .route("/api/harness/models", get(api_harness_models))
         .route(
             "/api/pi-config/file",
             get(api_pi_config_file).post(api_pi_config_file_post),

@@ -12,7 +12,8 @@ export function SessionsPage() {
   const days = new URLSearchParams(window.location.search).get("days") || "7"
   const { data, error, loading, refresh } = useFetch<ApiSessions>(`/api/sessions?days=${encodeURIComponent(days)}`, [days])
   const sessions = data?.sessions || []
-  return <PageChrome icon={<Server size={15} />} eyebrow="Pi Sessions" title="Sessions" description="只读浏览本机 pi session；PTY / terminal 已从新版移除。" actions={<button onClick={refresh}><RefreshCw size={15} />刷新</button>}><div className="react-tab-row">{[1, 3, 7, 14, 30, 0].map((d) => <a key={d} className={String(d) === days ? "active" : ""} href={`/sessions?days=${d}`}>{d === 0 ? "全部时间" : `近 ${d} 天`}</a>)}</div>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{sessions.length === 0 ? <EmptyCard>暂无 pi session。</EmptyCard> : sessions.map((s, index) => <SessionCard key={s.id} session={s} index={index} />)}</div>}</PageChrome>
+  const harnessLabel = data?.harness === "dsh" ? "DSH" : "Pi"
+  return <PageChrome icon={<Server size={15} />} eyebrow={`${harnessLabel} Sessions`} title="Sessions" description={`只读浏览本机 ${harnessLabel} session；当前对接 ${harnessLabel}，仅展示该 harness 的会话。`} actions={<button onClick={refresh}><RefreshCw size={15} />刷新</button>}><div className="react-tab-row">{[1, 3, 7, 14, 30, 0].map((d) => <a key={d} className={String(d) === days ? "active" : ""} href={`/sessions?days=${d}`}>{d === 0 ? "全部时间" : `近 ${d} 天`}</a>)}</div>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{sessions.length === 0 ? <EmptyCard>暂无 {harnessLabel} session。</EmptyCard> : sessions.map((s, index) => <SessionCard key={s.id} session={s} index={index} />)}</div>}</PageChrome>
 }
 
 function SessionCard({ session, index }: { session: SessionInfo; index: number }) {

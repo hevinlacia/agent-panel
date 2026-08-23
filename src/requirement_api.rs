@@ -910,7 +910,7 @@ pub(crate) async fn api_recommendations(
         .as_ref()
         .map(|r| r.session_ids.iter().cloned().collect())
         .unwrap_or_default();
-    let sessions = scan_pi_sessions(&state, query.days).await?;
+    let sessions = scan_sessions_for_current_harness(&state, query.days).await?;
     let recommendations: Vec<Value> = sessions
         .into_iter()
         .filter(|s| !existing.contains(&s.id))
