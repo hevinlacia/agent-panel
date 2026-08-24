@@ -263,6 +263,10 @@ async fn main() -> Result<()> {
             post(api_requirement_new_session),
         )
         .route(
+            "/api/requirement/session-candidates",
+            get(api_requirement_session_candidates),
+        )
+        .route(
             "/api/requirement/code-review",
             get(api_requirement_code_review).post(api_requirement_code_review_post),
         )

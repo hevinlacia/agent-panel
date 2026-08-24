@@ -143,6 +143,8 @@ export interface SessionLogPayload { ok: boolean; sessionId: string; path: strin
 export interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 
 export interface ConfigPayload {
+  harness?: string
+  dshProfile?: string
   requirementScanRoots?: string[]
   fullSyncSchedule?: boolean
   fullSyncTimes?: string[]
@@ -156,6 +158,27 @@ export interface ConfigPayload {
   experienceSummaryMaxAgents?: number
   cainiaoMockEnabled?: boolean
   cainiaoMockPort?: number
+}
+
+export interface HarnessCurrent {
+  harness: "pi" | "dsh"
+  label: string
+}
+
+export interface SessionCandidatesPayload {
+  harness: "pi" | "dsh"
+  projectRoot?: string | null
+  candidates: SessionInfo[]
+}
+
+export interface NewSessionPayload {
+  ok: boolean
+  harness?: "pi" | "dsh"
+  command: string
+  sessionId?: string
+  profile?: string
+  cwd?: string | null
+  contextPath?: string | null
 }
 
 export interface CainiaoMockStatus { enabled: boolean; running: boolean; port: number }

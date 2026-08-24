@@ -2,7 +2,7 @@ import { motion } from "framer-motion"
 import { createPortal } from "react-dom"
 import { ArrowLeft, Copy, RefreshCw, Server } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { ApiSessions, SessionInfo, SessionLogEntry, SessionLogPayload } from "../types"
+import type { ApiSessions, ConfigPayload, SessionInfo, SessionLogEntry, SessionLogPayload } from "../types"
 import { fetchJson, useFetch } from "../lib/api"
 import { formatDateTime, relAge } from "../lib/format"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
@@ -20,14 +20,21 @@ function SessionCard({ session, index }: { session: SessionInfo; index: number }
   return <motion.article className="react-list-card react-session-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{session.id}</span><h3><a href={`/session?id=${encodeURIComponent(session.id)}`}>{session.title || session.id}</a></h3><p>{session.directory || "-"}</p><div className="react-card-meta"><span>{session.agent || "pi"}</span><span>{session.model || session.modelId || session.provider || "model n/a"}</span><span>更新 {relAge(session.updated || session.created)}</span><span>{session.messageCount || 0} messages</span></div></div><div className="react-card-side">{statusPill(session.status)}<span className="react-muted">{session.worktree || "-"}</span></div></motion.article>
 }
 
+function openCommand(session: { id: string; agent?: string } | undefined, dshProfile: string): string {
+  if (session?.agent === "dsh") return `DSH_TUI_RESUME_SESSION=${session.id} dsh --profile ${dshProfile || "dsh-tui"}`
+  return `pi --session ${session?.id || ""}`
+}
+
 export function SessionPage() {
   const id = new URLSearchParams(window.location.search).get("id") || ""
   const { data, error, loading } = useFetch<{ session: SessionInfo | null; terminalRemoved?: boolean }>(id ? `/api/session?id=${encodeURIComponent(id)}` : null, [id])
   const session = data?.session
-  return <PageChrome icon={<Server size={15} />} eyebrow="Session" title={session?.title || id || "Session"} description="只读实时查看 pi session JSONL；关闭页面不会影响后台 agent。" actions={<a href="/sessions"><ArrowLeft size={15} />返回 Sessions</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !session ? <EmptyCard>Session not found.</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="Session 信息" chip={statusPill(session.status)} /><div className="react-meta-grid"><span>ID <code>{session.id}</code></span><span>Agent {session.agent || "pi"}</span><span>Model {session.model || session.modelId || "-"}</span><span>Updated {formatDateTime(session.updated || session.created)}</span><span>Worktree {session.worktree || "-"}</span><span>Messages {session.messageCount || 0}</span></div><p className="react-detail-desc">{session.directory || "-"}</p></section><section className="react-panel"><PanelHead kicker="Read Only" title="打开终端（可选）" /><p className="react-muted">页面日志是只读的，不会启动第二个 pi 进程。若你需要手动接管，可复制命令打开；关闭该终端不会影响 Agent Panel 已派发的后台总结进程。</p><code className="react-command">pi --session {session.id}</code></section><SessionLogPanel sessionId={session.id} /></div>}</PageChrome>
+  const config = useFetch<ConfigPayload>("/api/config")
+  const dshProfile = config.data?.dshProfile || "dsh-tui"
+  return <PageChrome icon={<Server size={15} />} eyebrow="Session" title={session?.title || id || "Session"} description="只读实时查看 session JSONL；关闭页面不会影响后台 agent。" actions={<a href="/sessions"><ArrowLeft size={15} />返回 Sessions</a>}>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !session ? <EmptyCard>Session not found.</EmptyCard> : <div className="react-detail-grid"><section className="react-panel"><PanelHead kicker="Overview" title="Session 信息" chip={statusPill(session.status)} /><div className="react-meta-grid"><span>ID <code>{session.id}</code></span><span>Agent {session.agent || "pi"}</span><span>Model {session.model || session.modelId || "-"}</span><span>Updated {formatDateTime(session.updated || session.created)}</span><span>Worktree {session.worktree || "-"}</span><span>Messages {session.messageCount || 0}</span></div><p className="react-detail-desc">{session.directory || "-"}</p></section><section className="react-panel"><PanelHead kicker="Read Only" title="打开终端（可选）" /><p className="react-muted">页面日志是只读的，不会启动第二个 agent 进程。若你需要手动接管，可复制命令打开；关闭该终端不会影响 Agent Panel 已派发的后台总结进程。</p><code className="react-command">{openCommand(session, dshProfile)}</code></section><SessionLogPanel sessionId={session.id} agent={session.agent} dshProfile={dshProfile} /></div>}</PageChrome>
 }
 
-function SessionLogPanel({ sessionId }: { sessionId: string }) {
+function SessionLogPanel({ sessionId, agent, dshProfile }: { sessionId: string; agent?: string; dshProfile: string }) {
   const [entries, setEntries] = useState<SessionLogEntry[]>([])
   const [cursor, setCursor] = useState(0)
   const [total, setTotal] = useState(0)
@@ -66,11 +73,11 @@ function SessionLogPanel({ sessionId }: { sessionId: string }) {
     el?.scrollIntoView({ block: "end" })
   }, [entries.length, live])
   const copyCommand = async () => {
-    await navigator.clipboard.writeText(`pi --session ${sessionId}`)
+    await navigator.clipboard.writeText(openCommand({ id: sessionId, agent }, dshProfile))
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1600)
   }
-  return <section className="react-panel react-session-log-panel"><PanelHead kicker="Live Log" title="实时过程（只读）" chip={live ? "LIVE" : "PAUSED"} /><p className="react-muted">从 pi session JSONL 增量读取，不向 session 写入任何内容；适合观察自动经验总结 agent 的完整过程。</p><div className="react-actions"><button onClick={() => load(false)} disabled={loading}><RefreshCw size={15} className={loading ? "react-spin" : ""} />刷新</button><button type="button" onClick={() => setLive((v) => !v)}>{live ? "暂停实时" : "继续实时"}</button><button type="button" onClick={() => load(true)}>重新读取</button><button type="button" onClick={copyCommand}><Copy size={13} />{copied ? "已复制" : "复制终端命令"}</button>{path ? <code className="react-doc-path">{path}</code> : null}</div>{error ? <ErrorCard error={error} /> : null}<div className="react-session-log"><div className="react-card-meta"><span>{entries.length}/{total} entries</span><span>cursor {cursor}</span></div>{entries.length === 0 && loading ? <LoadingCard label="正在读取 session 日志…" /> : entries.length === 0 ? <EmptyCard>暂无日志内容。</EmptyCard> : entries.map((entry) => <SessionLogEntryView key={entry.line} entry={entry} />)}<div id="session-log-bottom" /></div></section>
+  return <section className="react-panel react-session-log-panel"><PanelHead kicker="Live Log" title="实时过程（只读）" chip={live ? "LIVE" : "PAUSED"} /><p className="react-muted">从 session JSONL 增量读取，不向 session 写入任何内容；适合观察自动经验总结 agent 的完整过程。</p><div className="react-actions"><button onClick={() => load(false)} disabled={loading}><RefreshCw size={15} className={loading ? "react-spin" : ""} />刷新</button><button type="button" onClick={() => setLive((v) => !v)}>{live ? "暂停实时" : "继续实时"}</button><button type="button" onClick={() => load(true)}>重新读取</button><button type="button" onClick={copyCommand}><Copy size={13} />{copied ? "已复制" : "复制终端命令"}</button>{path ? <code className="react-doc-path">{path}</code> : null}</div>{error ? <ErrorCard error={error} /> : null}<div className="react-session-log"><div className="react-card-meta"><span>{entries.length}/{total} entries</span><span>cursor {cursor}</span></div>{entries.length === 0 && loading ? <LoadingCard label="正在读取 session 日志…" /> : entries.length === 0 ? <EmptyCard>暂无日志内容。</EmptyCard> : entries.map((entry) => <SessionLogEntryView key={entry.line} entry={entry} />)}<div id="session-log-bottom" /></div></section>
 }
 
 function SessionLogEntryView({ entry }: { entry: SessionLogEntry }) {
@@ -85,6 +92,8 @@ export function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
 
 export function SessionListModal({ sessionIds, onClose }: { sessionIds: string[]; onClose: () => void }) {
   const { data, loading, error } = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(sessionIds.length ? `/api/sessions/resolve?ids=${encodeURIComponent(sessionIds.join(","))}` : null, [sessionIds.join(",")])
+  const config = useFetch<ConfigPayload>("/api/config")
+  const dshProfile = config.data?.dshProfile || "dsh-tui"
   const byId = useMemo(() => {
     const map = new Map<string, SessionInfo>()
     for (const s of data?.sessions || []) map.set(s.id, s)
@@ -93,7 +102,7 @@ export function SessionListModal({ sessionIds, onClose }: { sessionIds: string[]
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const copyOpen = async (sid: string) => {
     try {
-      await navigator.clipboard.writeText(`pi --session ${sid}`)
+      await navigator.clipboard.writeText(openCommand(byId.get(sid) ?? { id: sid }, dshProfile))
       setCopiedId(sid)
       window.setTimeout(() => setCopiedId((cur) => cur === sid ? null : cur), 1600)
     } catch {

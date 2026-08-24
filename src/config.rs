@@ -13,6 +13,9 @@ use crate::*;
 pub(crate) struct AppConfig {
     #[serde(default)]
     pub(crate) harness: String,
+    /// dsh profile name used when generating "new session" / resume commands (default dsh-tui).
+    #[serde(default = "default_dsh_profile")]
+    pub(crate) dsh_profile: String,
     #[serde(default)]
     pub(crate) auto_extract: bool,
     #[serde(default)]
@@ -61,6 +64,10 @@ pub(crate) fn default_cainiao_mock_port() -> u16 {
     DEFAULT_CAINIAO_MOCK_PORT
 }
 
+pub(crate) fn default_dsh_profile() -> String {
+    "dsh-tui".into()
+}
+
 pub(crate) fn default_requirement_scan_roots() -> Vec<String> {
     Vec::new()
 }
@@ -81,6 +88,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             harness: "pi".into(),
+            dsh_profile: default_dsh_profile(),
             auto_extract: false,
             auto_extract_schedule: false,
             extract_model: "litellm-local/deepseek-v4-flash-auto".into(),
@@ -115,6 +123,7 @@ impl Default for AppConfig {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ConfigPatch {
     pub(crate) harness: Option<String>,
+    pub(crate) dsh_profile: Option<String>,
     pub(crate) auto_extract: Option<bool>,
     pub(crate) auto_extract_schedule: Option<bool>,
     pub(crate) extract_model: Option<String>,
@@ -148,6 +157,9 @@ pub(crate) async fn api_config_post(
     let mut cfg = read_config(&state).await?;
     if let Some(v) = patch.harness {
         cfg.harness = v;
+    }
+    if let Some(v) = patch.dsh_profile {
+        cfg.dsh_profile = v.trim().to_string();
     }
     if let Some(v) = patch.auto_extract {
         cfg.auto_extract = v;

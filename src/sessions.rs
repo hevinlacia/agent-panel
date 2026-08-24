@@ -84,6 +84,53 @@ pub(crate) async fn scan_sessions_for_current_harness(
     }
 }
 
+/// Unassociated sessions of the current harness, newest first, with sessions
+/// whose working directory sits inside the requirement's project root (when
+/// known) sorted to the front. Used by the requirement detail page to let a
+/// user pick a session it just opened in dsh-tui and link it to the requirement.
+pub(crate) async fn scan_session_candidates(
+    state: &AppState,
+    project_root: Option<&str>,
+    exclude_ids: &HashSet<String>,
+) -> Result<Vec<SessionInfo>> {
+    let harness = current_harness(state);
+    let all = if harness == "dsh" {
+        scan_dsh_sessions(state, None).await?
+    } else {
+        scan_pi_sessions(state, None).await?
+    };
+    let root = project_root.map(|r| r.trim_end_matches('/').to_string()).unwrap_or_default();
+    let mut out = Vec::new();
+    for s in all {
+        if s.id.is_empty() || exclude_ids.contains(&s.id) {
+            continue;
+        }
+        let bare = s.id.trim_start_matches("session-");
+        if exclude_ids.contains(bare) {
+            continue;
+        }
+        out.push(s);
+        if out.len() >= 60 {
+            break;
+        }
+    }
+    out.sort_by(|a, b| {
+        let am = directory_matches_project(&a.directory, &root);
+        let bm = directory_matches_project(&b.directory, &root);
+        bm.cmp(&am).then(b.updated.cmp(&a.updated))
+    });
+    Ok(out)
+}
+
+fn directory_matches_project(dir: &str, root: &str) -> bool {
+    if root.is_empty() {
+        return false;
+    }
+    let dir = dir.trim_end_matches('/');
+    let root = root.trim_end_matches('/');
+    !dir.is_empty() && (dir == root || dir.starts_with(&format!("{}/", root)))
+}
+
 pub(crate) async fn api_sessions(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
