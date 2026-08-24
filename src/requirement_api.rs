@@ -654,6 +654,33 @@ pub(crate) async fn api_requirement_new_session(
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
+    let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
+    // dsh-tui cannot pre-seed a fresh session id (new sessions get a random
+    // uuid; --resume only re-enters persisted sessions), so in dsh mode we
+    // only hand out the launcher command and let the user link the session
+    // afterwards via /api/requirement/session-candidates.
+    if crate::sessions::current_harness(&state) == "dsh" {
+        let cfg = crate::config::read_config(&state).await.unwrap_or_default();
+        let profile = if cfg.dsh_profile.trim().is_empty() {
+            "dsh-tui".to_string()
+        } else {
+            cfg.dsh_profile
+        };
+        let base = format!("dsh --profile {}", shell_quote(&profile));
+        let command = if let Some(root) = &project_root {
+            format!("cd {} && {}", shell_quote(root), base)
+        } else {
+            base
+        };
+        return Ok(Json(json!({
+            "ok": true,
+            "harness": "dsh",
+            "command": command,
+            "profile": profile,
+            "cwd": project_root,
+            "contextPath": Value::Null,
+        })));
+    }
     let session_id = Uuid::new_v4().to_string();
     associate_session(&state, &body.req_id, &session_id).await?;
     let ctx_path = write_injection_context(&state, &req, &session_id).await?;
@@ -663,15 +690,34 @@ pub(crate) async fn api_requirement_new_session(
         "pi --session-id {} --name {} --append-system-prompt @{}",
         session_id, title, ctx
     );
-    let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
     let command = if let Some(root) = &project_root {
         format!("cd {} && {}", shell_quote(root), pi_command)
     } else {
         pi_command
     };
     Ok(Json(
-        json!({ "ok": true, "sessionId": session_id, "command": command, "contextPath": ctx_path, "cwd": project_root }),
+        json!({ "ok": true, "harness": "pi", "sessionId": session_id, "command": command, "contextPath": ctx_path, "cwd": project_root }),
     ))
+}
+
+/// Unassociated session candidates (of the current harness) for a requirement,
+/// newest first, filtered to sessions whose directory overlaps the project root.
+/// Lets the user link a dsh-tui session it opened manually.
+pub(crate) async fn api_requirement_session_candidates(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let harness = crate::sessions::current_harness(&state);
+    let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
+    let exclude: HashSet<String> = req.session_ids.iter().cloned().collect();
+    let candidates = crate::sessions::scan_session_candidates(&state, project_root.as_deref(), &exclude).await?;
+    Ok(Json(json!({
+        "harness": harness,
+        "projectRoot": project_root,
+        "candidates": candidates,
+    })))
 }
 
 pub(crate) async fn api_requirement_code_review(
