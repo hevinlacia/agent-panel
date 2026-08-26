@@ -52,6 +52,10 @@ export function ProjectsPage({ globalProject }: { globalProject: string }) {
   }
   const resetDefaultExcludedStatuses = () => setDefaultExcludedStatuses(() => FALLBACK_DEFAULT_EXCLUDED_STATUSES)
   const filtered = useMemo(() => reqs.filter((r) => {
+    const kw = keyword.trim().toLowerCase()
+    // 精确需求 ID 查找：关键词形如需求 ID（如 WMS-080 / WMS-080-xxx）且命中某需求 ID（含前缀）时，
+    // 无视状态/类别/项目/时间等所有筛选条件直接命中，属于精确查找。
+    if (kw && /^[a-z]+-\d+/.test(kw) && (r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))) return true
     if (!billableOnly && statuses.length === 0 && defaultExcludedStatuses.includes(r.status)) return false
     if (statuses.length && !statuses.includes(r.status)) return false
     if (category && (r.category ?? "需求") !== category) return false
@@ -59,8 +63,7 @@ export function ProjectsPage({ globalProject }: { globalProject: string }) {
     if (project && !(r.projects?.length ? r.projects : [r.project]).includes(project)) return false
     if (createdFrom && r.createdAt < new Date(`${createdFrom}T00:00:00`).getTime()) return false
     if (createdTo && r.createdAt > new Date(`${createdTo}T23:59:59`).getTime()) return false
-    if (keyword.trim()) {
-      const kw = keyword.trim().toLowerCase()
+    if (kw) {
       const haystack = [r.id, r.title, r.description || "", projectsOf(r)].join(" ").toLowerCase()
       if (!haystack.includes(kw)) return false
     }
