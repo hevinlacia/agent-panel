@@ -604,6 +604,22 @@ button, input, select, textarea { font: inherit; }
 .react-doc-path { display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid rgba(34,211,238,.22); border-radius: 999px; padding: 7px 10px; color: var(--react-cyan); background: rgba(34,211,238,.06); font: .7rem var(--react-mono); }
 .react-doc-preview { max-height: 420px; overflow: auto; margin: 14px 0 0; border: 1px solid var(--react-border); border-radius: 18px; padding: 16px; background: rgba(4,8,14,.78); color: var(--react-text); white-space: pre-wrap; word-break: break-word; font: .82rem/1.62 var(--react-mono); }
 .react-doc-preview + .react-actions { margin-top: 12px; }
+.react-attachments-panel { grid-column: 1 / -1; border-color: rgba(45,212,191,.2); }
+.react-attachment-wrap { margin-top: 14px; }
+.react-attachment-files { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.react-attachment-file { border: 1px solid var(--react-border); border-radius: 14px; background: rgba(4,8,14,.55); }
+.react-attachment-file > summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; cursor: pointer; list-style: none; }
+.react-attachment-file > summary::-webkit-details-marker { display: none; }
+.react-attachment-file > summary::before { content: "▸"; color: var(--react-faint); transition: transform 120ms ease; }
+.react-attachment-file[open] > summary::before { transform: rotate(90deg); }
+.react-attachment-name { font-family: var(--react-mono); font-weight: 700; color: var(--react-text); word-break: break-all; }
+.react-attachment-badge { color: var(--react-cyan); font-size: 12px; font-weight: 700; }
+.react-attachment-size { color: var(--react-faint); font-size: 12px; }
+.react-attachment-note { color: var(--react-amber); font-size: 12px; font-weight: 700; }
+.react-attachment-file-body { padding: 0 14px 14px; }
+.react-attachment-actions { display: flex; align-items: center; gap: 10px; margin: 10px 0 8px; }
+.react-attachment-path { font-size: 11px; color: var(--react-faint); word-break: break-all; }
+.react-attachment-file pre { background: rgba(6,10,18,.9); border: 1px solid var(--react-border); border-radius: 10px; padding: 12px 14px; overflow: auto; font-family: var(--react-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 420px; margin: 0; color: var(--react-text); }
 
 /* rendered markdown (requirement doc page) */
 .react-doc-page-panel { grid-column: 1 / -1; }

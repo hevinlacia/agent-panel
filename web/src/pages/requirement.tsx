@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, RefreshCw, Search } from "lucide-react"
+import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, Paperclip, RefreshCw, Search } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementDocPayload, ReviewGatePayload, SessionCandidatesPayload, SyncBasePayload } from "../types"
+import type { CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionCandidatesPayload, SyncBasePayload } from "../types"
 import { fetchJson, postForm, postJson, useFetch } from "../lib/api"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES } from "../lib/requirements"
@@ -382,6 +382,52 @@ function RequirementDocPanel({ id, req, docType, title, kicker, description, pat
   </section>
 }
 
+const TEXT_ATTACHMENT_EXTS = new Set(["sql", "txt", "md", "yaml", "yml", "json", "csv"])
+
+function attachmentHumanBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function attachmentFormatTime(ms: number): string {
+  if (!ms) return "-"
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function RequirementAttachmentsPanel({ req }: { req: Requirement }) {
+  const { data, error, loading } = useFetch<RequirementAttachmentsPayload>(
+    req.reqDir ? `/api/requirement/attachments?id=${encodeURIComponent(req.id)}` : null,
+    [req.id],
+  )
+  const rows = data?.attachments ?? []
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const previewable = (row: RequirementAttachment) => TEXT_ATTACHMENT_EXTS.has(row.extension) && Boolean((row.sample || "").trim())
+  const copyAttachment = async (row: RequirementAttachment) => {
+    try {
+      await navigator.clipboard.writeText(row.sample || "")
+      setCopiedKey(row.filename)
+      window.setTimeout(() => setCopiedKey((k) => (k === row.filename ? null : k)), 1600)
+    } catch {
+      setCopiedKey(null)
+    }
+  }
+  const chip = loading ? "loading" : error ? "error" : `${rows.length} 个文件`
+  return <section id="attachments" className="react-panel react-attachments-panel"><PanelHead kicker="Attachments" title="附件" chip={chip} />
+    <p className="react-muted">展示需求目录 <code>attachments/</code> 下的非代码资产（排查数据、SQL、截图、导出件等），与上线清单相互独立；线上问题排查过程中沉淀的附件也在这里直接可见。</p>
+    {error ? <p className="react-effort-error">附件加载失败：{error}</p> : loading ? <LoadingCard label="正在加载附件…" /> : rows.length === 0 ? <p className="react-muted">暂无附件。</p> : <>
+      <div className="react-table-wrap react-attachment-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>类型/统计</th><th>大小</th><th>更新时间</th><th>路径</th></tr></thead><tbody>{rows.map((row) => <tr key={row.filename}><td><code>{row.filename}</code></td><td>{row.summary.length ? row.summary.join(" / ") : row.extension || "-"}</td><td>{attachmentHumanBytes(row.size)}</td><td>{attachmentFormatTime(row.mtime)}</td><td><code>{row.relativePath || row.path}</code></td></tr>)}</tbody></table></div>
+      <div className="react-attachment-files">{rows.map((row) => {
+        const canPreview = previewable(row)
+        const summary = row.summary.length ? row.summary.join(" / ") : row.extension || "-"
+        return <details key={row.filename} className="react-attachment-file"><summary><span className="react-attachment-name">{row.filename}</span><span className="react-attachment-badge">{summary}</span><span className="react-attachment-size">{attachmentHumanBytes(row.size)}</span>{canPreview ? null : <span className="react-attachment-note">二进制/不可预览</span>}</summary>{canPreview ? <div className="react-attachment-file-body"><div className="react-attachment-actions"><button type="button" className="react-copy-link-btn" onClick={() => copyAttachment(row)}>{copiedKey === row.filename ? "已复制" : "一键复制"}</button><code className="react-attachment-path">{row.path}</code></div><pre>{row.sample}</pre></div> : <div className="react-attachment-file-body"><code className="react-attachment-path">{row.path}</code><p className="react-muted">该文件为二进制或不可预览内容，请按路径打开核对。</p></div>}</details>
+      })}</div>
+    </>}
+  </section>
+}
+
 function RequirementFilesPanel({ req }: { req: Requirement }) {
   const corePath = (file: string, path?: string) => path || (req.reqDir ? `${req.reqDir}/${file}` : "-")
   const existing = (file: string, path?: string): [string, string] | null => path ? [file, path] : null
@@ -513,11 +559,12 @@ export function RequirementPage() {
       console.error("复制失败", err)
     }
   }
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#attachments"><Paperclip size={15} />附件</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
       <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={<>{statusPill(req.status)}{experienceSummaryPill(req)}</>} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
       <RequirementDocPanel id="technical-plan" req={req} docType="technical-plan" title="技术方案" kicker="Implementation Plan" path={req.technicalPlanPath} description="Agent 执行需求过程中持续维护：先看总体实现路径、影响范围、风险、灰度/回滚和验证计划，再进入代码差异人工审查。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=design&tokens=req.technicalPlan,req.impact,req.branchScope,req.codeReview&budget=4000&format=html`} target="_blank" rel="noreferrer">方案上下文</a></>} />
       <RequirementDocPanel id="release-manifest" req={req} docType="release-manifest" title="上线清单" kicker="Release Manifest" path={req.releaseManifestPath} description="贯穿需求全流程维护：集中展示 DB 表、配置、Topic/Group、Job、开关、接口和上线人工动作，避免发布时遗漏。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=release-check&tokens=req.releaseManifest,req.attachments,req.configChanges,req.branchScope&budget=5000&format=html`} target="_blank" rel="noreferrer">清单上下文</a></>} />
+      <RequirementAttachmentsPanel req={req} />
       <section id="business-background" className="react-panel react-doc-panel"><PanelHead kicker="Business Context" title="业务背景文档" chip="新页面查看" /><p className="react-muted">给不熟悉业务的开发/测试快速理解背景，也作为后续经验总结的参考材料。点击下方按钮在独立页面查看渲染后的完整文档。</p><div className="react-actions"><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />查看业务背景文档</a><a href="/business-knowledge"><Library size={15} />业务知识库</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=clarification&budget=3000&format=html`} target="_blank" rel="noreferrer">澄清上下文</a></div></section>
       <RequirementDocPanel id="experience-summary" req={req} docType="experience-summary" title="经验总结闭环" kicker="Capability Evolution" path={req.experienceSummaryPath} description="记录本次需求暴露出的业务知识、经验、skill 和流程改进，让下一次需求执行更快更稳。" actions={<><a href="/experiences"><Lightbulb size={15} />需求总结</a><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=experience-summary&title=${encodeURIComponent("经验总结报告")}`}><Library size={15} />查看总结报告</a>{req.experienceSummaryJob?.sessionId ? <a href={`/session?id=${encodeURIComponent(req.experienceSummaryJob.sessionId)}`}>总结 Agent</a> : null}<button type="button" onClick={retrySummary} disabled={summaryWorking}>{summaryWorking ? "派发中…" : req.experienceSummaryJob?.status === "failed" ? "重试总结" : "重新总结"}</button><a href={`/api/requirement/experience-summary-context?id=${encodeURIComponent(req.id)}&limit=200`} target="_blank" rel="noreferrer">候选汇总</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=experience-summary&budget=3000&format=html`} target="_blank" rel="noreferrer">总结上下文</a></>} />
       <CodeReviewPanel req={req} />
