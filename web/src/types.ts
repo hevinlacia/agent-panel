@@ -75,6 +75,21 @@ export interface Requirement {
   effortEstimate?: EffortEstimate
 }
 
+export interface RequirementAttachment {
+  filename: string
+  path: string
+  relativePath: string
+  extension: string
+  size: number
+  mtime: number
+  summary: string[]
+  sample: string
+}
+
+export interface RequirementAttachmentsPayload {
+  attachments: RequirementAttachment[]
+}
+
 export interface RequirementSummary {
   id: string
   title: string
