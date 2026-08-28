@@ -38,6 +38,24 @@ Agent Panel 默认运行在 `http://localhost:7331`（可通过 `PORT` 环境变
 
 状态更新接口由 `agent-panel-requirement-api` 维护；本 skill 不重复执行状态推进。
 
+## 快速绑定（推荐，一条命令）
+
+`req-session-bind.sh`（位于 `~/.agents/scripts/`）把「拿 session id → POST 关联 → 确认」合并成一条命令：
+
+```bash
+req-session-bind.sh WMS-097-quick-outbound-cancel-reject  # 完整 ID 直接绑
+req-session-bind.sh WMS-097                                # 缩写：404 时提示 --search
+req-session-bind.sh --search quick-outbound                 # 只列候选，不绑定
+```
+
+要点（这是提速核心，优先走这里）：
+- **session id 直接读环境变量 `$DSH_SESSION_ID`**（DSH harness 自动注入），不需要调 `get_session_info`。
+- **绑定成功即完成，无需再 GET `/api/requirements` 验证**：Agent Panel 会在绑定后的下一条消息自动注入需求上下文（`[AGENT PANEL REQUIREMENT CONTEXT - AUTO REFRESHED]`），这就是确认。
+- 传完整 reqId 时跳过需求模糊匹配；只有缩写/未知时才用 `--search` 确认唯一候选。
+- 退出码：0 成功；1 需求不存在/请求失败；2 参数错误。成功返回 `200` 或 `303` 都算成功（旧文档只写 303，实际 DSH 下常见 200）。
+
+以下「流程」为手动分步实现，作为教学/兜底。
+
 ## 流程
 
 ### 1. 确认 Agent Panel 在运行
@@ -55,7 +73,7 @@ systemctl --user status opencode-dashboard.service --no-pager
 
 ### 2. 找到当前 Session ID
 
-优先调用 `get_session_info` 工具，读取当前 pi 会话的 `sessionId`。不要通过“最近活跃 session”猜当前 session，除非工具不可用且用户接受不确定性。
+优先读取环境变量 `$DSH_SESSION_ID`（DSH harness 自动注入，无需任何调用）；其次调用 `get_session_info` 工具读取当前会话的 `sessionId`。不要通过“最近活跃 session”猜当前 session，除非工具不可用且用户接受不确定性。
 
 工具不可用时回退：
 
@@ -97,15 +115,17 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 返回码判断：
 
-- `303` = 成功
+- `200` / `303` = 成功（DSH 下实际返回 200）
 - `400` = 缺少 reqId/sessionId 或 sessionId 格式不合法
 - `404` = 需求不存在
 
-不要用 `curl -f` 判断；成功默认是 303。
+不要用 `curl -f` 判断。
 
 ### 5. 确认结果
 
-关联成功后，再 GET `/api/requirements` 验证该需求的 `sessionIds` 包含当前 session id。
+DSH harness 下绑定成功即完成：Agent Panel 会在下一条消息自动注入需求上下文（`[AGENT PANEL REQUIREMENT CONTEXT - AUTO REFRESHED]`），这就是确认。
+
+仅在多 session 并发、POST 返回码异常或需要向用户展示时，才 GET `/api/requirements` 验证该需求的 `sessionIds` 包含当前 session id。
 
 ## 查看当前 session 已关联的需求
 
@@ -146,9 +166,9 @@ else:
 ## Required Checks
 
 - Agent Panel 必须在运行。
-- Session ID 必须来自 `get_session_info` 或用户明确确认的 fallback。
-- 需求 ID 必须精确匹配。
-- 关联请求返回 303 后，还要读取需求列表确认 `sessionIds`。
+- Session ID 优先用 `$DSH_SESSION_ID`（DSH harness），其次 `get_session_info` 或用户明确确认的 fallback。
+- 需求 ID 必须精确匹配；缩写先用 `req-session-bind.sh --search` 确认唯一候选。
+- 绑定成功以 POST 返回 `200`/`303` + Agent Panel 自动注入需求上下文为准；多 session 场景确需核实才 GET `sessionIds`。
 - 不要修改需求状态；状态推进使用 `agent-panel-requirement-api`。
 
 ## Final Response
