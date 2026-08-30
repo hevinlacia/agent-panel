@@ -439,6 +439,8 @@ export function RequirementPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [command, setCommand] = useState("")
   const [copied, setCopied] = useState(false)
+  /** dsh: the just-created session (appears in the dsh web GUI at `url`). */
+  const [dshSession, setDshSession] = useState<{ sessionId: string; url: string } | null>(null)
   const [showSessions, setShowSessions] = useState(false)
   const [linkingId, setLinkingId] = useState<string | null>(null)
   const statusOptions = req?.category === "线上问题" ? ISSUE_STATUSES : REQ_FLOW_STATUSES
@@ -472,9 +474,15 @@ export function RequirementPage() {
   const newSession = async () => {
     if (!req) return
     const res = await postForm<NewSessionPayload>("/api/requirement/new-session", { reqId: req.id })
-    setCommand(res.command)
+    if (res.harness === "dsh") {
+      setDshSession(res.sessionId ? { sessionId: res.sessionId, url: res.url || "" } : null)
+      setCommand("")
+      candidates.refresh()
+    } else {
+      setCommand(res.command || "")
+      setDshSession(null)
+    }
     setCopied(false)
-    if (res.harness === "dsh") candidates.refresh()
   }
   const linkSession = async (sid: string) => {
     if (!req || linkingId) return
@@ -525,7 +533,7 @@ export function RequirementPage() {
       <ProdMrPanel req={req} />
       <OnesPanel req={req} onSaved={refresh} />
       <section className="react-panel"><PanelHead kicker="Status" title={isOnlineIssue ? "线上问题状态" : "状态切换"} /><p className="react-muted">{isOnlineIssue ? "线上问题轻流程：排查中 → 已确认；用于记录排查过程，不强制需求阶段门禁。若确认需要代码修复，可一键转普通需求流程。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>转为普通需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section>
-      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{req.sessionIds.length}</button> : "0"} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>{curHarness === "dsh" ? "生成新 dsh session 命令" : "生成新 pi session 命令"}</button></div>{command ? <><div className="react-command-wrap"><code className="react-command">{command}</code><button type="button" className="react-copy-link-btn" onClick={copyCommand} title="复制命令到剪贴板"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div>{curHarness === "dsh" ? <p className="react-muted">dsh 新会话 id 随机，无法像 pi 那样预置关联；在 TUI 里开始会话后，从下方候选列表把它关联到本需求。</p> : null}</> : null}{curHarness === "dsh" ? <SessionCandidates data={candidates.data} loading={candidates.loading} error={candidates.error} linkingId={linkingId} onLink={linkSession} /> : null}{showSessions && req.sessionIds?.length ? <SessionListModal sessionIds={req.sessionIds} onClose={() => setShowSessions(false)} /> : null}</section>
+      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{req.sessionIds.length}</button> : "0"} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>{curHarness === "dsh" ? "为需求开启 dsh session" : "生成新 pi session 命令"}</button></div>{curHarness === "dsh" ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可在 web 聊天框输入 /requirement-bind &lt;reqId&gt; 自行绑定。</p></div> : null : command ? <><div className="react-command-wrap"><code className="react-command">{command}</code><button type="button" className="react-copy-link-btn" onClick={copyCommand} title="复制命令到剪贴板"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div></> : null}{curHarness === "dsh" ? <SessionCandidates data={candidates.data} loading={candidates.loading} error={candidates.error} linkingId={linkingId} onLink={linkSession} /> : null}{showSessions && req.sessionIds?.length ? <SessionListModal sessionIds={req.sessionIds} onClose={() => setShowSessions(false)} /> : null}</section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>

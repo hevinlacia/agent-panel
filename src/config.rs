@@ -16,6 +16,9 @@ pub(crate) struct AppConfig {
     /// dsh profile name used when generating "new session" / resume commands (default dsh-tui).
     #[serde(default = "default_dsh_profile")]
     pub(crate) dsh_profile: String,
+    /// Base URL of the running dsh `/api` (default web profile daemon).
+    #[serde(default = "default_dsh_api_base_url")]
+    pub(crate) dsh_api_base_url: String,
     #[serde(default)]
     pub(crate) auto_extract: bool,
     #[serde(default)]
@@ -68,6 +71,10 @@ pub(crate) fn default_dsh_profile() -> String {
     "dsh-tui".into()
 }
 
+pub(crate) fn default_dsh_api_base_url() -> String {
+    "http://127.0.0.1:3080".into()
+}
+
 pub(crate) fn default_requirement_scan_roots() -> Vec<String> {
     Vec::new()
 }
@@ -89,6 +96,7 @@ impl Default for AppConfig {
         Self {
             harness: "pi".into(),
             dsh_profile: default_dsh_profile(),
+            dsh_api_base_url: default_dsh_api_base_url(),
             auto_extract: false,
             auto_extract_schedule: false,
             extract_model: "litellm-local/deepseek-v4-flash-auto".into(),
@@ -124,6 +132,7 @@ impl Default for AppConfig {
 pub(crate) struct ConfigPatch {
     pub(crate) harness: Option<String>,
     pub(crate) dsh_profile: Option<String>,
+    pub(crate) dsh_api_base_url: Option<String>,
     pub(crate) auto_extract: Option<bool>,
     pub(crate) auto_extract_schedule: Option<bool>,
     pub(crate) extract_model: Option<String>,
@@ -160,6 +169,9 @@ pub(crate) async fn api_config_post(
     }
     if let Some(v) = patch.dsh_profile {
         cfg.dsh_profile = v.trim().to_string();
+    }
+    if let Some(v) = patch.dsh_api_base_url {
+        cfg.dsh_api_base_url = v.trim().trim_end_matches('/').to_string();
     }
     if let Some(v) = patch.auto_extract {
         cfg.auto_extract = v;

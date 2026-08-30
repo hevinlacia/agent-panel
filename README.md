@@ -56,7 +56,7 @@ Agent Panel 目前做的是**只读能力接入**：
 | --- | --- |
 | `/` `/dashboard` | 需求 KPI、状态分布、交付周期 |
 | `/projects` | 需求进度看板 |
-| `/requirement?id=<req>` | 需求详情、业务背景文档、经验总结、状态/类别/ONES、关联 session、新 pi session 命令 |
+| `/requirement?id=<req>` | 需求详情、业务背景文档、经验总结、状态/类别/ONES、关联 session、新 session（pi 生成命令 / dsh 一键开 web session） |
 | `/sessions` | pi session 列表 |
 | `/session?id=<uuid>` | pi session 元数据详情（无 terminal） |
 | `/auth-sites` | Chrome 登录态复用：CDP 连接、站点登录状态、白名单接口请求、Auth 配置 |
@@ -132,7 +132,8 @@ Agent Panel 目前做的是**只读能力接入**：
 - `POST /api/requirement/ones`
 - `POST /api/requirement/associate`
 - `POST /api/requirement/dissociate`
-- `POST /api/requirement/new-session`
+- `POST /api/requirement/new-session` — pi 模式生成带预分配 session id 和注入上下文的启动命令；dsh 模式改为对常驻 dsh web 进程发 RPC（`session.create` 预分配 id + `session.prompt` 触发 `/requirement-bind`），返回 `sessionId` + dsh web GUI 链接
+- `GET /api/requirement/by-session?sessionId=<id>` — 查询某个 dsh session 绑定到哪个需求（dsh-agentpanel-requirement 插件跨进程恢复绑定用）
 - `GET /api/sessions?days=7`
 - `GET /api/session?id=<uuid>`
 - `GET/POST /api/config`
@@ -286,11 +287,13 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 - 每个扫描 root 下会查找 `.agents/req/` 和 `req/`。
 - 需求目录以 `meta.md` 识别，`state.json` 管理状态和类别。
 - 关联关系存储在 `~/.local/share/agent-panel/associations.json`。
-- 新建 session 只生成命令，不再内嵌终端；生成的启动上下文会通过 `--append-system-prompt @<ctx-file>` 注入需求压缩背景、当前阶段 prompt、核心文档摘要、最近结构化事件和刷新 URL，让新 agent 第一轮就具备需求背景。启动上下文仍是一次性快照；后续同 session 状态切换由 Pi 扩展 `agent-panel-context.ts` 在每轮自动注入最新上下文，未加载扩展时应手动刷新 `context?for=agent`：
+- **pi 模式**：新建 session 只生成命令，不再内嵌终端；生成的启动上下文会通过 `--append-system-prompt @<ctx-file>` 注入需求压缩背景、当前阶段 prompt、核心文档摘要、最近结构化事件和刷新 URL，让新 agent 第一轮就具备需求背景。启动上下文仍是一次性快照；后续同 session 状态切换由 Pi 扩展 `agent-panel-context.ts` 在每轮自动注入最新上下文，未加载扩展时应手动刷新 `context?for=agent`：
 
 ```bash
 pi --session-id <uuid> --name '<需求标题>' --append-system-prompt @<ctx-file>
 ```
+
+- **dsh（web）模式**：不再生成命令。`POST /api/requirement/new-session` 直接对常驻 dsh 进程发 RPC——`session.create({ sessionId, cwd })` 预分配 id，再 `session.prompt('/requirement-bind <reqId>')` 触发 `dsh-agentpanel-requirement` 插件写入关联（绑定持久真源仍是本文件的 `associations.json`）。该插件在 `agent/pre-step` 每轮注入最新需求上下文（阶段提示词 + 关键文档摘要 + 最近事件，agent-instructions 模式），状态变化自动注入更新版；在 dsh web 聊天框直接输入 `/requirement-bind <reqId>` 也可手动绑定。dsh 侧 base URL 由配置 `dshApiBaseUrl`（默认 `http://127.0.0.1:3080`）控制。
 
 ## 部署
 

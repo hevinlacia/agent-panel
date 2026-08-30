@@ -648,6 +648,30 @@ pub(crate) async fn api_requirement_dissociate(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Resolve the requirement a dsh session is bound to (reads associations.json).
+/// Used by the dsh-agentpanel-requirement plugin to recover a binding across
+/// process restarts without scanning session logs.
+pub(crate) async fn api_requirement_by_session(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let session_id = query.session_id.unwrap_or_default();
+    if session_id.is_empty() {
+        return Err(ApiError::bad_request("missing sessionId"));
+    }
+    let store = crate::requirement_index::load_associations(&state).await?;
+    let req_id = store
+        .associations
+        .iter()
+        .find(|(_, sids)| sids.iter().any(|s| s == &session_id))
+        .map(|(key, _)| key.clone());
+    Ok(Json(json!({
+        "ok": true,
+        "sessionId": session_id,
+        "reqId": req_id,
+    })))
+}
+
 pub(crate) async fn api_requirement_new_session(
     State(state): State<AppState>,
     form: FormOrJson<NewSessionForm>,
@@ -655,30 +679,50 @@ pub(crate) async fn api_requirement_new_session(
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
-    // dsh-tui cannot pre-seed a fresh session id (new sessions get a random
-    // uuid; --resume only re-enters persisted sessions), so in dsh mode we
-    // only hand out the launcher command and let the user link the session
-    // afterwards via /api/requirement/session-candidates.
+    // dsh (web) 模式：不生成启动命令，改为对常驻 dsh 进程发 RPC——
+    // 1) session.create 预分配 session id；2) commands/execute 触发
+    // /requirement-bind（dsh 插件写入关联并准备注入需求上下文）。
     if crate::sessions::current_harness(&state) == "dsh" {
         let cfg = crate::config::read_config(&state).await.unwrap_or_default();
-        let profile = if cfg.dsh_profile.trim().is_empty() {
-            "dsh-tui".to_string()
-        } else {
-            cfg.dsh_profile
-        };
-        let base = format!("dsh --profile {}", shell_quote(&profile));
-        let command = if let Some(root) = &project_root {
-            format!("cd {} && {}", shell_quote(root), base)
-        } else {
-            base
-        };
+        let client = crate::dsh_client::DshClient::new(&cfg.dsh_api_base_url);
+        if !client.healthy().await {
+            return Err(ApiError::bad_request(format!(
+                "dsh 未运行（{}）：请先启动 dsh --profile web，或在 Settings 里调整 dshApiBaseUrl",
+                cfg.dsh_api_base_url
+            )));
+        }
+        let session_id = Uuid::new_v4().to_string();
+        let created = client
+            .create_session(&session_id, project_root.as_deref())
+            .await
+            .map_err(|e| ApiError::from(anyhow::anyhow!(e.to_string())))?;
+        let bind = client
+            .run_command(&created, &format!("/requirement-bind {}", req.id))
+            .await
+            .map_err(|e| ApiError::from(anyhow::anyhow!(e.to_string())))?;
+        // Mirror the association in our own index so the requirement page shows
+        // the session immediately (associations.json is the durable authority;
+        // this keeps the in-memory view in sync).
+        associate_session(&state, &req.id, &created).await?;
+        // An empty `commands/execute` value means the /requirement-bind command
+        // is not registered — the dsh-agentpanel-requirement plugin is not
+        // mounted in the running dsh yet. The binding itself is already
+        // durable (agent-panel store), so only the context injection is
+        // deferred until the plugin is loaded.
+        let command_dispatched = bind
+            .get("result")
+            .and_then(|r| r.get("kind"))
+            .and_then(Value::as_str)
+            == Some("success");
+        let url = format!("{}/", cfg.dsh_api_base_url);
         return Ok(Json(json!({
             "ok": true,
             "harness": "dsh",
-            "command": command,
-            "profile": profile,
+            "sessionId": created,
+            "url": url,
             "cwd": project_root,
-            "contextPath": Value::Null,
+            "bind": bind,
+            "contextInjectionReady": command_dispatched,
         })));
     }
     let session_id = Uuid::new_v4().to_string();

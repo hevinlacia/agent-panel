@@ -19,6 +19,7 @@ mod cainiao_mock;
 mod capability;
 mod chrome_cookies;
 mod config;
+mod dsh_client;
 mod experience_summary;
 mod git_ai;
 mod git_workflow;
@@ -138,6 +139,8 @@ struct IdQuery {
     id: Option<String>,
     #[serde(alias = "reqId")]
     req_id: Option<String>,
+    #[serde(alias = "sessionId")]
+    session_id: Option<String>,
     ids: Option<String>,
     days: Option<i64>,
     file: Option<String>,
@@ -265,6 +268,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/session-candidates",
             get(api_requirement_session_candidates),
+        )
+        .route(
+            "/api/requirement/by-session",
+            get(api_requirement_by_session),
         )
         .route(
             "/api/requirement/code-review",

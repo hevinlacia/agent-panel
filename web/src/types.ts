@@ -174,11 +174,15 @@ export interface SessionCandidatesPayload {
 export interface NewSessionPayload {
   ok: boolean
   harness?: "pi" | "dsh"
-  command: string
+  command?: string
   sessionId?: string
   profile?: string
   cwd?: string | null
   contextPath?: string | null
+  /** dsh: base URL of the running web GUI where the created session appears. */
+  url?: string
+  /** dsh: raw `sessions.prompt` command response (the /requirement-bind dispatch). */
+  bind?: unknown
 }
 
 export interface CainiaoMockStatus { enabled: boolean; running: boolean; port: number }
