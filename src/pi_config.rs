@@ -81,6 +81,7 @@ pub(crate) async fn api_pi_config() -> Json<Value> {
             "defaultThinkingLevel": settings.get("defaultThinkingLevel").and_then(Value::as_str).unwrap_or("off"),
             "enabledModels": settings.get("enabledModels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>()).unwrap_or_default(),
             "theme": settings.get("theme").and_then(Value::as_str).unwrap_or(""),
+            "autoTitleEnabled": settings.get("autoTitle").and_then(|v| v.get("enabled")).and_then(Value::as_bool).unwrap_or(true),
         },
         "providers": providers,
         "files": [
@@ -183,6 +184,15 @@ pub(crate) async fn api_pi_config_settings(Json(payload): Json<Value>) -> ApiRes
                     .collect(),
             ),
         );
+    }
+    if let Some(enabled) = payload.get("autoTitleEnabled").and_then(Value::as_bool) {
+        let auto_title = obj.entry("autoTitle").or_insert_with(|| json!({}));
+        if !auto_title.is_object() {
+            *auto_title = json!({});
+        }
+        if let Some(auto_title_obj) = auto_title.as_object_mut() {
+            auto_title_obj.insert("enabled".into(), json!(enabled));
+        }
     }
     atomic_write_json(&path, &settings).await?;
     Ok(Json(json!({ "ok": true, "settings": settings })))
