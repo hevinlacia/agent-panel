@@ -271,7 +271,15 @@ pub(crate) async fn api_sessions_resolve(
     let mut sessions: Vec<&SessionInfo> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
     for id in &ids {
-        match by_id.get(id.as_str()) {
+        // Normalize the `session-` prefix DSH dirs carry so an association
+        // stored as `session-<uuid>` resolves against the bare-uuid id the
+        // dsh scanner publishes (`read_dsh_session_file` strips the prefix).
+        let bare = id.trim_start_matches("session-");
+        let hit = by_id
+            .get(id.as_str())
+            .or_else(|| by_id.get(bare))
+            .copied();
+        match hit {
             Some(session) => sessions.push(session),
             None => missing.push(id.clone()),
         }

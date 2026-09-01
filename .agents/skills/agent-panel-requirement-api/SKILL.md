@@ -408,6 +408,13 @@ curl -sS -H 'Content-Type: application/json' \
 - `status=skipped`：对应 repo 类型或分支不适用；检查 `repoKind` / `targetBranch` / `branches.json`。
 - `status=failed`：读取 `message` 和 `commands`，不要改用手写 git 绕过；先判断是分支不存在、push 失败还是 worktree 清理失败。
 - `status=conflict`：必须使用接口返回的 `worktreePath` 和 `conflictFiles` 作为冲突处理入口。
+- **merged 后远端验证（WMS-068 教训）**：历史上出现过接口返回 `merged` 但 merge commit 只创建在本地 merge station 分支、未推送远端的情况（本地分支领先远端数百 commit）。合并后用远端状态验证真正合入，不要信任本地分支或 merged 事件：
+  ```bash
+  git -C <repo> ls-remote origin <targetBranch>                                # 远端真实哈希
+  git -C <repo> fetch origin <targetBranch>
+  git -C <repo> merge-base --is-ancestor <req-branch-tip> origin/<targetBranch> && echo MERGED || echo NOT-MERGED
+  ```
+  若验证为 NOT-MERGED：用临时 worktree 从 origin/<targetBranch> 合并需求分支并 push（补推），并把该情况记录为需求事件。
 
 冲突状态查询：
 

@@ -90,7 +90,7 @@ export function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
   return <div className="react-chip-list">{sessionIds.map((sid) => <a key={sid} href={`/session?id=${encodeURIComponent(sid)}`}>{sid.slice(0, 8)}…</a>)}</div>
 }
 
-export function SessionListModal({ sessionIds, onClose }: { sessionIds: string[]; onClose: () => void }) {
+export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds: string[]; onClose: () => void; harness?: "pi" | "dsh" }) {
   const { data, loading, error } = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(sessionIds.length ? `/api/sessions/resolve?ids=${encodeURIComponent(sessionIds.join(","))}` : null, [sessionIds.join(",")])
   const config = useFetch<ConfigPayload>("/api/config")
   const dshProfile = config.data?.dshProfile || "dsh-tui"
@@ -114,7 +114,13 @@ export function SessionListModal({ sessionIds, onClose }: { sessionIds: string[]
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [onClose])
-  const sessions = sessionIds.map((sid) => byId.get(sid) ?? { id: sid, title: "(未知 session)", status: "" })
+  const sessions = sessionIds
+    .map((sid) => {
+      // resolve keys are bare uuid while associations may carry `session-` prefix
+      const bare = sid.replace(/^session-/, "")
+      return byId.get(sid) ?? byId.get(bare) ?? { id: sid, title: "(未知 session)", status: "" }
+    })
+    .filter((s) => harness !== "dsh" || s.agent === "dsh")
   return createPortal(
     <div className="react-modal-backdrop" onClick={onClose}>
       <div className="react-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

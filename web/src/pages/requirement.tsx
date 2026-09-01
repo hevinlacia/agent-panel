@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, Paperclip, RefreshCw, Search } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionCandidatesPayload, SyncBasePayload } from "../types"
+import type { CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionCandidatesPayload, SessionInfo, SyncBasePayload } from "../types"
 import { fetchJson, postForm, postJson, useFetch } from "../lib/api"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES } from "../lib/requirements"
@@ -476,6 +476,13 @@ export function RequirementPage() {
   const harness = useFetch<HarnessCurrent>("/api/harness/current")
   const curHarness = harness.data?.harness ?? "pi"
   const candidates = useFetch<SessionCandidatesPayload>(curHarness === "dsh" && req ? `/api/requirement/session-candidates?id=${encodeURIComponent(req.id)}` : null, [req?.id, curHarness])
+  const resolved = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(req?.sessionIds?.length ? `/api/sessions/resolve?ids=${encodeURIComponent(req.sessionIds.join(","))}` : null, [req?.id])
+  /** In dsh mode only dsh sessions are shown; resolve returns each session's harness via `agent`. */
+  const dshSessionIds = useMemo(() => {
+    if (curHarness !== "dsh" || !req?.sessionIds?.length) return req?.sessionIds ?? []
+    const agents = new Map((resolved.data?.sessions ?? []).map((s) => [s.id.replace(/^session-/, ""), s.agent]))
+    return req.sessionIds.filter((sid) => agents.get(sid.replace(/^session-/, "")) === "dsh")
+  }, [curHarness, req?.sessionIds, resolved.data])
   const [note, setNote] = useState("")
   const [status, setStatus] = useState<ReqStatus | "">("")
   const [category, setCategory] = useState<ReqCategory | "">("")
@@ -485,6 +492,7 @@ export function RequirementPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [command, setCommand] = useState("")
   const [copied, setCopied] = useState(false)
+  const [bindCmdCopied, setBindCmdCopied] = useState(false)
   /** dsh: the just-created session (appears in the dsh web GUI at `url`). */
   const [dshSession, setDshSession] = useState<{ sessionId: string; url: string } | null>(null)
   const [showSessions, setShowSessions] = useState(false)
@@ -567,6 +575,18 @@ export function RequirementPage() {
       console.error("复制失败", err)
     }
   }
+  const copyBindCommand = async () => {
+    if (!req) return
+    try {
+      await navigator.clipboard.writeText(`/requirement-bind ${req.id}`)
+      setBindCmdCopied(true)
+      window.setTimeout(() => setBindCmdCopied(false), 1600)
+    } catch (err) {
+      setBindCmdCopied(false)
+      // eslint-disable-next-line no-console
+      console.error("复制失败", err)
+    }
+  }
   return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#attachments"><Paperclip size={15} />附件</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
       <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={<>{statusPill(req.status)}{experienceSummaryPill(req)}</>} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span></div><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
@@ -580,7 +600,7 @@ export function RequirementPage() {
       <ProdMrPanel req={req} />
       <OnesPanel req={req} onSaved={refresh} />
       <section className="react-panel"><PanelHead kicker="Status" title={isOnlineIssue ? "线上问题状态" : "状态切换"} /><p className="react-muted">{isOnlineIssue ? "线上问题轻流程：排查中 → 已确认；用于记录排查过程，不强制需求阶段门禁。若确认需要代码修复，可一键转普通需求流程。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>转为普通需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></div></section>
-      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{req.sessionIds.length}</button> : "0"} />{req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>{curHarness === "dsh" ? "为需求开启 dsh session" : "生成新 pi session 命令"}</button></div>{curHarness === "dsh" ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可在 web 聊天框输入 /requirement-bind &lt;reqId&gt; 自行绑定。</p></div> : null : command ? <><div className="react-command-wrap"><code className="react-command">{command}</code><button type="button" className="react-copy-link-btn" onClick={copyCommand} title="复制命令到剪贴板"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div></> : null}{curHarness === "dsh" ? <SessionCandidates data={candidates.data} loading={candidates.loading} error={candidates.error} linkingId={linkingId} onLink={linkSession} /> : null}{showSessions && req.sessionIds?.length ? <SessionListModal sessionIds={req.sessionIds} onClose={() => setShowSessions(false)} /> : null}</section>
+      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{curHarness === "dsh" ? dshSessionIds.length : req.sessionIds.length}</button> : "0"} />{curHarness === "dsh" ? dshSessionIds.length ? <SessionChipList sessionIds={dshSessionIds} /> : <p className="react-muted">暂无关联的 dsh session。</p> : req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions"><button onClick={newSession}>{curHarness === "dsh" ? "为需求开启 dsh session" : "生成新 pi session 命令"}</button></div>{curHarness === "dsh" ? <div className="react-command-wrap"><code className="react-command">/requirement-bind {req.id}</code><button type="button" className="react-copy-link-btn" onClick={copyBindCommand} title="复制绑定命令，到 dsh web 聊天框粘贴"><Copy size={13} />{bindCmdCopied ? "已复制" : "复制"}</button></div> : command ? <><div className="react-command-wrap"><code className="react-command">{command}</code><button type="button" className="react-copy-link-btn" onClick={copyCommand} title="复制命令到剪贴板"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div></> : null}{curHarness === "dsh" ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可复制上面的绑定命令到任一 dsh session 聊天框。</p></div> : <p className="react-muted">复制上面的绑定命令，粘贴到 dsh web 聊天框（任意 session），即可把该 session 关联到本需求；也可从下方列表关联已扫描的 dsh 会话。</p> : null}{curHarness === "dsh" ? <SessionCandidates data={candidates.data} loading={candidates.loading} error={candidates.error} linkingId={linkingId} onLink={linkSession} /> : null}{showSessions && (curHarness === "dsh" ? dshSessionIds.length : req.sessionIds?.length) ? <SessionListModal sessionIds={curHarness === "dsh" ? dshSessionIds : req.sessionIds} harness={curHarness} onClose={() => setShowSessions(false)} /> : null}</section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>
