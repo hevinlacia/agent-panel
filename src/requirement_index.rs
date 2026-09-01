@@ -57,6 +57,13 @@ pub(crate) struct StatusCount {
     pub(crate) percent: f64,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReleaseDayCount {
+    pub(crate) date: String,
+    pub(crate) count: usize,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementDuration {
@@ -75,6 +82,8 @@ pub(crate) struct DashboardStats {
     pub(crate) max_delivery_ms: i64,
     pub(crate) completed_count: usize,
     pub(crate) in_progress_count: usize,
+    pub(crate) release_schedule: Vec<ReleaseDayCount>,
+    pub(crate) next_release: Option<ReleaseDayCount>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -516,12 +525,60 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
     }
 }
 
+pub(crate) fn local_date_key_from_ms(ms: i64) -> String {
+    let date = chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| dt.with_timezone(&chrono::Local).date_naive())
+        .unwrap_or_else(|| chrono::Local::now().date_naive());
+    date.format("%Y-%m-%d").to_string()
+}
+
+/// 未来 14 天（含今天）每天登记的发版需求数，以及最近一个已登记日期（含今天，不限 14 天窗口）。
+fn build_release_schedule(
+    plan_counts: &HashMap<String, usize>,
+    today_key: &str,
+) -> (Vec<ReleaseDayCount>, Option<ReleaseDayCount>) {
+    let today = chrono::NaiveDate::parse_from_str(today_key, "%Y-%m-%d").ok();
+    let schedule = (0..14)
+        .map(|i| {
+            let date = today
+                .and_then(|d| d.checked_add_signed(chrono::Duration::days(i)))
+                .map(|d| d.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| today_key.to_string());
+            ReleaseDayCount {
+                count: plan_counts.get(&date).copied().unwrap_or(0),
+                date,
+            }
+        })
+        .collect();
+    let next_release = plan_counts
+        .iter()
+        .filter(|(k, _)| k.as_str() >= today_key)
+        .min_by_key(|(k, _)| *k)
+        .map(|(k, v)| ReleaseDayCount {
+            date: k.clone(),
+            count: *v,
+        });
+    (schedule, next_release)
+}
+
 pub(crate) fn build_dashboard_stats(requirements: Vec<Requirement>, now: i64) -> DashboardStats {
     let real: Vec<Requirement> = requirements
         .into_iter()
         .filter(|r| r.id != DEFAULT_REQ_ID)
         .collect();
     let total = real.len();
+    let mut plan_counts: HashMap<String, usize> = HashMap::new();
+    for r in &real {
+        let plan = r.plan_release.as_deref().map(str::trim).unwrap_or("");
+        if plan.is_empty() || plan == "unknown" {
+            continue;
+        }
+        if chrono::NaiveDate::parse_from_str(plan, "%Y-%m-%d").is_ok() {
+            *plan_counts.entry(plan.to_string()).or_insert(0) += 1;
+        }
+    }
+    let today_key = local_date_key_from_ms(now);
+    let (release_schedule, next_release) = build_release_schedule(&plan_counts, &today_key);
     let status_counts = REQ_STATUSES
         .iter()
         .map(|status| {
@@ -582,5 +639,7 @@ pub(crate) fn build_dashboard_stats(requirements: Vec<Requirement>, now: i64) ->
         max_delivery_ms: max,
         completed_count,
         in_progress_count: total.saturating_sub(completed_count),
+        release_schedule,
+        next_release,
     }
 }

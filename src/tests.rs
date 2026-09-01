@@ -631,3 +631,62 @@ fn slug_segment_cjk_caps_length() {
     let slug = slug_segment_cjk(long, "fb");
     assert!(slug.chars().count() <= 64, "应截断到 64: {}", slug.chars().count());
 }
+
+#[test]
+fn dashboard_stats_release_schedule_and_next_release() {
+    let now = now_ms();
+    let today_key = local_date_key_from_ms(now);
+    let date_after = |days: i64| {
+        chrono::NaiveDate::parse_from_str(&today_key, "%Y-%m-%d")
+            .unwrap()
+            .checked_add_signed(chrono::Duration::days(days))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let tomorrow = date_after(1);
+    let far = date_after(20);
+    let mk = |id: &str, plan: Option<&str>| {
+        let mut r = default_requirement(vec![]);
+        r.id = id.to_string();
+        r.plan_release = plan.map(|s| s.to_string());
+        r
+    };
+    let reqs = vec![
+        mk("R-today-1", Some(today_key.as_str())),
+        mk("R-today-2", Some(today_key.as_str())),
+        mk("R-tomorrow", Some(tomorrow.as_str())),
+        mk("R-far", Some(far.as_str())),
+        mk("R-unknown", Some("unknown")),
+        mk("R-none", None),
+    ];
+    let stats = build_dashboard_stats(reqs, now);
+    assert_eq!(stats.total, 6);
+    assert_eq!(stats.release_schedule.len(), 14);
+    assert_eq!(stats.release_schedule[0].date, today_key);
+    assert_eq!(stats.release_schedule[0].count, 2);
+    assert_eq!(stats.release_schedule[1].date, tomorrow);
+    assert_eq!(stats.release_schedule[1].count, 1);
+    assert!(stats.release_schedule[2..].iter().all(|d| d.count == 0));
+    let next = stats.next_release.clone().expect("next release expected");
+    assert_eq!(next.date, today_key);
+    assert_eq!(next.count, 2);
+
+    // 最近发版日在 14 天窗口之外时，next_release 仍应命中该日期，窗口内计数全为 0。
+    let stats_far = build_dashboard_stats(vec![mk("R-far", Some(far.as_str()))], now);
+    assert_eq!(
+        stats_far
+            .release_schedule
+            .iter()
+            .map(|d| d.count)
+            .sum::<usize>(),
+        0
+    );
+    let next_far = stats_far.next_release.expect("far next release expected");
+    assert_eq!(next_far.date, far);
+    assert_eq!(next_far.count, 1);
+
+    // 全部未登记日期时无最近发版日。
+    let stats_unknown = build_dashboard_stats(vec![mk("R-unknown", Some("unknown"))], now);
+    assert!(stats_unknown.next_release.is_none());
+}
