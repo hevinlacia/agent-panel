@@ -36,7 +36,7 @@ $WMS_WORKSPACE_ROOT/.agents/business-knowledge/
   README.md
   meta/*.yaml     # 纯 YAML 属性/概述，程序默认读取
   items/*.md      # 完整正文，按需读取
-  index.jsonl     # 应用/脚本生成缓存
+  index.jsonl     # 脚本生成的检索缓存（migrate/enrich 脚本产物）。API 查询不依赖它（动态扫 meta/）；POST 保存后不会自动更新，需手工 repair 或跑脚本重建（见下）
 
 $WMS_WORKSPACE_ROOT/.agents/experiences/
   README.md
@@ -138,6 +138,13 @@ curl -sS 'http://localhost:7331/api/agent/items/full?id=<id>&section=判断接�
 
 > **必须显式传 `root`**：`POST /api/knowledge` 不传 `root` 且 `scope=project` 时，服务端会取第一个 project storage root（可能是 agent-panel 自身仓库），导致 WMS 条目误落到 `~/Developer/tools/agent-panel/.agents/` 下。写 WMS 知识/经验时永远带 `"root": "/home/hevin/Developer/company/WMS"`；更新已有条目（带 `id`）会按 ID 定位原地更新，不受此影响。
 
+> **必须显式传 `id`（避免退化 id）**：新增 WMS 知识/经验时**务必显式传 `id`**（ASCII 字母数字 + `-`/`_`/`.`，如 `biz-wms-cycle-count-inventory-adjust`）。
+> 原因：`POST /api/knowledge` 未传 `id` 时，服务端按 `{prefix}-{domain}-{titleSlug}` 自动生成 id，而 slug 化只保留 ASCII 字符，**中文标题会自动退化成只剩 domain**（如标题"WMS 盘点账实调整落表链路"→ `biz-wms-wms`），id 无语义、易混淆、不便引用。显式传 `id` 可得到稳定语义化 id，后续更新/引用也更可靠。
+
+> **保存后不自动更新 index.jsonl**：`POST /api/knowledge` 只写 `meta/` + `items/`，**不会更新 `index.jsonl`**（该缓存由 `scripts/migrate-wms-knowledge.py` / `scripts/enrich-wms-knowledge-relations.py` 生成）。API 查询动态扫 `meta/`，新条目即时可检索，不受影响；若需索引一致，幂等 append 一行（参考已有条目 JSON 行格式）或跑 `enrich-wms-knowledge-relations.py --write` 重建。
+
+> **无 DELETE 端点**：清理错误/过期条目 = `trash-put meta/<id>.yaml items/<id>.md`，顺手从 `index.jsonl` 移除对应行（如已 append）。
+
 新增业务知识：
 
 ```bash
@@ -223,6 +230,7 @@ python3 scripts/enrich-wms-knowledge-relations.py --write         # 写回 meta 
 
 - 查询类任务：最终说明使用了哪些 `id`，是否展开全文/章节。
 - 写入类任务：确认 `meta` 和 `items` 都存在，`source_path` 可解析；**新增条目必须检查返回的 `metaPath` 落在目标项目 root 下**（如 `/home/hevin/Developer/company/WMS/.agents/...`），发现落在 agent-panel 自身仓库立即用 `trash-put` 清理重写；批量补齐关系字段后确认 `index.jsonl` 已重建。
+- 写入类任务：确认 `id` 语义化（非 `biz-wms-wms` 这类退化 id）；若因未显式传 `id` 产生退化 id，用显式 id 重建并 `trash-put` 清理旧条目（含 index.jsonl 对应行）。
 - WMS 任务：不要使用已弃用的 `.agents/knowledge/wms-test` / `.agents/knowledge/wms-graph` 作为默认入口。
 - 服务不可用：报告 `AGENT_PANEL_DOWN`，再按 fallback 文件规则处理。
 
