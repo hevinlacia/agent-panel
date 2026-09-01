@@ -1,0 +1,27 @@
+src/http.rs
+  562889dfc3b91950 43-49
+src/main.rs
+  562889dfc3b91950 325-327
+src/knowledge.rs
+  562889dfc3b91950 12,224-262,1100-1101,1117-1243,1265,1506-1536
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d521cc517bfec14531b373f8768d52b13dfa7b19",
+  "prompts": {
+    "562889dfc3b91950": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "786642a1-3a5a-4051-8522-1574d254dde8",
+        "model": "deepseek-v4-flash-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 238,
+      "total_deletions": 25,
+      "accepted_lines": 215,
+      "overriden_lines": 0
+    }
+  }
+}
