@@ -113,6 +113,11 @@ export interface RequirementDuration {
   durationMs: number
 }
 
+export interface ReleaseDayCount {
+  date: string
+  count: number
+}
+
 export interface DashboardStats {
   total: number
   statusCounts: StatusCount[]
@@ -122,6 +127,8 @@ export interface DashboardStats {
   maxDeliveryMs: number
   completedCount: number
   inProgressCount: number
+  releaseSchedule: ReleaseDayCount[]
+  nextRelease: ReleaseDayCount | null
 }
 
 export interface DashboardStatsPayload {

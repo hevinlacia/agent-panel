@@ -106,7 +106,7 @@ Agent Panel 目前做的是**只读能力接入**：
 核心接口：
 
 - `GET /health`
-- `GET /api/dashboard/stats`
+- `GET /api/dashboard/stats` — 需求统计：状态分布、交付时长、未来 14 天发版分布（`releaseSchedule`，含今天、每天条数）和最近发版日（`nextRelease`，按需求 `plan-release` 统计）
 - `GET /api/requirements` — 需求列表；每项含 `planRelease`（来自 meta.md `plan-release` frontmatter，`unknown` 表示未排期）
 - `POST /api/requirements` — 创建需求目录和标准文件；支持 JSON/form，`dryRun=true` 只返回计划写入路径
 - `GET /api/requirement?id=<req>`

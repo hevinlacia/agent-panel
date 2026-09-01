@@ -396,6 +396,7 @@ button, input, select, textarea { font: inherit; }
 .react-pipeline-fill { height: 100%; min-width: 2px; border-radius: 999px; }
 .react-pipeline-row strong { color: #f8fbff; font: 850 1rem var(--react-mono); text-align: center; }
 .react-pipeline-row > span:last-child { color: var(--react-muted); font: 0.78rem var(--react-mono); text-align: right; }
+.react-forecast-panel { grid-column: 1 / -1; }
 
 .react-table-wrap { overflow: auto; border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 18px; background: rgba(0, 0, 0, 0.13); }
 .react-duration-table { width: 100%; min-width: 790px; border-collapse: separate; border-spacing: 0; }
