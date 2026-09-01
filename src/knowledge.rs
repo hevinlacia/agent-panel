@@ -9,6 +9,7 @@ use axum::{
     extract::{Query, State},
     Json,
 };
+use pinyin::ToPinyin;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::fs;
@@ -218,6 +219,45 @@ pub(crate) async fn api_knowledge_save(
 ) -> ApiResult<Json<Value>> {
     let item = save_knowledge_item(&state, payload).await?;
     Ok(Json(json!({ "ok": true, "item": item })))
+}
+
+/// 删除一条知识/经验条目（DELETE /api/knowledge?id=<id>）。
+/// 定位条目后校验其位于 knowledge root 下，删除正文+meta 文件，并同步从 index.jsonl 移除。
+pub(crate) async fn api_knowledge_delete(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = clean_required_opt(query.id.as_deref(), "id")?;
+    let (root, meta_path, _raw) = find_knowledge_file_by_id(&state, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("knowledge item not found: {id}")))?;
+    // 安全校验：只允许删除 knowledge root 下的条目，防路径穿越
+    if !same_or_child_path(&meta_path, &root.path) {
+        return Err(ApiError::bad_request(
+            "refusing to delete outside knowledge root",
+        ));
+    }
+    // 解析并删除正文文件（如存在）
+    let source_path = {
+        let raw = fs::read_to_string(&meta_path).await.unwrap_or_default();
+        parse_knowledge_meta_yaml(&raw, &meta_path)
+            .ok()
+            .and_then(|fm| resolve_knowledge_source_path(&meta_path, &fm))
+            .filter(|p| p.is_file())
+    };
+    if let Some(src) = source_path.as_ref() {
+        fs::remove_file(src).await.ok();
+    }
+    // 删除 meta 文件
+    fs::remove_file(&meta_path).await?;
+    // 同步 index.jsonl
+    remove_knowledge_index_line(&meta_path, &id).await;
+    Ok(Json(json!({
+        "ok": true,
+        "id": id,
+        "deleted": true,
+        "metaPath": meta_path.to_string_lossy().to_string()
+    })))
 }
 
 fn all_knowledge_kinds() -> Vec<String> {
@@ -1057,6 +1097,8 @@ async fn save_knowledge_item(state: &AppState, form: KnowledgeWriteForm) -> ApiR
     });
     atomic_write_text(&source_path, &(details.trim().to_string() + "\n")).await?;
     atomic_write_text(&meta_path, &meta_text).await?;
+    // 同步更新 index.jsonl（尽力而为：文件不存在则跳过；检索动态扫 meta 不依赖它，仅保持索引一致）
+    update_knowledge_index(&meta_path).await;
     let root = KnowledgePath {
         path: meta_path
             .parent()
@@ -1070,6 +1112,133 @@ async fn save_knowledge_item(state: &AppState, form: KnowledgeWriteForm) -> ApiR
             .to_path_buf(),
     };
     read_knowledge_item_file(&root, &meta_path, true, Some(20_000), None, true).await
+}
+
+/// 返回条目 meta 文件所属知识目录下的 index.jsonl 路径（meta/ 的上一级）。
+fn knowledge_index_path(meta_path: &Path) -> Option<PathBuf> {
+    let dir = meta_path.parent()?.parent()?; // <dir>/meta/<id>.yaml -> <dir>
+    Some(dir.join("index.jsonl"))
+}
+
+/// 构造 index.jsonl 的一行（字段键名与 migrate/enrich 脚本输出对齐）。
+fn build_knowledge_index_entry(meta_path: &Path, fm: &Frontmatter) -> Value {
+    let get = |key: &str, default: &str| {
+        fm.fields
+            .get(key)
+            .map(String::as_str)
+            .unwrap_or(default)
+            .to_string()
+    };
+    let list = |key: &str| -> Vec<String> {
+        match fm
+            .fields
+            .get(key)
+            .and_then(|v| serde_yaml::from_str::<serde_yaml::Value>(v).ok())
+        {
+            Some(v) => v
+                .as_sequence()
+                .map(|seq| {
+                    seq.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            None => Vec::new(),
+        }
+    };
+    json!({
+        "id": get("id", ""),
+        "title": get("title", ""),
+        "kind": fm.fields.get("kind").or_else(|| fm.fields.get("type")).cloned().unwrap_or_default(),
+        "category": get("category", ""),
+        "domain": get("domain", ""),
+        "project": get("project", ""),
+        "scope": get("scope", ""),
+        "status": get("status", ""),
+        "confidence": get("confidence", ""),
+        "summary": get("summary", ""),
+        "tags": list("tags"),
+        "triggerTerms": list("trigger_terms"),
+        "relatedSkills": list("related_skills"),
+        "relatedRepos": list("related_repos"),
+        "relatedTables": list("related_tables"),
+        "relatedApis": list("related_apis"),
+        "sourcePath": resolve_knowledge_source_path(meta_path, fm)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        "metaPath": meta_path.to_string_lossy().to_string(),
+        "originPath": get("origin_path", ""),
+        "updatedAt": get("updated_at", ""),
+    })
+}
+
+/// 保存成功后同步 index.jsonl：文件存在则幂等替换/追加该条目行；不存在则跳过。
+async fn update_knowledge_index(meta_path: &Path) {
+    let Some(index_path) = knowledge_index_path(meta_path) else {
+        return;
+    };
+    let Ok(existing) = fs::read_to_string(&index_path).await else {
+        return;
+    };
+    let raw = match fs::read_to_string(meta_path).await {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let fm = match parse_knowledge_meta_yaml(&raw, meta_path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let id = fm
+        .fields
+        .get("id")
+        .map(String::as_str)
+        .unwrap_or("")
+        .to_string();
+    if id.is_empty() {
+        return;
+    }
+    let is_same_id = |line: &str| -> bool {
+        match serde_json::from_str::<Value>(line) {
+            Ok(v) => v
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(|i| i == id)
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    };
+    let mut lines: Vec<String> = existing.lines().map(|l| l.to_string()).collect();
+    let replaced = lines.iter().any(|l| is_same_id(l));
+    if replaced {
+        lines.retain(|l| !is_same_id(l));
+    }
+    lines.push(build_knowledge_index_entry(meta_path, &fm).to_string());
+    let _ = atomic_write_text(&index_path, &(lines.join("\n") + "\n")).await;
+}
+
+/// 删除条目时同步从 index.jsonl 移除对应行。
+async fn remove_knowledge_index_line(meta_path: &Path, id: &str) {
+    let Some(index_path) = knowledge_index_path(meta_path) else {
+        return;
+    };
+    let Ok(existing) = fs::read_to_string(&index_path).await else {
+        return;
+    };
+    let lines: Vec<String> = existing
+        .lines()
+        .filter(|l| {
+            match serde_json::from_str::<Value>(l) {
+                Ok(v) => v
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .map(|i| i != id)
+                    .unwrap_or(true),
+                Err(_) => true,
+            }
+        })
+        .map(|l| l.to_string())
+        .collect();
+    let _ = atomic_write_text(&index_path, &(lines.join("\n") + "\n")).await;
 }
 
 async fn unique_knowledge_id(
@@ -1093,7 +1262,7 @@ fn knowledge_id_from_title(kind: &str, domain: Option<&str>, title: &str) -> Str
         "exp"
     };
     let domain = slug_segment(domain.unwrap_or("general"), "general");
-    let title_slug = slug_segment(
+    let title_slug = slug_segment_cjk(
         title,
         &chrono::Utc::now().format("%Y%m%d%H%M%S").to_string(),
     );
@@ -1330,6 +1499,41 @@ fn slug_segment(value: &str, fallback: &str) -> String {
     if compact.is_empty() {
         fallback.to_string()
     } else {
+        compact
+    }
+}
+
+/// 与 slug_segment 相同，但额外支持中文转拼音，用于中文标题生成语义化 id。
+/// 拼音取无声调形式、以 `-` 分隔；非中文字符沿用 slug_segment 规则；结果截断到 64 字符。
+pub(crate) fn slug_segment_cjk(value: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in value.to_ascii_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+            prev_dash = false;
+        } else if let Some(pinyin) = ch.to_pinyin() {
+            let plain = pinyin.plain();
+            if !plain.is_empty() {
+                if !out.is_empty() && !prev_dash {
+                    out.push('-');
+                }
+                out.push_str(plain);
+                prev_dash = false;
+            }
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let mut compact = out.trim_matches('-').to_string();
+    if compact.is_empty() {
+        fallback.to_string()
+    } else {
+        if compact.chars().count() > 64 {
+            compact = compact.chars().take(64).collect::<String>();
+            compact = compact.trim_end_matches('-').to_string();
+        }
         compact
     }
 }
