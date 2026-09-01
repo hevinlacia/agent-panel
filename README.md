@@ -56,6 +56,7 @@ Agent Panel 目前做的是**只读能力接入**：
 | --- | --- |
 | `/` `/dashboard` | 需求 KPI、状态分布、交付周期 |
 | `/projects` | 需求进度看板 |
+| `/release-plan` | 发布计划：按需求 meta.md `plan-release` 登记日期分组，发版当天快速确认当天要发的需求 |
 | `/requirement?id=<req>` | 需求详情、业务背景文档、经验总结、状态/类别/ONES、关联 session、新 session（pi 生成命令 / dsh 一键开 web session） |
 | `/sessions` | pi session 列表 |
 | `/session?id=<uuid>` | pi session 元数据详情（无 terminal） |
@@ -106,7 +107,7 @@ Agent Panel 目前做的是**只读能力接入**：
 
 - `GET /health`
 - `GET /api/dashboard/stats`
-- `GET /api/requirements`
+- `GET /api/requirements` — 需求列表；每项含 `planRelease`（来自 meta.md `plan-release` frontmatter，`unknown` 表示未排期）
 - `POST /api/requirements` — 创建需求目录和标准文件；支持 JSON/form，`dryRun=true` 只返回计划写入路径
 - `GET /api/requirement?id=<req>`
 - `PATCH /api/requirement` / `POST /api/requirement/update` — 修改受控字段（title/project/projects/status/category/owner/startDate/planRelease/ones）

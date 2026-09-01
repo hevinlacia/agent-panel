@@ -25,6 +25,7 @@ pub(crate) struct Requirement {
     pub(crate) session_ids: Vec<String>,
     pub(crate) category: Option<String>,
     pub(crate) ones: Option<String>,
+    pub(crate) plan_release: Option<String>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) completed_at: Option<i64>,
@@ -331,6 +332,11 @@ pub(crate) async fn load_requirement_from_dir(
         .get("ones")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let plan_release = fm
+        .fields
+        .get("plan-release")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let mut explicit_projects = Vec::new();
     explicit_projects.extend(split_list(fm.fields.get("project")));
     explicit_projects.extend(split_list(fm.fields.get("projects")));
@@ -394,6 +400,7 @@ pub(crate) async fn load_requirement_from_dir(
         session_ids: Vec::new(),
         category: Some(category),
         ones,
+        plan_release,
         created_at,
         updated_at,
         completed_at,
@@ -484,6 +491,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         session_ids,
         category: Some("需求".into()),
         ones: None,
+        plan_release: None,
         created_at: now,
         updated_at: now,
         completed_at: None,

@@ -489,6 +489,7 @@ fn context_page_contains_sections_and_raw_link() {
         session_ids: vec![],
         category: None,
         ones: None,
+        plan_release: None,
         created_at: 0,
         updated_at: 0,
         completed_at: None,
