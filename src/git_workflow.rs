@@ -1154,11 +1154,11 @@ pub(crate) fn normalize_merge_request(form: &MergeBranchForm) -> ApiResult<Merge
 pub(crate) fn target_from_branch(branch: &str) -> ApiResult<String> {
     if branch == "test" {
         Ok("test".to_string())
-    } else if branch == "master" || branch.starts_with("UAT-") {
+    } else if branch == "master" || branch == "uat" || branch.starts_with("UAT-") {
         Ok("uat".to_string())
     } else {
         Err(ApiError::bad_request(
-            "targetBranch must be test, master, or UAT-*",
+            "targetBranch must be test, master, uat, or UAT-*",
         ))
     }
 }
@@ -1187,6 +1187,7 @@ pub(crate) fn merge_option_label(kind: &str, branch: &str) -> String {
         ("frontend", "test") => "前端 test".to_string(),
         ("frontend", "master") => "前端 UAT (master)".to_string(),
         ("backend", "test") => "后端 test".to_string(),
+        ("backend", "uat") => "后端 UAT (uat)".to_string(),
         ("backend", branch) if branch.starts_with("UAT-") => format!("后端 UAT ({branch})"),
         _ => branch.to_string(),
     }
@@ -1202,7 +1203,14 @@ pub(crate) fn default_merge_selection(
         "测试中" if kind == "frontend" => {
             options.iter().find(|v| v.as_str() == "master").cloned()
         }
-        "测试中" if kind == "backend" => options.iter().find(|v| v.starts_with("UAT-")).cloned(),
+        "测试中" if kind == "backend" => {
+            // 优先选统一命名的小写 uat（WMS 2026-08 起后端 UAT 分支统一为 uat），无则回退 UAT-* 历史分支
+            options
+                .iter()
+                .find(|v| v.as_str() == "uat")
+                .cloned()
+                .or_else(|| options.iter().find(|v| v.starts_with("UAT-")).cloned())
+        }
         _ => None,
     }
 }
@@ -1924,11 +1932,30 @@ pub(crate) fn target_branch_matches_repo(repo: &BranchRepo, target_branch: &str)
     if is_frontend_repo(repo) {
         matches!(target_branch, "test" | "master")
     } else {
-        target_branch == "test" || target_branch.starts_with("UAT-")
+        target_branch == "test" || target_branch == "uat" || target_branch.starts_with("UAT-")
     }
 }
 
 pub(crate) async fn detect_latest_uat_branch(project_path: &Path) -> Option<String> {
+    // WMS 后端 2026-08 起 UAT 分支统一命名为小写 uat，优先返回远端 uat 分支（如存在）
+    let _ = git(
+        project_path,
+        &["fetch", "origin", "uat"],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let has_uat = git(
+        project_path,
+        &["rev-parse", "--verify", "origin/uat"],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if has_uat.ok {
+        return Some("uat".to_string());
+    }
+    // 回退：扫描历史 UAT-* 前缀分支，取 committerdate 最新
     let _ = git(
         project_path,
         &[
