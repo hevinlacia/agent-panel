@@ -599,3 +599,34 @@ fn target_branch_matches_repo_accepts_lowercase_uat_for_backend() {
     assert!(!target_branch_matches_repo(&frontend, "uat"));
     assert!(!target_branch_matches_repo(&frontend, "UAT-2607"));
 }
+
+#[test]
+fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
+    // 中文标题不再退化成只剩 domain 的 id（如 biz-wms-wms）
+    let slug = slug_segment_cjk("WMS 盘点账实调整落表链路", "fallback");
+    assert!(slug.starts_with("wms-"), "got: {slug}");
+    assert_ne!(slug, "wms", "中文标题 slug 不应退化成 wms: {slug}");
+    assert!(slug.contains("pan") && slug.contains("luo"), "应包含拼音: {slug}");
+    // id 组合
+    let id = format!("biz-wms-{slug}");
+    assert!(id.len() <= 200, "id 过长: {id}");
+}
+
+#[test]
+fn slug_segment_cjk_keeps_ascii_behavior() {
+    assert_eq!(slug_segment_cjk("Receipt Callback Retry", "fb"), "receipt-callback-retry");
+    assert_eq!(slug_segment_cjk("WMS-1234-receipt", "fb"), "wms-1234-receipt");
+}
+
+#[test]
+fn slug_segment_cjk_empty_falls_back() {
+    assert_eq!(slug_segment_cjk("???", "fallback"), "fallback");
+    assert_eq!(slug_segment_cjk("", "fallback"), "fallback");
+}
+
+#[test]
+fn slug_segment_cjk_caps_length() {
+    let long = "盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路";
+    let slug = slug_segment_cjk(long, "fb");
+    assert!(slug.chars().count() <= 64, "应截断到 64: {}", slug.chars().count());
+}

@@ -322,7 +322,9 @@ async fn main() -> Result<()> {
         .route("/api/sessions/resolve", get(api_sessions_resolve))
         .route(
             "/api/knowledge",
-            get(api_knowledge_list).post(api_knowledge_save),
+            get(api_knowledge_list)
+                .post(api_knowledge_save)
+                .delete(api_knowledge_delete),
         )
         .route(
             "/api/knowledge/item",

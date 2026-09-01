@@ -26,6 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 walkdir = "2.5"
 zstd = "0.13"
+pinyin = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3.12"

@@ -40,6 +40,13 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
 }
 
 impl<E> From<E> for ApiError
