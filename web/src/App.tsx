@@ -23,6 +23,7 @@ import {
   List,
   ListChecks,
   RefreshCw,
+  Rocket,
   Search,
   Server,
   Settings,
@@ -92,6 +93,7 @@ import { TestdataPage } from "./pages/testdata"
 import { DashboardPage } from "./pages/dashboard"
 import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
+import { ReleasePlanPage } from "./pages/release-plan"
 import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "./lib/diff"
 import { SessionPage, SessionsPage } from "./pages/sessions"
 import { SessionChipList, SessionListModal } from "./pages/sessions"
@@ -120,6 +122,7 @@ interface AppProps { apiPath: string }
 const navItems = [
   { href: "/dashboard", label: "状态看板", short: "DB", icon: <LayoutDashboard size={16} /> },
   { href: "/projects", label: "需求看板", short: "PR", icon: <ListChecks size={16} /> },
+  { href: "/release-plan", label: "发布计划", short: "RP", icon: <Rocket size={16} /> },
   { href: "/business-knowledge", label: "业务知识", short: "BK", icon: <Library size={16} /> },
   { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
@@ -133,6 +136,7 @@ const navItems = [
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
   if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc"
+  if (href === "/release-plan") return path === "/release-plan"
   if (href === "/business-knowledge") return path === "/business-knowledge"
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
@@ -145,6 +149,7 @@ function isActiveNav(path: string, href: string): boolean {
 function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/" || path === "/dashboard") return { eyebrow: "Dashboard", title: "状态看板" }
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
+  if (path === "/release-plan") return { eyebrow: "Release Plan", title: "发布计划" }
   if (path === "/business-knowledge") return { eyebrow: "Business Knowledge", title: "业务知识" }
   if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
@@ -188,6 +193,7 @@ export function App({ apiPath }: AppProps) {
   const { project, setProject } = useProjectFilter()
   const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
+    : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
     : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
     : path === "/experiences" ? <KnowledgePage kind="experience" />
     : path === "/sessions" ? <SessionsPage />

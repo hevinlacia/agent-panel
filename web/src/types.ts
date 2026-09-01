@@ -72,6 +72,7 @@ export interface Requirement {
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
+  planRelease?: string
   effortEstimate?: EffortEstimate
 }
 
