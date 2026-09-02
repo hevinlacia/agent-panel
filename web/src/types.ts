@@ -5,7 +5,7 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "经验总结" | "已完成" | "排查中" | "已确认"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "经验总结" | "发布就绪" | "已完成" | "排查中" | "已确认"
 export type ReqCategory = "需求" | "线上问题"
 
 export interface EffortEstimate {
