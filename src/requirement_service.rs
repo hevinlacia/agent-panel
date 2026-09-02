@@ -1985,6 +1985,7 @@ pub(crate) fn phase_prompt_file(status: &str) -> &'static str {
         "测试中" => "prompts/phase-testing.md",
         "排查中" | "已确认" => "prompts/phase-online-issue.md",
         "经验总结" | "待上线" => "prompts/phase-experience-summary.md",
+        "发布就绪" => "prompts/phase-deploy.md",
         "已完成" => "prompts/phase-done.md",
         _ => "prompts/phase-dev.md",
     }

@@ -104,6 +104,9 @@ static REQ_STATUSES: &[&str] = &[
     "自测中",
     "测试中",
     "经验总结",
+    // 发布就绪：人工已检查代码（或重大变更已经他人 review），随时可发布；
+    // 与“agent 做完但未经人工检查”的经验总结阶段区分。
+    "发布就绪",
     "已完成",
     // Lightweight statuses for category=线上问题; no strict requirement lifecycle gate.
     "排查中",
