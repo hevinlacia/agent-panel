@@ -1,0 +1,27 @@
+web/src/styles.css
+  cbbf15a37aeb6cf4 117-126,142-158,456-463
+web/src/App.tsx
+  cbbf15a37aeb6cf4 25-26,90,173-175
+web/src/lib/preferences.ts
+  cbbf15a37aeb6cf4 6,28-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5ddea03adc7abc86e35e20ca3887cfc96ce1927a",
+  "prompts": {
+    "cbbf15a37aeb6cf4": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0628a-cfd8-79ef-9734-3b4850060151",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 50,
+      "total_deletions": 3,
+      "accepted_lines": 50,
+      "overriden_lines": 0
+    }
+  }
+}
