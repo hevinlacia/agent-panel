@@ -114,6 +114,16 @@ button, input, select, textarea { font: inherit; }
 .react-sidebar-card strong { color: #fff; font: 800 .84rem var(--react-mono); }
 .react-sidebar-card em { color: var(--react-muted); font-size: .78rem; font-style: normal; }
 
+.react-shell.collapsed { grid-template-columns: 68px minmax(0, 1fr); }
+.react-shell.collapsed .react-sidebar { padding: 20px 10px; }
+.react-shell.collapsed .react-brand { justify-content: center; gap: 0; }
+.react-shell.collapsed .react-brand-copy { display: none; }
+.react-shell.collapsed .react-sidebar-link { grid-template-columns: 28px; justify-items: center; padding: 9px 0; }
+.react-shell.collapsed .react-sidebar-link:hover { transform: none; }
+.react-shell.collapsed .react-sidebar-link span:nth-child(2),
+.react-shell.collapsed .react-sidebar-link small { display: none; }
+.react-shell.collapsed .react-sidebar-card { display: none; }
+
 .react-content-shell { min-width: 0; }
 .react-topbar {
   position: sticky;
@@ -129,7 +139,23 @@ button, input, select, textarea { font: inherit; }
   background: rgba(6, 8, 13, 0.72);
   backdrop-filter: blur(18px);
 }
-.react-topbar div:first-child { display: flex; flex-direction: column; gap: 2px; }
+.react-topbar-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.react-topbar-heading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.react-topbar-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--react-muted);
+  cursor: pointer;
+  transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.react-topbar-collapse:hover { color: #fff; border-color: rgba(34,211,238,.35); background: rgba(34,211,238,.1); }
 .react-topbar span { color: var(--react-cyan); font: 800 .66rem var(--react-mono); letter-spacing: .16em; text-transform: uppercase; }
 .react-topbar strong { color: #fff; font-size: 1.04rem; }
 .react-topbar-actions { display: flex; gap: 9px; align-items: center; }
@@ -427,6 +453,14 @@ button, input, select, textarea { font: inherit; }
   .react-sidebar-nav { flex-direction: row; }
   .react-sidebar-link { min-width: max-content; }
   .react-sidebar-card { display: none; }
+  .react-topbar-collapse { display: none; }
+  .react-shell.collapsed { grid-template-columns: 1fr; }
+  .react-shell.collapsed .react-sidebar { padding: 12px; }
+  .react-shell.collapsed .react-brand { justify-content: flex-start; gap: 12px; }
+  .react-shell.collapsed .react-brand-copy { display: flex; }
+  .react-shell.collapsed .react-sidebar-link { grid-template-columns: 28px minmax(0, 1fr) auto; justify-items: stretch; padding: 9px 10px; }
+  .react-shell.collapsed .react-sidebar-link span:nth-child(2),
+  .react-shell.collapsed .react-sidebar-link small { display: inline; }
   .react-main { padding: 18px; }
   .react-topbar { padding: 0 18px; }
   .react-hero { align-items: flex-start; flex-direction: column; }
