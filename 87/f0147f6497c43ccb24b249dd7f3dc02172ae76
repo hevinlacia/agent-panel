@@ -1,0 +1,23 @@
+web/src/pages/projects.tsx
+  8e13f67e6a62a1a0 7,44,68,84,91,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "87f0147f6497c43ccb24b249dd7f3dc02172ae76",
+  "prompts": {
+    "8e13f67e6a62a1a0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a065cd-0a43-782b-979a-4c326f215a5a",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 20,
+      "accepted_lines": 35,
+      "overriden_lines": 0
+    }
+  }
+}
