@@ -53,7 +53,9 @@ pub(crate) fn requirement_api_schema() -> Value {
             "Maintain req.technicalPlan throughout implementation: update the global approach before/after non-trivial code changes so humans can review direction before reading diffs.",
             "Every phase context includes prompts/phase-common.md as fixedPhasePrompt; state-specific prompts stay in prompts/phase-*.md as statePhasePrompt.",
             "During all phases, record referenced knowledge/experience IDs as knowledgeReference events and reusable findings as learningCandidate or skillImprovementCandidate events when current-session details may help later experience summary.",
-            "Online issue requirements use lightweight statuses 排查中/已确认 and do not need the strict normal requirement lifecycle unless converted to category=需求.",
+            "Requirements have a source attribute: 产品推动 (default) or 开发推动. For 开发推动 requirements, QA cannot ask product for test scope, so the dev must fill test-scenario.md (需求说明 + 开发评估的测试范围 + 测试覆盖场景) before the requirement can enter 测试中; the status API rejects the transition otherwise.",
+            "Online issue requirements use lightweight statuses 排查中/已定位/已修复/已复盘/已关闭 and do not need the strict normal requirement lifecycle unless converted to category=需求.",
+            "已定位→已修复 has two paths: data-only fix pushes the issue directly to 已修复; code fix requires creating a normal requirement and binding the issue via the requirement meta.md issues field. When the bound requirement reaches 经验总结 or later, the linked issues in 排查中/已定位 are auto-advanced to 已修复 by agent-panel.",
             "Agent should call edit-plan before selecting files for non-trivial requirement edits.",
             "state.json is the source of truth for status/category; do not direct-edit it.",
             "Use appendNote for free-form progress logs; avoid replacing notes.md.",
@@ -1136,6 +1138,13 @@ pub(crate) async fn build_phase_runtime_context(
         })
         .collect();
     let entry_checks = phase_entry_checks(&req.status, dir);
+    let entry_checks = if req.source == "开发推动" && req.status == "测试中" {
+        let mut checks = entry_checks;
+        checks.push(file_check(dir, "test-scenario.md", "开发推动：测试场景文档（需求说明 + 开发评估的测试范围 + 测试覆盖场景）", true));
+        checks
+    } else {
+        entry_checks
+    };
     let missing_required: Vec<Value> = entry_checks
         .iter()
         .filter(|item| {
@@ -1180,7 +1189,9 @@ pub(crate) fn default_intent_for_status(status: &str) -> &'static str {
         "测试中" => "self-test",
         "经验总结" => "experience-summary",
         "排查中" => "progress",
-        "已确认" => "experience-summary",
+        "已定位" => "overview",
+        "已修复" => "experience-summary",
+        "已复盘" | "已关闭" => "overview",
         "已完成" => "overview",
         _ => "overview",
     }
@@ -1266,14 +1277,35 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             file_check(dir, "release-manifest.md", "有上线资产时变更无遗漏", false),
             file_check(dir, "notes.md", "关键决策和坑点可追溯", false),
         ],
-        "已确认" => vec![
-            file_check(dir, "notes.md", "线上问题排查过程和确认结论", true),
+        "已定位" => vec![
+            file_check(dir, "notes.md", "线上问题排查过程和根因结论", true),
             file_check(
                 dir,
                 "technical-plan.md",
-                "根因、影响、后续修复建议或转需求判断",
+                "根因、影响、修复方案或转需求判断",
                 true,
             ),
+        ],
+        "已修复" => vec![
+            file_check(dir, "notes.md", "排查与修复过程可追溯", true),
+            file_check(
+                dir,
+                "troubleshooting.md",
+                "排查经验草稿：怎么排查 + 怎么修复",
+                false,
+            ),
+        ],
+        "已复盘" => vec![
+            file_check(
+                dir,
+                "troubleshooting.md",
+                "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
+                true,
+            ),
+            file_check(dir, "notes.md", "排查过程与经验库落地记录", true),
+        ],
+        "已关闭" => vec![
+            file_check(dir, "notes.md", "关闭原因可追溯（误报/重复/环境问题等）", true),
         ],
         "排查中" => vec![
             file_check(dir, "notes.md", "线上问题排查过程", true),

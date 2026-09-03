@@ -24,7 +24,11 @@ pub(crate) struct Requirement {
     pub(crate) description: String,
     pub(crate) session_ids: Vec<String>,
     pub(crate) category: Option<String>,
+    /// 需求推动方：产品推动（默认）/ 开发推动；开发推动必须先完成测试场景文档。
+    pub(crate) source: String,
     pub(crate) ones: Option<String>,
+    /// 绑定的线上问题 req id 列表（meta.md issues 字段，仅普通需求使用）。
+    pub(crate) issues: Vec<String>,
     pub(crate) plan_release: Option<String>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
@@ -43,6 +47,8 @@ pub(crate) struct Requirement {
     pub(crate) release_manifest_path: Option<String>,
     pub(crate) release_check_path: Option<String>,
     pub(crate) experience_summary_path: Option<String>,
+    pub(crate) troubleshooting_path: Option<String>,
+    pub(crate) test_scenario_path: Option<String>,
     pub(crate) experience_summary_job: Option<Value>,
     pub(crate) alignment_path: Option<String>,
     pub(crate) prd_path: Option<String>,
@@ -93,6 +99,25 @@ pub(crate) struct AssociationsStore {
     pub(crate) version: u8,
     #[serde(default)]
     pub(crate) associations: HashMap<String, Vec<String>>,
+    /// Per-requirement pending (not-yet-used) terminal launch command. One per
+    /// requirement: repeated "copy command" clicks reuse it until the session
+    /// id has been used (a session file exists in the harness store), then the
+    /// next copy auto-generates a fresh one. Force refresh discards it.
+    #[serde(default)]
+    pub(crate) pending_commands: HashMap<String, PendingSessionCommand>,
+}
+
+/// A generated-but-maybe-unused terminal launch command for a requirement.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingSessionCommand {
+    pub(crate) session_id: String,
+    pub(crate) command: String,
+    /// Harness the command targets ("pi" | "dsh-tui"); a stored command for a
+    /// different harness than the current one is stale and regenerated.
+    pub(crate) harness: String,
+    pub(crate) context_path: String,
+    pub(crate) created_at: i64,
 }
 
 pub(crate) fn associations_version() -> u8 {
@@ -109,17 +134,50 @@ pub(crate) async fn load_associations(state: &AppState) -> Result<AssociationsSt
         return Ok(AssociationsStore {
             version: 2,
             associations: HashMap::new(),
+            pending_commands: HashMap::new(),
         });
     }
     let raw = fs::read_to_string(path).await.unwrap_or_default();
     Ok(serde_json::from_str(&raw).unwrap_or(AssociationsStore {
         version: 2,
         associations: HashMap::new(),
+        pending_commands: HashMap::new(),
     }))
 }
 
 pub(crate) async fn save_associations(state: &AppState, store: &AssociationsStore) -> Result<()> {
     atomic_write_json(&associations_path(state), store).await
+}
+
+/// Read the requirement's pending launch command, if any (no side effects).
+pub(crate) async fn load_pending_command(
+    state: &AppState,
+    req_id: &str,
+) -> Result<Option<PendingSessionCommand>> {
+    Ok(load_associations(state)
+        .await?
+        .pending_commands
+        .get(req_id)
+        .cloned())
+}
+
+/// Insert/replace (`Some`) or remove (`None`) the requirement's pending
+/// launch command and persist the store.
+pub(crate) async fn save_pending_command(
+    state: &AppState,
+    req_id: &str,
+    pending: Option<PendingSessionCommand>,
+) -> Result<()> {
+    let mut store = load_associations(state).await?;
+    match pending {
+        Some(cmd) => {
+            store.pending_commands.insert(req_id.to_string(), cmd);
+        }
+        None => {
+            store.pending_commands.remove(req_id);
+        }
+    }
+    save_associations(state, &store).await
 }
 
 pub(crate) async fn associate_session(
@@ -341,6 +399,13 @@ pub(crate) async fn load_requirement_from_dir(
         .get("ones")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let mut issues = split_list(fm.fields.get("issues"));
+    issues = unique_strings(issues);
+    let source = fm
+        .fields
+        .get("source")
+        .and_then(|v| normalize_source(Some(v)))
+        .unwrap_or_else(|| "产品推动".into());
     let plan_release = fm
         .fields
         .get("plan-release")
@@ -408,7 +473,9 @@ pub(crate) async fn load_requirement_from_dir(
         description,
         session_ids: Vec::new(),
         category: Some(category),
+        source,
         ones,
+        issues,
         plan_release,
         created_at,
         updated_at,
@@ -427,6 +494,8 @@ pub(crate) async fn load_requirement_from_dir(
         release_manifest_path: path_if_exists(dir.join("release-manifest.md")),
         release_check_path: path_if_exists(dir.join("release-check.md")),
         experience_summary_path: path_if_exists(dir.join("experience-summary.md")),
+        troubleshooting_path: path_if_exists(dir.join("troubleshooting.md")),
+        test_scenario_path: path_if_exists(dir.join("test-scenario.md")),
         experience_summary_job: normalize_experience_summary_job_value(
             &id,
             dir,
@@ -499,7 +568,9 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         description: "未关联到具体需求的 session 归属到此默认需求。".into(),
         session_ids,
         category: Some("需求".into()),
+        source: "产品推动".into(),
         ones: None,
+        issues: Vec::new(),
         plan_release: None,
         created_at: now,
         updated_at: now,
@@ -518,6 +589,8 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         release_manifest_path: None,
         release_check_path: None,
         experience_summary_path: None,
+        troubleshooting_path: None,
+        test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,
         prd_path: None,

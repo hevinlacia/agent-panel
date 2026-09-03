@@ -504,6 +504,9 @@ pub(crate) async fn api_requirement_status(
     if should_enforce_review_gate_for_status(&req.status, &status) {
         ensure_review_gate_allows_testing(&req).await?;
     }
+    if req.source == "开发推动" && status == "测试中" {
+        ensure_test_scenario_allows_testing(&req).await?;
+    }
     let st = write_requirement_status(
         req.req_dir.as_deref().unwrap_or_default(),
         &status,
@@ -559,30 +562,71 @@ pub(crate) async fn api_requirement_convert_issue(
     form: FormOrJson<ConvertIssueForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
-    let req = get_real_requirement(&state, &body.req_id).await?;
-    let category_state =
-        write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), "需求").await?;
-    let status_state = write_requirement_status(
-        req.req_dir.as_deref().unwrap_or_default(),
-        "需求澄清",
-        body.note
-            .as_deref()
-            .or(Some("线上问题已确认需要代码/需求流程承接")),
+    let issue = get_real_requirement(&state, &body.req_id).await?;
+    if issue.category.as_deref() != Some("线上问题") {
+        return Err(ApiError::bad_request(format!(
+            "{} 不是线上问题，无需转换",
+            issue.id
+        )));
+    }
+    // 代码修复路径：创建独立的普通需求承接修复，线上问题保持 category=线上问题 不变，
+    // 绑定在新需求的 meta.md issues 字段；需求进入 >= 经验总结 时自动把问题推进到已修复。
+    let created = create_requirement(
+        &state,
+        RequirementCreateForm {
+            req_id: String::new(),
+            title: format!("{}（代码修复）", issue.title),
+            project: Some(issue.project.clone()),
+            projects: Some(issue.projects.clone()),
+            group_path: None,
+            parent_req_id: None,
+            root: None,
+            status: Some("需求澄清".to_string()),
+            category: Some("需求".to_string()),
+            owner: None,
+            start_date: None,
+            plan_release: None,
+            ones: None,
+            source: None,
+            issues: Some(vec![issue.id.clone()]),
+            summary: Some(format!(
+                "由线上问题 {} 转出的代码修复需求；排查过程见原问题。",
+                issue.id
+            )),
+            background: None,
+            notes: None,
+            dry_run: Some(false),
+        },
     )
     .await?;
+    let fix_req_id = created
+        .get("reqId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    // 问题侧：仍处于排查中则推进到已定位（根因已明确、需要代码修复）；已定位/已修复等保持不变。
+    let issue_status_state = if issue.status == "排查中" {
+        write_requirement_status(
+            issue.req_dir.as_deref().unwrap_or_default(),
+            "已定位",
+            Some(&format!("已转代码修复需求 {fix_req_id}")),
+        )
+        .await?
+    } else {
+        Value::Null
+    };
     let event = record_requirement_event(
         &state,
         RequirementEventForm {
-            req_id: req.id.clone(),
+            req_id: issue.id.clone(),
             event_type: Some("decision".to_string()),
-            title: Some("线上问题转需求".to_string()),
-            summary: Some("线上问题已转为普通需求流程".to_string()),
+            title: Some("线上问题转代码修复需求".to_string()),
+            summary: Some(format!(
+                "已创建修复需求 {fix_req_id} 并绑定本问题；需求进入经验总结后自动推进本问题到已修复"
+            )),
             details: body.note,
             evidence: Vec::new(),
-            decisions: vec![
-                "category: 线上问题 -> 需求".to_string(),
-                "status: 需求澄清".to_string(),
-            ],
+            decisions: vec![format!("fixRequirement: {fix_req_id}")],
             todos: Vec::new(),
             related_files: vec![STATE_FILE.to_string()],
             related_knowledge_ids: Vec::new(),
@@ -595,14 +639,14 @@ pub(crate) async fn api_requirement_convert_issue(
             confidence: None,
             target: None,
             test_cases: Vec::new(),
-            status: Some("需求澄清".to_string()),
+            status: None,
             risk_level: None,
             tags: vec![
                 "online-issue".to_string(),
                 "convert-to-requirement".to_string(),
             ],
             session_id: None,
-            idempotency_key: Some(format!("{}-convert-issue-{}", req.id, now_ms())),
+            idempotency_key: Some(format!("{}-convert-issue-{}", issue.id, now_ms())),
             append_note: Some(true),
             dry_run: Some(false),
         },
@@ -610,9 +654,10 @@ pub(crate) async fn api_requirement_convert_issue(
     .await?;
     Ok(Json(json!({
         "ok": true,
-        "reqId": req.id,
-        "categoryState": category_state,
-        "statusState": status_state,
+        "reqId": issue.id,
+        "fixReqId": fix_req_id,
+        "issueStatusState": issue_status_state,
+        "created": created,
         "event": event,
     })))
 }
@@ -679,10 +724,10 @@ pub(crate) async fn api_requirement_new_session(
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
-    // dsh (web) 模式：不生成启动命令，改为对常驻 dsh 进程发 RPC——
+    // dsh-web 模式：不生成启动命令，改为对常驻 dsh 进程发 RPC——
     // 1) session.create 预分配 session id；2) commands/execute 触发
     // /requirement-bind（dsh 插件写入关联并准备注入需求上下文）。
-    if crate::sessions::current_harness(&state) == "dsh" {
+    if crate::sessions::current_harness(&state) == "dsh-web" {
         let cfg = crate::config::read_config(&state).await.unwrap_or_default();
         let client = crate::dsh_client::DshClient::new(&cfg.dsh_api_base_url);
         if !client.healthy().await {
@@ -717,7 +762,7 @@ pub(crate) async fn api_requirement_new_session(
         let url = format!("{}/", cfg.dsh_api_base_url);
         return Ok(Json(json!({
             "ok": true,
-            "harness": "dsh",
+            "harness": "dsh-web",
             "sessionId": created,
             "url": url,
             "cwd": project_root,
@@ -725,23 +770,99 @@ pub(crate) async fn api_requirement_new_session(
             "contextInjectionReady": command_dispatched,
         })));
     }
+    // dsh-tui / pi 模式：与当前 harness 同构的可粘贴终端命令，带 pending 复用：
+    // - 重复点击复制命令时复用未使用过的 pending session id（不新产生 id）；
+    // - pending 的 session 已被使用（harness session 库里已有对应 session 文件）时自动换新；
+    // - force=true（强制刷新）时无视使用状态直接废弃旧 pending、生成新 id；
+    // - pending 与当前 harness 不匹配（中途切换 harness）也视为过期重新生成。
+    let harness = crate::sessions::current_harness(&state);
+    let binary = if harness == "dsh-tui" {
+        "dsh-tui"
+    } else {
+        "pi"
+    };
+    let force = body.force.unwrap_or(false);
+    if let Some(pending) = load_pending_command(&state, &req.id).await? {
+        let stale = pending.harness != harness;
+        let used = !stale
+            && crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness)
+                .await;
+        if !force && !stale && !used {
+            // 未使用过：原样复用，不产生新 session id。
+            return Ok(Json(json!(
+                { "ok": true, "harness": harness, "sessionId": pending.session_id, "command": pending.command, "contextPath": pending.context_path, "cwd": project_root, "reused": true }
+            )));
+        }
+        // 废弃 pending：已使用的 session 保留关联；未使用过的（force 刷新或 harness 切换）
+        // 同步清理关联和 ctx 文件，避免留下悬空 session。
+        if !used {
+            let _ = dissociate_session(&state, &req.id, &pending.session_id).await;
+            let _ = fs::remove_file(&pending.context_path).await;
+        }
+        let _ = save_pending_command(&state, &req.id, None).await;
+    }
     let session_id = Uuid::new_v4().to_string();
     associate_session(&state, &body.req_id, &session_id).await?;
     let ctx_path = write_injection_context(&state, &req, &session_id).await?;
     let title = shell_quote(&req.title);
     let ctx = shell_quote(ctx_path.to_string_lossy().as_ref());
-    let pi_command = format!(
-        "pi --session-id {} --name {} --append-system-prompt @{}",
-        session_id, title, ctx
+    let core_command = format!(
+        "{} --session-id {} --name {} --append-system-prompt @{}",
+        binary, session_id, title, ctx
     );
     let command = if let Some(root) = &project_root {
-        format!("cd {} && {}", shell_quote(root), pi_command)
+        format!("cd {} && {}", shell_quote(root), core_command)
     } else {
-        pi_command
+        core_command
     };
+    save_pending_command(
+        &state,
+        &req.id,
+        Some(PendingSessionCommand {
+            session_id: session_id.clone(),
+            command: command.clone(),
+            harness: harness.clone(),
+            context_path: ctx_path.to_string_lossy().to_string(),
+            created_at: now_ms(),
+        }),
+    )
+    .await?;
     Ok(Json(
-        json!({ "ok": true, "harness": "pi", "sessionId": session_id, "command": command, "contextPath": ctx_path, "cwd": project_root }),
+        json!({ "ok": true, "harness": harness, "sessionId": session_id, "command": command, "contextPath": ctx_path, "cwd": project_root, "reused": false }),
     ))
+}
+
+/// Read-only view of the requirement's pending terminal launch command (no
+/// side effects). Lets the requirement page show the current command without
+/// generating one; `used` hints whether the next copy click will auto-generate
+/// a fresh session id.
+pub(crate) async fn api_requirement_pending_session(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let harness = crate::sessions::current_harness(&state);
+    let pending = load_pending_command(&state, &req.id).await?;
+    let Some(pending) = pending else {
+        return Ok(Json(
+            json!({ "ok": true, "harness": harness, "pending": null }),
+        ));
+    };
+    let used =
+        crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness).await;
+    Ok(Json(json!({
+        "ok": true,
+        "harness": harness,
+        "pending": {
+            "sessionId": pending.session_id,
+            "command": pending.command,
+            "contextPath": pending.context_path,
+            "harness": pending.harness,
+            "createdAt": pending.created_at,
+            "used": used,
+        },
+    })))
 }
 
 /// Unassociated session candidates (of the current harness) for a requirement,
@@ -756,7 +877,8 @@ pub(crate) async fn api_requirement_session_candidates(
     let harness = crate::sessions::current_harness(&state);
     let project_root = requirement_project_root(&req).map(|p| p.to_string_lossy().to_string());
     let exclude: HashSet<String> = req.session_ids.iter().cloned().collect();
-    let candidates = crate::sessions::scan_session_candidates(&state, project_root.as_deref(), &exclude).await?;
+    let candidates =
+        crate::sessions::scan_session_candidates(&state, project_root.as_deref(), &exclude).await?;
     Ok(Json(json!({
         "harness": harness,
         "projectRoot": project_root,

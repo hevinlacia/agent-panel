@@ -12,7 +12,7 @@ export function SessionsPage() {
   const days = new URLSearchParams(window.location.search).get("days") || "7"
   const { data, error, loading, refresh } = useFetch<ApiSessions>(`/api/sessions?days=${encodeURIComponent(days)}`, [days])
   const sessions = data?.sessions || []
-  const harnessLabel = data?.harness === "dsh" ? "DSH" : "Pi"
+  const harnessLabel = data?.harness === "dsh-web" ? "DSH Web" : data?.harness === "dsh-tui" ? "DSH TUI" : "Pi"
   return <PageChrome icon={<Server size={15} />} eyebrow={`${harnessLabel} Sessions`} title="Sessions" description={`只读浏览本机 ${harnessLabel} session；当前对接 ${harnessLabel}，仅展示该 harness 的会话。`} actions={<button onClick={refresh}><RefreshCw size={15} />刷新</button>}><div className="react-tab-row">{[1, 3, 7, 14, 30, 0].map((d) => <a key={d} className={String(d) === days ? "active" : ""} href={`/sessions?days=${d}`}>{d === 0 ? "全部时间" : `近 ${d} 天`}</a>)}</div>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{sessions.length === 0 ? <EmptyCard>暂无 {harnessLabel} session。</EmptyCard> : sessions.map((s, index) => <SessionCard key={s.id} session={s} index={index} />)}</div>}</PageChrome>
 }
 
@@ -90,7 +90,7 @@ export function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
   return <div className="react-chip-list">{sessionIds.map((sid) => <a key={sid} href={`/session?id=${encodeURIComponent(sid)}`}>{sid.slice(0, 8)}…</a>)}</div>
 }
 
-export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds: string[]; onClose: () => void; harness?: "pi" | "dsh" }) {
+export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds: string[]; onClose: () => void; harness?: "pi" | "dsh-web" | "dsh-tui" }) {
   const { data, loading, error } = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(sessionIds.length ? `/api/sessions/resolve?ids=${encodeURIComponent(sessionIds.join(","))}` : null, [sessionIds.join(",")])
   const config = useFetch<ConfigPayload>("/api/config")
   const dshProfile = config.data?.dshProfile || "dsh-tui"
@@ -120,7 +120,7 @@ export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds:
       const bare = sid.replace(/^session-/, "")
       return byId.get(sid) ?? byId.get(bare) ?? { id: sid, title: "(未知 session)", status: "" }
     })
-    .filter((s) => harness !== "dsh" || s.agent === "dsh")
+    .filter((s) => !(harness === "dsh-web" || harness === "dsh-tui") || s.agent === "dsh")
   return createPortal(
     <div className="react-modal-backdrop" onClick={onClose}>
       <div className="react-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

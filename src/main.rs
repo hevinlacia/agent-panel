@@ -23,10 +23,10 @@ mod dsh_client;
 mod experience_summary;
 mod git_ai;
 mod git_workflow;
+mod harness;
 mod http;
 mod knowledge;
 mod markdown;
-mod harness;
 mod pi_config;
 mod requirement_api;
 mod requirement_context;
@@ -44,10 +44,10 @@ use config::*;
 use experience_summary::*;
 use git_ai::*;
 pub(crate) use git_workflow::*;
+use harness::*;
 use http::*;
 use knowledge::*;
 use markdown::*;
-use harness::*;
 use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
@@ -109,10 +109,15 @@ static REQ_STATUSES: &[&str] = &[
     "发布就绪",
     "已完成",
     // Lightweight statuses for category=线上问题; no strict requirement lifecycle gate.
+    // 流转：排查中 → 已定位 → 已修复 → 已复盘（有价值路径，复盘前必须沉淀 troubleshooting.md）；
+    // 任意阶段可直接已关闭（无沉淀价值：误报/重复/环境问题等）。
     "排查中",
-    "已确认",
+    "已定位",
+    "已修复",
+    "已复盘",
+    "已关闭",
 ];
-static ISSUE_STATUSES: &[&str] = &["排查中", "已确认"];
+static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "已复盘", "已关闭"];
 static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("需求对齐", "需求澄清"),
     ("方案设计", "需求澄清"),
@@ -121,9 +126,12 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("待上线", "经验总结"),
     ("线上排查", "排查中"),
     ("问题排查", "排查中"),
-    ("问题确认", "已确认"),
+    ("已确认", "已定位"),
+    ("问题确认", "已定位"),
 ];
 static REQ_CATEGORIES: &[&str] = &["需求", "线上问题"];
+/// 需求推动方：产品推动（默认）可问产品要测试范围；开发推动必须先沉淀测试场景文档才能进入测试中。
+static REQ_SOURCES: &[&str] = &["产品推动", "开发推动"];
 
 #[derive(Clone)]
 struct AppState {
@@ -137,7 +145,7 @@ struct AppState {
     experience_summary_dispatch: Arc<Mutex<()>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct IdQuery {
     id: Option<String>,
     #[serde(alias = "reqId")]
@@ -269,6 +277,10 @@ async fn main() -> Result<()> {
             post(api_requirement_new_session),
         )
         .route(
+            "/api/requirement/pending-session",
+            get(api_requirement_pending_session),
+        )
+        .route(
             "/api/requirement/session-candidates",
             get(api_requirement_session_candidates),
         )
@@ -358,10 +370,7 @@ async fn main() -> Result<()> {
             "/api/auth-sites/:site/check",
             get(api_auth_site_check).post(api_auth_site_check),
         )
-        .route(
-            "/api/auth-sites/:site/request",
-            post(api_auth_site_request),
-        )
+        .route("/api/auth-sites/:site/request", post(api_auth_site_request))
         .route("/api/cainiao-mock/status", get(api_cainiao_mock_status))
         .route("/api/pi-config", get(api_pi_config))
         .route("/api/harness/list", get(api_harness_list))
