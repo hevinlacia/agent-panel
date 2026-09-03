@@ -1,0 +1,97 @@
+web/src/types.ts
+  9806a328037e902d 212-213,220-234
+  8e13f67e6a62a1a0 8,50-51,74,78-81
+src/sessions.rs
+  9806a328037e902d 87-150
+web/src/pages/issues.tsx
+  8e13f67e6a62a1a0 1-134
+src/tests.rs
+  8e13f67e6a62a1a0 323-414,584,586,605-606
+web/src/styles.css
+  9806a328037e902d 538-541
+  8e13f67e6a62a1a0 534-536
+web/src/App.tsx
+  8e13f67e6a62a1a0 32,34,101-102,132-133,148-149,163-164,211-212
+src/requirement_index.rs
+  9806a328037e902d 102-120,137,144,152-180
+  8e13f67e6a62a1a0 27-28,30-31,50-51,402-408,476,478,497-498,571,573,592-593
+web/src/features/requirements/session-command.ts
+  9806a328037e902d 1-30
+web/src/pages/projects.tsx
+  8e13f67e6a62a1a0 7,47-50,53,59,62,82,93,115
+  9806a328037e902d 2,4,9,25-27,96-114
+web/src/pages/ones-missing.tsx
+  8e13f67e6a62a1a0 1-119
+web/src/pages/requirement.tsx
+  8e13f67e6a62a1a0 7,15-55,300,304,510,514,536-537,541,548,551,569,572-579,601-605,669,671,676,680,682
+  9806a328037e902d 3,5,556-558,563-566,607-608,611-619,621-625,628-630,632-638,683
+src/requirement_service.rs
+  9806a328037e902d 57-60
+  8e13f67e6a62a1a0 82-83,92-93,119-120,128-129,294-301,334-355,367,372,402,472-494,500-514,530-531,559,1117,1122,1140,1145,1161,1166,1724,1729,1741,1746,1776,1781,1794,1801-1803,1869-1876,1918-1919,1950-1957,1993-2061,2175
+AGENTS.md
+  9806a328037e902d 35
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  2aa827d471b7bcd8 31
+src/requirement_context.rs
+  8e13f67e6a62a1a0 56-58,1141-1147,1192-1194,1280-1281,1285,1289-1308
+src/main.rs
+  8e13f67e6a62a1a0 112-113,115-118,120,129-130,133-134
+  9806a328037e902d 148,279-282
+web/src/lib/requirements.ts
+  8e13f67e6a62a1a0 4,7-8,22-25
+src/requirement_api.rs
+  8e13f67e6a62a1a0 507-509,565-599,602-617,621,623-626,629,642,649,657-660
+  9806a328037e902d 773-803,809-811,814,816,818-829,831,835-848,850-865
+src/util.rs
+  8e13f67e6a62a1a0 194-212
+prompts/phase-dev.md
+  8e13f67e6a62a1a0 15-19,30
+prompts/phase-online-issue.md
+  8e13f67e6a62a1a0 1-15,19,25-31,35-37,41,46-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5db42319f2a9ad19501b457210626a2ffdf6dc8a",
+  "prompts": {
+    "2aa827d471b7bcd8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "dd0c3572-f258-41fd-a77a-36a38adea15d",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "8e13f67e6a62a1a0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a065cd-0a43-782b-979a-4c326f215a5a",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 865,
+      "total_deletions": 90,
+      "accepted_lines": 834,
+      "overriden_lines": 0
+    },
+    "9806a328037e902d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a062c7-b4d2-738c-ab81-e6976a015b35",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 403,
+      "total_deletions": 141,
+      "accepted_lines": 334,
+      "overriden_lines": 1
+    }
+  }
+}
