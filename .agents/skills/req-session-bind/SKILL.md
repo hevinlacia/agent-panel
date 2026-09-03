@@ -68,7 +68,7 @@ curl -sf --max-time 3 http://localhost:7331/api/requirements >/dev/null 2>&1 \
 如果不可用，告知用户 Agent Panel 未运行，并检查 systemd unit：
 
 ```bash
-systemctl --user status opencode-dashboard.service --no-pager
+systemctl --user status agent-panel.service --no-pager
 ```
 
 ### 2. 找到当前 Session ID

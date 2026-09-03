@@ -42,14 +42,14 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 │   │   └── review.md
 │   └── REQ-2026-002/
 │       └── meta.md
-├── opencode-dashboard/
+├── agent-panel/
 │   └── DASH-001/
 │       └── meta.md
 └── _default/
     └── (未归类的需求)
 ```
 
-项目目录名用 ASCII 字母数字和连字符(如 `WMS`、`opencode-dashboard`、`_default`)。需求目录名同理(用 PRD/工单号/日期简写,例如 `REQ-2026-001` 或 `0628-wms-inbound-allowpart`)。项目分组以目录名为准,`meta.md` frontmatter 的 `project` 字段为可选的显示名覆盖。
+项目目录名用 ASCII 字母数字和连字符(如 `WMS`、`agent-panel`、`_default`)。需求目录名同理(用 PRD/工单号/日期简写,例如 `REQ-2026-001` 或 `0628-wms-inbound-allowpart`)。项目分组以目录名为准,`meta.md` frontmatter 的 `project` 字段为可选的显示名覆盖。
 
 子目录文件约定(全部用 Markdown,UTF-8):
 
@@ -74,10 +74,10 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 ### Phase 1: 登记(`登记` / `新建需求` / `req-id 记录一下`)
 
 - 询问:需求号、需求标题、源分支、目标分支、负责人、计划发布日期、关联项目路径、项目分组(`project` 字段,例如 `WMS后端`)
-- 询问需求归属哪个项目目录(例如 `WMS`、`opencode-dashboard`);若用户给的项目目录不存在,确认后新建;无明确归属时落到 `_default/`
+- 询问需求归属哪个项目目录(例如 `WMS`、`agent-panel`);若用户给的项目目录不存在,确认后新建;无明确归属时落到 `_default/`
 - 在 `~/.agents/req/<project>/<req-id>/` 下创建目录:`mkdir -p ~/.agents/req/<project>/<req-id>/`,按模板生成 `meta.md`、`memory.md`、`branch.md`、`config-changes.md`、`impact.md`、`test.md`、`notes.md`,按需生成 `review.md`
 - `meta.md` 顶部使用 YAML frontmatter,`status` 默认填 `需求澄清`,`project` 字段可选,留空时按父目录名作为项目分组
-- meta.md 顶部的 YAML frontmatter 供 opencode-dashboard 解析需求状态和项目分组,正文部分供人阅读
+- meta.md 顶部的 YAML frontmatter 供 Agent Panel 解析需求状态和项目分组,正文部分供人阅读
 - `memory.md` / `branch.md` / `config-changes.md` / `impact.md` / `test.md` / `notes.md` / `review.md` 会被 dashboard 智能提取读取并维护；文件可以先写占位模板,后续由 agent 按会话事实更新
 - `branch.md` 里的关键 commit 区间可以后续在代码 push 后用 `git log` 回填
 - 不在文件里写真实 token、密码、Cookie、私钥、SQL 文件名以外的敏感信息;测试账号放 `test.md` 时只写账号规则,不写明文密码

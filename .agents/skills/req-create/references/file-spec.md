@@ -42,11 +42,14 @@
 | --- | --- | --- |
 | req-id | string | 需求 ID，与目录名一致 |
 | title | string | 需求标题，30字以内 |
-| status | enum | 需求澄清 / 开发中 / 自测中 / 测试中 / 经验总结 / 已完成 |
+| status | enum | 需求澄清 / 开发中 / 自测中 / 测试中 / 经验总结 / 发布就绪 / 已完成；线上问题专用：排查中 / 已定位 / 已修复 / 已复盘 / 已关闭 |
 | project | string | 项目目录名（如 WMS） |
 | owner | string | 负责人 |
 | start-date | string | YYYY-MM-DD 或 unknown |
 | plan-release | string | YYYY-MM-DD 或 unknown |
+| source | enum | 推动方：产品推动（默认）/ 开发推动；开发推动进入测试中前必须有 test-scenario.md |
+| ones | string | ONES 任务链接或编号，可留空 |
+| issues | string | 绑定的线上问题 req id 列表（逗号分隔，仅 category=需求 时有意义） |
 
 ## 父需求 vs 叶子需求
 
