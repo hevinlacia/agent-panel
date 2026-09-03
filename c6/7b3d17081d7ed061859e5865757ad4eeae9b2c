@@ -1,0 +1,33 @@
+.agents/skills/req-create/references/file-spec.md
+  8e13f67e6a62a1a0 45,50-52
+.agents/skills/req-create/references/meta-leaf.md
+  8e13f67e6a62a1a0 6,10
+.agents/skills/req-tracker/SKILL.md
+  8e13f67e6a62a1a0 80
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  8e13f67e6a62a1a0 40-41,54,56,68,96,99-100,103-108,131,190-191,307,471
+.agents/skills/req-session-bind/SKILL.md
+  8e13f67e6a62a1a0 71
+.agents/skills/agent-session-summary-mark/SKILL.md
+  8e13f67e6a62a1a0 54-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c67b3d17081d7ed061859e5865757ad4eeae9b2c",
+  "prompts": {
+    "8e13f67e6a62a1a0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a065cd-0a43-782b-979a-4c326f215a5a",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}
