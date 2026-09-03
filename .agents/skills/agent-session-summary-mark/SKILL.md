@@ -51,8 +51,8 @@ allowed-tools: ["bash", "read"]
    - `{"error": "..."}` — 标记失败，告知用户错误原因
 
 6. 如果 Agent Panel 不可用（连接失败），告知用户：
-   - 确认 `opencode-dashboard.service` 是否运行：`systemctl --user status opencode-dashboard.service`
-   - 如果未运行，提示启动：`systemctl --user start opencode-dashboard.service`
+   - 确认 `agent-panel.service` 是否运行：`systemctl --user status agent-panel.service`
+   - 如果未运行，提示启动：`systemctl --user start agent-panel.service`
 
 ## Required Checks
 

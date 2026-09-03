@@ -3,9 +3,11 @@ req-id: <REQ-ID>
 title: <一句话标题，30字以内>
 status: 开发中
 project: <项目目录名，如 WMS>
+source: 产品推动
 owner: <name>
 start-date: <YYYY-MM-DD 或 unknown>
 plan-release: <YYYY-MM-DD 或 unknown>
+ones: <ONES 链接/编号，可留空>
 ---
 
 # <req-id> <需求标题>

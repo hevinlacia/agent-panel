@@ -37,8 +37,8 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 
 - 产品/页面统一称 **Agent Panel**。
 - 本机默认地址：`http://localhost:7331`，可由 `PORT` 覆盖。
-- systemd unit 历史名称仍是 `opencode-dashboard.service`；只在服务检查命令中使用这个名字，不把它当产品名。
-- API 契约以本 skill 为准；除非接口返回 404/400 且怀疑版本不一致，否则不要先去翻 `src/server.tsx`。
+- 本机服务为 systemd user unit `agent-panel.service`（历史名称 `opencode-dashboard.service` 已停用，仅老文档提及）。
+- API 契约以本 skill 为准；除非接口返回 404/400 且怀疑版本不一致，否则不要先去翻 `src/requirement_api.rs` 等源码。
 
 ## API Contract
 
@@ -51,9 +51,9 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 记录结构化事件 | POST | `/api/requirement/events` | JSON body: `reqId`, `type`, `summary`; 可选 `details`, `evidence`, `decisions`, `todos`, `relatedFiles`, `testCases`, `idempotencyKey`, `appendNote`, `dryRun`；写 `events.jsonl`，默认同步追加 notes |
 | 章节 upsert 别名 | POST/PATCH | `/api/requirement/sections/{section}` | JSON body: `reqId`, `content`; 可选 `heading`, `docType`, `token`, `dryRun`；section 如 `impact`, `test`, `boxCodeIssue` |
 | 结构化编辑 | POST | `/api/requirement/edit` | JSON/form body: `reqId`, `operation`; 支持 `setStatus`, `setCategory`, `patchMeta`, `appendNote`, `writeDoc`, `upsertSection` |
-| 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
+| 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `source`, `issues`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
 | 查单需求 | GET | `/api/requirement?id=<reqId>` | 返回 `{ requirement }` |
-| 更新受控字段 | PATCH | `/api/requirement` | JSON/form body: `reqId`; 可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` |
+| 更新受控字段 | PATCH | `/api/requirement` | JSON/form body: `reqId`; 可选 `title`, `project`, `projects`, `status`, `category`, `source`, `ones`, `issues`, `owner`, `startDate`, `planRelease`, `note`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` |
 | 更新受控字段兼容 | POST | `/api/requirement/update` | 同 PATCH `/api/requirement`，给不方便发 PATCH 的 agent/client 使用 |
 | 追加 notes | POST | `/api/requirement/notes` | JSON/form body: `reqId`, `text`; 可选 `title`, `sessionId`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` + `operation=appendNote` |
 | 写受控文档 | PUT/POST | `/api/requirement/doc` | JSON/form body: `reqId`, `docType`, `content`; 可选 `mode=replace|append`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` + `writeDoc/upsertSection` |
@@ -65,7 +65,7 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 列需求 | GET | `/api/requirements` | 返回 `{ requirements: [...] }`，客户端自行按 `status` 过滤 |
 | 更新状态 | POST | `/api/requirement/status` | form body: `reqId`, `status`, 可选 `note`, `redirect` |
 | 更新类别 | POST | `/api/requirement/category` | form body: `reqId`, `category` |
-| 更新 ONES | POST | `/api/requirement/ones` | form body: `reqId`, `ones` |
+| 更新 ONES | POST | `/api/requirement/ones` | form body: `reqId`, `ones`；推动方/绑定线上问题无专用端点，走 PATCH `source` / `issues` 字段 |
 | 关联 session | POST | `/api/requirement/associate` | form body: `reqId`, `sessionId`，成功默认 200 JSON，历史版本可能 303 |
 
 ### `{seq}` 自动编号
@@ -93,11 +93,18 @@ curl -sS -H 'Content-Type: application/json' \
 # 返回 reqId: "WMS-043-rocketmq-fail-alarm"（序号由 API 分配）
 ```
 
-状态值必须严格匹配：
+状态值必须严格匹配（需求流 7 个 + 线上问题专用 5 个）：
 
 ```text
-需求澄清 / 开发中 / 自测中 / 测试中 / 经验总结 / 已完成
+需求澄清 / 开发中 / 自测中 / 测试中 / 经验总结 / 发布就绪 / 已完成
+排查中 / 已定位 / 已修复 / 已复盘 / 已关闭
 ```
+
+- `category=线上问题` 用轻流程：排查中 → 已定位 → 已修复 → 已复盘（有价值路径）/ 已关闭（无沉淀价值）；旧状态「已确认」自动映射到「已定位」。
+- 已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定问题（需求 meta.md `issues` 字段），需求进入 ≥经验总结 时系统自动把关联问题推进到已修复。
+- 已复盘门禁：进入「已复盘」前必须已填写 `troubleshooting.md` 排查经验（怎么排查 + 怎么修复），否则状态接口拒绝。
+- 开发推动门禁：`source=开发推动` 的需求进入「测试中」前必须先完成 `test-scenario.md` 测试场景文档，否则状态接口拒绝。
+- `/api/requirement/convert-issue`（创建修复需求）：对线上问题调用后会创建独立的普通需求并自动绑定该问题（返回 `fixReqId`），问题保持 category=线上问题，不再原地转换类别。
 
 ## Agent File Protocol
 
@@ -121,7 +128,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 标准 intent：`overview` / `clarification` / `status` / `progress` / `branch` / `self-test` / `release-check` / `experience-summary` / `design` / `config` / `review`。
 
-代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。
+代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
 
 上线清单：`release-manifest.md` 是贯穿全流程维护的发布资产总览，需求详情页常驻展示；凡涉及 DB 表、Apollo/Nacos、Topic/Group、Job、开关、接口、外部依赖或上线人工动作，都要同步维护 `req.releaseManifest`。
 
@@ -180,8 +187,8 @@ curl -sf --max-time 3 http://localhost:7331/api/requirements >/dev/null \
 如果不可用，只做服务状态检查，不读日志中的 secret-like 内容：
 
 ```bash
-systemctl --user status opencode-dashboard.service --no-pager
-journalctl --user -u opencode-dashboard.service -n 80 --no-pager
+systemctl --user status agent-panel.service --no-pager
+journalctl --user -u agent-panel.service -n 80 --no-pager
 ```
 
 ### 2. 解析或匹配需求 ID
@@ -297,7 +304,7 @@ curl -sS -H 'Content-Type: application/json' \
   -d '{"reqId":"<req-id>","docType":"test","mode":"replace","content":"# <req-id> Test\n\n## 测试场景清单\n- ..."}'
 ```
 
-`docType` 仅支持：`background` / `memory` / `branch` / `config-changes` / `release-manifest` / `impact` / `test` / `notes` / `review` / `release-check` / `experience-summary` / `alignment` / `prd`。
+`docType` 仅支持：`background` / `memory` / `branch` / `config-changes` / `release-manifest` / `impact` / `test` / `test-scenario`（开发推动测试场景文档）/ `troubleshooting`（线上问题排查经验）/ `notes` / `review` / `release-check` / `experience-summary` / `alignment` / `prd`。
 
 ### 6. 校验需求
 
@@ -461,7 +468,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 - 写文档只能使用 `/api/requirement/doc` 的白名单 `docType`；不要把任意文件路径传给 API 或直接写路径。
 - 大段进展优先 `/api/requirement/notes` 追加，避免覆盖已有 notes。
 - `dryRun:true` 适用于创建、更新字段、notes、doc 写入预览；正式写入后再 validate。
-- `status` 必须是 7 个合法状态之一。
+- `status` 必须是 12 个合法状态之一（需求流 7 个 + 线上问题 5 个）；线上问题状态只能用于 `category=线上问题`。
 - `GET /api/requirements` 不保证服务端按 query 过滤；按状态筛选时必须客户端过滤。
 - 状态更新优先使用 `Accept: application/json`；不用 `curl -f` 判断 303。
 - 需求分支合并必须优先走 `/api/requirement/merge-options` + `/api/requirement/merge-branch`；不要自行手写 git merge/push，除非 Agent Panel 不可用且用户明确要求 fallback。
