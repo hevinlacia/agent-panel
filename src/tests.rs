@@ -320,6 +320,99 @@ fn parse_ones_ref_empty_input_is_none() {
 }
 
 #[test]
+fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
+    // 新状态机：排查中 → 已定位 → 已修复 → 已复盘 / 已关闭。
+    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+        assert_eq!(canonical_status(s).unwrap(), s);
+    }
+    // 旧状态兼容：已确认/问题确认 → 已定位。
+    assert_eq!(canonical_status("已确认").unwrap(), "已定位");
+    assert_eq!(canonical_status("问题确认").unwrap(), "已定位");
+    assert_eq!(canonical_status("线上排查").unwrap(), "排查中");
+}
+
+#[test]
+fn online_issue_statuses_map_to_online_issue_phase_prompt() {
+    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+        assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");
+    }
+}
+
+#[test]
+fn source_normalizes_to_known_values_with_default() {
+    assert_eq!(normalize_source(Some(&"开发推动".to_string())).unwrap(), "开发推动");
+    assert_eq!(normalize_source(Some(&"产品推动".to_string())).unwrap(), "产品推动");
+    assert!(normalize_source(Some(&"外部".to_string())).is_none());
+    assert!(ensure_source("开发推动").is_ok());
+    assert!(ensure_source("QA").is_err());
+}
+
+#[test]
+fn doc_has_filled_items_rejects_template_only_content() {
+    assert!(!doc_has_filled_items(""));
+    assert!(!doc_has_filled_items("# 标题\n\n- 待补充\n- 待补充\n"));
+    assert!(doc_has_filled_items("# 标题\n\n- 已确认：修复出库单取消释放\n"));
+    assert!(doc_has_filled_items("| 1 | 登录 | 无 | 打开首页 | 跳转 | P0 |\n"));
+}
+
+#[test]
+fn build_meta_doc_writes_source_line() {
+    let meta = build_meta_doc(
+        "WMS-100-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "开发推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s",
+    );
+    assert!(meta.contains("source: 开发推动"));
+    let default_meta = build_meta_doc(
+        "WMS-100-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s",
+    );
+    assert!(default_meta.contains("source: 产品推动"));
+}
+
+#[test]
+fn build_meta_doc_writes_issues_frontmatter_when_bound() {
+    let with = build_meta_doc(
+        "WMS-100-fix-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
+        "2026-01-01", "unknown", "", &["WMS-099-issue".into()], "s",
+    );
+    assert!(with.contains("issues: WMS-099-issue"));
+    let without = build_meta_doc(
+        "WMS-100-fix-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s",
+    );
+    assert!(!without.contains("issues:"));
+}
+
+#[test]
+fn should_auto_advance_issues_only_for_experience_or_later() {
+    assert!(should_auto_advance_issues("经验总结"));
+    assert!(should_auto_advance_issues("发布就绪"));
+    assert!(should_auto_advance_issues("已完成"));
+    assert!(!should_auto_advance_issues("测试中"));
+    assert!(!should_auto_advance_issues("开发中"));
+    assert!(!should_auto_advance_issues("已定位"));
+}
+
+#[test]
+fn online_issue_doc_type_resolves_to_troubleshooting_md() {
+    assert_eq!(requirement_doc_file("troubleshooting").unwrap(), "troubleshooting.md");
+    assert_eq!(requirement_doc_file("排查经验").unwrap(), "troubleshooting.md");
+    let tpl = requirement_doc_template(
+        &default_requirement_for_test("WMS-001"),
+        "troubleshooting.md",
+    );
+    assert!(tpl.contains("## 怎么排查"));
+    assert!(tpl.contains("## 怎么修复"));
+    assert!(tpl.contains("## 根因"));
+}
+
+fn default_requirement_for_test(req_id: &str) -> Requirement {
+    let mut req = default_requirement(Vec::new());
+    req.id = req_id.to_string();
+    req
+}
+
+#[test]
 fn experience_summary_entered_at_picks_last_history_entry() {
     // 多次进入经验总结时取最后一次进入时间。
     let state = json!({
@@ -488,7 +581,9 @@ fn context_page_contains_sections_and_raw_link() {
         description: String::new(),
         session_ids: vec![],
         category: None,
+        source: "产品推动".to_string(),
         ones: None,
+        issues: Vec::new(),
         plan_release: None,
         created_at: 0,
         updated_at: 0,
@@ -507,6 +602,8 @@ fn context_page_contains_sections_and_raw_link() {
         release_manifest_path: None,
         release_check_path: None,
         experience_summary_path: None,
+        troubleshooting_path: None,
+        test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,
         prd_path: None,
@@ -607,7 +704,10 @@ fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
     let slug = slug_segment_cjk("WMS 盘点账实调整落表链路", "fallback");
     assert!(slug.starts_with("wms-"), "got: {slug}");
     assert_ne!(slug, "wms", "中文标题 slug 不应退化成 wms: {slug}");
-    assert!(slug.contains("pan") && slug.contains("luo"), "应包含拼音: {slug}");
+    assert!(
+        slug.contains("pan") && slug.contains("luo"),
+        "应包含拼音: {slug}"
+    );
     // id 组合
     let id = format!("biz-wms-{slug}");
     assert!(id.len() <= 200, "id 过长: {id}");
@@ -615,8 +715,14 @@ fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
 
 #[test]
 fn slug_segment_cjk_keeps_ascii_behavior() {
-    assert_eq!(slug_segment_cjk("Receipt Callback Retry", "fb"), "receipt-callback-retry");
-    assert_eq!(slug_segment_cjk("WMS-1234-receipt", "fb"), "wms-1234-receipt");
+    assert_eq!(
+        slug_segment_cjk("Receipt Callback Retry", "fb"),
+        "receipt-callback-retry"
+    );
+    assert_eq!(
+        slug_segment_cjk("WMS-1234-receipt", "fb"),
+        "wms-1234-receipt"
+    );
 }
 
 #[test]
@@ -629,7 +735,11 @@ fn slug_segment_cjk_empty_falls_back() {
 fn slug_segment_cjk_caps_length() {
     let long = "盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路盘点账实调整落表链路";
     let slug = slug_segment_cjk(long, "fb");
-    assert!(slug.chars().count() <= 64, "应截断到 64: {}", slug.chars().count());
+    assert!(
+        slug.chars().count() <= 64,
+        "应截断到 64: {}",
+        slug.chars().count()
+    );
 }
 
 #[test]
@@ -689,4 +799,221 @@ fn dashboard_stats_release_schedule_and_next_release() {
     // 全部未登记日期时无最近发版日。
     let stats_unknown = build_dashboard_stats(vec![mk("R-unknown", Some("unknown"))], now);
     assert!(stats_unknown.next_release.is_none());
+}
+
+fn write_file(path: &Path, content: &str) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    std::fs::write(path, content).expect("write file");
+}
+
+#[test]
+fn pi_session_file_exists_matches_filename_suffix() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let id = "019f6a66-9601-74ea-bbaf-7640861b1959";
+    // 未创建任何 session 文件时视为未使用。
+    assert!(!pi_session_file_exists(root.path(), id));
+    // pi 命名：<timestamp>_<sessionId>.jsonl，位于编码 cwd 子目录下。
+    let session_file = root
+        .path()
+        .join("--home-hevin-Developer--")
+        .join(format!("2026-07-16T10-08-55-809Z_{id}.jsonl"));
+    write_file(&session_file, "{\"type\":\"session\"}\n");
+    assert!(pi_session_file_exists(root.path(), id));
+    // 其他 session id 不命中。
+    assert!(!pi_session_file_exists(
+        root.path(),
+        "00000000-0000-0000-0000-000000000000"
+    ));
+}
+
+#[test]
+fn dsh_session_file_exists_matches_workspace_dir_name() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let id = "8b1c2a34-1111-2222-3333-444455556666";
+    assert!(!dsh_session_file_exists(root.path(), id));
+    // DSH 命名：<workspace>/<sessionId>/session.jsonl.zstd。
+    let session_file = root
+        .path()
+        .join("--home-hevin-Developer--")
+        .join(id)
+        .join("session.jsonl.zstd");
+    write_file(&session_file, "placeholder");
+    assert!(dsh_session_file_exists(root.path(), id));
+    // 未压缩的 session.jsonl 也算。
+    let other = "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000";
+    let plain = root
+        .path()
+        .join("--tmp--")
+        .join(other)
+        .join("session.jsonl");
+    write_file(&plain, "placeholder");
+    assert!(dsh_session_file_exists(root.path(), other));
+}
+
+#[test]
+fn associations_store_defaults_pending_commands_for_legacy_files() {
+    // 旧版 associations.json 没有 pendingCommands 字段时必须能加载为空 map。
+    let legacy = "{\"version\":2,\"associations\":{\"WMS-001\":[\"sid-1\"]}}";
+    let store: AssociationsStore = serde_json::from_str(legacy).expect("parse legacy store");
+    assert!(store.pending_commands.is_empty());
+    assert_eq!(store.associations.get("WMS-001").map(Vec::len), Some(1));
+
+    // 含 pendingCommands 的文件能完整往返。
+    let mut store = AssociationsStore::default();
+    store.pending_commands.insert(
+        "WMS-001".to_string(),
+        PendingSessionCommand {
+            session_id: "sid-2".to_string(),
+            command: "pi --session-id sid-2".to_string(),
+            harness: "pi".to_string(),
+            context_path: "/tmp/ctx/sid-2.md".to_string(),
+            created_at: 1_720_000_000_000,
+        },
+    );
+    let raw = serde_json::to_string(&store).expect("serialize store");
+    let round: AssociationsStore = serde_json::from_str(&raw).expect("parse store");
+    let pending = round.pending_commands.get("WMS-001").expect("pending kept");
+    assert_eq!(pending.session_id, "sid-2");
+    assert_eq!(pending.harness, "pi");
+    assert_eq!(pending.created_at, 1_720_000_000_000);
+}
+
+fn temp_app_state(data: &Path, pi_root: &Path, dsh_root: &Path) -> AppState {
+    AppState {
+        project_root: Arc::new(data.to_path_buf()),
+        data_dir: Arc::new(data.to_path_buf()),
+        pi_session_root: Arc::new(pi_root.to_path_buf()),
+        dsh_session_root: Arc::new(dsh_root.to_path_buf()),
+        cainiao_mock: Arc::new(Mutex::new(None)),
+        experience_summary_dispatch: Arc::new(Mutex::new(())),
+    }
+}
+
+/// new-session 命令生命周期端到端（进程内直调 handler，全部落盘在临时目录）：
+/// 1) 首次复制生成 session id；2) 重复复制复用同一 id；3) session 被使用后自动换新；
+/// 4) force 强制刷新并清理未使用的旧 pending；5) GET pending-session 只读视图。
+#[tokio::test]
+async fn new_session_reuses_pending_until_used_then_refreshes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-001");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-001\ntitle: 会话命令测试\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let form = |force: Option<bool>| {
+        FormOrJson(NewSessionForm {
+            req_id: "T-001".into(),
+            force,
+        })
+    };
+
+    // 1) 首次复制：生成新 session id，写入关联 + ctx + pending。
+    let res1 = api_requirement_new_session(State(state.clone()), form(None))
+        .await
+        .expect("first copy")
+        .0;
+    assert_eq!(res1["reused"], json!(false));
+    assert_eq!(res1["harness"], json!("pi"));
+    let sid1 = res1["sessionId"].as_str().expect("sessionId").to_string();
+    let command1 = res1["command"].as_str().expect("command");
+    assert!(
+        command1.contains(&format!("pi --session-id {sid1}")),
+        "command: {command1}"
+    );
+    assert!(
+        command1.contains("--name"),
+        "command carries --name so pi persists at startup"
+    );
+    assert!(
+        data.join("ctx").join(format!("{sid1}.md")).is_file(),
+        "ctx written"
+    );
+
+    // 2) 重复复制：复用同一 session id，不新产生。
+    let res2 = api_requirement_new_session(State(state.clone()), form(None))
+        .await
+        .expect("second copy")
+        .0;
+    assert_eq!(res2["reused"], json!(true));
+    assert_eq!(res2["sessionId"], json!(sid1));
+
+    // 3) session 被使用（pi 库出现 <ts>_<id>.jsonl）：下次复制自动换新 id。
+    let cwd_dir = pi_root.join("--tmp--proj");
+    std::fs::create_dir_all(&cwd_dir).expect("create cwd dir");
+    std::fs::write(
+        cwd_dir.join(format!("2026-07-16T10-08-55-809Z_{sid1}.jsonl")),
+        "{\"type\":\"session\"}\n",
+    )
+    .expect("write used session file");
+    let res3 = api_requirement_new_session(State(state.clone()), form(None))
+        .await
+        .expect("third copy")
+        .0;
+    assert_eq!(res3["reused"], json!(false));
+    let sid3 = res3["sessionId"]
+        .as_str()
+        .expect("new sessionId")
+        .to_string();
+    assert_ne!(sid3, sid1, "used pending must auto-refresh to a new id");
+    // 已使用的 sid1 保留关联；新 pending 是 sid3。
+    let assoc = load_associations(&state).await.expect("load associations");
+    let list = assoc.associations.get("T-001").expect("associated list");
+    assert!(list.contains(&sid1), "used session stays associated");
+    assert!(list.contains(&sid3), "new pending session associated");
+    let pending = load_pending_command(&state, "T-001")
+        .await
+        .expect("load pending")
+        .expect("pending exists");
+    assert_eq!(pending.session_id, sid3);
+
+    // 4) 强制刷新：无视使用状态换新 id；未使用过的 sid3 被清理（解除关联 + 删 ctx）。
+    let res4 = api_requirement_new_session(State(state.clone()), form(Some(true)))
+        .await
+        .expect("force refresh")
+        .0;
+    assert_eq!(res4["reused"], json!(false));
+    let sid4 = res4["sessionId"]
+        .as_str()
+        .expect("forced sessionId")
+        .to_string();
+    assert_ne!(sid4, sid3);
+    let assoc = load_associations(&state).await.expect("load associations");
+    let list = assoc.associations.get("T-001").expect("associated list");
+    assert!(
+        !list.contains(&sid3),
+        "unused force-discarded session dissociated"
+    );
+    assert!(list.contains(&sid1), "used session still associated");
+    assert!(list.contains(&sid4), "fresh pending session associated");
+    assert!(
+        !data.join("ctx").join(format!("{sid3}.md")).exists(),
+        "unused discarded ctx file removed"
+    );
+
+    // 5) GET pending-session：只读视图，报告 pending 与 used=false。
+    let view = api_requirement_pending_session(
+        State(state.clone()),
+        Query(IdQuery {
+            id: Some("T-001".into()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("pending view")
+    .0;
+    assert_eq!(view["pending"]["sessionId"], json!(sid4));
+    assert_eq!(view["pending"]["used"], json!(false));
+    assert_eq!(view["pending"]["harness"], json!("pi"));
 }

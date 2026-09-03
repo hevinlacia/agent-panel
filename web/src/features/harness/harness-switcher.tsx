@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from "react"
-import { Bot, ChevronDown, Sparkles } from "lucide-react"
+import { Bot, ChevronDown, Sparkles, Terminal } from "lucide-react"
 import { postJson, useFetch } from "../../lib/api"
 
-type HarnessId = "pi" | "dsh"
+type HarnessId = "pi" | "dsh-web" | "dsh-tui"
 
 interface HarnessModelRow {
   id: string
@@ -82,8 +82,8 @@ export function HarnessSwitcher() {
         title={cur?.settingsPath || ""}
       >
         <span className={`react-harness-badge ${curHarness}`}>
-          {curHarness === "dsh" ? <Sparkles size={13} /> : <Bot size={13} />}
-          {curHarness === "dsh" ? "DSH" : "Pi"}
+          {curHarness === "pi" ? <Bot size={13} /> : curHarness === "dsh-tui" ? <Terminal size={13} /> : <Sparkles size={13} />}
+          {current.data?.label || "Pi"}
         </span>
         <ChevronDown size={14} className={open ? "rot" : ""} />
       </button>
@@ -92,7 +92,7 @@ export function HarnessSwitcher() {
         <div className="react-harness-menu" role="menu">
           <div className="react-harness-menu-head">
             <span>对接 Agent</span>
-            <em>{curHarness === "dsh" ? "DSH" : "Pi"}</em>
+            <em>{current.data?.label || "Pi"}</em>
           </div>
 
           {harnesses.map((h) => {
@@ -106,7 +106,7 @@ export function HarnessSwitcher() {
                   disabled={!!busy}
                 >
                   <span className="react-harness-group-label">
-                    {h.harness === "dsh" ? <Sparkles size={14} /> : <Bot size={14} />}
+                    {h.harness === "pi" ? <Bot size={14} /> : h.harness === "dsh-tui" ? <Terminal size={14} /> : <Sparkles size={14} />}
                     {h.label}
                   </span>
                   {isActive ? (

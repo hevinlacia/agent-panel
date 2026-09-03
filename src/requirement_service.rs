@@ -54,6 +54,10 @@ pub(crate) struct AssociateForm {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NewSessionForm {
     pub(crate) req_id: String,
+    /// Force-generate a fresh session id, discarding the pending command even
+    /// if its session was never used (recovery hatch for "used" misdetection).
+    #[serde(default)]
+    pub(crate) force: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +79,8 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) status: Option<String>,
     #[serde(default)]
     pub(crate) category: Option<String>,
+    /// 需求推动方：产品推动（默认）/ 开发推动。
+    pub(crate) source: Option<String>,
     #[serde(default)]
     pub(crate) owner: Option<String>,
     #[serde(default)]
@@ -83,6 +89,8 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) plan_release: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 创建时绑定的线上问题 req id 列表（仅 category=需求 时有意义）。
+    pub(crate) issues: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) summary: Option<String>,
     #[serde(default)]
@@ -108,6 +116,8 @@ pub(crate) struct RequirementPatchForm {
     #[serde(default)]
     pub(crate) category: Option<String>,
     #[serde(default)]
+    pub(crate) source: Option<String>,
+    #[serde(default)]
     pub(crate) owner: Option<String>,
     #[serde(default)]
     pub(crate) start_date: Option<String>,
@@ -115,6 +125,8 @@ pub(crate) struct RequirementPatchForm {
     pub(crate) plan_release: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 绑定的线上问题 req id 列表；空列表表示清空绑定。
+    pub(crate) issues: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) note: Option<String>,
     #[serde(default)]
@@ -279,6 +291,14 @@ pub(crate) async fn create_requirement(
         .trim()
         .to_string();
     ensure_category(&category)?;
+    let source = form
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| ensure_source(v).map(|_| v.to_string()))
+        .transpose()?
+        .unwrap_or_else(|| "产品推动".to_string());
     let mut status = form
         .status
         .as_deref()
@@ -311,6 +331,28 @@ pub(crate) async fn create_requirement(
         clean_optional(form.plan_release.as_deref()).unwrap_or_else(|| "unknown".to_string());
     ensure_date_or_unknown(&plan_release, "planRelease")?;
     let ones = clean_optional(form.ones.as_deref()).unwrap_or_default();
+    // 创建时绑定线上问题：仅 category=需求 时允许，且每个 id 必须是真实存在的线上问题。
+    let mut issues: Vec<String> = Vec::new();
+    if let Some(raw_issues) = form.issues.as_ref() {
+        if category != "需求" {
+            return Err(ApiError::bad_request(
+                "只有 category=需求 的记录可以绑定线上问题（issues）",
+            ));
+        }
+        issues = unique_strings(raw_issues.clone());
+        for id in &issues {
+            let issue = get_real_requirement(state, id)
+                .await
+                .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
+            if issue.category.as_deref() != Some("线上问题") {
+                return Err(ApiError::bad_request(format!(
+                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    id,
+                    issue.category.unwrap_or_else(|| "需求".into())
+                )));
+            }
+        }
+    }
     let summary = clean_optional(form.summary.as_deref()).unwrap_or_else(|| "待补充".to_string());
     let background = clean_optional(form.background.as_deref());
     let notes = clean_optional(form.notes.as_deref());
@@ -322,10 +364,12 @@ pub(crate) async fn create_requirement(
         &project,
         &projects,
         &category,
+        &source,
         &owner,
         &start_date,
         &plan_release,
         &ones,
+        &issues,
         &summary,
         background.as_deref(),
         notes.as_deref(),
@@ -355,6 +399,7 @@ pub(crate) async fn create_requirement(
         "title": title,
         "status": status,
         "category": category,
+        "source": source,
         "project": project,
         "projects": projects,
         "reqDir": target_dir.to_string_lossy(),
@@ -424,10 +469,48 @@ pub(crate) async fn update_requirement(
         }
         planned_files.push(dir.join(STATE_FILE).to_string_lossy().to_string());
     }
+    if let Some(source) = form.source.as_deref() {
+        ensure_source(source)?;
+        meta_next = set_frontmatter_field(&meta_next, "source", source);
+        changes.push("meta.source".into());
+    }
+    if let Some(raw_issues) = form.issues.as_ref() {
+        let issue_ids = unique_strings(raw_issues.clone());
+        for id in &issue_ids {
+            let issue = get_real_requirement(state, id)
+                .await
+                .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
+            if issue.category.as_deref() != Some("线上问题") {
+                return Err(ApiError::bad_request(format!(
+                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    id,
+                    issue.category.unwrap_or_else(|| "需求".into())
+                )));
+            }
+        }
+        meta_next = set_frontmatter_field(&meta_next, "issues", &issue_ids.join(", "));
+        changes.push("meta.issues".into());
+    }
+    let mut auto_advanced_issues: Vec<String> = Vec::new();
     if let Some(status) = form.status.as_deref() {
         let status = canonical_status(status)?;
         if should_enforce_review_gate_for_status(&req.status, &status) {
             ensure_review_gate_allows_testing(&req).await?;
+        }
+        // 线上问题复盘门禁：进入「已复盘」前必须已沉淀排查经验（troubleshooting.md 含怎么排查/怎么修复），
+        // 无沉淀价值的问题应直接「已关闭」而不是复盘。
+        if req.category.as_deref() == Some("线上问题") && status == "已复盘"
+            && !doc_has_filled_items(
+                &tokio::fs::read_to_string(dir.join("troubleshooting.md")).await.unwrap_or_default(),
+            )
+        {
+            return Err(ApiError::bad_request(
+                "进入「已复盘」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
+            ));
+        }
+        // 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
+        if req.source == "开发推动" && status == "测试中" {
+            ensure_test_scenario_allows_testing(&req).await?;
         }
         changes.push("state.status".into());
         if !dry_run {
@@ -444,6 +527,8 @@ pub(crate) async fn update_requirement(
                         .to_string_lossy()
                         .to_string(),
                 );
+                // 需求进入 >= 经验总结 时，自动把绑定的未解决线上问题推进到已修复。
+                auto_advanced_issues = auto_advance_linked_issues(state, &req, &status).await;
             }
         }
         planned_files.push(dir.join(STATE_FILE).to_string_lossy().to_string());
@@ -471,6 +556,7 @@ pub(crate) async fn update_requirement(
         "reqId": req.id,
         "changes": unique_strings(changes),
         "files": unique_strings(planned_files),
+        "autoAdvancedIssues": auto_advanced_issues,
         "validation": validation,
     }))
 }
@@ -1028,10 +1114,12 @@ pub(crate) async fn apply_requirement_edit(
                     projects: None,
                     status: Some(status),
                     category: None,
+                    source: None,
                     owner: None,
                     start_date: None,
                     plan_release: None,
                     ones: None,
+                    issues: None,
                     note: form.note,
                     dry_run: form.dry_run,
                 },
@@ -1049,10 +1137,12 @@ pub(crate) async fn apply_requirement_edit(
                     projects: None,
                     status: None,
                     category: Some(category),
+                    source: None,
                     owner: None,
                     start_date: None,
                     plan_release: None,
                     ones: None,
+                    issues: None,
                     note: None,
                     dry_run: form.dry_run,
                 },
@@ -1068,10 +1158,12 @@ pub(crate) async fn apply_requirement_edit(
                 projects: None,
                 status: None,
                 category: None,
+                source: field_value(&fields, &["source"]),
                 owner: field_value(&fields, &["owner"]),
                 start_date: field_value(&fields, &["startDate", "start-date"]),
                 plan_release: field_value(&fields, &["planRelease", "plan-release"]),
                 ones: field_value(&fields, &["ones"]),
+                issues: None,
                 note: None,
                 dry_run: form.dry_run,
             };
@@ -1629,10 +1721,12 @@ pub(crate) fn requirement_create_files(
     project: &str,
     projects: &[String],
     category: &str,
+    source: &str,
     owner: &str,
     start_date: &str,
     plan_release: &str,
     ones: &str,
+    issues: &[String],
     summary: &str,
     background: Option<&str>,
     notes: Option<&str>,
@@ -1644,10 +1738,12 @@ pub(crate) fn requirement_create_files(
         project,
         projects,
         category,
+        source,
         owner,
         start_date,
         plan_release,
         ones,
+        issues,
         summary,
     );
     vec![
@@ -1677,10 +1773,12 @@ pub(crate) fn build_meta_doc(
     project: &str,
     projects: &[String],
     category: &str,
+    source: &str,
     owner: &str,
     start_date: &str,
     plan_release: &str,
     ones: &str,
+    issues: &[String],
     summary: &str,
 ) -> String {
     let mut fm = vec![
@@ -1693,11 +1791,15 @@ pub(crate) fn build_meta_doc(
         fm.push(format!("projects: {}", yaml_quote(&projects.join(", "))));
     }
     fm.push(format!("category: {}", yaml_quote(category)));
+    fm.push(format!("source: {}", yaml_quote(source)));
     fm.push(format!("owner: {}", yaml_quote(owner)));
     fm.push(format!("start-date: {}", yaml_quote(start_date)));
     fm.push(format!("plan-release: {}", yaml_quote(plan_release)));
     if !ones.trim().is_empty() {
         fm.push(format!("ones: {}", yaml_quote(ones)));
+    }
+    if !issues.is_empty() {
+        fm.push(format!("issues: {}", yaml_quote(&issues.join(", "))));
     }
     format!(
         "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
@@ -1764,6 +1866,14 @@ pub(crate) fn template_test(req_id: &str) -> String {
     format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归记录\n- ⬜ 待执行\n")
 }
 
+pub(crate) fn template_test_scenario(req_id: &str) -> String {
+    format!("# {req_id} 测试场景\n\n> 用途：开发推动的需求，测试无法像产品需求那样向产品经理确认测试范围，本档由开发负责沉淀，让测试自主理解需求并评估/补充测试范围。进入「测试中」前必须填完。\n\n## 需求说明（这个需求是干嘛的）\n- 背景与目标：待补充（为什么做这个需求，解决什么问题）\n- 使用场景与角色：待补充（谁在什么入口/场景使用）\n- 功能点/变更点清单：待补充（新增/修改/删除了哪些功能点，涉及哪些页面/接口/表）\n\n## 开发评估的测试范围\n- 重点场景：待补充（开发认为必须覆盖的主链路）\n- 边界与异常：待补充（空值/并发/失败分支/回退/权限）\n- 影响面：待补充（受影响的既有功能、接口调用方、数据）\n- 不需要测的范围：待补充（明确排除，避免测试浪费）\n\n## 测试覆盖场景\n| # | 场景 | 前置数据 | 操作步骤 | 预期结果 | 优先级 |\n| --- | --- | --- | --- | --- | --- |\n| 1 | 待补充 | 待补充 | 待补充 | 待补充 | P0 |\n\n## 自测结论与证据\n- 已自测场景：待补充\n- 遗留风险：待补充\n")
+}
+
+pub(crate) fn template_troubleshooting(req_id: &str) -> String {
+    format!("# {req_id} 排查经验\n\n> 用途：沉淀本线上问题的完整排查路径与修复方案，让同类问题下次直接复用；推进到「已复盘」前必须填完本档。\n\n## 现象与影响\n- 环境/时间窗口：待补充\n- 现象：待补充（报错、指标、用户反馈）\n- 影响范围：待补充（仓库/租户/单号/接口）\n\n## 怎么排查（可复用的定位路径）\n- 证据链：待补充（日志关键字/tid、DB 状态、接口返回、MQ/Job 状态）\n- 排查步骤：待补充（按顺序记录：先看什么、再看什么、在哪里分叉）\n- 用到的工具/命令/知识：待补充（Kibana 查询、SQL、相关业务知识/经验条目 id）\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 怎么修复\n- 修复方案：待补充（代码变更、配置、数据修复、人工动作）\n- 验证方式：待补充（如何确认修复生效、回归范围）\n- 是否转需求：待补充（需要常规开发承接时记录需求 id）\n\n## 复用清单\n- [ ] 下次遇到同类现象，按「怎么排查」逐步执行\n- [ ] 已落地到经验库：待补充（经验条目 id/链接，无则写「未落地」及原因）\n")
+}
+
 pub(crate) fn template_experience_summary(req_id: &str) -> String {
     format!("# {req_id} 经验总结\n\n## 本次需求结论\n- 待补充\n\n## 新发现的业务知识\n| 发现 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/business-knowledge/ | - |\n\n## 新发现的经验 / 踩坑\n| 经验 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/experiences/ | - |\n\n## Skill 改进机会\n| Skill | 问题 / 机会 | 动作 | 状态 |\n| --- | --- | --- | --- |\n| 待补充 | 待补充 | 新增/优化/不处理 | 待落地 |\n\n## 流程改进\n- 待补充\n\n## 已落地清单\n- [ ] 待补充\n\n## 待落地清单\n- [ ] 待补充\n")
 }
@@ -1805,6 +1915,8 @@ pub(crate) fn requirement_doc_template(req: &Requirement, doc_file: &str) -> Str
         "impact.md" => template_impact(&req.id),
         "test.md" => template_test(&req.id),
         "experience-summary.md" => template_experience_summary(&req.id),
+        "troubleshooting.md" => template_troubleshooting(&req.id),
+        "test-scenario.md" => template_test_scenario(&req.id),
         "notes.md" => template_notes(&req.id),
         _ => String::new(),
     }
@@ -1835,6 +1947,14 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         "experience-summary" | "experiencesummary" | "experience-summary.md" => {
             Ok("experience-summary.md")
         }
+        "troubleshooting"
+        | "troubleshooting.md"
+        | "postmortem"
+        | "排查经验" => Ok("troubleshooting.md"),
+        "test-scenario"
+        | "testscenario"
+        | "test-scenario.md"
+        | "测试场景" => Ok("test-scenario.md"),
         "alignment" | "alignment.md" => Ok("alignment.md"),
         "prd" | "prd.md" => Ok("prd.md"),
         other => Err(ApiError::bad_request(format!(
@@ -1868,6 +1988,75 @@ pub(crate) async fn read_requirement_state(dir: &Path) -> Result<Option<Value>> 
         return Ok(read_json_if_exists(&path).await);
     }
     Ok(None)
+}
+
+/// 需求状态达到「经验总结」及以上时，才允许自动推进关联线上问题。
+pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
+    matches!(new_status, "经验总结" | "发布就绪" | "已完成")
+}
+
+/// 需求进入 >= 经验总结 后，自动把绑定的、仍处于排查中/已定位的线上问题推进到已修复。
+/// 已修复/已复盘/已关闭的线上问题不会被回退；绑定错误或目录不可写时静默跳过。
+pub(crate) async fn auto_advance_linked_issues(
+    state: &AppState,
+    req: &Requirement,
+    new_status: &str,
+) -> Vec<String> {
+    if !should_auto_advance_issues(new_status) || req.issues.is_empty() {
+        return Vec::new();
+    }
+    let mut advanced = Vec::new();
+    for issue_id in &req.issues {
+        let Ok(issue) = get_real_requirement(state, issue_id).await else {
+            continue;
+        };
+        if issue.category.as_deref() != Some("线上问题") {
+            continue;
+        }
+        if matches!(issue.status.as_str(), "已修复" | "已复盘" | "已关闭") {
+            continue;
+        }
+        let Ok(issue_dir) = req_dir_path(&issue) else {
+            continue;
+        };
+        let note = format!("关联需求 {} 进入{}，自动推进", req.id, new_status);
+        let Ok(st) =
+            write_requirement_status(&issue_dir.to_string_lossy(), "已修复", Some(&note)).await
+        else {
+            continue;
+        };
+        if matches!(st.get("changed").and_then(Value::as_bool), Some(true)) {
+            let _ = record_status_transition_event(state, &issue, &st, Some(&note)).await;
+            advanced.push(issue.id.clone());
+        }
+    }
+    advanced
+}
+
+/// 文档是否已有实际内容：非空且至少一条非「待补充」的列表项。
+pub(crate) fn doc_has_filled_items(body: &str) -> bool {
+    if body.trim().is_empty() {
+        return false;
+    }
+    body.lines()
+        .any(|line| line.trim().starts_with("- ") && !line.contains("待补充"))
+        || body.lines().any(|line| line.trim().starts_with("| ") && !line.contains("待补充"))
+}
+
+/// 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
+pub(crate) async fn ensure_test_scenario_allows_testing(req: &Requirement) -> ApiResult<()> {
+    let Some(dir) = req.req_dir.as_deref() else {
+        return Ok(());
+    };
+    let body = tokio::fs::read_to_string(PathBuf::from(dir).join("test-scenario.md"))
+        .await
+        .unwrap_or_default();
+    if doc_has_filled_items(&body) {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(
+        "开发推动的需求进入「测试中」前必须先完成测试场景文档 test-scenario.md（需求说明 + 开发评估的测试范围 + 测试覆盖场景）；请在需求详情页「测试场景」面板生成并填写，或让 agent 通过 doc API 更新",
+    ))
 }
 
 pub(crate) async fn write_requirement_status(
@@ -1983,7 +2172,7 @@ pub(crate) fn phase_prompt_file(status: &str) -> &'static str {
         "开发中" => "prompts/phase-dev.md",
         "自测中" => "prompts/phase-selftest.md",
         "测试中" => "prompts/phase-testing.md",
-        "排查中" | "已确认" => "prompts/phase-online-issue.md",
+        "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" => "prompts/phase-online-issue.md",
         "经验总结" | "待上线" => "prompts/phase-experience-summary.md",
         "发布就绪" => "prompts/phase-deploy.md",
         "已完成" => "prompts/phase-done.md",

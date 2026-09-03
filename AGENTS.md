@@ -32,6 +32,7 @@ Current architecture:
 - `web/src/pages/release-plan.tsx` — 发布计划页：按需求 `plan-release` 登记日期分组（当天/已过期/未来/未登记），发版当天快速查看。
 - `web/src/components/ui.tsx` — Shared page chrome, feedback cards, panel headers, KPI card, and motion variants.
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
+- `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
 - `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.
 - `web/src/lib/requirements.ts` — Requirement status/category constants and status color metadata.

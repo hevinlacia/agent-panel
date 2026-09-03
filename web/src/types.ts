@@ -5,7 +5,7 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "经验总结" | "发布就绪" | "已完成" | "排查中" | "已确认"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "经验总结" | "发布就绪" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭"
 export type ReqCategory = "需求" | "线上问题"
 
 export interface EffortEstimate {
@@ -47,6 +47,8 @@ export interface Requirement {
   description?: string
   status: ReqStatus
   category?: ReqCategory
+  /** 需求推动方：产品推动（默认）/ 开发推动。 */
+  source?: string
   project: string
   projects?: string[]
   groupPath?: string[]
@@ -69,9 +71,14 @@ export interface Requirement {
   releaseManifestPath?: string
   releaseCheckPath?: string
   experienceSummaryPath?: string
+  troubleshootingPath?: string
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
+  /** 绑定的线上问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
+  issues?: string[]
+  /** 测试场景文档路径（开发推动的需求必须维护）。 */
+  testScenarioPath?: string
   planRelease?: string
   effortEstimate?: EffortEstimate
 }
@@ -184,28 +191,47 @@ export interface ConfigPayload {
 }
 
 export interface HarnessCurrent {
-  harness: "pi" | "dsh"
+  harness: "pi" | "dsh-web" | "dsh-tui"
   label: string
 }
 
 export interface SessionCandidatesPayload {
-  harness: "pi" | "dsh"
+  harness: "pi" | "dsh-web" | "dsh-tui"
   projectRoot?: string | null
   candidates: SessionInfo[]
 }
 
 export interface NewSessionPayload {
   ok: boolean
-  harness?: "pi" | "dsh"
+  harness?: "pi" | "dsh-web" | "dsh-tui"
   command?: string
   sessionId?: string
   profile?: string
   cwd?: string | null
   contextPath?: string | null
+  /** pi/dsh-tui：true 表示复用了未使用过的 pending session id，未新建。 */
+  reused?: boolean
   /** dsh: base URL of the running web GUI where the created session appears. */
   url?: string
   /** dsh: raw `sessions.prompt` command response (the /requirement-bind dispatch). */
   bind?: unknown
+}
+
+/** 需求当前的待使用终端命令（未被用过的 session id 对应的启动命令）。 */
+export interface PendingSessionCommand {
+  sessionId: string
+  command: string
+  contextPath: string
+  harness: "pi" | "dsh-tui" | string
+  createdAt: number
+  /** session 文件已存在（命令已被使用过）；下次复制命令会自动换新 id。 */
+  used: boolean
+}
+
+export interface PendingSessionPayload {
+  ok: boolean
+  harness?: "pi" | "dsh-web" | "dsh-tui"
+  pending: PendingSessionCommand | null
 }
 
 export interface CainiaoMockStatus { enabled: boolean; running: boolean; port: number }

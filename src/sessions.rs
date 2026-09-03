@@ -58,14 +58,19 @@ pub(crate) struct SessionInfo {
 }
 
 pub(crate) fn current_harness(state: &AppState) -> String {
-    // Mirrors harness.rs: persisted agent-panel config `harness` field, default pi.
+    // Mirrors harness.rs: persisted agent-panel config `harness` field, default
+    // pi. "dsh" alone is the legacy id and meant the web client; the two DSH
+    // ids share one session store (see `uses_dsh_store`).
     let path = state.data_dir.join("config.json");
     if let Ok(raw) = std::fs::read_to_string(path) {
         if let Ok(v) = serde_json::from_str::<Value>(&raw) {
             if let Some(h) = v.get("harness").and_then(Value::as_str) {
-                let h = h.trim().to_ascii_lowercase();
-                if h == "dsh" || h == "deepseek-harness" || h == "deepseek_harness" {
-                    return "dsh".into();
+                match h.trim().to_ascii_lowercase().as_str() {
+                    "dsh-web" | "dsh" | "deepseek-harness" | "deepseek_harness" => {
+                        return "dsh-web".into()
+                    }
+                    "dsh-tui" | "dsh_tui" | "dshtui" => return "dsh-tui".into(),
+                    _ => {}
                 }
             }
         }
@@ -73,11 +78,81 @@ pub(crate) fn current_harness(state: &AppState) -> String {
     "pi".into()
 }
 
+/// Whether the harness reads the shared `~/.dsh` session store (both DSH
+/// clients do — web GUI and TUI sessions are indistinguishable at store level).
+pub(crate) fn uses_dsh_store(harness: &str) -> bool {
+    harness == "dsh-web" || harness == "dsh-tui"
+}
+
+/// Whether a session id has actually been used: its session file already
+/// exists in the harness session store.
+///
+/// pi persists `<timestamp>_<sessionId>.jsonl` under
+/// `~/.pi/agent/sessions/<encoded-cwd>/` (the generated launch command always
+/// carries `--name`, so pi writes the file at startup, before the first
+/// message). DSH stores `<sessionId>/session.jsonl(.zstd)` under
+/// `~/.dsh/sessions/<workspace>/`. Both checks are filename-only, so they stay
+/// cheap enough for per-click use.
+pub(crate) async fn session_id_is_used(state: &AppState, session_id: &str, harness: &str) -> bool {
+    let id = session_id.trim();
+    if id.is_empty() {
+        return false;
+    }
+    if uses_dsh_store(harness) {
+        dsh_session_file_exists(&state.dsh_session_root, id)
+    } else {
+        pi_session_file_exists(&state.pi_session_root, id)
+    }
+}
+
+/// pi store: `<encoded-cwd>/<timestamp>_<sessionId>.jsonl` — filename-only match.
+pub(crate) fn pi_session_file_exists(root: &Path, session_id: &str) -> bool {
+    if !root.is_dir() {
+        return false;
+    }
+    let suffix = format!("_{session_id}.jsonl");
+    WalkDir::new(root)
+        .min_depth(2)
+        .max_depth(2)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .any(|entry| {
+            entry.file_type().is_file() && entry.file_name().to_string_lossy().ends_with(&suffix)
+        })
+}
+
+/// DSH store: `<workspace>/<sessionId>/session.jsonl(.zstd)` — directory-name match.
+pub(crate) fn dsh_session_file_exists(root: &Path, session_id: &str) -> bool {
+    if !root.is_dir() {
+        return false;
+    }
+    WalkDir::new(root)
+        .min_depth(2)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .any(|entry| {
+            if !entry.file_type().is_file() {
+                return false;
+            }
+            let name = entry.file_name().to_string_lossy();
+            if name != "session.jsonl" && name != "session.jsonl.zstd" {
+                return false;
+            }
+            entry
+                .path()
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|d| d == session_id)
+                .unwrap_or(false)
+        })
+}
+
 pub(crate) async fn scan_sessions_for_current_harness(
     state: &AppState,
     days: Option<i64>,
 ) -> Result<Vec<SessionInfo>> {
-    if current_harness(state) == "dsh" {
+    if uses_dsh_store(&current_harness(state)) {
         scan_dsh_sessions(state, days).await
     } else {
         scan_pi_sessions(state, days).await
@@ -94,12 +169,14 @@ pub(crate) async fn scan_session_candidates(
     exclude_ids: &HashSet<String>,
 ) -> Result<Vec<SessionInfo>> {
     let harness = current_harness(state);
-    let all = if harness == "dsh" {
+    let all = if uses_dsh_store(&harness) {
         scan_dsh_sessions(state, None).await?
     } else {
         scan_pi_sessions(state, None).await?
     };
-    let root = project_root.map(|r| r.trim_end_matches('/').to_string()).unwrap_or_default();
+    let root = project_root
+        .map(|r| r.trim_end_matches('/').to_string())
+        .unwrap_or_default();
     let mut out = Vec::new();
     for s in all {
         if s.id.is_empty() || exclude_ids.contains(&s.id) {
@@ -136,7 +213,7 @@ pub(crate) async fn api_sessions(
     Query(query): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
     let harness = current_harness(&state);
-    let sessions = if harness == "dsh" {
+    let sessions = if uses_dsh_store(&harness) {
         scan_dsh_sessions(&state, query.days).await?
     } else {
         scan_pi_sessions(&state, query.days).await?
@@ -156,7 +233,7 @@ pub(crate) async fn api_session(
 ) -> ApiResult<Json<Value>> {
     let id = query.id.unwrap_or_default();
     let harness = current_harness(&state);
-    let session = if harness == "dsh" {
+    let session = if uses_dsh_store(&harness) {
         scan_dsh_sessions(&state, None)
             .await?
             .into_iter()
@@ -170,12 +247,20 @@ pub(crate) async fn api_session(
     // Fallback: if not found in current harness, try the other one so direct links still resolve.
     let session = if session.is_some() {
         session
-    } else if harness == "dsh" {
-        scan_pi_sessions(&state, None).await?.into_iter().find(|s| s.id == id)
+    } else if uses_dsh_store(&harness) {
+        scan_pi_sessions(&state, None)
+            .await?
+            .into_iter()
+            .find(|s| s.id == id)
     } else {
-        scan_dsh_sessions(&state, None).await?.into_iter().find(|s| s.id == id)
+        scan_dsh_sessions(&state, None)
+            .await?
+            .into_iter()
+            .find(|s| s.id == id)
     };
-    Ok(Json(json!({ "session": session, "terminalRemoved": true, "harness": harness })))
+    Ok(Json(
+        json!({ "session": session, "terminalRemoved": true, "harness": harness }),
+    ))
 }
 
 pub(crate) async fn api_session_log(
@@ -205,7 +290,11 @@ pub(crate) async fn api_session_log(
     } else {
         fs::read_to_string(&path).await.unwrap_or_default()
     };
-    let lines: Vec<String> = raw.lines().filter(|line| !line.trim().is_empty()).map(|s| s.to_string()).collect();
+    let lines: Vec<String> = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|s| s.to_string())
+        .collect();
     let total = lines.len();
     let start = cursor.min(total);
     let end = (start + limit).min(total);
@@ -252,7 +341,7 @@ pub(crate) async fn api_sessions_resolve(
     let set: HashSet<String> = ids.iter().cloned().collect();
     let harness = current_harness(&state);
     // Resolve within current harness, then fallback to the other so chips still show.
-    let mut found = if harness == "dsh" {
+    let mut found = if uses_dsh_store(&harness) {
         scan_dsh_sessions_filtered(&state, None, Some(&set)).await?
     } else {
         scan_pi_sessions_filtered(&state, None, Some(&set)).await?
@@ -260,7 +349,7 @@ pub(crate) async fn api_sessions_resolve(
     if found.len() < set.len() {
         let have: HashSet<String> = found.iter().map(|s| s.id.clone()).collect();
         let missing_ids: HashSet<String> = set.difference(&have).cloned().collect();
-        let extra = if harness == "dsh" {
+        let extra = if uses_dsh_store(&harness) {
             scan_pi_sessions_filtered(&state, None, Some(&missing_ids)).await?
         } else {
             scan_dsh_sessions_filtered(&state, None, Some(&missing_ids)).await?
@@ -275,10 +364,7 @@ pub(crate) async fn api_sessions_resolve(
         // stored as `session-<uuid>` resolves against the bare-uuid id the
         // dsh scanner publishes (`read_dsh_session_file` strips the prefix).
         let bare = id.trim_start_matches("session-");
-        let hit = by_id
-            .get(id.as_str())
-            .or_else(|| by_id.get(bare))
-            .copied();
+        let hit = by_id.get(id.as_str()).or_else(|| by_id.get(bare)).copied();
         match hit {
             Some(session) => sessions.push(session),
             None => missing.push(id.clone()),
@@ -354,7 +440,11 @@ async fn find_dsh_session_path(state: &AppState, id: &str) -> Result<Option<Path
             continue;
         }
         // Prefer header id without decompressing full file when possible: dir name often is session id
-        if let Some(parent) = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()) {
+        if let Some(parent) = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+        {
             if parent == id || parent.starts_with(id) || id.starts_with(parent) {
                 return Ok(Some(path.to_path_buf()));
             }
@@ -506,12 +596,17 @@ fn parse_session_log_entry(line_no: usize, line: &str) -> Option<Value> {
 
 fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
     let value: Value = serde_json::from_str(line).ok()?;
-    let entry_type = value.get("type").and_then(Value::as_str).unwrap_or("unknown");
+    let entry_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
     // DSH uses numeric `time` (ms since epoch), not RFC3339 `timestamp`
-    let timestamp = value
-        .get("time")
-        .and_then(Value::as_i64)
-        .or_else(|| value.get("timestamp").and_then(Value::as_str).and_then(parse_date_ms));
+    let timestamp = value.get("time").and_then(Value::as_i64).or_else(|| {
+        value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_date_ms)
+    });
     let data = value.get("data");
     match entry_type {
         "session" => Some(json!({
@@ -538,14 +633,20 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
                 for p in parts {
                     if p.get("type").and_then(Value::as_str) == Some("text") {
                         if let Some(t) = p.get("text").and_then(Value::as_str) {
-                            if !text.is_empty() { text.push_str("\n\n"); }
+                            if !text.is_empty() {
+                                text.push_str("\n\n");
+                            }
                             text.push_str(t);
                         }
                     }
                 }
             }
             // source kind for hint
-            let source_kind = d.get("source").and_then(|s| s.get("kind")).and_then(Value::as_str).unwrap_or("user");
+            let source_kind = d
+                .get("source")
+                .and_then(|s| s.get("kind"))
+                .and_then(Value::as_str)
+                .unwrap_or("user");
             Some(json!({
                 "line": line_no,
                 "type": "user",
@@ -558,7 +659,10 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
         "assistant/message" => {
             let d = data?;
             let msg = d.get("message")?;
-            let role = msg.get("role").and_then(Value::as_str).unwrap_or("assistant");
+            let role = msg
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("assistant");
             let mut text_parts: Vec<String> = Vec::new();
             let mut tools: Vec<Value> = Vec::new();
             if let Some(parts) = msg.get("content").and_then(Value::as_array) {
@@ -580,16 +684,28 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
                     }
                 }
             }
-            let usage = d.get("usage").cloned().or_else(|| msg.get("usage").cloned()).unwrap_or(Value::Null);
-            let provider = msg.get("source").and_then(|s| s.get("provider")).and_then(Value::as_str)
+            let usage = d
+                .get("usage")
+                .cloned()
+                .or_else(|| msg.get("usage").cloned())
+                .unwrap_or(Value::Null);
+            let provider = msg
+                .get("source")
+                .and_then(|s| s.get("provider"))
+                .and_then(Value::as_str)
                 .or_else(|| d.get("provider").and_then(Value::as_str))
                 .unwrap_or("");
-            let model = msg.get("source").and_then(|s| s.get("model")).and_then(Value::as_str)
+            let model = msg
+                .get("source")
+                .and_then(|s| s.get("model"))
+                .and_then(Value::as_str)
                 .or_else(|| d.get("model").and_then(Value::as_str))
                 .unwrap_or("");
             let meta = if !provider.is_empty() || !model.is_empty() {
                 format!("{provider}/{model}")
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             Some(json!({
                 "line": line_no,
                 "type": role,
@@ -625,16 +741,22 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
                     if let Some(inner) = p.get("content").and_then(Value::as_array) {
                         for c in inner {
                             if let Some(t) = c.get("text").and_then(Value::as_str) {
-                                if !text.is_empty() { text.push_str("\n\n"); }
+                                if !text.is_empty() {
+                                    text.push_str("\n\n");
+                                }
                                 text.push_str(t);
                             }
                         }
                     } else if let Some(t) = p.get("text").and_then(Value::as_str) {
-                        if !text.is_empty() { text.push_str("\n\n"); }
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
                         text.push_str(t);
                     }
                     if let Some(s) = p.get("content").and_then(Value::as_str) {
-                        if !text.is_empty() { text.push_str("\n\n"); }
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
                         text.push_str(&s);
                     }
                 }
@@ -654,8 +776,20 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
                 "rawType": entry_type,
             }))
         }
-        "request/header" | "request/context" | "session/title-llm-request" | "permission/preset" | "sandbox/mode" | "approval/policy" | "agent/inbox/spliced" | "turn/start" | "turn/end" | "step/start" | "step/end" => {
-            let text = data.map(|d| compact(&d.to_string(), 1200).unwrap_or_default()).unwrap_or_default();
+        "request/header"
+        | "request/context"
+        | "session/title-llm-request"
+        | "permission/preset"
+        | "sandbox/mode"
+        | "approval/policy"
+        | "agent/inbox/spliced"
+        | "turn/start"
+        | "turn/end"
+        | "step/start"
+        | "step/end" => {
+            let text = data
+                .map(|d| compact(&d.to_string(), 1200).unwrap_or_default())
+                .unwrap_or_default();
             Some(json!({
                 "line": line_no,
                 "type": "event",
@@ -665,7 +799,10 @@ fn parse_dsh_log_entry(line_no: usize, line: &str) -> Option<Value> {
                 "rawType": entry_type,
             }))
         }
-        _ if entry_type.starts_with("assistant/chunk") || entry_type == "text-chunks" || entry_type == "tool-call-chunks" => {
+        _ if entry_type.starts_with("assistant/chunk")
+            || entry_type == "text-chunks"
+            || entry_type == "tool-call-chunks" =>
+        {
             // Streaming internals — collapse to event to avoid flooding
             Some(json!({
                 "line": line_no,
@@ -781,7 +918,9 @@ async fn scan_dsh_sessions_filtered(
                 Some(ids) => {
                     // DSH dirs may be `session-<uuid>` while id is bare uuid; normalize both
                     let bare = session.id.trim_start_matches("session-");
-                    let matches = ids.contains(&session.id) || ids.contains(bare) || ids.iter().any(|q| q.trim_start_matches("session-") == bare);
+                    let matches = ids.contains(&session.id)
+                        || ids.contains(bare)
+                        || ids.iter().any(|q| q.trim_start_matches("session-") == bare);
                     if matches {
                         out.push(session);
                     }
@@ -985,8 +1124,14 @@ async fn read_dsh_session_file(path: &Path) -> Option<SessionInfo> {
     if Uuid::parse_str(bare).is_err() {
         return None;
     }
-    let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or_default().to_string();
-    let created = header.get("createdAt").and_then(Value::as_i64)
+    let cwd = header
+        .get("cwd")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let created = header
+        .get("createdAt")
+        .and_then(Value::as_i64)
         .unwrap_or_else(|| system_time_to_ms(meta.created().unwrap_or(UNIX_EPOCH)));
     let updated = system_time_to_ms(meta.modified().unwrap_or(UNIX_EPOCH));
     let mut title = String::new();
@@ -1013,9 +1158,19 @@ async fn read_dsh_session_file(path: &Path) -> Option<SessionInfo> {
         let t = entry.get("type").and_then(Value::as_str).unwrap_or("");
         match t {
             "session/title" => {
-                let cand = entry.get("data").and_then(|d| d.get("title")).and_then(Value::as_str).unwrap_or("").trim();
+                let cand = entry
+                    .get("data")
+                    .and_then(|d| d.get("title"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
                 // Prefer provider-generated title over fallback (later entry wins if more specific)
-                let source_kind = entry.get("data").and_then(|d| d.get("source")).and_then(|s| s.get("kind")).and_then(Value::as_str).unwrap_or("");
+                let source_kind = entry
+                    .get("data")
+                    .and_then(|d| d.get("source"))
+                    .and_then(|s| s.get("kind"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if !cand.is_empty() {
                     if source_kind == "provider" || title.is_empty() {
                         title = cand.chars().take(200).collect();
@@ -1025,21 +1180,51 @@ async fn read_dsh_session_file(path: &Path) -> Option<SessionInfo> {
             "request/header" => {
                 let h = entry.get("data").and_then(|d| d.get("header"));
                 if let Some(cfg) = h.and_then(|v| v.get("config")) {
-                    provider = cfg.get("provider").and_then(Value::as_str).map(|s| s.to_string()).or(provider);
-                    model_id = cfg.get("model").and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+                    provider = cfg
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                        .or(provider);
+                    model_id = cfg
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                        .or(model_id);
                 }
             }
             "request/context" => {
                 let d = entry.get("data");
-                provider = d.and_then(|v| v.get("provider")).and_then(Value::as_str).map(|s| s.to_string()).or(provider);
-                model_id = d.and_then(|v| v.get("model")).and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+                provider = d
+                    .and_then(|v| v.get("provider"))
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string())
+                    .or(provider);
+                model_id = d
+                    .and_then(|v| v.get("model"))
+                    .and_then(Value::as_str)
+                    .map(|s| s.to_string())
+                    .or(model_id);
             }
             "user/message" => {
                 message_count += 1;
                 user_count += 1;
                 if title.is_empty() {
-                    let txt = entry.get("data").and_then(|d| d.get("content")).and_then(Value::as_array)
-                        .map(|arr| arr.iter().filter_map(|p| if p.get("type").and_then(Value::as_str)==Some("text") { p.get("text").and_then(Value::as_str) } else { None }).collect::<Vec<_>>().join(" "))
+                    let txt = entry
+                        .get("data")
+                        .and_then(|d| d.get("content"))
+                        .and_then(Value::as_array)
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    if p.get("type").and_then(Value::as_str) == Some("text") {
+                                        p.get("text").and_then(Value::as_str)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
                         .unwrap_or_default();
                     let compact = txt.split_whitespace().collect::<Vec<_>>().join(" ");
                     if !compact.is_empty() {
@@ -1053,19 +1238,50 @@ async fn read_dsh_session_file(path: &Path) -> Option<SessionInfo> {
                 let d = entry.get("data");
                 let msg = d.and_then(|v| v.get("message"));
                 if let Some(src) = msg.and_then(|m| m.get("source")) {
-                    provider = src.get("provider").and_then(Value::as_str).map(|s| s.to_string()).or(provider);
-                    model_id = src.get("model").and_then(Value::as_str).map(|s| s.to_string()).or(model_id);
+                    provider = src
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                        .or(provider);
+                    model_id = src
+                        .get("model")
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string())
+                        .or(model_id);
                 }
                 if let Some(parts) = msg.and_then(|m| m.get("content")).and_then(Value::as_array) {
-                    tool_call_count += parts.iter().filter(|p| p.get("type").and_then(Value::as_str)==Some("tool-call")).count() as u64;
+                    tool_call_count += parts
+                        .iter()
+                        .filter(|p| p.get("type").and_then(Value::as_str) == Some("tool-call"))
+                        .count() as u64;
                 }
                 if let Some(u) = d.and_then(|v| v.get("usage")) {
-                    tokens_input += u.get("inputTokens").and_then(Value::as_u64).or_else(|| u.get("input").and_then(Value::as_u64)).unwrap_or(0);
-                    tokens_output += u.get("outputTokens").and_then(Value::as_u64).or_else(|| u.get("output").and_then(Value::as_u64)).unwrap_or(0);
+                    tokens_input += u
+                        .get("inputTokens")
+                        .and_then(Value::as_u64)
+                        .or_else(|| u.get("input").and_then(Value::as_u64))
+                        .unwrap_or(0);
+                    tokens_output += u
+                        .get("outputTokens")
+                        .and_then(Value::as_u64)
+                        .or_else(|| u.get("output").and_then(Value::as_u64))
+                        .unwrap_or(0);
                     tokens_reasoning += u.get("reasoning").and_then(Value::as_u64).unwrap_or(0);
-                    tokens_cache_read += u.get("cacheReadTokens").and_then(Value::as_u64).or_else(|| u.get("cacheRead").and_then(Value::as_u64)).unwrap_or(0);
-                    tokens_cache_write += u.get("cacheWriteTokens").and_then(Value::as_u64).or_else(|| u.get("cacheWrite").and_then(Value::as_u64)).unwrap_or(0);
-                    cost += u.get("cost").and_then(|c| c.get("total")).and_then(Value::as_f64).unwrap_or(0.0);
+                    tokens_cache_read += u
+                        .get("cacheReadTokens")
+                        .and_then(Value::as_u64)
+                        .or_else(|| u.get("cacheRead").and_then(Value::as_u64))
+                        .unwrap_or(0);
+                    tokens_cache_write += u
+                        .get("cacheWriteTokens")
+                        .and_then(Value::as_u64)
+                        .or_else(|| u.get("cacheWrite").and_then(Value::as_u64))
+                        .unwrap_or(0);
+                    cost += u
+                        .get("cost")
+                        .and_then(|c| c.get("total"))
+                        .and_then(Value::as_f64)
+                        .unwrap_or(0.0);
                 }
             }
             "tool/call" => {

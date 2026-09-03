@@ -191,6 +191,25 @@ pub(crate) fn ensure_category(value: &str) -> ApiResult<()> {
     }
 }
 
+pub(crate) fn normalize_source(value: Option<&String>) -> Option<String> {
+    let raw = value?.trim();
+    if REQ_SOURCES.contains(&raw) {
+        Some(raw.to_string())
+    } else {
+        None
+    }
+}
+
+pub(crate) fn ensure_source(value: &str) -> ApiResult<()> {
+    if REQ_SOURCES.contains(&value) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "invalid source: {value}（可选：产品推动 / 开发推动）"
+        )))
+    }
+}
+
 pub(crate) fn parse_date_ms(value: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|d| d.timestamp_millis())

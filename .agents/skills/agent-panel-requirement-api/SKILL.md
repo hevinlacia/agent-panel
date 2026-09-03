@@ -28,7 +28,7 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 ## Trigger
 
 - “更新需求状态” / “推进状态” / “设为经验总结” / “设为已完成”
-- “合并到 test” / “合并到 UAT” / “需求分支合并” / “merge branch” / “冲突处理”
+- “合并到 test” / “合并到 UAT” / “需求分支合并” / “需求代码合并到 test” / “合并到 test 分支” / “代码都合并 test 了吗” / “merge branch” / “冲突处理”
 - “查 Agent Panel 需求 API” / “requirements API” / “需求状态接口”
 - “把 session 关联到需求”且需要 API 路径或自动执行
 - agent 已知要调用本机需求 API，不应再搜索项目源码
