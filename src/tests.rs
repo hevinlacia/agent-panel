@@ -480,6 +480,11 @@ fn chrono_like_unique_suffix() -> u128 {
 
 #[test]
 fn agent_context_tokens_issue_category_uses_issue_doc_set() {
+    // token→file 映射必须覆盖 issue 专属 token，否则上下文组装会静默丢弃。
+    assert_eq!(requirement_token_file("req.incident"), Some("incident.md"));
+    assert_eq!(requirement_token_file("req.rootCause"), Some("root-cause.md"));
+    assert_eq!(requirement_doc_type_for_token("req.incident"), Some("incident"));
+    assert_eq!(requirement_doc_type_for_token("req.rootCause"), Some("root-cause"));
     let tokens = agent_context_tokens("overview", true);
     assert!(tokens.contains(&"req.incident"));
     assert!(tokens.contains(&"req.rootCause"));
