@@ -316,8 +316,9 @@ pub(crate) async fn create_requirement(
     ensure_status(&status)?;
     let dry_run = form.dry_run.unwrap_or(false);
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
+    let id_template = normalize_create_id_template(form.req_id.trim(), &category)?;
     let (req_id, target_dir) =
-        resolve_req_id_and_target_dir(state, &base, form.req_id.trim(), &form, dry_run).await?;
+        resolve_req_id_and_target_dir(state, &base, &id_template, &form, dry_run).await?;
 
     let projects = normalize_projects(form.project.as_deref(), form.projects.as_deref());
     let project = projects
@@ -1537,6 +1538,39 @@ pub(crate) fn ensure_req_id(value: &str) -> ApiResult<String> {
 
 /// Parse a reqId template containing a single `{seq}` placeholder into
 /// `(prefix, suffix)`. `WMS-{seq}-demo` -> `("WMS", "-demo")`.
+/// 线上问题独立编号池前缀：与普通需求（WMS-）分开计数，目录仍共用 req 根；
+/// 目录身份证创建后不变，setCategory 切换类别不改号。
+pub(crate) const ISSUE_ID_PREFIX: &str = "WMS-INC";
+
+/// 创建时按类别规范化 reqId 模板：
+/// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`）；
+/// - 线上问题强制使用 WMS-INC- 前缀：模板改写前缀保留 suffix；具体 id 校验形态，避免误用需求池；
+/// - 需求模板原样透传。
+pub(crate) fn normalize_create_id_template(raw: &str, category: &str) -> ApiResult<String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(if category == "线上问题" {
+            format!("{ISSUE_ID_PREFIX}-{{seq}}")
+        } else {
+            "WMS-{seq}".to_string()
+        });
+    }
+    if category != "线上问题" {
+        return Ok(v.to_string());
+    }
+    if v.contains("{seq}") {
+        let (_, suffix) = split_seq_template(v)?;
+        return Ok(format!("{ISSUE_ID_PREFIX}-{{seq}}{suffix}"));
+    }
+    let re = Regex::new(&format!("^{ISSUE_ID_PREFIX}-(\\d+)(-|$)")).expect("valid regex");
+    if !re.is_match(v) {
+        return Err(ApiError::bad_request(format!(
+            "线上问题 reqId 必须使用 {ISSUE_ID_PREFIX}-<序号> 独立编号（如 {ISSUE_ID_PREFIX}-031-slug）；代码修复承接请创建 category=需求 的普通需求并绑定本问题"
+        )));
+    }
+    Ok(v.to_string())
+}
+
 pub(crate) fn split_seq_template(template: &str) -> ApiResult<(String, String)> {
     let count = template.matches("{seq}").count();
     if count == 0 {
