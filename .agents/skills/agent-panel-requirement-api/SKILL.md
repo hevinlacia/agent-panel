@@ -48,7 +48,8 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 获取编辑计划 | GET | `/api/requirement/edit-plan?id=<reqId>&intent=<intent>` | 返回本 intent 应读/写的 token、文件路径、大小和示例写法 |
 | 获取低 token 上下文 | GET | `/api/requirement/context?id=<reqId>&intent=<intent>&budget=2000` | 按 intent 和 budget 返回压缩上下文；可选 `tokens=req.meta,req.test` |
 | 获取 agent 专用上下文 | GET | `/api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000` | 返回 `phaseRuntime`（当前状态独有提示词 `currentPhasePrompt`、`entryChecks`、跳状态风险 `phaseGaps`、状态历史 `transitionMemory`）、摘要文档、最近结构化事件、推荐写入 API；优先用于继续需求工作 |
-| 记录结构化事件 | POST | `/api/requirement/events` | JSON body: `reqId`, `type`, `summary`; 可选 `details`, `evidence`, `decisions`, `todos`, `relatedFiles`, `testCases`, `idempotencyKey`, `appendNote`, `dryRun`；写 `events.jsonl`，默认同步追加 notes |
+| 记录结构化事件 | POST | `/api/requirement/events` | JSON body: `reqId`, `type`, `summary`; 可选 `details`, `evidence`, `decisions`, `todos`, `testCases`, `triggerTerms`, `relatedFiles`, `relatedKnowledgeIds`, `relatedRepos`, `relatedTables`, `relatedApis`, `tags`, `candidateType`, `dedupeKey`, `confidence`, `target`, `riskLevel`, `idempotencyKey`, `appendNote`, `dryRun`；写 `events.jsonl`，默认同步追加 notes；数组字段必须传数组，见下方「events 字段类型与误发清理」 |
+| 事件误发清理 | - | 无 DELETE | `/api/requirement/events` 只注册了 POST，`DELETE` 返回 405；误发只能改文件兜底，见下方「events 字段类型与误发清理」 |
 | 章节 upsert 别名 | POST/PATCH | `/api/requirement/sections/{section}` | JSON body: `reqId`, `content`; 可选 `heading`, `docType`, `token`, `dryRun`；section 如 `impact`, `test`, `boxCodeIssue` |
 | 结构化编辑 | POST | `/api/requirement/edit` | JSON/form body: `reqId`, `operation`; 支持 `setStatus`, `setCategory`, `patchMeta`, `appendNote`, `writeDoc`, `upsertSection` |
 | 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `source`, `issues`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
@@ -67,6 +68,22 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 更新类别 | POST | `/api/requirement/category` | form body: `reqId`, `category` |
 | 更新 ONES | POST | `/api/requirement/ones` | form body: `reqId`, `ones`；推动方/绑定线上问题无专用端点，走 PATCH `source` / `issues` 字段 |
 | 关联 session | POST | `/api/requirement/associate` | form body: `reqId`, `sessionId`，成功默认 200 JSON，历史版本可能 303 |
+
+### `/api/requirement/events` 字段类型与误发清理
+
+字段类型（serde camelCase）：
+
+| 类型 | 字段 |
+|---|---|
+| 字符串（单值） | `reqId`（必填）、`type`、`summary`（建议必填）、`title`、`details`、`candidateType`、`dedupeKey`、`confidence`、`target`、`status`、`riskLevel`、`sessionId`、`idempotencyKey` |
+| 布尔 | `appendNote`（不传默认 true，同步追加 notes.md）、`dryRun` |
+| 数组（字符串） | `evidence`、`decisions`、`todos`、`triggerTerms`、`relatedFiles`、`relatedKnowledgeIds`、`relatedRepos`、`relatedTables`、`relatedApis`、`tags` |
+| 数组（对象） | `testCases`：`[{"name":"...","result":"pass|fail","evidence":"..."}]`（只有对象内部的 `evidence` 是字符串） |
+
+- 数组字段必须传 JSON 数组：`"evidence":["tid=xxx"]` 正确；`"evidence":"tid=xxx"` 返回 400。
+- 类型传错时返回 `{"error":"Failed to deserialize the JSON body into the target type"}`，**报错不含字段名**；按上表逐字段核对或二分 payload 定位。
+- 事件无 DELETE：`DELETE /api/requirement/events` 返回 405，误发事件无法通过 API 撤回。兜底只能直接改文件：删除 `events.jsonl` 中对应事件行 + 删除 `notes.md` 中同步追加的事件块，然后调 `/api/requirement/validate`。
+- 拿不准 payload 时先 `"dryRun": true` 预览（不写 `events.jsonl`/`notes.md`），确认后再正式提交。
 
 ### `{seq}` 自动编号
 
@@ -474,6 +491,8 @@ curl -s -o /dev/null -w "%{http_code}" \
 - 需求分支合并必须优先走 `/api/requirement/merge-options` + `/api/requirement/merge-branch`；不要自行手写 git merge/push，除非 Agent Panel 不可用且用户明确要求 fallback。
 - merge-options 没有默认值时（非 `自测中`/`测试中`），不要擅自选择目标分支；向用户确认或说明未执行合并。
 - 处理合并冲突时，使用接口返回的 `worktreePath` 和 `conflictFiles`；不要重新探索所有仓库。
+- `/api/requirement/events` 的 `evidence`/`triggerTerms`/`related*`/`decisions`/`todos`/`tags`/`testCases` 必须传数组；传字符串报 `Failed to deserialize` 且错误不含字段名。
+- 事件接口无 DELETE（405）；误发事件只能删 `events.jsonl` 对应行 + `notes.md` 事件块兜底；拿不准 payload 先 `dryRun:true`。
 - Agent Panel 不可用时先检查 systemd unit，不要花很久搜索源码。
 
 ## Final Response
