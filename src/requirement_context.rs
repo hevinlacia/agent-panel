@@ -11,7 +11,7 @@ use crate::*;
 pub(crate) fn requirement_api_schema() -> Value {
     json!({
         "version": 3,
-        "flow": ["需求澄清", "开发中", "自测中", "测试中", "经验总结", "已完成"],
+        "flow": ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"],
         "statusValues": REQ_STATUSES,
         "statusAliases": REQ_STATUS_ALIASES,
         "categoryValues": REQ_CATEGORIES,
@@ -143,6 +143,22 @@ fn requirement_token_specs_json() -> Vec<Value> {
             "technical-plan.md",
             Some("technical-plan"),
             "agent-maintained implementation plan for global design, touched code, risks and validation before human diff review",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.incident",
+            "incident.md",
+            Some("incident"),
+            "online-issue incident profile: symptom, discovery channel, env, time window, impact scope, reproduction steps and timeline",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
+            "req.rootCause",
+            "root-cause.md",
+            Some("root-cause"),
+            "online-issue root cause and fix decision: root cause, user-verifiable evidence chain, impact, fix path decision, temporary actions and rollback",
             true,
             vec!["writeDoc", "upsertSection"],
         ),
@@ -988,7 +1004,8 @@ pub(crate) async fn build_requirement_agent_context(
 ) -> ApiResult<Value> {
     let dir = req_dir_path(req)?;
     let phase_runtime = build_phase_runtime_context(state, req, intent, &dir).await;
-    let context_tokens = agent_context_tokens(intent);
+    let context_tokens =
+        agent_context_tokens(intent, req.category.as_deref() == Some("线上问题"));
     let mut docs = Vec::new();
     let per_doc_budget = (budget / context_tokens.len().max(1)).clamp(300, 2_000);
     for token in context_tokens {
@@ -1025,6 +1042,23 @@ pub(crate) async fn build_requirement_agent_context(
     }
     let events_path = dir.join(REQUIREMENT_EVENTS_FILE);
     let events = read_recent_requirement_events(&events_path, event_limit).await;
+    let mut rules = vec![
+        "Treat phaseRuntime as current navigation: it is rebuilt from the requirement's latest state on every context call.",
+        "If the session started in an earlier phase, do not keep following the startup prompt; refresh context with for=agent and follow phaseRuntime.fixedPhasePrompt + phaseRuntime.statePhasePrompt.",
+        "Skipped phase gaps are risk flags, not hard blockers: record them and continue the user's current task unless a safety gate blocks it.",
+        "Prefer recordEvent for facts/status/evidence/decisions; it stores events.jsonl and can append notes.md.",
+        "Prefer sections/{section} or upsertSection for targeted impact/test/background/technical-plan updates.",
+        "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
+        "Read full docs only when this compressed context is insufficient.",
+    ];
+    if req.category.as_deref() == Some("线上问题") {
+        rules.push(
+            "线上问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。",
+        );
+        rules.push(
+            "每条证据必须附用户可独立复核的验证线索：日志=带时区时间范围+tid/唯一关键字；DB=验证 SQL（表/条件/预期结果）；代码=应用+文件+可搜关键字片段；配置=环境+namespace/key。agent 知道≠证据成立。",
+        );
+    }
     Ok(json!({
         "ok": true,
         "format": "agentRequirementContext.v2",
@@ -1048,15 +1082,7 @@ pub(crate) async fn build_requirement_agent_context(
             "validate": "/api/requirement/validate",
             "refreshAgentContext": format!("/api/requirement/context?id={}&for=agent&intent={}&budget={}", req.id, intent, budget)
         },
-        "rules": [
-            "Treat phaseRuntime as current navigation: it is rebuilt from the requirement's latest state on every context call.",
-            "If the session started in an earlier phase, do not keep following the startup prompt; refresh context with for=agent and follow phaseRuntime.fixedPhasePrompt + phaseRuntime.statePhasePrompt.",
-            "Skipped phase gaps are risk flags, not hard blockers: record them and continue the user's current task unless a safety gate blocks it.",
-            "Prefer recordEvent for facts/status/evidence/decisions; it stores events.jsonl and can append notes.md.",
-            "Prefer sections/{section} or upsertSection for targeted impact/test/background/technical-plan updates.",
-            "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
-            "Read full docs only when this compressed context is insufficient."
-        ]
+        "rules": rules
     }))
 }
 
@@ -1277,17 +1303,29 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             file_check(dir, "release-manifest.md", "有上线资产时变更无遗漏", false),
             file_check(dir, "notes.md", "关键决策和坑点可追溯", false),
         ],
+        "排查中" => vec![
+            file_check(dir, "notes.md", "线上问题排查过程", true),
+            file_check(dir, "incident.md", "问题现象、影响范围和触发条件", true),
+            file_check(dir, "root-cause.md", "排查假设与证据链草稿", false),
+        ],
         "已定位" => vec![
             file_check(dir, "notes.md", "线上问题排查过程和根因结论", true),
-            file_check(
+            file_check(dir, "incident.md", "问题现象、影响范围和触发条件", true),
+            any_file_check(
                 dir,
-                "technical-plan.md",
-                "根因、影响、修复方案或转需求判断",
+                &["root-cause.md", "technical-plan.md"],
+                "根因、可复核证据链和修复路径决策（存量问题可用 technical-plan.md 兼容）",
                 true,
             ),
         ],
         "已修复" => vec![
             file_check(dir, "notes.md", "排查与修复过程可追溯", true),
+            any_file_check(
+                dir,
+                &["root-cause.md", "technical-plan.md"],
+                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
+                true,
+            ),
             file_check(
                 dir,
                 "troubleshooting.md",
@@ -1302,20 +1340,17 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
                 true,
             ),
+            any_file_check(
+                dir,
+                &["root-cause.md", "technical-plan.md"],
+                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
+                true,
+            ),
             file_check(dir, "notes.md", "排查过程与经验库落地记录", true),
         ],
         "已关闭" => vec![
             file_check(dir, "notes.md", "关闭原因可追溯（误报/重复/环境问题等）", true),
-        ],
-        "排查中" => vec![
-            file_check(dir, "notes.md", "线上问题排查过程", true),
-            file_check(dir, "background.md", "问题现象、影响范围和触发条件", false),
-            file_check(
-                dir,
-                "technical-plan.md",
-                "排查假设、证据链和根因判断",
-                false,
-            ),
+            file_check(dir, "incident.md", "问题现象档案（关闭前建议补齐现象记录）", false),
         ],
         "已完成" => vec![
             file_check(
@@ -1376,7 +1411,14 @@ pub(crate) fn any_file_check(dir: &Path, files: &[&str], label: &str, required: 
     })
 }
 
-pub(crate) fn agent_context_tokens(intent: &str) -> Vec<&'static str> {
+pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&'static str> {
+    if is_online_issue {
+        // 线上问题专用文档集：不注入需求开发文档（technical-plan/branch/config-changes 等）。
+        return match intent {
+            "progress" | "status" => vec!["req.rootCause", "req.memory", "req.notes"],
+            _ => vec!["req.incident", "req.rootCause", "req.memory", "req.notes"],
+        };
+    }
     match intent {
         "self-test" => vec![
             "req.technicalPlan",
