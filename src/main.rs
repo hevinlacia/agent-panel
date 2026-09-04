@@ -27,6 +27,7 @@ mod harness;
 mod http;
 mod knowledge;
 mod markdown;
+mod paths;
 mod pi_config;
 mod requirement_api;
 mod requirement_context;
@@ -73,8 +74,6 @@ const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
 const EXPERIENCE_SUMMARY_JOB_FILE: &str = "experience-summary-job.json";
 const PHASE_COMMON_PROMPT_FILE: &str = "prompts/phase-common.md";
-const DEFAULT_WMS_PROJECT_ROOT: &str = "/home/hevin/Developer/company/WMS";
-const DEFAULT_WMS_TESTDATA_PACK_ROOT: &str = "/home/hevin/Developer/company/WMS/.agents/testdata";
 const DEFAULT_GITLAB_API_URL: &str = "http://code.jms.com/api/v4";
 const DEFAULT_CAINIAO_MOCK_PORT: u16 = 13528;
 /// 经验总结状态停留超过该时长后自动推进为已完成（48 小时）。
@@ -103,10 +102,10 @@ static REQ_STATUSES: &[&str] = &[
     "开发中",
     "自测中",
     "测试中",
-    "经验总结",
-    // 发布就绪：人工已检查代码（或重大变更已经他人 review），随时可发布；
-    // 与“agent 做完但未经人工检查”的经验总结阶段区分。
+    // 发布就绪：人工已检查代码（或重大变更已经他人 review），随时可发布。
+    // 经验总结：发布检查通过后沉淀知识/经验/skill 改进；停留超期自动推进已完成。
     "发布就绪",
+    "经验总结",
     "已完成",
     // Lightweight statuses for category=线上问题; no strict requirement lifecycle gate.
     // 流转：排查中 → 已定位 → 已修复 → 已复盘（有价值路径，复盘前必须沉淀 troubleshooting.md）；

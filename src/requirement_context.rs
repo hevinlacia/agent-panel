@@ -11,7 +11,7 @@ use crate::*;
 pub(crate) fn requirement_api_schema() -> Value {
     json!({
         "version": 3,
-        "flow": ["需求澄清", "开发中", "自测中", "测试中", "经验总结", "已完成"],
+        "flow": ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"],
         "statusValues": REQ_STATUSES,
         "statusAliases": REQ_STATUS_ALIASES,
         "categoryValues": REQ_CATEGORIES,

@@ -1,4 +1,4 @@
-use std::{env, path::PathBuf};
+use std::env;
 
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -120,7 +120,7 @@ pub(crate) fn agent_panel_skill_path(skill_name: &str) -> String {
         .filter(|path| path.is_file());
     local
         .unwrap_or_else(|| {
-            PathBuf::from("/home/hevin/Developer/company/WMS/.agents/skills")
+            crate::paths::wms_skills_dir()
                 .join(skill_name)
                 .join("SKILL.md")
         })
