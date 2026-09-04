@@ -508,6 +508,21 @@ pub(crate) async fn update_requirement(
                 "进入「已复盘」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
             ));
         }
+        // 线上问题定位门禁：进入「已定位」前必须填完根因与修复决策（root-cause.md：根因 + 可复核证据链 + 修复路径决策），
+        // 存量兼容：历史问题已写 technical-plan.md 且内容成型时同样放行。
+        if req.category.as_deref() == Some("线上问题") && status == "已定位" {
+            let root_cause_filled = doc_has_filled_items(
+                &tokio::fs::read_to_string(dir.join("root-cause.md")).await.unwrap_or_default(),
+            );
+            let legacy_plan_filled = doc_has_filled_items(
+                &tokio::fs::read_to_string(dir.join("technical-plan.md")).await.unwrap_or_default(),
+            );
+            if !root_cause_filled && !legacy_plan_filled {
+                return Err(ApiError::bad_request(
+                    "进入「已定位」前必须先完成 root-cause.md（根因 + 可复核证据链 + 修复路径决策，至少一条非「待补充」记录）；每条证据要附用户可独立复核的线索：日志=时间范围+tid/关键字，DB=验证 SQL，代码=应用+文件+可搜关键字；存量问题已填 technical-plan.md 的可直接推进",
+                ));
+            }
+        }
         // 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
         if req.source == "开发推动" && status == "测试中" {
             ensure_test_scenario_allows_testing(&req).await?;
@@ -1746,23 +1761,30 @@ pub(crate) fn requirement_create_files(
         issues,
         summary,
     );
-    vec![
+    let mut files: Vec<(&'static str, String)> = vec![
         ("meta.md", meta),
         (STATE_FILE, template_state(status, category)),
-        (
+    ];
+    if category == "线上问题" {
+        // 线上问题专用文档集：问题档案（incident.md）+ 排查流水（notes.md）；
+        // 根因与修复决策（root-cause.md）按需生成，不再脚手架 background/technical-plan。
+        files.push(("incident.md", template_incident(req_id)));
+    } else {
+        files.push((
             "background.md",
             background
                 .map(str::to_string)
                 .unwrap_or_else(|| template_background(req_id)),
-        ),
-        ("technical-plan.md", template_technical_plan(req_id)),
-        (
-            "notes.md",
-            notes
-                .map(str::to_string)
-                .unwrap_or_else(|| template_notes(req_id)),
-        ),
-    ]
+        ));
+        files.push(("technical-plan.md", template_technical_plan(req_id)));
+    }
+    files.push((
+        "notes.md",
+        notes
+            .map(str::to_string)
+            .unwrap_or_else(|| template_notes(req_id)),
+    ));
+    files
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1874,6 +1896,14 @@ pub(crate) fn template_troubleshooting(req_id: &str) -> String {
     format!("# {req_id} 排查经验\n\n> 用途：沉淀本线上问题的完整排查路径与修复方案，让同类问题下次直接复用；推进到「已复盘」前必须填完本档。\n\n## 现象与影响\n- 环境/时间窗口：待补充\n- 现象：待补充（报错、指标、用户反馈）\n- 影响范围：待补充（仓库/租户/单号/接口）\n\n## 怎么排查（可复用的定位路径）\n- 证据链：待补充（日志关键字/tid、DB 状态、接口返回、MQ/Job 状态）\n- 排查步骤：待补充（按顺序记录：先看什么、再看什么、在哪里分叉）\n- 用到的工具/命令/知识：待补充（Kibana 查询、SQL、相关业务知识/经验条目 id）\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 怎么修复\n- 修复方案：待补充（代码变更、配置、数据修复、人工动作）\n- 验证方式：待补充（如何确认修复生效、回归范围）\n- 是否转需求：待补充（需要常规开发承接时记录需求 id）\n\n## 复用清单\n- [ ] 下次遇到同类现象，按「怎么排查」逐步执行\n- [ ] 已落地到经验库：待补充（经验条目 id/链接，无则写「未落地」及原因）\n")
 }
 
+pub(crate) fn template_incident(req_id: &str) -> String {
+    format!("# {req_id} 问题档案\n\n> 用途：回答这个问题「是什么」。排查中创建并持续更新，是问题身份证；根因和修复决策写 root-cause.md，过程流水写 notes.md。\n\n## 现象描述\n- 现象：待补充（报错、指标异常、功能不可用）\n- 发现渠道：待补充（用户反馈/告警/巡检/测试发现）\n\n## 环境与时间窗口\n- 环境：待补充（test / cn-uat / sea-uat / cn-pro / sea-pro）\n- 首次发生：待补充（带时区绝对时间）\n- 最近发生：待补充（带时区绝对时间）\n- 是否仍在发生：待补充\n\n## 影响范围\n- 业务影响：待补充（单量/订单/租户/用户数量级）\n- 关键对象：待补充（仓库/单号/接口/租户）\n- 紧急程度：待补充\n\n## 复现步骤\n- 待补充（能稳定复现时记录精确步骤；不能复现记录当时条件）\n\n## 时间线\n- 待补充（发现 → 定位 → 修复 → 恢复，逐条带时间）\n")
+}
+
+pub(crate) fn template_root_cause(req_id: &str) -> String {
+    format!("# {req_id} 根因与修复决策\n\n> 用途：回答「为什么」和「怎么办」。每条证据必须附用户可独立复核的验证线索：日志证据=时间范围+tid/关键字；DB 证据=验证 SQL；代码证据=应用+文件+可搜关键字；配置证据=环境+key。推进到「已定位」前必须填完根因、证据链和修复路径决策。\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 证据链（每条必须可复核）\n- 日志证据：待补充（环境/索引/应用 + tid 或唯一关键字 + 带时区绝对时间范围）\n- DB 证据：待补充（验证 SQL：表、条件、预期结果；必要时附查询结果摘要）\n- 代码证据：待补充（应用名 + 文件路径 + 可全局搜索的关键字片段：日志文本/方法名/常量）\n- 配置证据：待补充（Apollo/Nacos namespace + key + 环境，如有）\n\n## 影响面\n- 待补充（哪些业务对象/数据受影响，与 incident.md 影响范围呼应）\n\n## 修复路径决策\n- 结论：待补充（数据修复直接推进已修复 / 代码修复转普通需求（需求 id）/ 不修复）\n- 临时处置：待补充（应急 SQL 及影响行数、应急配置回滚，如有）\n- 回滚方案：待补充\n\n## 验证方式\n- 待补充（如何确认修复生效，附可复核的查询/日志线索）\n")
+}
+
 pub(crate) fn template_experience_summary(req_id: &str) -> String {
     format!("# {req_id} 经验总结\n\n## 本次需求结论\n- 待补充\n\n## 新发现的业务知识\n| 发现 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/business-knowledge/ | - |\n\n## 新发现的经验 / 踩坑\n| 经验 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/experiences/ | - |\n\n## Skill 改进机会\n| Skill | 问题 / 机会 | 动作 | 状态 |\n| --- | --- | --- | --- |\n| 待补充 | 待补充 | 新增/优化/不处理 | 待落地 |\n\n## 流程改进\n- 待补充\n\n## 已落地清单\n- [ ] 待补充\n\n## 待落地清单\n- [ ] 待补充\n")
 }
@@ -1916,6 +1946,8 @@ pub(crate) fn requirement_doc_template(req: &Requirement, doc_file: &str) -> Str
         "test.md" => template_test(&req.id),
         "experience-summary.md" => template_experience_summary(&req.id),
         "troubleshooting.md" => template_troubleshooting(&req.id),
+        "incident.md" => template_incident(&req.id),
+        "root-cause.md" => template_root_cause(&req.id),
         "test-scenario.md" => template_test_scenario(&req.id),
         "notes.md" => template_notes(&req.id),
         _ => String::new(),
@@ -1951,6 +1983,13 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         | "troubleshooting.md"
         | "postmortem"
         | "排查经验" => Ok("troubleshooting.md"),
+        "incident"
+        | "incident.md"
+        | "现象" => Ok("incident.md"),
+        "root-cause"
+        | "rootcause"
+        | "root-cause.md"
+        | "根因" => Ok("root-cause.md"),
         "test-scenario"
         | "testscenario"
         | "test-scenario.md"

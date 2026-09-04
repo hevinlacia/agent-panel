@@ -406,6 +406,114 @@ fn online_issue_doc_type_resolves_to_troubleshooting_md() {
     assert!(tpl.contains("## 根因"));
 }
 
+#[test]
+fn incident_and_root_cause_doc_types_resolve_with_verifiable_evidence_templates() {
+    assert_eq!(requirement_doc_file("incident").unwrap(), "incident.md");
+    assert_eq!(requirement_doc_file("现象").unwrap(), "incident.md");
+    assert_eq!(requirement_doc_file("root-cause").unwrap(), "root-cause.md");
+    assert_eq!(requirement_doc_file("rootcause").unwrap(), "root-cause.md");
+    assert_eq!(requirement_doc_file("根因").unwrap(), "root-cause.md");
+    let incident_tpl = requirement_doc_template(
+        &default_requirement_for_test("WMS-001"),
+        "incident.md",
+    );
+    assert!(incident_tpl.contains("## 影响范围"));
+    assert!(incident_tpl.contains("## 复现步骤"));
+    let root_cause_tpl = requirement_doc_template(
+        &default_requirement_for_test("WMS-001"),
+        "root-cause.md",
+    );
+    assert!(root_cause_tpl.contains("## 证据链"));
+    assert!(root_cause_tpl.contains("验证 SQL"));
+    assert!(root_cause_tpl.contains("可全局搜索的关键字片段"));
+    assert!(root_cause_tpl.contains("## 修复路径决策"));
+}
+
+#[test]
+fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent-panel-entry-checks-{}-{}",
+        std::process::id(),
+        chrono_like_unique_suffix()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // 排查中：incident + notes 必填，未创建时 required 检查不通过。
+    let checks = phase_entry_checks("排查中", &dir);
+    let incident_check = checks
+        .iter()
+        .find(|c| c["id"] == "incident-md")
+        .expect("incident check should exist");
+    assert_eq!(incident_check["required"], true);
+    assert_eq!(incident_check["ok"], false);
+    std::fs::write(dir.join("incident.md"), "内容").unwrap();
+    std::fs::write(dir.join("notes.md"), "内容").unwrap();
+    let checks = phase_entry_checks("排查中", &dir);
+    assert!(checks.iter().all(|c| c["required"] == false || c["ok"] == true));
+    // 已定位：root-cause 缺失但存量 technical-plan.md 兼容放行。
+    std::fs::write(dir.join("technical-plan.md"), "存量根因记录").unwrap();
+    let checks = phase_entry_checks("已定位", &dir);
+    let fallback_check = checks
+        .iter()
+        .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
+        .expect("root-cause fallback check should exist");
+    assert_eq!(fallback_check["required"], true);
+    assert_eq!(fallback_check["ok"], true);
+    // 新问题写 root-cause.md 后同样满足。
+    std::fs::write(dir.join("root-cause.md"), "根因与证据链").unwrap();
+    let checks = phase_entry_checks("已定位", &dir);
+    let fallback_check = checks
+        .iter()
+        .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
+        .unwrap();
+    assert_eq!(fallback_check["ok"], true);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn chrono_like_unique_suffix() -> u128 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+#[test]
+fn agent_context_tokens_issue_category_uses_issue_doc_set() {
+    let tokens = agent_context_tokens("overview", true);
+    assert!(tokens.contains(&"req.incident"));
+    assert!(tokens.contains(&"req.rootCause"));
+    assert!(!tokens.contains(&"req.technicalPlan"));
+    let progress = agent_context_tokens("progress", true);
+    assert!(progress.contains(&"req.rootCause"));
+    assert!(!progress.contains(&"req.technicalPlan"));
+    let normal = agent_context_tokens("overview", false);
+    assert!(normal.contains(&"req.technicalPlan"));
+    assert!(!normal.contains(&"req.incident"));
+}
+
+#[test]
+fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
+    let issue_files = requirement_create_files(
+        "WMS-100-issue", "t", "排查中", "WMS", &["WMS".to_string()], "线上问题", "开发推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s", None, None,
+    );
+    let names: Vec<&str> = issue_files.iter().map(|(n, _)| *n).collect();
+    assert!(names.contains(&"incident.md"));
+    assert!(names.contains(&"notes.md"));
+    assert!(!names.contains(&"background.md"));
+    assert!(!names.contains(&"technical-plan.md"));
+
+    let normal_files = requirement_create_files(
+        "WMS-101-req", "t", "需求澄清", "WMS", &["WMS".to_string()], "需求", "产品推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s", None, None,
+    );
+    let normal_names: Vec<&str> = normal_files.iter().map(|(n, _)| *n).collect();
+    assert!(normal_names.contains(&"background.md"));
+    assert!(normal_names.contains(&"technical-plan.md"));
+    assert!(!normal_names.contains(&"incident.md"));
+}
+
 fn default_requirement_for_test(req_id: &str) -> Requirement {
     let mut req = default_requirement(Vec::new());
     req.id = req_id.to_string();
@@ -603,6 +711,8 @@ fn context_page_contains_sections_and_raw_link() {
         release_check_path: None,
         experience_summary_path: None,
         troubleshooting_path: None,
+        incident_path: None,
+        root_cause_path: None,
         test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,
