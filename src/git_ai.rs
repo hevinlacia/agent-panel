@@ -566,7 +566,7 @@ pub(crate) async fn api_git_ai_suspect_fix_note(
     let repo_path = resolve_git_ai_repo_path(&record);
     let Some(repo_path) = repo_path else {
         return Err(ApiError::bad_request(
-            "record has no repoPath and the repo could not be located under ~/Developer/company/WMS",
+            "record has no repoPath and the repo could not be located under the resolved WMS workspace root",
         ));
     };
     if !repo_path.is_dir() {
@@ -614,10 +614,8 @@ pub(crate) async fn api_git_ai_suspect_fix_note(
     // git-ai-fix-note skill. The skill path resolves to the WMS project-local
     // copy (symlinked into ~/.agents/skills as well).
     if still_missing {
-        let skill_path = home_dir()
-            .ok()
-            .map(|h| h.join("Developer/company/WMS/.agents/skills/git-ai-fix-note/SKILL.md"))
-            .filter(|p| p.exists());
+        let skill_path =
+            Some(crate::paths::wms_skills_dir().join("git-ai-fix-note/SKILL.md")).filter(|p| p.exists());
         match skill_path {
             Some(path) => {
                 let prompt = format!(
@@ -772,7 +770,6 @@ fn resolve_git_ai_repo_path(record: &Value) -> Option<PathBuf> {
     if project.is_empty() {
         return None;
     }
-    let home = home_dir().ok()?;
     let leaf = if let Some(stripped) = project.strip_prefix("yl-cwhsea-wms-") {
         format!("yl-cwhsea-wms-{stripped}")
     } else if project.starts_with("yl-cwhsea-wms") {
@@ -781,7 +778,7 @@ fn resolve_git_ai_repo_path(record: &Value) -> Option<PathBuf> {
         format!("yl-cwhsea-wms-{project}")
     };
     for area in ["backend", "frontend", "pda", "infra"] {
-        let candidate = home.join("Developer/company/WMS").join(area).join(&leaf);
+        let candidate = crate::paths::wms_root().join(area).join(&leaf);
         if candidate.is_dir() {
             return Some(candidate);
         }

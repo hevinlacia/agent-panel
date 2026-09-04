@@ -13,8 +13,7 @@ use serde_json::{json, Value};
 use tokio::{fs, process::Command, time::timeout};
 
 use crate::{
-    agent_panel_skill_path, ApiError, ApiResult, AppState, FormOrJson, IdQuery,
-    DEFAULT_WMS_PROJECT_ROOT, DEFAULT_WMS_TESTDATA_PACK_ROOT,
+    agent_panel_skill_path, paths, ApiError, ApiResult, AppState, FormOrJson, IdQuery,
 };
 
 pub(crate) async fn api_capability_sources(
@@ -411,22 +410,22 @@ pub(crate) fn capability_pack_schema() -> Value {
 }
 
 pub(crate) fn capability_sources(_state: &AppState) -> Vec<Value> {
-    let pack = Path::new(DEFAULT_WMS_TESTDATA_PACK_ROOT);
+    let pack = paths::wms_testdata_pack_root();
     vec![json!({
         "id": "wms-testdata",
         "kind": "testdata",
         "project": "WMS",
         "title": "WMS Test Data Capability Pack",
         "adapter": "wms-testdata-recipes",
-        "projectRoot": DEFAULT_WMS_PROJECT_ROOT,
-        "sourcePath": DEFAULT_WMS_TESTDATA_PACK_ROOT,
+        "projectRoot": paths::wms_root().display().to_string(),
+        "sourcePath": paths::wms_testdata_pack_root().display().to_string(),
         "capabilityFile": "capabilities.yaml",
-        "knowledgeRoot": format!("{}/.agents/knowledge", DEFAULT_WMS_PROJECT_ROOT),
+        "knowledgeRoot": paths::wms_root().join(".agents/knowledge").display().to_string(),
         "capabilityApi": "/api/capabilities?project=WMS",
         "detailApi": "/api/capability?id=<capability-id>&project=WMS",
         "status": if pack.is_dir() { "ok" } else { "missing" },
         "exists": pack.is_dir(),
-        "projectExists": Path::new(DEFAULT_WMS_PROJECT_ROOT).is_dir(),
+        "projectExists": paths::wms_root().is_dir(),
         "readOnly": true,
         "notes": [
             "WMS-owned test-data assets live under the WMS project root.",
@@ -618,7 +617,7 @@ pub(crate) fn capability_detail(source_path: &Path, cap: &Value) -> Value {
         map.insert(
             "migration".to_string(),
             json!({
-                "sourcePath": DEFAULT_WMS_TESTDATA_PACK_ROOT,
+                "sourcePath": paths::wms_testdata_pack_root().display().to_string(),
                 "phase": "phase-3",
                 "note": "Assets are owned by the WMS project; the legacy tools repo has been removed."
             })

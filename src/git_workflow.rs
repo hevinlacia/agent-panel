@@ -2572,9 +2572,7 @@ pub(crate) fn resolve_code_review_project_path(
     if let Some(parent) = resolved.parent() {
         roots.push(parent.to_path_buf());
     }
-    if let Ok(home) = home_dir() {
-        roots.push(home.join("Developer/company/WMS"));
-    }
+    roots.push(crate::paths::wms_root());
     for root in roots {
         for area in ["backend", "frontend", "pda", "infra"] {
             let candidate = root.join(area).join(&leaf);
