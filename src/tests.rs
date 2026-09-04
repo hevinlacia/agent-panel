@@ -332,6 +332,56 @@ fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
 }
 
 #[test]
+fn normalize_create_id_template_splits_issue_pool() {
+    // 空模板：按类别给默认池
+    assert_eq!(
+        normalize_create_id_template("", "线上问题").unwrap(),
+        "WMS-INC-{seq}"
+    );
+    assert_eq!(normalize_create_id_template("", "需求").unwrap(), "WMS-{seq}");
+    // 模板：issue 强制 WMS-INC 前缀，保留 suffix
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}", "线上问题").unwrap(),
+        "WMS-INC-{seq}"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}-hotfix", "线上问题").unwrap(),
+        "WMS-INC-{seq}-hotfix"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-INC-{seq}", "线上问题").unwrap(),
+        "WMS-INC-{seq}"
+    );
+    // 具体 id：需求透传；issue 必须 WMS-INC-<序号> 形态
+    assert_eq!(
+        normalize_create_id_template("WMS-112-fix-x", "需求").unwrap(),
+        "WMS-112-fix-x"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-INC-031-x", "线上问题").unwrap(),
+        "WMS-INC-031-x"
+    );
+    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题").is_err());
+    // 前缀分池：INC 序号独立于需求序号
+    assert_eq!(
+        compute_next_seq_from_ids(
+            &["WMS-INC-031-a".to_string(), "WMS-111-b".to_string()],
+            "WMS-INC",
+            None
+        ),
+        32
+    );
+    assert_eq!(
+        compute_next_seq_from_ids(
+            &["WMS-INC-031-a".to_string(), "WMS-111-b".to_string()],
+            "WMS",
+            None
+        ),
+        112
+    );
+}
+
+#[test]
 fn online_issue_statuses_map_to_online_issue_phase_prompt() {
     for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
         assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");
