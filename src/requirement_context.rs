@@ -465,6 +465,8 @@ pub(crate) fn canonical_requirement_token(raw: &str) -> Option<&'static str> {
         "technicalplan" | "techplan" | "implementationplan" | "solution" => {
             Some("req.technicalPlan")
         }
+        "incident" => Some("req.incident"),
+        "rootcause" => Some("req.rootCause"),
         "impact" => Some("req.impact"),
         "test" => Some("req.test"),
         "notes" | "note" => Some("req.notes"),
@@ -490,6 +492,8 @@ pub(crate) fn requirement_token_file(token: &str) -> Option<&'static str> {
         "req.releaseManifest" => Some("release-manifest.md"),
         "req.attachments" => Some("attachments"),
         "req.technicalPlan" => Some("technical-plan.md"),
+        "req.incident" => Some("incident.md"),
+        "req.rootCause" => Some("root-cause.md"),
         "req.impact" => Some("impact.md"),
         "req.test" => Some("test.md"),
         "req.notes" => Some("notes.md"),
@@ -511,6 +515,8 @@ pub(crate) fn requirement_doc_type_for_token(token: &str) -> Option<&'static str
         "req.configChanges" => Some("config-changes"),
         "req.releaseManifest" => Some("release-manifest"),
         "req.technicalPlan" => Some("technical-plan"),
+        "req.incident" => Some("incident"),
+        "req.rootCause" => Some("root-cause"),
         "req.impact" => Some("impact"),
         "req.test" => Some("test"),
         "req.notes" => Some("notes"),
