@@ -1,0 +1,23 @@
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  0c3ffdb86aa72e20 51-52,72-87,494-495
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4547d86f099ea8490d5dfef18032e46b73d21136",
+  "prompts": {
+    "0c3ffdb86aa72e20": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a06bae-2b68-7988-a215-86089872fd60",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 1,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
