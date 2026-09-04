@@ -1,0 +1,34 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ad5705e7a57ae35d52d93011315026f336f42d10",
+  "prompts": {
+    "0e6376ab398b2921": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a066c7-3535-7675-99db-634517a247f6",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 102,
+      "total_deletions": 22,
+      "accepted_lines": 102,
+      "overriden_lines": 0
+    },
+    "0e8ecb4e8cebea3b": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a06a21-d274-7261-85b3-11ee78a082f4",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 15,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
