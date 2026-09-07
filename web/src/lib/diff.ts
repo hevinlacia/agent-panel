@@ -30,11 +30,55 @@ export function parseUnifiedDiffFiles(review?: CodeReviewSnapshot | null): DiffF
   for (const repo of review.repos || []) {
     const chunks = splitUnifiedDiff(repo.diff || "")
     for (const file of repo.files || []) {
-      const diff = chunks.get(file.path) || ""
-      rows.push({ repo, file, diff, lines: parseDiffLines(diff) })
+      const path = unquoteGitPath(file.path)
+      const diff = chunks.get(file.path) || chunks.get(path) || ""
+      rows.push({ repo, file: { ...file, path }, diff, lines: parseDiffLines(diff) })
     }
   }
   return rows
+}
+
+/** 解析 git 输出中带引号+转义的路径（core.quotepath 开启时非 ASCII/特殊字符路径会被转义成 \NNN 八进制）。 */
+export function unquoteGitPath(raw: string): string {
+  const s = raw.trim()
+  if (s.length < 2 || !s.startsWith('"') || !s.endsWith('"')) return s
+  const inner = s.slice(1, -1)
+  const bytes: number[] = []
+  let pending = ""
+  const flushPlain = () => {
+    if (pending) {
+      for (const b of new TextEncoder().encode(pending)) bytes.push(b)
+      pending = ""
+    }
+  }
+  const chars = Array.from(inner)
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i]
+    if (ch === "\\" && i + 1 < chars.length) {
+      const next = chars[i + 1]
+      const oct = next + (chars[i + 2] ?? "") + (chars[i + 3] ?? "")
+      if (/^[0-7]{3}$/.test(oct)) {
+        flushPlain()
+        bytes.push(parseInt(oct, 8))
+        i += 3
+        continue
+      }
+      const escaped: Record<string, number> = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '"': 34, "\\": 92 }
+      if (next in escaped) {
+        flushPlain()
+        bytes.push(escaped[next])
+        i += 1
+        continue
+      }
+    }
+    pending += ch
+  }
+  flushPlain()
+  try {
+    return new TextDecoder().decode(Uint8Array.from(bytes))
+  } catch {
+    return inner
+  }
 }
 
 export function splitUnifiedDiff(diff: string): Map<string, string> {
@@ -47,8 +91,9 @@ export function splitUnifiedDiff(diff: string): Map<string, string> {
   for (const line of diff.split("\n")) {
     if (line.startsWith("diff --git ")) {
       flush()
-      const match = line.match(/^diff --git a\/(.*?) b\/(.*)$/)
-      currentPath = match?.[2] || ""
+      const plain = line.match(/^diff --git a\/(.*?) b\/(.*)$/)
+      const quoted = line.match(/^diff --git "a\/(.*)" "b\/(.*)"$/)
+      currentPath = plain ? unquoteGitPath(plain[2]) : quoted ? unquoteGitPath(quoted[2]) : ""
       buffer = [line]
       continue
     }
