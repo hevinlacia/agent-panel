@@ -337,6 +337,8 @@ export function RequirementDiffPage() {
   const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
   const stats = reviewStats(review)
   const [activeKey, setActiveKey] = useState("")
+  /** 手动刷新计数：base 不变时点击刷新也要重新拉取，计入依赖触发 effect 重跑。 */
+  const [refreshTick, setRefreshTick] = useState(0)
   useEffect(() => {
     if (!reqId) return
     let cancelled = false
@@ -347,7 +349,7 @@ export function RequirementDiffPage() {
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)) })
       .finally(() => { if (!cancelled) setLoadingDiff(false) })
     return () => { cancelled = true }
-  }, [reqId, baseRef])
+  }, [reqId, baseRef, refreshTick])
   useEffect(() => {
     if (!files.length) { setActiveKey(""); return }
     const exists = files.some((item) => `${item.repo.repoName}:${item.file.path}` === activeKey)
@@ -366,7 +368,7 @@ export function RequirementDiffPage() {
     window.history.replaceState(null, "", `/requirement-diff?${q.toString()}`)
   }
   const title = req?.title || reqId || "分支差异"
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="按需求分支和指定基准分支生成代码差异，左侧选择文件，中间查看改动内容。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => changeBase(baseRef)} disabled={loadingDiff}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />刷新 diff</button></>}>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="按需求分支和指定基准分支生成代码差异，左侧选择文件，中间查看改动内容。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => setRefreshTick((t) => t + 1)} disabled={loadingDiff}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />刷新 diff</button></>}>
     <section className="react-diff-shell">
       <aside className="react-diff-sidebar"><div className="react-diff-compare"><span>Compare</span><select value={baseRef} onChange={(e) => changeBase(e.target.value)}><option value="origin/master">origin/master</option><option value="origin/production">origin/production</option><option value="master">master</option><option value="production">production</option></select><em>and latest version</em></div><label className="react-diff-search"><Search size={14} /><input placeholder="Search files (Ctrl+P)" onChange={(e) => { const hit = files.find((f) => f.file.path.toLowerCase().includes(e.target.value.toLowerCase())); if (hit && e.target.value) scrollToFile(`${hit.repo.repoName}:${hit.file.path}`) }} /></label><div className="react-diff-file-list">{[...new Set(review?.repos?.map((r) => r.repoName) || [])].map((repoName) => {
           const repo = review?.repos?.find((r) => r.repoName === repoName)
