@@ -1,5 +1,5 @@
 /**
- * Role: 发布计划页 — 统计「发布就绪」状态的需求，按 meta.md plan-release 登记日期分组（当天/已过期/未来/未登记）。
+ * Role: 发布计划页 — 统计「发布就绪」状态的需求，顶部平铺全部发布就绪需求列表（默认展开，可折叠），再按 meta.md plan-release 登记日期分组（当天/已过期/未来/未登记）。
  * Public surface: ReleasePlanPage used by web/src/App.tsx route /release-plan.
  * Constraints: read-only view over /api/requirements; only includes status=发布就绪 (人工已检查代码、随时可发布) requirements.
  * Read-this-with: web/src/pages/projects.tsx for card/filter patterns and src/requirement_index.rs for the DTO source.
@@ -63,6 +63,8 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
   const [selected, setSelected] = useState(() => ymd(new Date()))
   const [project, setProject] = useState("")
   const [unknownOpen, setUnknownOpen] = useState(false)
+  /** 顶部「全部发布就绪」平铺列表折叠态：默认展开，一眼看到哪些需求可发。 */
+  const [readyOpen, setReadyOpen] = useState(true)
   /** 发版日筛选：null=全部（按日期分组）；0..7=距现第 N 发版日（正常周三序列，含当天）。 */
   const [releaseDay, setReleaseDay] = useState<number | null>(null)
   const reqs = data?.requirements || []
@@ -85,6 +87,29 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
     if (releaseDay !== null) base = base.filter((r) => (r.planRelease || "").trim() === releaseDays[releaseDay])
     return base
   }, [readyReqs, effectiveProject, releaseDay, releaseDays])
+
+  // 全部发布就绪平铺列表：有 plan-release 的按日期升序在前，未登记/非法日期按更新时间倒序在后。
+  const allReady = useMemo(() => {
+    const dated: Requirement[] = []
+    const undated: Requirement[] = []
+    for (const r of filtered) {
+      const plan = (r.planRelease || "").trim()
+      if (plan && plan !== "unknown" && dayDiff(plan, selected) !== null) dated.push(r)
+      else undated.push(r)
+    }
+    dated.sort((a, b) => (a.planRelease || "").localeCompare(b.planRelease || ""))
+    undated.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    return [...dated, ...undated]
+  }, [filtered, selected])
+
+  const allGroup = useMemo<ReleaseGroup>(() => ({
+    key: "all",
+    kicker: "Ready · All",
+    title: "全部发布就绪需求",
+    chip: `${allReady.length} 条`,
+    reqs: allReady,
+    collapsible: true,
+  }), [allReady])
 
   const groups = useMemo<ReleaseGroup[]>(() => {
     // 发版日筛选生效时：只展示该正常发版日的需求，不再按当天/过期/未来分组。
@@ -149,9 +174,12 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
       </div>
       <div className="react-actions"><span className="react-muted">统计范围：状态为「发布就绪」的需求；发版日按正常周三发版序列（含当天）过滤，紧急发版不在序列内；发布日期在需求编辑页 planRelease 字段维护，unknown 表示尚未排期。</span></div>
     </section>
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.map((group) => (
-      <GroupSection key={group.key} group={group} selected={releaseDay !== null ? releaseDays[releaseDay] : selected} collapsed={Boolean(group.collapsible) && !unknownOpen} onToggle={() => setUnknownOpen((v) => !v)} />
-    ))}
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>
+      {releaseDay === null ? <GroupSection group={allGroup} selected={selected} collapsed={!readyOpen} onToggle={() => setReadyOpen((v) => !v)} /> : null}
+      {groups.map((group) => (
+        <GroupSection key={group.key} group={group} selected={releaseDay !== null ? releaseDays[releaseDay] : selected} collapsed={Boolean(group.collapsible) && !unknownOpen} onToggle={() => setUnknownOpen((v) => !v)} />
+      ))}
+    </>}
   </PageChrome>
 }
 
@@ -167,7 +195,7 @@ function GroupSection({ group, selected, collapsed, onToggle }: { group: Release
   }
   return <section className="react-panel">
     <PanelHead kicker={group.kicker} title={group.title} chip={group.chip} />
-    {group.reqs.length === 0 ? <EmptyCard>{group.key === "selected" ? `${selected} 没有登记发布的发布就绪需求。` : group.key === "release-day" ? `${selected} 没有登记发布的发布就绪需求。` : group.key === "unknown" ? "没有未登记发布日期的发布就绪需求。" : "暂无发布就绪需求。"}</EmptyCard> : <div className="react-card-list">{group.reqs.map((req, index) => <ReleaseCard key={req.id} req={req} selected={selected} index={index} />)}</div>}
+    {group.reqs.length === 0 ? <EmptyCard>{group.key === "all" ? "当前没有任何发布就绪需求。" : group.key === "selected" ? `${selected} 没有登记发布的发布就绪需求。` : group.key === "release-day" ? `${selected} 没有登记发布的发布就绪需求。` : group.key === "unknown" ? "没有未登记发布日期的发布就绪需求。" : "暂无发布就绪需求。"}</EmptyCard> : <div className="react-card-list">{group.reqs.map((req, index) => <ReleaseCard key={req.id} req={req} selected={selected} index={index} />)}</div>}
   </section>
 }
 
