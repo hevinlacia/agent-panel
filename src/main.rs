@@ -95,7 +95,7 @@ const CAINIAO_MOCK_PRINTERS: &[(&str, &str)] = &[
     ("Mock-Express", "Mock 面单打印机"),
 ];
 const COMMAND_OUTPUT_LIMIT: usize = 80_000;
-const DIFF_OUTPUT_LIMIT: usize = 180_000;
+const DIFF_OUTPUT_LIMIT: usize = 2_000_000;
 
 static REQ_STATUSES: &[&str] = &[
     "需求澄清",
