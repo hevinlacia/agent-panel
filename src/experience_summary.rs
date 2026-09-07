@@ -229,7 +229,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
     let now = now_ms();
 
     for req in reqs {
-        if req.status != "经验总结" {
+        if !experience_summary_triggered(&req) {
             if matches!(
                 req.experience_summary_job
                     .as_ref()
@@ -353,6 +353,73 @@ pub(crate) async fn dispatch_experience_summary_jobs(
     Ok(report)
 }
 
+/// 经验总结自动派发触发条件：
+/// - 普通需求进入「经验总结」；
+/// - 线上问题进入「已复盘」（终态；自动沉淀定位为第二遍独立复核补漏，默认有价值，重复/误报才跳过）。
+pub(crate) fn experience_summary_triggered(req: &Requirement) -> bool {
+    if req.status == "经验总结" {
+        return true;
+    }
+    req.category.as_deref() == Some("线上问题") && req.status == "已复盘"
+}
+
+/// 构建自动经验总结 agent 的任务提示词；线上问题走 troubleshooting 复核沉淀分支。
+pub(crate) fn experience_summary_prompt(
+    req: &Requirement,
+    report_path: &Path,
+    session_id: &str,
+) -> String {
+    let req_id = &req.id;
+    let title = &req.title;
+    if req.category.as_deref() == Some("线上问题") {
+        let dir = report_path
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let report = report_path.display();
+        return format!(
+            "自动经验沉淀任务（线上问题第二遍独立复核）。{req_id} - {title}
+
+             背景：排查 agent 已在 troubleshooting.md 记录 怎么排查/怎么修复/根因/复用清单；你的职责是验证并补齐经验库落地，供下次排查参考，不是重写排查过程。
+
+             必须先读取：
+             - GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200
+             - {dir}/troubleshooting.md（怎么排查 + 怎么修复 + 根因 + 复用清单）
+             - {dir}/incident.md 与 {dir}/root-cause.md（如存在）
+
+             价值判定基线：线上问题经验默认有价值——除非与经验库已有条目重复（相同现象/根因/触发词已覆盖），或确认为误报/环境问题/纯一次性操作，否则都应落一条 experiences 条目。
+             查重：POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
+
+             必须产出：
+             - 有价值的：POST http://127.0.0.1:7331/api/knowledge 写入 experiences 条目，JSON 字段 {{\"kind\":\"experience\",\"title\":…,\"summary\":…,\"details\":…,\"triggerTerms\":[…],\"domain\":\"wms\",\"scope\":\"project\",\"source\":\"auto-experience-summary\"}}；triggerTerms 写下次排查可能提到的关键词（现象、错误码、模块、仓库/单号）
+             - 回填 {dir}/troubleshooting.md「复用清单」：已落地条目 id/链接；重复或无价值的写明原因
+             - 写 experience-summary.md（路径：{report}）：已落地条目清单、跳过项及原因
+
+             完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"线上问题经验沉淀完成\"}}。
+             无法完成时把原因写入 notes.md 或通过 /api/requirement/events 记录。",
+            req_id = req_id,
+            title = title,
+            dir = dir,
+            report = report,
+            session_id = session_id,
+        );
+    }
+    format!(
+        "自动经验总结任务。需求：{req_id} - {title}
+
+         目标：按当前经验总结阶段规则，读取 Agent Panel 候选上下文，回顾本需求文档和结构化事件，沉淀可复用业务知识、经验/踩坑和 skill 改进机会。
+         必须先读取：GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200
+         必须写入：experience-summary.md（路径：{report}），区分已落地和待落地。
+         可安全落地的知识/经验请通过 Agent Panel API 写入 business-knowledge / experiences；不要把未验证猜测写成稳定事实。
+         完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"自动经验总结完成\"}}。
+         若无法完成，请尽量把原因写入 notes.md 或通过 /api/requirement/events 记录。",
+        req_id = req_id,
+        title = title,
+        report = report_path.display(),
+        session_id = session_id,
+    )
+}
+
 pub(crate) async fn spawn_experience_summary_agent(
     state: &AppState,
     req: &Requirement,
@@ -364,19 +431,7 @@ pub(crate) async fn spawn_experience_summary_agent(
     let ctx_path = write_injection_context(state, req, session_id).await?;
     let cwd = requirement_project_root(req).unwrap_or_else(|| state.project_root.as_ref().clone());
     let report_path = dir.join("experience-summary.md");
-    let prompt = format!(
-        "自动经验总结任务。需求：{req_id} - {title}\n\n\
-         目标：按当前经验总结阶段规则，读取 Agent Panel 候选上下文，回顾本需求文档和结构化事件，沉淀可复用业务知识、经验/踩坑和 skill 改进机会。\n\
-         必须先读取：GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200\n\
-         必须写入：experience-summary.md（路径：{report_path}），区分已落地和待落地。\n\
-         可安全落地的知识/经验请通过 Agent Panel API 写入 business-knowledge / experiences；不要把未验证猜测写成稳定事实。\n\
-         完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"自动经验总结完成\"}}。\n\
-         若无法完成，请尽量把原因写入 notes.md 或通过 /api/requirement/events 记录。",
-        req_id = req.id,
-        title = req.title,
-        report_path = report_path.to_string_lossy(),
-        session_id = session_id,
-    );
+    let prompt = experience_summary_prompt(req, &report_path, session_id);
     let mut cmd = Command::new("pi");
     cmd.current_dir(&cwd)
         .arg("-p")

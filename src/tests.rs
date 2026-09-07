@@ -382,6 +382,41 @@ fn normalize_create_id_template_splits_issue_pool() {
 }
 
 #[test]
+fn experience_summary_dispatch_triggers_for_issue_reviewed() {
+    let mut req = default_requirement_for_test("WMS-INC-111-x");
+    req.status = "已复盘".to_string();
+    req.category = Some("线上问题".to_string());
+    assert!(experience_summary_triggered(&req));
+    req.status = "已修复".to_string();
+    assert!(!experience_summary_triggered(&req));
+    req.status = "经验总结".to_string();
+    req.category = Some("需求".to_string());
+    assert!(experience_summary_triggered(&req));
+    req.status = "需求澄清".to_string();
+    assert!(!experience_summary_triggered(&req));
+}
+
+#[test]
+fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check() {
+    let mut req = default_requirement_for_test("WMS-INC-111-x");
+    req.status = "已复盘".to_string();
+    req.category = Some("线上问题".to_string());
+    let prompt =
+        experience_summary_prompt(&req, Path::new("/tmp/x/experience-summary.md"), "sess-1");
+    assert!(prompt.contains("troubleshooting.md"));
+    assert!(prompt.contains("默认有价值"));
+    assert!(prompt.contains("/api/agent/knowledge/query"));
+    assert!(prompt.contains("WMS-INC-111-x"));
+    let mut normal = default_requirement_for_test("WMS-120-x");
+    normal.status = "经验总结".to_string();
+    normal.category = Some("需求".to_string());
+    let prompt =
+        experience_summary_prompt(&normal, Path::new("/tmp/y/experience-summary.md"), "s2");
+    assert!(!prompt.contains("troubleshooting.md"));
+    assert!(prompt.contains("experience-summary-context"));
+}
+
+#[test]
 fn online_issue_statuses_map_to_online_issue_phase_prompt() {
     for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
         assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");

@@ -515,7 +515,9 @@ pub(crate) async fn api_requirement_status(
     .await?;
     if !matches!(st.get("changed").and_then(Value::as_bool), Some(false)) {
         record_status_transition_event(&state, &req, &st, body.note.as_deref()).await?;
-        if status == "经验总结" {
+        if status == "经验总结"
+            || (req.category.as_deref() == Some("线上问题") && status == "已复盘")
+        {
             let cfg = read_config(&state).await.unwrap_or_default();
             if cfg.auto_experience_summary {
                 if let Err(e) = dispatch_experience_summary_jobs(&state, Some(&req.id)).await {
