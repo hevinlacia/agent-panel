@@ -32,6 +32,8 @@ function hasTroubleshootingDoc(req: Requirement): boolean {
 
 export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const { data, error, loading } = useFetch<{ requirements: Requirement[] }>("/api/requirements")
+  const urlParams = new URLSearchParams(window.location.search)
+  const [keyword, setKeyword] = useState(urlParams.get("q") || "")
   const [project, setProject] = useState("")
   const [closedOpen, setClosedOpen] = useState(false)
   const reqs = data?.requirements || []
@@ -50,10 +52,41 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   }, [reqs])
   const projects = useMemo(() => [...new Set(issues.flatMap((r) => (r.projects?.length ? r.projects : [r.project])).filter(Boolean))].sort(), [issues])
   const effectiveProject = globalProject || project
+  const setKeywordSync = (value: string) => {
+    setKeyword(value)
+    const q = new URLSearchParams(window.location.search)
+    if (value) q.set("q", value)
+    else q.delete("q")
+    window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
+  }
   const filtered = useMemo(() => {
-    if (!effectiveProject) return issues
-    return issues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
-  }, [issues, effectiveProject])
+    const kw = keyword.trim().toLowerCase()
+    // 精确编号查找：关键词形如线上问题 ID（wms-inc-112 / wms-088-fix-xxx / inc-112）或纯数字序号（112）时，
+    // 直接按 ID 命中（全等 / 前缀 / 序号尾匹配），无视项目筛选；精确命中为空时回退到模糊查找。
+    if (kw) {
+      const exact = /^[a-z]+-(inc-)?\d+/.test(kw)
+        ? issues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
+        : /^\d+$/.test(kw)
+          ? issues.filter((r) => r.id.toLowerCase().endsWith(`-${kw}`))
+          : null
+      if (exact?.length) return exact
+    }
+    const base = effectiveProject
+      ? issues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
+      : issues
+    if (!kw) return base
+    return base.filter((r) => {
+      const fix = fixReqOf.get(r.id)
+      const haystack = [
+        r.id,
+        r.title,
+        r.description || "",
+        (r.projects?.length ? r.projects : [r.project]).filter(Boolean).join(" "),
+        fix?.title || "",
+      ].join(" ").toLowerCase()
+      return haystack.includes(kw)
+    })
+  }, [issues, effectiveProject, keyword, fixReqOf])
 
   const groups = useMemo<IssueGroup[]>(() => {
     const byStatus = new Map<string, Requirement[]>()
@@ -88,10 +121,11 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     {globalProject ? null : <section className="react-panel react-filter-panel">
       <div className="react-filter-grid">
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <label className="react-filter-grow">查找线上问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / inc-112 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
       </div>
       <div className="react-actions"><span className="react-muted">统计范围：全部状态下 category=线上问题 的记录；「已关闭」分组默认折叠，点击展开；排查经验在需求详情页「排查经验」面板维护，进入已复盘前必须先填写。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>没有线上问题记录。创建需求时选择类别「线上问题」即可进入本流程。</EmptyCard> : groups.map((group) => group.collapsible && !closedOpen
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的线上问题，试试其他关键字或完整编号。` : "没有线上问题记录。创建需求时选择类别「线上问题」即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && !closedOpen && !keyword.trim()
       ? <section key={group.status} className="react-panel">
         <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => setClosedOpen(true)} aria-expanded={false}>
           <span>已关闭</span>
