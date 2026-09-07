@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e36a5d8fc33d69788fc8ea7dee742bc16d5d2d3a",
+  "prompts": {
+    "bbe900f5cd2c9818": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a06afd-238e-7692-b0f5-f9ae26e19c8e",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 2,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
