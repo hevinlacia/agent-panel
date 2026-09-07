@@ -62,12 +62,12 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
     // 精确编号查找：关键词形如线上问题 ID（wms-inc-112 / wms-088-fix-xxx / inc-112）或纯数字序号（112）时，
-    // 直接按 ID 命中（全等 / 前缀 / 序号尾匹配），无视项目筛选；精确命中为空时回退到模糊查找。
+    // 直接按 ID 命中（全等 / 前缀 / 序号段匹配），无视项目筛选；精确命中为空时回退到模糊查找。
     if (kw) {
       const exact = /^[a-z]+-(inc-)?\d+/.test(kw)
         ? issues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
         : /^\d+$/.test(kw)
-          ? issues.filter((r) => r.id.toLowerCase().endsWith(`-${kw}`))
+          ? issues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
           : null
       if (exact?.length) return exact
     }
