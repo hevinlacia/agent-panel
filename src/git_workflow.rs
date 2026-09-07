@@ -2732,11 +2732,17 @@ pub(crate) async fn git(
     timeout_ms: u64,
     max_output: usize,
 ) -> GitCommandResult {
+    // 统一关闭 quotepath：非 ASCII 文件名输出原生 UTF-8，避免 numstat/name-status/diff
+    // 产生 "\345\215\225..." 形式的引号+八进制转义路径，破坏前后端路径匹配。
+    let mut full_args: Vec<&str> = Vec::with_capacity(args.len() + 2);
+    full_args.push("-c");
+    full_args.push("core.quotepath=false");
+    full_args.extend_from_slice(args);
     let command = std::iter::once("git".to_string())
-        .chain(args.iter().map(|a| shell_quote(a)))
+        .chain(full_args.iter().map(|a| shell_quote(a)))
         .collect::<Vec<_>>()
         .join(" ");
-    let fut = Command::new("git").args(args).current_dir(cwd).output();
+    let fut = Command::new("git").args(&full_args).current_dir(cwd).output();
     match timeout(Duration::from_millis(timeout_ms), fut).await {
         Ok(Ok(output)) => {
             let (stdout, stdout_truncated) = limit_output(

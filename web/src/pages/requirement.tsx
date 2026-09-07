@@ -5,7 +5,7 @@ import { fetchJson, postForm, postJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_SOURCES } from "../lib/requirements"
-import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
+import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName, unquoteGitPath } from "../lib/diff"
 import { Markdown } from "../markdown"
 import { experienceSummaryPill, onesBadge, projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
@@ -181,7 +181,7 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
         {repo.error ? <p className="react-effort-error">{repo.error}</p> : null}
         {repo.warnings?.length ? <div className="react-drive-blockers"><strong>Warnings</strong><ul>{repo.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div> : null}
         {repo.commits?.length ? <details className="react-review-commits"><summary>提交列表（{repo.commits.length}）</summary><pre>{repo.commits.join("\n")}</pre></details> : null}
-        {repo.files?.length ? <div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>状态</th><th>增删</th><th>风险</th></tr></thead><tbody>{repo.files.map((file) => <tr key={file.path}><td><code>{file.path}</code></td><td>{file.status}</td><td><span className="react-review-add">+{file.additions}</span> / <span className="react-review-del">-{file.deletions}</span></td><td>{file.riskTags?.length ? file.riskTags.map((tag) => <span key={tag} className="react-review-tag" data-risk={tag}>{tag}</span>) : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : <p className="react-muted">没有文件级差异。</p>}
+        {repo.files?.length ? <div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>状态</th><th>增删</th><th>风险</th></tr></thead><tbody>{repo.files.map((file) => <tr key={file.path}><td><code>{unquoteGitPath(file.path)}</code></td><td>{file.status}</td><td><span className="react-review-add">+{file.additions}</span> / <span className="react-review-del">-{file.deletions}</span></td><td>{file.riskTags?.length ? file.riskTags.map((tag) => <span key={tag} className="react-review-tag" data-risk={tag}>{tag}</span>) : <span className="react-muted">-</span>}</td></tr>)}</tbody></table></div> : <p className="react-muted">没有文件级差异。</p>}
         {showDiff && repo.diff ? <pre className="react-diff-preview">{repo.diff}{repo.diffTruncated ? "\n… diff 已截断" : ""}</pre> : null}
       </details>)}
     </>}
