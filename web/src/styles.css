@@ -892,21 +892,28 @@ button, input, select, textarea { font: inherit; }
 .react-diff-file-list i,
 .react-diff-file-card header i { color: #fca5a5; font-style: normal; }
 .react-diff-main { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-.react-diff-toolbar { position: sticky; top: 72px; z-index: 5; display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--react-border); border-radius: 16px; padding: 11px 14px; background: rgba(10,14,21,.92); backdrop-filter: blur(16px); color: var(--react-muted); font: .76rem var(--react-mono); }
+.react-diff-topbar { position: sticky; top: 72px; z-index: 5; display: flex; flex-direction: column; gap: 8px; }
+.react-diff-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid var(--react-border); border-radius: 16px; padding: 11px 14px; background: rgba(10,14,21,.92); backdrop-filter: blur(16px); color: var(--react-muted); font: .76rem var(--react-mono); }
+/* 顶部统一横向滚动条：自身是 overflow-x 滚动容器，pad 宽度与 diff 内容滚动宽度一致，双向同步 scrollLeft。 */
+.react-diff-hscroll { overflow-x: auto; overflow-y: hidden; background: rgba(10,14,21,.92); border: 1px solid var(--react-border); border-radius: 10px; }
+.react-diff-hscroll-pad { height: 1px; }
+/* 所有文件卡片共用一个横向滚动容器；隐藏自身滚动条，由顶部统一滚动条控制。 */
+.react-diff-scroll-body { display: flex; flex-direction: column; gap: 14px; overflow-x: auto; scrollbar-width: none; }
+.react-diff-scroll-body::-webkit-scrollbar { display: none; }
 .react-diff-toolbar div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .react-diff-toolbar strong { color: #fff; }
-.react-diff-file-card { overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); }
+.react-diff-file-card { width: max-content; min-width: 100%; overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); }
 .react-diff-file-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(16,22,31,.95); }
 .react-diff-file-card header div { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--react-text); }
 .react-diff-file-card header svg { color: var(--react-cyan); flex: 0 0 auto; }
 .react-diff-file-card header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 850 .78rem var(--react-mono); }
 .react-diff-base-label { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; margin-left: 4px; }
 .react-diff-file-card header span { display: inline-flex; gap: 9px; font: 850 .72rem var(--react-mono); }
-.react-diff-code { width: 100%; border-collapse: collapse; table-layout: fixed; font: .74rem/1.5 var(--react-mono); }
+.react-diff-code { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto; font: .74rem/1.5 var(--react-mono); }
 .react-diff-code td { padding: 0 9px; border-bottom: 1px solid rgba(148,163,184,.035); vertical-align: top; }
 .react-diff-code td:nth-child(1),
 .react-diff-code td:nth-child(2) { width: 52px; color: var(--react-faint); text-align: right; user-select: none; background: rgba(255,255,255,.018); }
-.react-diff-code td:nth-child(3) { white-space: pre; overflow-x: auto; color: #cfd8e3; }
+.react-diff-code td:nth-child(3) { white-space: pre; color: #cfd8e3; }
 .react-diff-code code { font-family: var(--react-mono); }
 .react-diff-line-add td { background: rgba(22,101,52,.34); }
 .react-diff-line-del td { background: rgba(127,29,29,.38); }
@@ -970,6 +977,6 @@ button, input, select, textarea { font: inherit; }
 .react-billable-summary span:first-child { font: 800 .78rem var(--react-mono); color: #bbf7d0; letter-spacing: .02em; }
 .react-billable-summary strong { font: 850 1.5rem var(--react-mono); color: #4ade80; }
 .react-billable-summary .react-muted { color: var(--react-muted); font: .74rem var(--react-mono); }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-diff-topbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
 @media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
 .react-warn-note { color: #d97706; font: 600 .72rem var(--react-mono); }
