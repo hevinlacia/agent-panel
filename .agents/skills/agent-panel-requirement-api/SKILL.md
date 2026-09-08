@@ -147,6 +147,8 @@ curl -sS -H 'Content-Type: application/json' \
 
 代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
 
+**审查后又有 commit（stale 拦截）**：审查后分支又有 commit（如 review 修正）时，状态推进会被 Code Review Gate 以 stale 拒绝（`reviewedTargetCommit != currentTargetCommit`）。在 review.md 追加「覆盖至 <hash>」文字**无效**（门禁不解析文本）；正确路径：`POST /api/requirement/code-review` `{"reqId":...}` 刷新 code-review.json 快照（保留 previousReviewedSnapshot 供增量对比）后重推状态。review-gate GET 返回的 `staleRepos` 给出 reviewed vs current commit，可据此定位增量审查范围。（WMS-110 实测：状态 400 拒绝两次后按此流程通过）
+
 上线清单：`release-manifest.md` 是贯穿全流程维护的发布资产总览，需求详情页常驻展示；凡涉及 DB 表、Apollo/Nacos、Topic/Group、Job、开关、接口、外部依赖或上线人工动作，都要同步维护 `req.releaseManifest`。
 
 推荐流程：
