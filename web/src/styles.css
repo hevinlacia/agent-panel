@@ -866,6 +866,8 @@ button, input, select, textarea { font: inherit; }
 .react-diff-preview { margin-top: 12px; margin-bottom: 14px; }
 .react-master-diff { margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(148,163,184,.22); }
 .react-master-diff > .react-review-summary { margin-top: 0; }
+/* 差异页代码主列需要更宽：仅对含差异三栏布局的页面放宽全局 1480px 内容宽度上限（:has 不支持时自动回退默认宽度）。 */
+.react-main:has(.react-diff-shell) { width: min(100%, 2360px); }
 .react-diff-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr) clamp(320px, 24vw, 420px); gap: 16px; align-items: start; }
 .react-diff-sidebar { position: sticky; top: 92px; max-height: calc(100vh - 112px); overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; background: linear-gradient(180deg, rgba(15,20,28,.94), rgba(8,12,18,.96)); padding: 12px; }
 .react-diff-compare { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid rgba(148,163,184,.12); color: var(--react-muted); font: .76rem var(--react-mono); }
