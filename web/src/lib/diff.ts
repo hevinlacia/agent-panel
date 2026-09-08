@@ -142,3 +142,8 @@ export function compactPath(path: string, max = 52): string {
 export function diffDomId(key: string): string {
   return `diff-file-${encodeURIComponent(key).replace(/%/g, "_")}`
 }
+
+/** DOM id for a single diff line row, used by annotation panel locate links. */
+export function diffLineDomId(key: string, lineIndex: number): string {
+  return `diff-line-${encodeURIComponent(key).replace(/%/g, "_")}-${lineIndex}`
+}

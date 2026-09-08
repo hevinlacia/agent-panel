@@ -972,6 +972,50 @@ pub(crate) async fn api_requirement_master_diff(
     ))
 }
 
+/// Read the code-annotations.json snapshot for a requirement (null when absent).
+/// Annotations explain key variables, design intent, and data/state flow per
+/// diffed file; they are written either by a pi session (diff-annotate skill)
+/// or manually from the diff inspector panel.
+pub(crate) async fn api_requirement_annotations_get(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
+    let annotations = read_json_if_exists(&req_dir.join(CODE_ANNOTATIONS_FILE)).await;
+    Ok(Json(json!({ "ok": true, "annotations": annotations })))
+}
+
+/// Save the whole code-annotations.json snapshot for a requirement.
+/// Accepts { reqId, annotations } where annotations is the full document;
+/// updatedAt is stamped here so callers never forge it.
+pub(crate) async fn api_requirement_annotations_put(
+    State(state): State<AppState>,
+    form: FormOrJson<AnnotationsSaveForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request("requirement has no directory; cannot save annotations".to_string())
+    })?);
+    ensure_requirement_dir_writable(&state, &req_dir).await?;
+    let mut annotations = body.annotations.unwrap_or(json!({}));
+    if !annotations.is_object() {
+        return Err(ApiError::bad_request(
+            "annotations must be a JSON object".to_string(),
+        ));
+    }
+    if let Some(obj) = annotations.as_object_mut() {
+        obj.insert("updatedAt".to_string(), json!(now_ms()));
+        obj.entry("version").or_insert(json!(1));
+        obj.entry("reqId").or_insert(json!(req.id));
+    }
+    let path = req_dir.join(CODE_ANNOTATIONS_FILE);
+    atomic_write_json(&path, &annotations).await?;
+    Ok(Json(json!({ "ok": true, "annotations": annotations })))
+}
+
 pub(crate) async fn api_requirement_sync_base(
     State(state): State<AppState>,
     form: FormOrJson<SyncBaseForm>,
