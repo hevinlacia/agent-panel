@@ -17,6 +17,14 @@ export async function postJson<T>(url: string, data: unknown): Promise<T> {
   })
 }
 
+export async function putJson<T>(url: string, data: unknown): Promise<T> {
+  return fetchJson<T>(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+}
+
 export async function postForm<T>(url: string, data: Record<string, string>): Promise<T> {
   return fetchJson<T>(url, {
     method: "POST",

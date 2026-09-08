@@ -352,6 +352,30 @@ export interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | nu
 export interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
 export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[] } }
 export interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null }
+
+export interface AnnotationVariable { name: string; kind?: string; meaning?: string; why?: string }
+export interface AnnotationAnchor { type?: "hunk" | "file"; hunkHeader?: string; context?: string[]; newStart?: number }
+export interface AnnotationNote { anchor?: AnnotationAnchor; title?: string; note: string }
+export interface CodeFileAnnotation {
+  repo: string
+  path: string
+  summary?: string
+  variables?: AnnotationVariable[]
+  flow?: string
+  flowType?: string
+  flowTitle?: string
+  notes?: AnnotationNote[]
+}
+export interface CodeAnnotations {
+  version?: number
+  reqId?: string
+  generatedAt?: number
+  generatedBy?: string
+  baseRef?: string
+  reviewedCommit?: Record<string, string>
+  files?: CodeFileAnnotation[]
+}
+export interface AnnotationsPayload { ok: boolean; annotations: CodeAnnotations | null }
 export interface SyncBaseResult { repoName: string; ok: boolean; status: string; baseRef?: string; remoteRef?: string; localBranch?: string; currentBranch?: string; beforeCommit?: string; afterCommit?: string; message: string; warnings?: string[] }
 export interface SyncBasePayload { ok: boolean; generatedAt: number; results: SyncBaseResult[] }
 export interface ProdMrResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; targetBranch: string; status: "created" | "reused" | "failed" | "skipped" | "no_diff" | string; iid?: number | null; webUrl?: string | null; title?: string | null; error?: string | null; diffFiles?: number | null; diffAdditions?: number | null; diffDeletions?: number | null }

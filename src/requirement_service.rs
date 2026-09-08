@@ -62,6 +62,15 @@ pub(crate) struct NewSessionForm {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AnnotationsSaveForm {
+    pub(crate) req_id: String,
+    /// Full code-annotations document; missing fields are filled in by the handler.
+    #[serde(default)]
+    pub(crate) annotations: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementCreateForm {
     pub(crate) req_id: String,
     pub(crate) title: String,

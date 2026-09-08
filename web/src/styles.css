@@ -866,7 +866,7 @@ button, input, select, textarea { font: inherit; }
 .react-diff-preview { margin-top: 12px; margin-bottom: 14px; }
 .react-master-diff { margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(148,163,184,.22); }
 .react-master-diff > .react-review-summary { margin-top: 0; }
-.react-diff-shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px; align-items: start; }
+.react-diff-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr) clamp(320px, 24vw, 420px); gap: 16px; align-items: start; }
 .react-diff-sidebar { position: sticky; top: 92px; max-height: calc(100vh - 112px); overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; background: linear-gradient(180deg, rgba(15,20,28,.94), rgba(8,12,18,.96)); padding: 12px; }
 .react-diff-compare { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid rgba(148,163,184,.12); color: var(--react-muted); font: .76rem var(--react-mono); }
 .react-diff-compare select { min-width: 0; border: 1px solid var(--react-border); border-radius: 10px; padding: 7px 9px; background: rgba(255,255,255,.045); color: var(--react-text); font: .74rem var(--react-mono); outline: none; }
@@ -912,6 +912,52 @@ button, input, select, textarea { font: inherit; }
 .react-diff-line-del td { background: rgba(127,29,29,.38); }
 .react-diff-line-hunk td { background: rgba(37,99,235,.14); color: #93c5fd; font-weight: 800; }
 .react-diff-line-hunk td:nth-child(3) { color: #93c5fd; }
+.react-diff-code tbody tr { cursor: pointer; }
+.react-diff-code tbody tr:hover td { background: rgba(56,189,248,.07); }
+.react-diff-code tbody tr.react-diff-line-focus td { box-shadow: inset 3px 0 0 #38bdf8; background: rgba(56,189,248,.1); }
+.react-diff-annotated { color: #4ade80; }
+
+/* ---- diff annotation inspector (right column) ---- */
+.react-diff-inspector { position: sticky; top: 92px; max-height: calc(100vh - 112px); overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; background: linear-gradient(180deg, rgba(15,20,28,.94), rgba(8,12,18,.96)); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.react-annotation-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(148,163,184,.14); }
+.react-annotation-title { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--react-cyan); font: 850 .78rem var(--react-mono); }
+.react-annotation-title strong { color: #fff; letter-spacing: .04em; }
+.react-annotation-title em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--react-muted); font: .7rem var(--react-mono); font-style: normal; }
+.react-annotation-edit-btn { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 1px solid rgba(56,189,248,.36); border-radius: 999px; padding: 5px 10px; background: rgba(56,189,248,.1); color: #7dd3fc; font: 800 .68rem var(--react-mono); cursor: pointer; }
+.react-annotation-edit-btn:hover { background: rgba(56,189,248,.2); }
+.react-annotation-stale { display: flex; align-items: center; gap: 7px; border: 1px solid rgba(245,158,11,.34); border-radius: 12px; padding: 8px 10px; background: rgba(245,158,11,.1); color: #fcd34d; font: 700 .7rem var(--react-mono); }
+.react-annotation-editor { display: flex; flex-direction: column; gap: 8px; }
+.react-annotation-editor textarea { min-height: 320px; width: 100%; resize: vertical; border: 1px solid var(--react-border); border-radius: 12px; padding: 10px; background: rgba(255,255,255,.04); color: var(--react-text); font: .72rem/1.55 var(--react-mono); outline: none; }
+.react-annotation-editor textarea:focus { border-color: rgba(56,189,248,.5); }
+.react-annotation-edit-error { margin: 0; color: #fca5a5; font: 700 .7rem var(--react-mono); }
+.react-annotation-editor-actions { display: flex; gap: 8px; }
+.react-annotation-editor-actions button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(34,197,94,.4); border-radius: 999px; padding: 6px 13px; background: rgba(34,197,94,.14); color: #86efac; font: 800 .72rem var(--react-mono); cursor: pointer; }
+.react-annotation-editor-actions button + button { border-color: rgba(148,163,184,.36); background: rgba(148,163,184,.08); color: var(--react-muted); }
+.react-annotation-editor-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.react-annotation-body { display: flex; flex-direction: column; gap: 14px; }
+.react-annotation-section { display: flex; flex-direction: column; gap: 8px; }
+.react-annotation-section-head { display: flex; align-items: center; gap: 6px; color: #7dd3fc; font: 850 .68rem var(--react-mono); text-transform: uppercase; letter-spacing: .08em; }
+.react-annotation-active { border: 1px solid rgba(56,189,248,.36); border-radius: 14px; padding: 10px 12px; background: rgba(56,189,248,.08); }
+.react-annotation-active .react-annotation-section-head { color: #38bdf8; }
+.react-md-sm { color: var(--react-text); font: .74rem/1.65 var(--react-mono); }
+.react-md-sm p { margin: 0 0 6px; }
+.react-md-sm p:last-child { margin-bottom: 0; }
+.react-annotation-vars { width: 100%; border-collapse: collapse; font: .72rem/1.5 var(--react-mono); }
+.react-annotation-vars th { text-align: left; padding: 4px 8px; color: var(--react-faint); border-bottom: 1px solid rgba(148,163,184,.2); font-weight: 800; }
+.react-annotation-vars td { padding: 6px 8px; border-bottom: 1px solid rgba(148,163,184,.08); color: var(--react-text); vertical-align: top; }
+.react-annotation-vars td code { color: #93c5fd; }
+.react-annotation-vars small { display: block; margin-top: 2px; color: var(--react-faint); }
+.react-annotation-var-kind { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid rgba(148,163,184,.3); border-radius: 999px; color: var(--react-faint); font: .6rem var(--react-mono); font-style: normal; }
+.react-annotation-note-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.react-annotation-note-list li { border-left: 2px solid rgba(56,189,248,.4); padding-left: 10px; display: flex; flex-direction: column; gap: 5px; }
+.react-annotation-note-loc { align-self: flex-start; border: 0; padding: 0; background: none; cursor: pointer; }
+.react-annotation-note-loc code { color: var(--react-cyan); font: .64rem var(--react-mono); opacity: .8; }
+.react-annotation-note-loc:hover code { opacity: 1; text-decoration: underline; }
+.react-annotation-unmatched-hint { margin: 0; color: #fcd34d; font: .68rem var(--react-mono); }
+.react-annotation-flow { overflow-x: auto; border: 1px solid rgba(148,163,184,.14); border-radius: 12px; padding: 8px; background: rgba(255,255,255,.03); }
+.react-annotation-flow svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+.react-annotation-flow-fallback { margin: 0; padding: 10px; border: 1px dashed rgba(148,163,184,.3); border-radius: 12px; color: var(--react-muted); font: .68rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
+.react-annotation-flow-loading { margin: 0; font: .7rem var(--react-mono); }
 .react-gitai-card { grid-template-columns: minmax(0, 1fr) auto; }
 .react-gitai-fix-result { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .react-fix-ok { color: #86efac !important; border-color: rgba(34,197,94,.36) !important; background: rgba(34,197,94,.12) !important; }
@@ -924,6 +970,6 @@ button, input, select, textarea { font: inherit; }
 .react-billable-summary span:first-child { font: 800 .78rem var(--react-mono); color: #bbf7d0; letter-spacing: .02em; }
 .react-billable-summary strong { font: 850 1.5rem var(--react-mono); color: #4ade80; }
 .react-billable-summary .react-muted { color: var(--react-muted); font: .74rem var(--react-mono); }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
 @media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
 .react-warn-note { color: #d97706; font: 600 .72rem var(--react-mono); }

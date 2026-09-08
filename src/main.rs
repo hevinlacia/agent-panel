@@ -71,6 +71,7 @@ const INJECTION_CTX_SUBDIR: &str = "ctx";
 const BRANCH_SCOPE_FILE: &str = "branches.json";
 const CODE_REVIEW_FILE: &str = "code-review.json";
 const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
+const CODE_ANNOTATIONS_FILE: &str = "code-annotations.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
 const EXPERIENCE_SUMMARY_JOB_FILE: &str = "experience-summary-job.json";
 const PHASE_COMMON_PROMPT_FILE: &str = "prompts/phase-common.md";
@@ -302,6 +303,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
+        )
+        .route(
+            "/api/requirement/annotations",
+            get(api_requirement_annotations_get).put(api_requirement_annotations_put),
         )
         .route(
             "/api/requirement/sync-base",

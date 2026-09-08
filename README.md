@@ -124,6 +124,7 @@ Agent Panel 目前做的是**只读能力接入**：
 - `POST /api/requirement/code-review/incremental` — 在已有审查快照过期时生成 `code-review-incremental.json`：按 reviewed `targetCommit` → current HEAD 生成新增提交/文件/diff，用于测试中追加代码后的快速复审，避免重审全量分支
 - `GET /api/requirement/review-gate?id=<req>` — 读取代码审查门禁状态；自测中推进到测试中时，后端会强制要求 PASS 或 WAIVED。响应 `gate` 含 `riskTags` / `inventoryRisk`：命中库存风险时，即使 review 写 PASS，若未包含库存账本专项评估，门禁仍为 `inventory-pending`（不允许推进）
 - `POST /api/requirement/master-diff` — 按 `branches.json` 对比需求分支和指定基准分支
+- `GET|PUT /api/requirement/annotations` — 读写需求目录 `code-annotations.json`：按文件讲解 diff（改动摘要 / 关键变量 / mermaid 流转图 / hunk 级备注），供差异页右侧说明栏展示；agent 经 `req-diff-annotate` skill 生成，面板可手工编辑
 - `GET /api/requirement/merge-options?id=<req>` — 返回前端/后端可选环境分支和按需求状态计算的默认选中值
 - `POST /api/requirement/merge-branch` — 按 `branches.json` 将需求分支合并到选择的 `targetBranch`（仅 test/UAT 环境分支，不含生产分支）；无冲突则自动推送，冲突则返回 `conflictFiles` 和保留的 `worktreePath`
 - `GET /api/requirement/merge-status?id=<req>&target=test|uat` — 查看未完成合并 worktree / 冲突状态，供详情页和 agent 续处理

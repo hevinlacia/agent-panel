@@ -16,7 +16,7 @@ Current architecture:
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_ai.rs` — Git AI health checks, suspect record refresh, note re-push, and fix-note agent dispatch.
 - `src/git_workflow.rs` — Requirement branch scope, code-review diff generation, sync-base, merge status, and GitLab MR helpers.
-- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration.
+- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save.
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
 - `src/requirement_service.rs` — Requirement create/update/edit/doc/event/state validation and write helpers.
 - `src/requirement_context.rs` — Requirement schema, token context, phase runtime, review gate, and context HTML rendering.
@@ -32,11 +32,14 @@ Current architecture:
 - `web/src/pages/release-plan.tsx` — 发布计划页：按需求 `plan-release` 登记日期分组（当天/已过期/未来/未登记），发版当天快速查看。
 - `web/src/components/ui.tsx` — Shared page chrome, feedback cards, panel headers, KPI card, and motion variants.
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
+- `web/src/features/requirements/annotation-panel.tsx` — Diff page right-hand inspector: file summary, key variables, mermaid flow, hunk notes, JSON hand-editing.
+- `web/src/features/requirements/mermaid-flow.tsx` — Lazy mermaid renderer for annotation flow diagrams; degrades to source on syntax errors.
 - `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
 - `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.
 - `web/src/lib/requirements.ts` — Requirement status/category constants and status color metadata.
 - `web/src/lib/diff.ts` — Unified diff parsing/stat helpers.
+- `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
@@ -51,7 +54,7 @@ Removed architecture:
 
 1. Never read or print secret/key files: `.env`, `.env.*`, `credentials.json`, `secrets.json`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`.
 2. Do not shell-eval user input. When commands are needed, use fixed argv and validate IDs/paths first.
-3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, and generated context files.
+3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, `code-annotations.json`, and generated context files.
 4. Pi session ids are UUIDs. Do not reintroduce `ses_` OpenCode id handling.
 5. Do not reintroduce PTY/terminal functionality unless the user explicitly asks for it.
 6. No git commit/push/branch changes without explicit user request.

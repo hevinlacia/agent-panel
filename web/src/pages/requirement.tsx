@@ -1,11 +1,13 @@
-import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, Paperclip, RefreshCw, Search } from "lucide-react"
+import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, MessageSquareText, Paperclip, RefreshCw, Search } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionInfo, SyncBasePayload } from "../types"
-import { fetchJson, postForm, postJson, useFetch } from "../lib/api"
+import type { AnnotationsPayload, CodeAnnotations, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionInfo, SyncBasePayload } from "../types"
+import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_SOURCES } from "../lib/requirements"
-import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName, unquoteGitPath } from "../lib/diff"
+import { compactPath, diffDomId, diffLineDomId, parseUnifiedDiffFiles, reviewStats, shortFileName, unquoteGitPath } from "../lib/diff"
+import { annotationStaleRepos, buildAnnotationIndex, fileKeyOf, hunkOwners, matchHunkNotes } from "../lib/annotations"
+import { AnnotationPanel } from "../features/requirements/annotation-panel"
 import { Markdown } from "../markdown"
 import { experienceSummaryPill, onesBadge, projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
@@ -337,8 +339,12 @@ export function RequirementDiffPage() {
   const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
   const stats = reviewStats(review)
   const [activeKey, setActiveKey] = useState("")
+  /** 行级联动状态：用户点击的 diff 行（key + 行下标），驱动右侧说明面板与 hunk 高亮。 */
+  const [activeLine, setActiveLine] = useState<{ key: string; line: number } | null>(null)
+  const [savingAnnotation, setSavingAnnotation] = useState(false)
   /** 手动刷新计数：base 不变时点击刷新也要重新拉取，计入依赖触发 effect 重跑。 */
   const [refreshTick, setRefreshTick] = useState(0)
+  const annotations = useFetch<AnnotationsPayload>(reqId ? `/api/requirement/annotations?reqId=${encodeURIComponent(reqId)}` : null, [reqId])
   useEffect(() => {
     if (!reqId) return
     let cancelled = false
@@ -356,9 +362,48 @@ export function RequirementDiffPage() {
     if (!exists) setActiveKey(`${files[0].repo.repoName}:${files[0].file.path}`)
   }, [files, activeKey])
   const activeIndex = Math.max(0, files.findIndex((item) => `${item.repo.repoName}:${item.file.path}` === activeKey))
+  const activeView = files.find((item) => `${item.repo.repoName}:${item.file.path}` === activeKey) || null
+  const annotationIndex = useMemo(() => buildAnnotationIndex(files, annotations.data?.annotations), [files, annotations.data])
+  const staleRepos = useMemo(() => annotationStaleRepos(annotations.data?.annotations, files), [annotations.data, files])
+  const activeAnnotation = annotationIndex.get(activeKey) || null
+  const activeHunkOwners = useMemo(() => hunkOwners(activeView?.lines || []), [activeView])
+  const hunkNotes = useMemo(() => matchHunkNotes(activeView?.lines || [], activeAnnotation?.notes), [activeView, activeAnnotation])
+  const activeHunkLine = activeLine && activeLine.key === activeKey ? activeHunkOwners[activeLine.line] ?? -1 : -1
+  const noteLocateMap = useMemo(() => {
+    const map = new Map<number, number>()
+    const notes = activeAnnotation?.notes || []
+    for (const hit of hunkNotes.matched) {
+      const idx = notes.indexOf(hit.note)
+      if (idx >= 0) map.set(idx, hit.lineIndex)
+    }
+    return map
+  }, [hunkNotes, activeAnnotation])
   const scrollToFile = (key: string) => {
     setActiveKey(key)
+    setActiveLine(null)
     document.getElementById(diffDomId(key))?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
+  const locateNote = (noteIndex: number) => {
+    const lineIndex = noteLocateMap.get(noteIndex)
+    if (lineIndex == null) return
+    setActiveLine({ key: activeKey, line: lineIndex })
+    document.getElementById(diffLineDomId(activeKey, lineIndex))?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }
+  const saveAnnotation = async (next: CodeFileAnnotation) => {
+    if (!reqId) return
+    setSavingAnnotation(true)
+    try {
+      const current: CodeAnnotations = { ...(annotations.data?.annotations || {}) }
+      const list = [...(current.files || [])]
+      const idx = list.findIndex((f) => f.repo === next.repo && f.path === next.path)
+      if (idx >= 0) list[idx] = next
+      else list.push(next)
+      current.files = list
+      await putJson("/api/requirement/annotations", { reqId, annotations: current })
+      annotations.refresh()
+    } finally {
+      setSavingAnnotation(false)
+    }
   }
   const changeBase = (next: string) => {
     setBaseRef(next)
@@ -368,17 +413,27 @@ export function RequirementDiffPage() {
     window.history.replaceState(null, "", `/requirement-diff?${q.toString()}`)
   }
   const title = req?.title || reqId || "分支差异"
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="按需求分支和指定基准分支生成代码差异，左侧选择文件，中间查看改动内容。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => setRefreshTick((t) => t + 1)} disabled={loadingDiff}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />刷新 diff</button></>}>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="按需求分支和指定基准分支生成代码差异：左侧选择文件，中间查看改动，右侧查看/编辑文件说明。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => setRefreshTick((t) => t + 1)} disabled={loadingDiff}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />刷新 diff</button></>}>
     <section className="react-diff-shell">
       <aside className="react-diff-sidebar"><div className="react-diff-compare"><span>Compare</span><select value={baseRef} onChange={(e) => changeBase(e.target.value)}><option value="origin/master">origin/master</option><option value="origin/production">origin/production</option><option value="master">master</option><option value="production">production</option></select><em>and latest version</em></div><label className="react-diff-search"><Search size={14} /><input placeholder="Search files (Ctrl+P)" onChange={(e) => { const hit = files.find((f) => f.file.path.toLowerCase().includes(e.target.value.toLowerCase())); if (hit && e.target.value) scrollToFile(`${hit.repo.repoName}:${hit.file.path}`) }} /></label><div className="react-diff-file-list">{[...new Set(review?.repos?.map((r) => r.repoName) || [])].map((repoName) => {
           const repo = review?.repos?.find((r) => r.repoName === repoName)
           const repoFiles = files.filter((f) => f.repo.repoName === repoName)
           return <details key={repoName} className="react-diff-repo-group" open>
             <summary><strong>{repoName}</strong><em>base: {repo?.baseRef || baseRef}</em></summary>
-            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em><b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
+            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
           </details>
         })}</div></aside>
-      <main className="react-diff-main"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成分支差异…" /> : files.length === 0 ? <EmptyCard>没有可展示的文件级差异。</EmptyCard> : files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <article key={key} id={diffDomId(key)} className="react-diff-file-card"><header><div><FileCode2 size={16} /><strong>{item.repo.repoName}/{item.file.path}</strong><em className="react-diff-base-label">vs {item.repo.baseRef || review?.baseRef || "?"}</em></div><span><b>+{item.file.additions}</b><i>-{item.file.deletions}</i></span></header>{item.lines.length ? <table className="react-diff-code"><tbody>{item.lines.map((line, i) => <tr key={i} className={`react-diff-line-${line.type}`}><td>{line.oldNo}</td><td>{line.newNo}</td><td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td></tr>)}</tbody></table> : <pre className="react-diff-preview">{item.diff || "该文件 diff 已截断或为空。"}</pre>}</article> })}</main>
+      <main className="react-diff-main"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成分支差异…" /> : files.length === 0 ? <EmptyCard>没有可展示的文件级差异。</EmptyCard> : files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const owners = hunkOwners(item.lines); const focusHunk = activeLine && activeLine.key === key ? owners[activeLine.line] ?? -1 : -1; return <article key={key} id={diffDomId(key)} className="react-diff-file-card"><header><div><FileCode2 size={16} /><strong>{item.repo.repoName}/{item.file.path}</strong><em className="react-diff-base-label">vs {item.repo.baseRef || review?.baseRef || "?"}</em></div><span><b>+{item.file.additions}</b><i>-{item.file.deletions}</i></span></header>{item.lines.length ? <table className="react-diff-code"><tbody>{item.lines.map((line, i) => <tr key={i} id={diffLineDomId(key, i)} className={`react-diff-line-${line.type}${focusHunk >= 0 && owners[i] === focusHunk ? " react-diff-line-focus" : ""}`} onClick={() => { setActiveKey(key); setActiveLine({ key, line: i }) }}><td>{line.oldNo}</td><td>{line.newNo}</td><td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td></tr>)}</tbody></table> : <pre className="react-diff-preview">{item.diff || "该文件 diff 已截断或为空。"}</pre>}</article> })}</main>
+      <AnnotationPanel
+        fileLabel={activeView ? `${activeView.repo.repoName}/${activeView.file.path}` : ""}
+        annotation={activeAnnotation}
+        stale={Boolean(activeView && staleRepos.includes(activeView.repo.repoName))}
+        activeNotes={hunkNotes.matched.filter((hit) => hit.lineIndex === activeHunkLine)}
+        unmatchedNotes={hunkNotes.unmatched}
+        onLocate={locateNote}
+        onSave={saveAnnotation}
+        saving={savingAnnotation}
+ />
     </section>
   </PageChrome>
 }
