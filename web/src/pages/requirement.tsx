@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, MessageSquareText, Paperclip, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { AnnotationsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, SessionInfo, SyncBasePayload } from "../types"
+import type { AnnotationsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, ReviewMaterialsPayload, SessionInfo, SyncBasePayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
@@ -114,6 +114,8 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
   const [actionError, setActionError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncPayload, setSyncPayload] = useState<SyncBasePayload | null>(null)
+  const [preparingMaterials, setPreparingMaterials] = useState(false)
+  const [materials, setMaterials] = useState<ReviewMaterialsPayload["materials"] | null>(null)
   const scope = data?.branchScope || null
   const review = data?.review || null
   const stats = reviewStats(review)
@@ -161,6 +163,21 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
       setSyncing(false)
     }
   }
+  const prepareMaterials = async () => {
+    if (!canScan || preparingMaterials) return
+    setPreparingMaterials(true)
+    setActionError(null)
+    try {
+      const payload = await postForm<ReviewMaterialsPayload>("/api/requirement/review-materials", { reqId: req.id })
+      setMaterials(payload.materials)
+      refresh()
+      gate.refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPreparingMaterials(false)
+    }
+  }
   return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Review Gate" title="代码审查门禁" chip={gate.data?.gate?.label || (gate.loading ? "loading" : "gate")} />
     <div className={`react-review-gate react-review-gate-${gate.data?.gate?.status || "unknown"}`}><strong>{gate.data?.gate?.label || "读取中"}</strong><span>{gate.data?.gate?.reason || "自测中推进到测试中前必须完成代码审查门禁。"}</span>{gate.data?.gate?.source ? <em>source: {gate.data.gate.source}</em> : null}</div>
     {gateRiskTags.length ? <div className="react-review-risk-tags"><strong>风险标签</strong>{gateRiskTags.map((tag) => <span key={tag} className="react-review-tag">{tag}</span>)}</div> : null}
@@ -168,8 +185,9 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
     {gateStale ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong>{staleRepos.length ? <ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul> : null}<p>优先生成增量审查包，只审上次已审 commit 到当前 HEAD 的新增 diff；非线性历史再回退全量审查。</p></div> : null}
     {gate.data?.gate?.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{gate.data.gate.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
     {gate.error ? <p className="react-effort-error">门禁加载失败：{gate.error}</p> : null}
-    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新全量差异" : "生成代码差异"}</button>{gateStale ? <button onClick={refreshIncrementalScan} disabled={!canScan || refreshingIncremental}><RefreshCw size={15} className={refreshingIncremental ? "react-spin" : ""} />生成增量审查包</button> : null}<button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
+    <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新全量差异" : "生成代码差异"}</button>{gateStale ? <button onClick={refreshIncrementalScan} disabled={!canScan || refreshingIncremental}><RefreshCw size={15} className={refreshingIncremental ? "react-spin" : ""} />生成增量审查包</button> : null}<button onClick={prepareMaterials} disabled={!canScan || preparingMaterials} title="一键备料：无快照生成全量、有漂移生成增量包、非线性历史回退全量；返回快照路径供 reviewer 直接 read，审查产出同步维护差异页说明栏（code-annotations.json）"><RefreshCw size={15} className={preparingMaterials ? "react-spin" : ""} />{preparingMaterials ? "备料中…" : "准备审查材料"}</button><button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
     {syncPayload?.results?.length ? <details className="react-review-repo" open><summary><span><strong>生产基线同步</strong><em>{formatDateTime(syncPayload.generatedAt)}</em></span><span className="react-review-size">{syncPayload.results.filter((r) => r.ok).length}/{syncPayload.results.length} ok</span></summary><div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>应用</th><th>本地分支</th><th>状态</th><th>before</th><th>after</th><th>说明</th></tr></thead><tbody>{syncPayload.results.map((r) => <tr key={r.repoName}><td><strong>{r.repoName}</strong></td><td><code>{r.localBranch || r.baseRef || "-"}</code></td><td><span className={`react-merge-status ${r.ok ? "merged" : "conflict"}`}>{r.status}</span></td><td><code>{r.beforeCommit || "-"}</code></td><td><code>{r.afterCommit || "-"}</code></td><td>{r.message}{r.warnings?.length ? <em>{r.warnings.join("; ")}</em> : null}</td></tr>)}</tbody></table></div></details> : null}
+    {materials ? <details className="react-review-repo" open><summary><span><strong>审查材料就绪</strong><em>{materials.mode} · {materials.materialFile}</em></span><span className="react-review-size">{materials.repos.length} repo</span></summary><p className="react-muted">{materials.reason}。reviewer 材料：<code>{materials.materialPath}</code></p>{materials.handoffHints?.length ? <ul className="react-muted">{materials.handoffHints.map((hint, i) => <li key={i}>{hint}</li>)}</ul> : null}{materials.repos.map((repo, i) => <div key={`${repo.repoName}-${repo.branch}-${i}`} className="react-branch-card"><strong>{repo.repoName}</strong><code>{repo.branch}</code><span>{repo.fromCommit?.slice(0, 12) || "?"} → {repo.toCommit?.slice(0, 12) || "?"}</span><em>{repo.linearHistory === false ? "非线性历史" : `+${repo.additions ?? 0} / -${repo.deletions ?? 0}`}</em></div>)}</details> : null}
     {error ? <p className="react-effort-error">加载失败：{error}</p> : null}{actionError ? <p className="react-effort-error">刷新失败：{actionError}</p> : null}
     {loading ? <LoadingCard label="正在加载代码差异…" /> : <>
       <div className="react-branch-scope">

@@ -355,6 +355,22 @@ export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number 
 export interface DiffSnapshotsPayload { ok: boolean; snapshots: CodeDiffSnapshot[] }
 export interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; snapshots: CodeDiffSnapshot[] }
 
+export interface ReviewMaterialsRepo { repoName: string; branch: string; fromCommit: string; toCommit: string; additions?: number; deletions?: number; riskTags?: string[]; diffTruncated?: boolean; linearHistory?: boolean | null }
+export interface ReviewMaterials {
+  mode: "full-initial" | "full-ready" | "full-regenerate" | "incremental" | "incremental-pending" | string
+  reason: string
+  materialKind: "full" | "incremental" | string
+  materialFile: string
+  materialPath: string
+  riskTags?: string[]
+  inventoryRisk?: boolean
+  repos: ReviewMaterialsRepo[]
+  warnings: string[]
+  handoffHints: string[]
+  checkedAt: number
+}
+export interface ReviewMaterialsPayload { ok: boolean; reqId: string; materials: ReviewMaterials }
+
 export interface AnnotationVariable { name: string; kind?: string; meaning?: string; why?: string }
 export interface AnnotationAnchor { type?: "hunk" | "file"; hunkHeader?: string; context?: string[]; newStart?: number }
 export interface AnnotationNote { anchor?: AnnotationAnchor; title?: string; note: string }

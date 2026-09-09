@@ -250,6 +250,227 @@ pub(crate) async fn run_code_review_incremental_scan(
     Ok(review)
 }
 
+/// 一键准备代码审查材料（决策树编排）：
+/// 1. code-review.json 不存在 -> 全量首扫（mode=full-initial）
+/// 2. 存在但 reviewed targetCommit 与 HEAD 漂移：
+///    - 全部线性历史 -> 生成增量包（mode=incremental）
+///    - 任一非线性历史（force-push/rebase）-> 全量重扫（mode=full-regenerate）
+/// 3. 存在且无漂移：
+///    - 增量包比 review 结论新（上次增量还没审完）-> 复用现有增量包（mode=incremental-pending）
+///    - 否则 -> 全量快照仍有效（mode=full-ready）
+/// 返回材料路径 + 模式 + handoff 提示，调用方把 materialPath 直接写进 reviewer handoff。
+pub(crate) async fn prepare_review_materials(
+    req_dir: &Path,
+    req_id: &str,
+    scope: &BranchScope,
+) -> Result<Value> {
+    let existing_full = read_json_if_exists(&req_dir.join(CODE_REVIEW_FILE)).await;
+    let mut warnings = Vec::<String>::new();
+    let (mode, reason, material_kind, review_doc) = match existing_full {
+        None => {
+            let review = run_code_review_scan(req_dir, req_id, scope).await?;
+            (
+                "full-initial",
+                "需求目录还没有 code-review.json，已自动生成全量审查快照".to_string(),
+                "full",
+                review,
+            )
+        }
+        Some(existing) => {
+            let drifts = review_snapshot_drifts(req_dir).await;
+            if drifts.is_empty() {
+                if review_artifact_newer_than_review_docs(req_dir, CODE_REVIEW_INCREMENTAL_FILE).await {
+                    if let Some(inc) = read_json_if_exists(&req_dir.join(CODE_REVIEW_INCREMENTAL_FILE)).await {
+                        (
+                            "incremental-pending",
+                            "上一次生成的增量审查包还没有产生更新的审查结论，直接复用，不重复生成".to_string(),
+                            "incremental",
+                            inc,
+                        )
+                    } else {
+                        let review = run_code_review_scan(req_dir, req_id, scope).await?;
+                        (
+                            "full-initial",
+                            "需求目录还没有 code-review.json，已自动生成全量审查快照".to_string(),
+                            "full",
+                            review,
+                        )
+                    }
+                } else {
+                    if review_artifact_requires_fresh_review(req_dir, &req_dir.join("review.md")).await {
+                        warnings.push(
+                            "全量快照刚刷新且比 review.md 结论新，需基于最新快照重新给出 Review Gate 结论".to_string(),
+                        );
+                    }
+                    (
+                        "full-ready",
+                        "审查快照覆盖的 target commit 与当前需求分支 HEAD 一致，无漂移，全量快照材料仍然有效".to_string(),
+                        "full",
+                        existing,
+                    )
+                }
+            } else {
+                let mut all_linear = true;
+                for drift in &drifts {
+                    if !drift_is_linear(drift).await {
+                        all_linear = false;
+                        break;
+                    }
+                }
+                if all_linear {
+                    let inc = run_code_review_incremental_scan(req_dir, req_id).await?;
+                    (
+                        "incremental",
+                        format!(
+                            "检测到 {} 个仓库的需求分支 HEAD 已推进（{}），已生成增量审查包，只覆盖 reviewed commit → HEAD 的新增 diff",
+                            drifts.len(),
+                            drifts.iter().map(|d| d.repo_name.as_str()).collect::<Vec<_>>().join("、")
+                        ),
+                        "incremental",
+                        inc,
+                    )
+                } else {
+                    warnings.push(
+                        "检测到非线性历史（reviewed commit 不是当前 HEAD 的祖先，可能 rebase/force-push），增量 diff 不可靠，已回退全量重扫".to_string(),
+                    );
+                    let review = run_code_review_scan(req_dir, req_id, scope).await?;
+                    (
+                        "full-regenerate",
+                        "存在非线性历史漂移，已重新生成全量审查快照".to_string(),
+                        "full",
+                        review,
+                    )
+                }
+            }
+        }
+    };
+
+    let is_incremental = material_kind == "incremental";
+    let material_file = if is_incremental {
+        CODE_REVIEW_INCREMENTAL_FILE
+    } else {
+        CODE_REVIEW_FILE
+    };
+    let material_path = req_dir.join(material_file);
+    let repos_summary = review_doc
+        .get("repos")
+        .and_then(Value::as_array)
+        .map(|repos| {
+            repos
+                .iter()
+                .map(|r| {
+                    let from = if is_incremental {
+                        value_string(r, "coverageFromCommit")
+                            .or_else(|| value_string(r, "baseCommit"))
+                            .unwrap_or_default()
+                    } else {
+                        value_string(r, "baseCommit").unwrap_or_default()
+                    };
+                    let to = if is_incremental {
+                        value_string(r, "coverageToCommit")
+                            .or_else(|| value_string(r, "targetCommit"))
+                            .unwrap_or_default()
+                    } else {
+                        value_string(r, "targetCommit").unwrap_or_default()
+                    };
+                    json!({
+                        "repoName": value_string(r, "repoName").unwrap_or_default(),
+                        "branch": value_string(r, "branch").unwrap_or_default(),
+                        "fromCommit": from,
+                        "toCommit": to,
+                        "additions": r.get("additions").cloned().unwrap_or(json!(0)),
+                        "deletions": r.get("deletions").cloned().unwrap_or(json!(0)),
+                        "riskTags": r.get("riskTags").cloned().unwrap_or_else(|| json!([])),
+                        "diffTruncated": r.get("diffTruncated").and_then(Value::as_bool).unwrap_or(false),
+                        "linearHistory": r.get("linearHistory").and_then(Value::as_bool),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let risk_tags: Vec<String> = review_doc
+        .get("riskTags")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let inventory_risk = review_doc
+        .get("inventoryRisk")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut handoff_hints = vec![format!(
+        "reviewer 直接 read {}：diff 字段已含 --unified=80 全文及 files/commits/riskTags 元数据，无需再执行 git 命令",
+        material_path.display()
+    )];
+    if is_incremental {
+        handoff_hints.push(
+            "只审查覆盖范围内的新增 diff（fromCommit → toCommit）；审完在 review.md 注明覆盖范围并重写 Review Gate 结论，门禁按结论文件 mtime + commit 指纹判定覆盖".to_string(),
+        );
+    } else {
+        handoff_hints.push(
+            "审查覆盖 baseCommit → toCommit 的全部 diff；审完在 review.md 重写 Review Gate 结论（PASS / BLOCKED / WAIVED）".to_string(),
+        );
+    }
+    if inventory_risk {
+        handoff_hints.push(
+            "本次改动命中库存高危风险：审查必须包含库存账本专项评估（单据活跃/死亡、DB 库存、redis 可用量、重复释放、遗漏占用、幂等、验证证据），否则 PASS 不通过门禁".to_string(),
+        );
+    }
+    handoff_hints.push(
+        "审查产出需同时维护人类审查辅助说明（code-annotations.json）：为本次 diff 的关键文件（建议 ≤10 个，优先 riskTags 命中/核心链路文件）逐个产出 `repoName/path` + `summary`（改动目的与设计思路）+ `variables`（关键变量/字段：名 | 含义 | 为何重要）+ `flow`（数据/状态流转，可用 mermaid flowchart）+ `notes`（关键 hunk 备注，含 hunkHeader 定位）".to_string(),
+    );
+    handoff_hints.push(
+        "reviewer 无写权限：annotations 内容先随审查结论一起输出，由主 agent 复核后调 `PUT /api/requirement/annotations` 落盘（全量覆盖旧版）；写入时机与审查快照同批，说明锚定当前审查 diff，避免说明栏与代码漂移".to_string(),
+    );
+    for repo in &repos_summary {
+        if repo.get("diffTruncated").and_then(Value::as_bool).unwrap_or(false) {
+            handoff_hints.push(format!(
+                "仓库 {} 的 diff 超过输出上限被截断，审查结论需注明覆盖范围，必要时分仓重试",
+                repo.get("repoName").and_then(Value::as_str).unwrap_or("?")
+            ));
+        }
+    }
+    handoff_hints.extend(warnings.iter().cloned());
+
+    Ok(json!({
+        "mode": mode,
+        "reason": reason,
+        "materialKind": material_kind,
+        "materialFile": material_file,
+        "materialPath": material_path.to_string_lossy(),
+        "riskTags": risk_tags,
+        "inventoryRisk": inventory_risk,
+        "repos": repos_summary,
+        "warnings": warnings,
+        "handoffHints": handoff_hints,
+        "checkedAt": now_ms(),
+    }))
+}
+
+/// 判定单条漂移是否线性历史：reviewed target commit 是否为当前 HEAD 的祖先。
+/// 缺 projectPath 或 git 调用失败时按非线性处理（保守回退全量审查）。
+async fn drift_is_linear(drift: &ReviewSnapshotDrift) -> bool {
+    let Some(project_path) = drift.project_path.as_ref() else {
+        return false;
+    };
+    if drift.reviewed_target_commit.is_empty() || drift.current_target_commit.is_empty() {
+        return false;
+    }
+    let ancestor = git(
+        project_path,
+        &[
+            "merge-base",
+            "--is-ancestor",
+            &drift.reviewed_target_commit,
+            &drift.current_target_commit,
+        ],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    ancestor.ok
+}
+
 pub(crate) async fn scan_incremental_review_drift(drift: &ReviewSnapshotDrift) -> Value {
     let mut warnings = Vec::<String>::new();
     let Some(project_path) = drift.project_path.as_ref() else {
