@@ -1,0 +1,33 @@
+src/requirement_api.rs
+  8188f9aa22e98743 957-959,972-974,976,980-993
+web/src/types.ts
+  8188f9aa22e98743 354-356
+web/src/pages/requirement.tsx
+  8188f9aa22e98743 1,3,338-341,380,384-391,394-404,460-461,464,474
+src/git_workflow.rs
+  8188f9aa22e98743 428-482
+src/main.rs
+  8188f9aa22e98743 75,308-310
+.agents/skills/req-diff-annotate/SKILL.md
+  8188f9aa22e98743 40,43,46-48,56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2a696fef89234b69a0ebe51e4c9aa3c15d9bd68d",
+  "prompts": {
+    "8188f9aa22e98743": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a07f29-9b20-7501-b8d3-e7dfe10dfb8a",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 124,
+      "total_deletions": 22,
+      "accepted_lines": 122,
+      "overriden_lines": 0
+    }
+  }
+}
