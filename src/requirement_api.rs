@@ -954,7 +954,9 @@ pub(crate) async fn api_requirement_master_diff(
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
-    let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request("requirement has no directory; cannot save diff snapshot".to_string())
+    })?);
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
         ApiError::bad_request(format!(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
@@ -967,9 +969,28 @@ pub(crate) async fn api_requirement_master_diff(
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
     let review = run_master_diff_scan(&req.id, &branch_scope, base_ref).await?;
+    // 快照对比模式：生成后入栈保存（保留最近 5 版，同 base+target 提交去重），
+    // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
+    let snapshots = save_diff_snapshot(&req_dir, review).await?;
     Ok(Json(
-        json!({ "ok": true, "branchScope": branch_scope, "review": review }),
+        json!({ "ok": true, "branchScope": branch_scope, "snapshots": snapshots }),
     ))
+}
+
+/// Read the requirement's saved master-diff snapshot stack (newest first).
+/// Returns an empty list when none has been generated yet.
+pub(crate) async fn api_requirement_diff_snapshots_get(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
+    let doc = read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE)).await;
+    let snapshots = doc
+        .and_then(|d| d.get("snapshots").cloned())
+        .unwrap_or_else(|| json!([]));
+    Ok(Json(json!({ "ok": true, "snapshots": snapshots })))
 }
 
 /// Read the code-annotations.json snapshot for a requirement (null when absent).

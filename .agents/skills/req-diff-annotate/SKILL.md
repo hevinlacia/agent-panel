@@ -37,14 +37,15 @@ allowed-tools: ["bash", "read", "get_session_info"]
 - reqId 已知则直接用；否则问用户，或用 `get_session_info` 确认当前 session 后经 `GET /api/requirement/by-session?sessionId=<id>` 反查。
 - 确认需求存在：`GET /api/requirement?id=<reqId>`。
 
-### 2. 读取代码差异快照
+### 2. 读取代码差异快照栈
 
 ```bash
-curl -s "http://localhost:7331/api/requirement/code-review?reqId=<reqId>"
+curl -s "http://localhost:7331/api/requirement/diff-snapshots?reqId=<reqId>"
 ```
 
-- 取 `review.repos[]`：每个 repo 有 `repoName`、`targetCommit`、`diff`（unified diff 全文）、`files[].path`。
-- 若 `review` 为 null 或无 diff：提示用户先在差异页点"生成代码差异"，停止本 skill。
+- 返回 `snapshots[]`（新在前，最多 5 版）；取 `snapshots[0]` 作为讲解基准（与差异页默认展示一致）。
+- 每个快照含 `repoName`、`targetCommit`、`diff`（unified diff 全文）、`files[].path`、`savedAt`。
+- 若 `snapshots` 为空：提示用户先在差异页点「生成代码差异」，停止本 skill。
 - 大需求可分批：先为改动最核心的 3-5 个文件生成，不要一次性读完整个 diff 再动手。
 
 ### 3. 生成讲解（遵守 schema）
@@ -52,6 +53,7 @@ curl -s "http://localhost:7331/api/requirement/code-review?reqId=<reqId>"
 对每个值得讲解的文件生成一个条目（schema 模板见下方）。生成要求：
 
 - `repo` / `path` 必须与快照中 `repoName` / `files[].path` **逐字一致**，否则面板匹配不上。
+- 快照是差异页展示的同一份数据：基于 `snapshots[0]` 生成的备注与面板锚定完全一致；用户刷新差异后快照变化，面板会提示备注过期，届时重跑本 skill 即可。
 - `summary`：1-3 句话，讲清"改了什么 + 为什么"，中文。
 - `variables`：只列 diff 中新出现或语义变化的关键变量/字段/配置项（5-10 个以内），不逐个罗列局部变量。`meaning` 讲业务含义，`why` 讲为什么需要它（可选）。
 - `flow`：mermaid 源码（`graph LR` / `sequenceDiagram` / `stateDiagram-v2`），节点文字用中文，描述数据或状态如何流转（来源 → 处理 → 落点）。节点/边标签避免 `()` `[]` `{}` 等易破坏 mermaid 语法的裸字符，需要时用引号包裹。
