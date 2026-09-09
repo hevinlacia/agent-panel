@@ -72,6 +72,7 @@ const BRANCH_SCOPE_FILE: &str = "branches.json";
 const CODE_REVIEW_FILE: &str = "code-review.json";
 const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
 const CODE_ANNOTATIONS_FILE: &str = "code-annotations.json";
+const CODE_DIFF_SNAPSHOTS_FILE: &str = "code-diff-snapshots.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
 const EXPERIENCE_SUMMARY_JOB_FILE: &str = "experience-summary-job.json";
 const PHASE_COMMON_PROMPT_FILE: &str = "prompts/phase-common.md";
@@ -303,6 +304,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
+        )
+        .route(
+            "/api/requirement/diff-snapshots",
+            get(api_requirement_diff_snapshots_get),
         )
         .route(
             "/api/requirement/annotations",

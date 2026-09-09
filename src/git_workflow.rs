@@ -425,6 +425,61 @@ pub(crate) async fn run_master_diff_scan(
     }))
 }
 
+/// Save a freshly generated master-diff snapshot onto the requirement's
+/// snapshot stack (newest first, capped at MAX_DIFF_SNAPSHOTS) and return the
+/// whole stack. The diff page renders any entry of this stack, so "undo a
+/// refresh" is just switching back to the previous entry — no regeneration.
+pub(crate) async fn save_diff_snapshot(req_dir: &Path, review: Value) -> Result<Vec<Value>> {
+    const MAX_DIFF_SNAPSHOTS: usize = 5;
+    let mut snapshots: Vec<Value> = read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE))
+        .await
+        .and_then(|doc| doc.get("snapshots").cloned())
+        .and_then(|s| serde_json::from_value::<Vec<Value>>(s).ok())
+        .unwrap_or_default();
+    let mut snapshot = review;
+    if let Some(obj) = snapshot.as_object_mut() {
+        obj.insert("savedAt".to_string(), json!(now_ms()));
+        // Remove any previous snapshot with the identical base+target commits:
+        // re-generating the same diff should not grow the history stack.
+        let sig = (
+            obj.get("baseRef").and_then(|v| v.as_str()).map(str::to_string),
+            repo_commit_signature(&snapshot),
+        );
+        snapshots.retain(|s| {
+            let other_sig = (
+                s.get("baseRef").and_then(|v| v.as_str()).map(str::to_string),
+                repo_commit_signature(s),
+            );
+            other_sig != sig
+        });
+    }
+    snapshots.insert(0, snapshot);
+    snapshots.truncate(MAX_DIFF_SNAPSHOTS);
+    let doc = json!({ "version": 1, "updatedAt": now_ms(), "snapshots": snapshots });
+    atomic_write_json(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE), &doc).await?;
+    Ok(snapshots)
+}
+
+/// Fingerprint of a snapshot's per-repo target commits; snapshots with the
+/// same base ref and same target commits show the same diff.
+fn repo_commit_signature(snapshot: &Value) -> Vec<(String, String)> {
+    snapshot
+        .get("repos")
+        .and_then(|v| v.as_array())
+        .map(|repos| {
+            repos
+                .iter()
+                .filter_map(|r| {
+                    Some((
+                        r.get("repoName")?.as_str()?.to_string(),
+                        r.get("targetCommit")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 同步单个仓库的本地生产基线分支到最新远端:
 /// 1. git fetch <remote> <base-branch>(更新 remote-tracking ref,diff 基线即从此读取)
 /// 2. 把本地 <base-branch> 分支指向 <remote>/<base-branch>:
