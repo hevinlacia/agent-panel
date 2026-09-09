@@ -948,6 +948,30 @@ pub(crate) async fn api_requirement_review_gate(
     Ok(Json(review_gate_json(&req).await?))
 }
 
+/// 一键准备审查材料：按决策树生成全量/增量快照，返回材料路径与 handoff 提示。
+/// 主 agent 把 materials.materialPath 写进 reviewer handoff，审查产出中同步维护
+/// code-annotations.json 内容并回写（见 prepare_review_materials 的 handoffHints）。
+pub(crate) async fn api_requirement_review_materials_post(
+    State(state): State<AppState>,
+    form: FormOrJson<CodeReviewForm>,
+) -> ApiResult<Json<Value>> {
+    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request("requirement has no directory; cannot prepare review materials".to_string())
+    })?);
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let materials = prepare_review_materials(&req_dir, &req.id, &branch_scope).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "materials": materials,
+    })))
+}
+
 pub(crate) async fn api_requirement_master_diff(
     State(state): State<AppState>,
     form: FormOrJson<CodeReviewForm>,

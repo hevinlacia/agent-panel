@@ -302,6 +302,10 @@ async fn main() -> Result<()> {
             get(api_requirement_review_gate),
         )
         .route(
+            "/api/requirement/review-materials",
+            post(api_requirement_review_materials_post),
+        )
+        .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
         )
