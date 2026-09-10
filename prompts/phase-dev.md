@@ -3,7 +3,7 @@
 ## 必读
 - background.md、technical-plan.md、notes.md
 - 历史兼容：若已有 impact.md / branch.md / config-changes.md / memory.md，可作为参考读取；新需求不再强制维护
-- ~/.agents/knowledge/wms/conventions-wms-backend-logging.md
+- `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-backend-logging.md`（Agent Panel managed，id: conventions-wms-backend-logging）
 
 ## 必做
 - 每次代码改动完成后立即提交并同步到需求分支（自测中、测试中、经验总结等后续状态同样适用）

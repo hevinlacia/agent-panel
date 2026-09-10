@@ -45,7 +45,7 @@ pub(crate) fn requirement_api_schema() -> Value {
             "description": "returns compressed summary docs, recent structured events, recommended write APIs, fixedPhasePrompt and statePhasePrompt"
         },
         "rules": [
-            "需求澄清阶段合并旧的需求对齐和方案设计：先读业务知识/经验，再初步调查代码，输出 background.md、technical-plan.md、notes.md 的最小闭环；alignment/impact/memory 仅历史兼容。" ,
+            "需求澄清阶段合并旧的需求对齐和方案设计：先做需求点拆解与关联性检查，关联性明显低的要点通过父需求+叶子子需求拆分为独立需求供多 agent 并行，再读业务知识/经验、初步调查代码，输出 background.md、technical-plan.md、notes.md 的最小闭环；alignment/impact/memory 仅历史兼容。" ,
             "经验总结阶段替代旧待上线状态：识别本次需求暴露的 skill、业务知识、经验和流程改进，并把已落地/待落地区分记录到 experience-summary.md。",
             "Agent should call context with for=agent for most work; use token context only when the compressed summary is insufficient.",
             "Use recordEvent for facts, evidence, test results, decisions and todos; it stores events.jsonl and can append notes.md.",

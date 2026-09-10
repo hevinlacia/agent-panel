@@ -539,18 +539,19 @@ pub(crate) async fn api_requirement_category(
     let st = write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), &body.category)
         .await?;
     let mut status_state = Value::Null;
-    if body.category == "线上问题" && !ISSUE_STATUSES.contains(&req.status.as_str()) {
+    // issue 家族（线上问题/测试问题）共用轻量状态机：从需求流程切入时进入排查中；切回需求流程时回需求澄清。
+    if is_issue_category(&body.category) && !ISSUE_STATUSES.contains(&req.status.as_str()) {
         status_state = write_requirement_status(
             req.req_dir.as_deref().unwrap_or_default(),
             "排查中",
-            Some("切换为线上问题，进入轻量排查流程"),
+            Some(&format!("切换为{}，进入轻量排查流程", body.category)),
         )
         .await?;
     } else if body.category == "需求" && ISSUE_STATUSES.contains(&req.status.as_str()) {
         status_state = write_requirement_status(
             req.req_dir.as_deref().unwrap_or_default(),
             "需求澄清",
-            Some("从线上问题切回需求流程"),
+            Some("从问题流程切回需求流程"),
         )
         .await?;
     }

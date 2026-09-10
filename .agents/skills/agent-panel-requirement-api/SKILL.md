@@ -118,6 +118,7 @@ curl -sS -H 'Content-Type: application/json' \
 ```
 
 - `category=线上问题` 用轻流程：排查中 → 已定位 → 已修复 → 已复盘（有价值路径）/ 已关闭（无沉淀价值）；旧状态「已确认」自动映射到「已定位」。
+- `category=测试问题`（独立编号池 `WMS-TST-{seq}`）：承接 UAT 测试反馈中不属于常规需求的轻量问题，与线上问题共用同一轻流程；硬门禁（已定位 root-cause / 已复盘 troubleshooting）只对线上问题生效，测试问题按需沉淀；测试问题不参与 `issues` 绑定，需要常规开发承接时另建 category=需求 的需求。
 - 已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定问题（需求 meta.md `issues` 字段），需求进入 ≥经验总结 时系统自动把关联问题推进到已修复。
 - 已复盘门禁：进入「已复盘」前必须已填写 `troubleshooting.md` 排查经验（怎么排查 + 怎么修复），否则状态接口拒绝。
 - 开发推动门禁：`source=开发推动` 的需求进入「测试中」前必须先完成 `test-scenario.md` 测试场景文档，否则状态接口拒绝。
@@ -145,7 +146,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 标准 intent：`overview` / `clarification` / `status` / `progress` / `branch` / `self-test` / `release-check` / `experience-summary` / `design` / `config` / `review`。
 
-代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
+代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。结论行必须字面独立成行，**不能用 markdown 加粗**（如 `Review Gate: **PASS**` 解析不出结论，review-gate 判 pending 拦截 MR 生成，WMS-107 实测）。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
 
 **审查后又有 commit（stale 拦截）**：审查后分支又有 commit（如 review 修正）时，状态推进会被 Code Review Gate 以 stale 拒绝（`reviewedTargetCommit != currentTargetCommit`）。在 review.md 追加「覆盖至 <hash>」文字**无效**（门禁不解析文本）；正确路径：`POST /api/requirement/code-review` `{"reqId":...}` 刷新 code-review.json 快照（保留 previousReviewedSnapshot 供增量对比）后重推状态。review-gate GET 返回的 `staleRepos` 给出 reviewed vs current commit，可据此定位增量审查范围。（WMS-110 实测：状态 400 拒绝两次后按此流程通过）
 
@@ -487,7 +488,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 - 写文档只能使用 `/api/requirement/doc` 的白名单 `docType`；不要把任意文件路径传给 API 或直接写路径。
 - 大段进展优先 `/api/requirement/notes` 追加，避免覆盖已有 notes。
 - `dryRun:true` 适用于创建、更新字段、notes、doc 写入预览；正式写入后再 validate。
-- `status` 必须是 12 个合法状态之一（需求流 7 个 + 线上问题 5 个）；线上问题状态只能用于 `category=线上问题`。
+- `status` 必须是 12 个合法状态之一（需求流 7 个 + 线上问题 5 个）；线上问题状态只能用于 `category=线上问题` 或 `category=测试问题`。
 - `GET /api/requirements` 不保证服务端按 query 过滤；按状态筛选时必须客户端过滤。
 - 状态更新优先使用 `Accept: application/json`；不用 `curl -f` 判断 303。
 - 需求分支合并必须优先走 `/api/requirement/merge-options` + `/api/requirement/merge-branch`；不要自行手写 git merge/push，除非 Agent Panel 不可用且用户明确要求 fallback。

@@ -313,17 +313,25 @@ pub(crate) async fn create_requirement(
         .as_deref()
         .and_then(normalize_status_value)
         .unwrap_or_else(|| {
-            if category == "线上问题" {
+            if is_issue_category(&category) {
                 "排查中".to_string()
             } else {
                 "需求澄清".to_string()
             }
         });
-    if category == "线上问题" && form.status.is_none() {
+    if is_issue_category(&category) && form.status.is_none() {
         status = "排查中".to_string();
     }
     ensure_status(&status)?;
     let dry_run = form.dry_run.unwrap_or(false);
+    // 串行化创建临界区：{seq} 占号靠扫描已有需求，扫描 -> 预留目录 -> 写 meta.md 必须
+    // 原子完成，否则两个并行创建会观察到同一个 max seq 且各自成功（目录名含 slug 不同，
+    // create_dir 的 AlreadyExists 兼底检测不到），导致撞号。dry_run 只预览不占号，无需加锁。
+    let _create_guard = if dry_run {
+        None
+    } else {
+        Some(state.requirement_create_lock.lock().await)
+    };
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
     let id_template = normalize_create_id_template(form.req_id.trim(), &category)?;
     let (req_id, target_dir) =
@@ -1550,31 +1558,51 @@ pub(crate) fn ensure_req_id(value: &str) -> ApiResult<String> {
 /// 线上问题独立编号池前缀：与普通需求（WMS-）分开计数，目录仍共用 req 根；
 /// 目录身份证创建后不变，setCategory 切换类别不改号。
 pub(crate) const ISSUE_ID_PREFIX: &str = "WMS-INC";
+/// 测试问题独立编号池：承接 UAT 测试反馈中不属于常规需求的轻量问题。
+pub(crate) const TEST_ISSUE_ID_PREFIX: &str = "WMS-TST";
+
+/// issue 家族类别（共用轻量状态机与 incident.md 文档集）：线上问题 / 测试问题。
+pub(crate) fn is_issue_category(category: &str) -> bool {
+    matches!(category, "线上问题" | "测试问题")
+}
+
+fn issue_id_prefix(category: &str) -> Option<&'static str> {
+    match category {
+        "线上问题" => Some(ISSUE_ID_PREFIX),
+        "测试问题" => Some(TEST_ISSUE_ID_PREFIX),
+        _ => None,
+    }
+}
 
 /// 创建时按类别规范化 reqId 模板：
-/// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`）；
-/// - 线上问题强制使用 WMS-INC- 前缀：模板改写前缀保留 suffix；具体 id 校验形态，避免误用需求池；
+/// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`，测试问题 `WMS-TST-{seq}`）；
+/// - issue 类别强制使用本类别前缀：模板改写前缀保留 suffix；具体 id 校验形态，避免误用需求池；
 /// - 需求模板原样透传。
 pub(crate) fn normalize_create_id_template(raw: &str, category: &str) -> ApiResult<String> {
     let v = raw.trim();
-    if v.is_empty() {
-        return Ok(if category == "线上问题" {
-            format!("{ISSUE_ID_PREFIX}-{{seq}}")
-        } else {
+    let Some(prefix) = issue_id_prefix(category) else {
+        return Ok(if v.is_empty() {
             "WMS-{seq}".to_string()
+        } else {
+            v.to_string()
         });
-    }
-    if category != "线上问题" {
-        return Ok(v.to_string());
+    };
+    if v.is_empty() {
+        return Ok(format!("{prefix}-{{seq}}"));
     }
     if v.contains("{seq}") {
         let (_, suffix) = split_seq_template(v)?;
-        return Ok(format!("{ISSUE_ID_PREFIX}-{{seq}}{suffix}"));
+        return Ok(format!("{prefix}-{{seq}}{suffix}"));
     }
-    let re = Regex::new(&format!("^{ISSUE_ID_PREFIX}-(\\d+)(-|$)")).expect("valid regex");
+    let re = Regex::new(&format!("^{prefix}-(\\d+)(-|$)")).expect("valid regex");
     if !re.is_match(v) {
+        let hint = if category == "线上问题" {
+            "；代码修复承接请创建 category=需求 的普通需求并绑定本问题"
+        } else {
+            ""
+        };
         return Err(ApiError::bad_request(format!(
-            "线上问题 reqId 必须使用 {ISSUE_ID_PREFIX}-<序号> 独立编号（如 {ISSUE_ID_PREFIX}-031-slug）；代码修复承接请创建 category=需求 的普通需求并绑定本问题"
+            "{category} reqId 必须使用 {prefix}-<序号> 独立编号（如 {prefix}-003-slug）{hint}"
         )));
     }
     Ok(v.to_string())
@@ -1674,11 +1702,13 @@ pub(crate) async fn compute_create_target_dir(
 
 /// Resolve the final reqId and target directory for a create request.
 ///
-/// When `template` contains `{seq}`, the next sequence number is allocated
-/// from existing requirements and (for non-dry-run) the target directory is
-/// atomically reserved with `fs::create_dir`, retrying on collision. When
-/// `template` has no `{seq}`, it is validated as-is and the target directory
-/// is checked for prior existence.
+/// Callers must hold `state.requirement_create_lock` (non-dry-run): when
+/// `template` contains `{seq}`, the next sequence number is allocated by
+/// scanning existing requirements, and only the create lock makes the
+/// scan -> reserve -> write-meta sequence atomic against parallel creates.
+/// The `fs::create_dir` collision retry below stays as defense-in-depth for
+/// same-slug collisions. When `template` has no `{seq}`, it is validated
+/// as-is and the target directory is checked for prior existence.
 pub(crate) async fn resolve_req_id_and_target_dir(
     state: &AppState,
     base: &Path,
@@ -1808,8 +1838,8 @@ pub(crate) fn requirement_create_files(
         ("meta.md", meta),
         (STATE_FILE, template_state(status, category)),
     ];
-    if category == "线上问题" {
-        // 线上问题专用文档集：问题档案（incident.md）+ 排查流水（notes.md）；
+    if is_issue_category(category) {
+        // issue 家族专用文档集：问题档案（incident.md）+ 排查流水（notes.md）；
         // 根因与修复决策（root-cause.md）按需生成，不再脚手架 background/technical-plan。
         files.push(("incident.md", template_incident(req_id)));
     } else {

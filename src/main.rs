@@ -130,7 +130,7 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("已确认", "已定位"),
     ("问题确认", "已定位"),
 ];
-static REQ_CATEGORIES: &[&str] = &["需求", "线上问题"];
+static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题"];
 /// 需求推动方：产品推动（默认）可问产品要测试范围；开发推动必须先沉淀测试场景文档才能进入测试中。
 static REQ_SOURCES: &[&str] = &["产品推动", "开发推动"];
 
@@ -144,6 +144,10 @@ struct AppState {
     cainiao_mock: Arc<Mutex<Option<JoinHandle<()>>>>,
     /// Serializes auto experience-summary dispatch scans so two triggers do not start duplicate agents.
     experience_summary_dispatch: Arc<Mutex<()>>,
+    /// Serializes requirement creation: {seq} allocation scans existing requirements, so
+    /// scan -> reserve dir -> write meta.md must be atomic per process or two parallel
+    /// creates observe the same max seq and both succeed with duplicate numbers.
+    requirement_create_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -195,6 +199,7 @@ async fn main() -> Result<()> {
         dsh_session_root: Arc::new(dsh_session_root),
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
+        requirement_create_lock: Arc::new(Mutex::new(())),
     };
 
     // Start the cainiao print mock server on boot if enabled in config.

@@ -379,6 +379,82 @@ fn normalize_create_id_template_splits_issue_pool() {
         ),
         112
     );
+    // 测试问题独立编号池：默认 WMS-TST-{seq}，强制 TST 前缀，与 INC/需求池互不干扰
+    assert_eq!(
+        normalize_create_id_template("", "测试问题").unwrap(),
+        "WMS-TST-{seq}"
+    );
+    assert_eq!(
+        normalize_create_id_template("TST-{seq}-uat-bug", "测试问题").unwrap(),
+        "WMS-TST-{seq}-uat-bug"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题").unwrap(),
+        "WMS-TST-005-uat-bug"
+    );
+    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题").is_err());
+    assert!(normalize_create_id_template("WMS-005-x", "测试问题").is_err());
+    // 需求类别不受 TST 池影响：模板原样透传
+    assert_eq!(
+        normalize_create_id_template("WMS-TST-005-x", "需求").unwrap(),
+        "WMS-TST-005-x"
+    );
+}
+
+/// 并行创建不得撞号（回归）：两个 `{seq}` 模板并发创建（slug 不同）必须拿到连续且
+/// 不同的序号。旧实现仅靠 create_dir 的 AlreadyExists 兜底，slug 不同则目录名不同
+/// 永不冲突；而扫描式占号也观察不到未写 meta.md 的预留目录，导致两个请求都拿到 117。
+/// 现由 `requirement_create_lock` 串行化扫描 -> 预留 -> 写 meta 临界区。
+#[tokio::test]
+async fn concurrent_create_allocates_distinct_seq_numbers() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&proj).expect("create proj dir");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+
+    let form = |slug: &str| RequirementCreateForm {
+        req_id: format!("T-{{seq}}-{slug}"),
+        title: format!("并发占号 {slug}"),
+        project: None,
+        projects: None,
+        group_path: None,
+        parent_req_id: None,
+        root: None,
+        status: None,
+        category: None,
+        source: None,
+        owner: None,
+        start_date: None,
+        plan_release: None,
+        ones: None,
+        issues: None,
+        summary: None,
+        background: None,
+        notes: None,
+        dry_run: None,
+    };
+
+    // 并发创建两个不同 slug 的需求：旧实现在这里双双拿到 T-001。
+    let (res_a, res_b) = tokio::join!(
+        create_requirement(&state, form("aaa")),
+        create_requirement(&state, form("bbb"))
+    );
+    let id_a = res_a.expect("create a")["reqId"].as_str().expect("reqId a").to_string();
+    let id_b = res_b.expect("create b")["reqId"].as_str().expect("reqId b").to_string();
+    assert_ne!(id_a, id_b, "parallel creates must not share a reqId");
+    let mut ids = vec![id_a, id_b];
+    ids.sort();
+    assert_eq!(ids, vec!["T-001-aaa", "T-002-bbb"]);
+    // 创建根是 scan root 下的 .agents/req（writable_req_roots 展开规则）
+    let req_root = proj.join(".agents/req");
+    assert!(req_root.join("T-001-aaa").join("meta.md").is_file());
+    assert!(req_root.join("T-002-bbb").join("meta.md").is_file());
 }
 
 #[test]
@@ -593,6 +669,17 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
     assert!(names.contains(&"notes.md"));
     assert!(!names.contains(&"background.md"));
     assert!(!names.contains(&"technical-plan.md"));
+
+    // 测试问题与线上问题同属 issue 家族：同样脚手架 incident.md 文档集
+    let test_issue_files = requirement_create_files(
+        "WMS-TST-001-uat-bug", "t", "排查中", "WMS", &["WMS".to_string()], "测试问题", "产品推动", "hevin",
+        "2026-01-01", "unknown", "", &[], "s", None, None,
+    );
+    let test_names: Vec<&str> = test_issue_files.iter().map(|(n, _)| *n).collect();
+    assert!(test_names.contains(&"incident.md"));
+    assert!(test_names.contains(&"notes.md"));
+    assert!(!test_names.contains(&"background.md"));
+    assert!(!test_names.contains(&"technical-plan.md"));
 
     let normal_files = requirement_create_files(
         "WMS-101-req", "t", "需求澄清", "WMS", &["WMS".to_string()], "需求", "产品推动", "hevin",
@@ -1088,6 +1175,7 @@ fn temp_app_state(data: &Path, pi_root: &Path, dsh_root: &Path) -> AppState {
         dsh_session_root: Arc::new(dsh_root.to_path_buf()),
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
+        requirement_create_lock: Arc::new(Mutex::new(())),
     }
 }
 

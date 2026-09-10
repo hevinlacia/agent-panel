@@ -1,13 +1,12 @@
-/**
- * Role: 线上问题页 — 只统计 category=线上问题 的记录，按线上问题专用状态机（排查中→已定位→已修复→已复盘/已关闭）分组。
+/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），按线上问题专用状态机（排查中→已定位→已修复→已复盘/已关闭）分组。
  * Public surface: IssuesPage used by web/src/App.tsx route /issues.
- * Constraints: read-only view over /api/requirements; 排查经验沉淀状态以 troubleshooting.md 是否存在判定。
+ * Constraints: read-only view over /api/requirements; 排查经验沉淀状态以 troubleshooting.md 是否存在判定；测试问题（WMS-TST-）承接 UAT 测试反馈中不属于常规需求的轻量问题。
  * Read-this-with: web/src/pages/ones-missing.tsx for page patterns and prompts/phase-online-issue.md for the state machine.
  */
 import { motion } from "framer-motion"
 import { BookOpenCheck, ChevronDown, Siren, TriangleAlert } from "lucide-react"
 import { useMemo, useState } from "react"
-import type { Requirement } from "../types"
+import type { Requirement, ReqCategory } from "../types"
 import { useFetch } from "../lib/api"
 import { relAge } from "../lib/format"
 import { ISSUE_STATUSES } from "../lib/requirements"
@@ -36,9 +35,13 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const [keyword, setKeyword] = useState(urlParams.get("q") || "")
   const [project, setProject] = useState("")
   const [closedOpen, setClosedOpen] = useState(false)
+  const urlType = urlParams.get("type")
+  const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" ? urlType : "")
   const reqs = data?.requirements || []
 
-  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题"), [reqs])
+  // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机
+  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题"), [reqs])
+  const typedIssues = useMemo(() => (typeFilter ? issues.filter((r) => r.category === typeFilter) : issues), [issues, typeFilter])
   /** 反查修复需求：绑定该线上问题的普通需求（meta.md issues 字段）。 */
   const fixReqOf = useMemo(() => {
     const map = new Map<string, Requirement>()
@@ -54,26 +57,33 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const effectiveProject = globalProject || project
   const setKeywordSync = (value: string) => {
     setKeyword(value)
+    syncUrl({ q: value })
+  }
+  const changeType = (value: "" | ReqCategory) => {
+    setTypeFilter(value)
+    syncUrl({ type: value })
+  }
+  const syncUrl = (patch: { q?: string; type?: string }) => {
     const q = new URLSearchParams(window.location.search)
-    if (value) q.set("q", value)
-    else q.delete("q")
+    if (patch.q !== undefined) { patch.q ? q.set("q", patch.q) : q.delete("q") }
+    if (patch.type !== undefined) { patch.type ? q.set("type", patch.type) : q.delete("type") }
     window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
   }
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
-    // 精确编号查找：关键词形如线上问题 ID（wms-inc-112 / wms-088-fix-xxx / inc-112）或纯数字序号（112）时，
+    // 精确编号查找：关键词形如问题 ID（wms-inc-112 / wms-tst-003 / inc-112 / tst-3）或纯数字序号（112）时，
     // 直接按 ID 命中（全等 / 前缀 / 序号段匹配），无视项目筛选；精确命中为空时回退到模糊查找。
     if (kw) {
-      const exact = /^[a-z]+-(inc-)?\d+/.test(kw)
-        ? issues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
+      const exact = /^[a-z]+-((inc|tst)-)?\d+/.test(kw)
+        ? typedIssues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
         : /^\d+$/.test(kw)
-          ? issues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
+          ? typedIssues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
           : null
       if (exact?.length) return exact
     }
     const base = effectiveProject
-      ? issues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
-      : issues
+      ? typedIssues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
+      : typedIssues
     if (!kw) return base
     return base.filter((r) => {
       const fix = fixReqOf.get(r.id)
@@ -86,7 +96,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
       ].join(" ").toLowerCase()
       return haystack.includes(kw)
     })
-  }, [issues, effectiveProject, keyword, fixReqOf])
+  }, [typedIssues, effectiveProject, keyword, fixReqOf])
 
   const groups = useMemo<IssueGroup[]>(() => {
     const byStatus = new Map<string, Requirement[]>()
@@ -110,9 +120,9 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const troubleshootingCount = filtered.filter(hasTroubleshootingDoc).length
   const pendingExperience = filtered.filter((r) => EXPERIENCE_REQUIRED.includes(r.status) && !hasTroubleshootingDoc(r)).length
 
-  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="只统计线上问题（category=线上问题），按专用状态机分组：排查中 → 已定位 → 已修复 → 已复盘。已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
+  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），按专用状态机分组：排查中 → 已定位 → 已修复 → 已复盘。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
     <section className="react-kpi-grid-5">
-      <KpiCard icon={<Siren size={20} />} label="线上问题" value={filtered.length} sub="全部状态" tone="total" />
+      <KpiCard icon={<Siren size={20} />} label={typeFilter || "问题总数"} value={filtered.length} sub={typeFilter ? `${typeFilter} · 全部状态` : "全部状态"} tone="total" />
       <KpiCard icon={<Siren size={20} />} label="排查中" value={countBy("排查中")} sub="收集证据验证假设" tone="avg" />
       <KpiCard icon={<Siren size={20} />} label="已定位" value={countBy("已定位")} sub="根因与方案明确" tone="active" />
       <KpiCard icon={<TriangleAlert size={20} />} label="待沉淀经验" value={pendingExperience} sub="已修复但排查经验未填" tone={pendingExperience > 0 ? "avg" : "total"} />
@@ -120,12 +130,13 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     </section>
     {globalProject ? null : <section className="react-panel react-filter-panel">
       <div className="react-filter-grid">
+        <label>类型<select value={typeFilter} onChange={(e) => changeType(e.target.value as "" | ReqCategory)}><option value="">全部（含测试问题）</option><option value="线上问题">线上问题</option><option value="测试问题">测试问题</option></select></label>
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
-        <label className="react-filter-grow">查找线上问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / inc-112 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
+        <label className="react-filter-grow">查找问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / WMS-TST-3 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
       </div>
-      <div className="react-actions"><span className="react-muted">统计范围：全部状态下 category=线上问题 的记录；「已关闭」分组默认折叠，点击展开；排查经验在需求详情页「排查经验」面板维护，进入已复盘前必须先填写。</span></div>
+      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题）；「已关闭」分组默认折叠，点击展开；排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的线上问题，试试其他关键字或完整编号。` : "没有线上问题记录。创建需求时选择类别「线上问题」即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && !closedOpen && !keyword.trim()
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : "没有问题记录。创建时选择类别「线上问题」或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && !closedOpen && !keyword.trim()
       ? <section key={group.status} className="react-panel">
         <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => setClosedOpen(true)} aria-expanded={false}>
           <span>已关闭</span>
@@ -133,18 +144,18 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
           <ChevronDown size={14} className="react-collapse-chevron" />
         </button>
       </section>
-      : <IssueSection key={group.status} status={group.status} reqs={group.reqs} fixReqOf={fixReqOf} />)}
+      : <IssueSection key={group.status} status={group.status} reqs={group.reqs} fixReqOf={fixReqOf} showType={!typeFilter} />)}
   </PageChrome>
 }
 
-function IssueSection({ status, reqs, fixReqOf }: { status: string; reqs: Requirement[]; fixReqOf: Map<string, Requirement> }) {
+function IssueSection({ status, reqs, fixReqOf, showType }: { status: string; reqs: Requirement[]; fixReqOf: Map<string, Requirement>; showType: boolean }) {
   return <section className="react-panel">
     <PanelHead kicker="Online Issue" title={status} chip={`${reqs.length} 条`} />
-    {reqs.length === 0 ? <EmptyCard>该状态下没有线上问题。</EmptyCard> : <div className="react-card-list">{reqs.map((req, index) => <IssueCard key={req.id} req={req} index={index} fixReq={fixReqOf.get(req.id)} />)}</div>}
+    {reqs.length === 0 ? <EmptyCard>该状态下没有问题。</EmptyCard> : <div className="react-card-list">{reqs.map((req, index) => <IssueCard key={req.id} req={req} index={index} fixReq={fixReqOf.get(req.id)} showType={showType} />)}</div>}
   </section>
 }
 
-function IssueCard({ req, index, fixReq }: { req: Requirement; index: number; fixReq?: Requirement }) {
+function IssueCard({ req, index, fixReq, showType }: { req: Requirement; index: number; fixReq?: Requirement; showType: boolean }) {
   const needExperience = EXPERIENCE_REQUIRED.includes(req.status) && !hasTroubleshootingDoc(req)
   const waitingForReq = Boolean(fixReq) && ["排查中", "已定位"].includes(req.status)
   return <motion.article className="react-list-card react-req-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}>
@@ -162,6 +173,9 @@ function IssueCard({ req, index, fixReq }: { req: Requirement; index: number; fi
     <div className="react-card-side">
       {hasTroubleshootingDoc(req) ? <a className="react-effort-badge" href={`/requirement?id=${encodeURIComponent(req.id)}#troubleshooting`} title="查看排查经验（怎么排查 + 怎么修复）">排查经验</a> : null}
       {needExperience ? <span className="react-ones-badge react-ones-missing" title="已修复但排查经验（troubleshooting.md）未沉淀，复盘前必须填写">⚠ 待沉淀经验</span> : null}
+      {showType ? (req.category === "测试问题"
+        ? <span className="react-status-pill" title="测试问题：UAT 测试反馈中不属于常规需求的轻量问题（WMS-TST- 编号池）" style={{ color: "#fbbf24", background: "rgba(251, 191, 36, 0.12)", borderColor: "rgba(251, 191, 36, 0.4)" }}>测试问题</span>
+        : <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span>) : null}
       {statusPill(req.status)}
     </div>
   </motion.article>

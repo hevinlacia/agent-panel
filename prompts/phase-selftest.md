@@ -3,8 +3,8 @@
 ## 必读
 - technical-plan.md、test.md、notes.md、review.md、code-review-ai.md
 - 按需读取 release-manifest.md；历史 impact.md / config-changes.md 仅在已有内容时参考
-- ~/.agents/knowledge/wms/conventions-wms-agent-self-test-evidence.md
-- ~/.agents/knowledge/wms/conventions-wms-backend-logging.md
+- `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-agent-self-test-evidence.md`（Agent Panel managed，id: conventions-wms-agent-self-test-evidence）
+- `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-backend-logging.md`（Agent Panel managed，id: conventions-wms-backend-logging）
 
 ## 必做
 - 每次改动先提交并同步到需求分支（继承开发中规则）
