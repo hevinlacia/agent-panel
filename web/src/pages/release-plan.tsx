@@ -67,6 +67,8 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
   const [readyOpen, setReadyOpen] = useState(true)
   /** 发版日筛选：null=全部（按日期分组）；0..7=距现第 N 发版日（正常周三序列，含当天）。 */
   const [releaseDay, setReleaseDay] = useState<number | null>(null)
+  /** 关键字搜索：标题 / req id / 描述 / 项目；空格分隔多关键字 AND 匹配。 */
+  const [keyword, setKeyword] = useState("")
   const reqs = data?.requirements || []
 
   // 距现第 1..8 发版日（周三）日期序列；紧急发版不属于正常序列，不在筛选范围内。
@@ -85,8 +87,16 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
     let base = readyReqs
     if (effectiveProject) base = base.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
     if (releaseDay !== null) base = base.filter((r) => (r.planRelease || "").trim() === releaseDays[releaseDay])
+    // 多关键字搜索：空格分隔 AND 匹配，口径与需求进度看板一致（标题 / req id / 描述 / 项目）。
+    const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (tokens.length) {
+      base = base.filter((r) => {
+        const haystack = [r.id, r.title, r.description || "", projectsOf(r)].join(" ").toLowerCase()
+        return tokens.every((t) => haystack.includes(t))
+      })
+    }
     return base
-  }, [readyReqs, effectiveProject, releaseDay, releaseDays])
+  }, [readyReqs, effectiveProject, releaseDay, releaseDays, keyword])
 
   // 全部发布就绪平铺列表：有 plan-release 的按日期升序在前，未登记/非法日期按更新时间倒序在后。
   const allReady = useMemo(() => {
@@ -171,8 +181,9 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
         <label>发版日<select value={releaseDay ?? ""} onChange={(e) => setReleaseDay(e.target.value === "" ? null : Number(e.target.value))}><option value="">全部（按日期分组）</option>{releaseDays.map((d, i) => <option key={d} value={i}>距现第{i + 1}发版日 · {d.slice(5)} {weekdayOf(d)}</option>)}</select></label>
         <label>查看日期<input type="date" value={selected} onChange={(e) => setSelected(e.target.value || ymd(new Date()))} /></label>
         {globalProject ? null : <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>}
+        <label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述 / 项目；空格分隔多个关键字" /></label>
       </div>
-      <div className="react-actions"><span className="react-muted">统计范围：状态为「发布就绪」的需求；发版日按正常周三发版序列（含当天）过滤，紧急发版不在序列内；发布日期在需求编辑页 planRelease 字段维护，unknown 表示尚未排期。</span></div>
+      <div className="react-actions"><span className="react-muted">统计范围：状态为「发布就绪」的需求；发版日按正常周三发版序列（含当天）过滤，紧急发版不在序列内；关键字命中范围含标题、req id、描述与项目；发布日期在需求编辑页 planRelease 字段维护，unknown 表示尚未排期。</span></div>
     </section>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <>
       {releaseDay === null ? <GroupSection group={allGroup} selected={selected} collapsed={!readyOpen} onToggle={() => setReadyOpen((v) => !v)} /> : null}
