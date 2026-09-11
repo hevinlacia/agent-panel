@@ -1,0 +1,23 @@
+web/src/pages/release-plan.tsx
+  6fa4f1c4461643d3 70-71,90-97,99,184,186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d51c980f4f9ff63ce9199886df302148374c8488",
+  "prompts": {
+    "6fa4f1c4461643d3": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a08e3b-0177-70bf-929e-51f30a52309b",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 2,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}
