@@ -120,7 +120,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const troubleshootingCount = filtered.filter(hasTroubleshootingDoc).length
   const pendingExperience = filtered.filter((r) => EXPERIENCE_REQUIRED.includes(r.status) && !hasTroubleshootingDoc(r)).length
 
-  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），按专用状态机分组：排查中 → 已定位 → 已修复 → 已复盘。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
+  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），按专用状态机分组：排查中 → 已定位 → 已修复 → 已复盘。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。排查/复现需要改代码时可直接登记 branches.json 在需求分支开发，合入 test/UAT 环境分支验证，禁止合入生产分支；已定位→已修复 双路径：数据修复直接推进；正式生产修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
     <section className="react-kpi-grid-5">
       <KpiCard icon={<Siren size={20} />} label={typeFilter || "问题总数"} value={filtered.length} sub={typeFilter ? `${typeFilter} · 全部状态` : "全部状态"} tone="total" />
       <KpiCard icon={<Siren size={20} />} label="排查中" value={countBy("排查中")} sub="收集证据验证假设" tone="avg" />
