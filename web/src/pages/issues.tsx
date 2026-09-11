@@ -70,7 +70,9 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
   }
   const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase()
+    // 多关键字：空格分隔 AND 匹配；单个关键词保留精确编号快速路径（形如问题 ID 或纯数字序号）。
+    const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    const kw = tokens.length === 1 ? tokens[0] : ""
     // 精确编号查找：关键词形如问题 ID（wms-inc-112 / wms-tst-003 / inc-112 / tst-3）或纯数字序号（112）时，
     // 直接按 ID 命中（全等 / 前缀 / 序号段匹配），无视项目筛选；精确命中为空时回退到模糊查找。
     if (kw) {
@@ -84,7 +86,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     const base = effectiveProject
       ? typedIssues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
       : typedIssues
-    if (!kw) return base
+    if (!tokens.length) return base
     return base.filter((r) => {
       const fix = fixReqOf.get(r.id)
       const haystack = [
@@ -94,7 +96,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
         (r.projects?.length ? r.projects : [r.project]).filter(Boolean).join(" "),
         fix?.title || "",
       ].join(" ").toLowerCase()
-      return haystack.includes(kw)
+      return tokens.every((t) => haystack.includes(t))
     })
   }, [typedIssues, effectiveProject, keyword, fixReqOf])
 

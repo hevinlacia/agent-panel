@@ -33,6 +33,8 @@ export function OnesMissingPage({ globalProject }: { globalProject?: string }) {
   const { data, error, loading } = useFetch<{ requirements: Requirement[] }>("/api/requirements")
   const [project, setProject] = useState("")
   const [doneOpen, setDoneOpen] = useState(false)
+  /** 关键字搜索：标题 / req id / 描述 / 项目；空格分隔多关键字 AND 匹配。 */
+  const [keyword, setKeyword] = useState("")
   const reqs = data?.requirements || []
 
   const effectiveProject = globalProject || project
@@ -40,9 +42,18 @@ export function OnesMissingPage({ globalProject }: { globalProject?: string }) {
 
   const missing = useMemo(() => reqs.filter(isOnesMissing), [reqs])
   const filtered = useMemo(() => {
-    if (!effectiveProject) return missing
-    return missing.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
-  }, [missing, effectiveProject])
+    let base = missing
+    if (effectiveProject) base = base.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
+    // 多关键字搜索：空格分隔 AND 匹配，口径与需求进度看板/发布计划页一致。
+    const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    if (tokens.length) {
+      base = base.filter((r) => {
+        const haystack = [r.id, r.title, r.description || "", projectsOf(r)].join(" ").toLowerCase()
+        return tokens.every((t) => haystack.includes(t))
+      })
+    }
+    return base
+  }, [missing, effectiveProject, keyword])
 
   const groups = useMemo<StatusGroup[]>(() => {
     const byStatus = new Map<string, Requirement[]>()
@@ -76,10 +87,11 @@ export function OnesMissingPage({ globalProject }: { globalProject?: string }) {
     {globalProject ? null : <section className="react-panel react-filter-panel">
       <div className="react-filter-grid">
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <label className="react-filter-grow">关键词<input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id / 描述 / 项目；空格分隔多个关键字" /></label>
       </div>
-      <div className="react-actions"><span className="react-muted">统计范围：全部状态下未关联 ONES 的需求；「已完成」分组默认折叠，点击展开查看；ONES 关联在需求详情页 meta.md ones 字段维护。</span></div>
+      <div className="react-actions"><span className="react-muted">统计范围：全部状态下未关联 ONES 的需求；关键字命中范围含标题、req id、描述与项目；「已完成」分组默认折叠，点击展开查看；ONES 关联在需求详情页 meta.md ones 字段维护。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>没有未关联 ONES 的需求，全部需求都已关联。</EmptyCard> : groups.map((group) => group.collapsible && !doneOpen
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的未关联 ONES 需求，试试其他关键字。` : "没有未关联 ONES 的需求，全部需求都已关联。"}</EmptyCard> : groups.map((group) => group.collapsible && !doneOpen
       ? <section key={group.status} className="react-panel">
         <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => setDoneOpen(true)} aria-expanded={false}>
           <span>已完成</span>
