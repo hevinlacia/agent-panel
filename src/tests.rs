@@ -986,6 +986,39 @@ fn target_branch_matches_repo_accepts_lowercase_uat_for_backend() {
 }
 
 #[test]
+fn is_production_target_branch_blocks_backend_master_and_frontend_production() {
+    // issue 家族（线上问题/测试问题）复现代码禁止合入生产分支：
+    // 后端生产分支 master，前端生产分支 production；test/uat/UAT-* 是环境分支，不拦截。
+    let backend = BranchRepo {
+        repo_name: "yl-cwhsea-wms-outbound-api".to_string(),
+        branches: vec![],
+        role: Some("后端".to_string()),
+        path: Some("~/Developer/company/WMS/backend/yl-cwhsea-wms-outbound-api/".to_string()),
+        base_ref: None,
+        test_target_branch: None,
+        uat_target_branch: None,
+    };
+    assert!(is_production_target_branch(&backend, "master"));
+    assert!(!is_production_target_branch(&backend, "uat"));
+    assert!(!is_production_target_branch(&backend, "UAT-2607"));
+    assert!(!is_production_target_branch(&backend, "test"));
+
+    let frontend = BranchRepo {
+        repo_name: "yl-cwhsea-wms-web-front".to_string(),
+        branches: vec![],
+        role: Some("前端".to_string()),
+        path: Some("~/Developer/company/WMS/frontend/yl-cwhsea-wms-web-front/".to_string()),
+        base_ref: None,
+        test_target_branch: None,
+        uat_target_branch: None,
+    };
+    assert!(is_production_target_branch(&frontend, "production"));
+    // 前端 master 是 UAT 部署分支，不是生产分支，不拦截
+    assert!(!is_production_target_branch(&frontend, "master"));
+    assert!(!is_production_target_branch(&frontend, "test"));
+}
+
+#[test]
 fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
     // 中文标题不再退化成只剩 domain 的 id（如 biz-wms-wms）
     let slug = slug_segment_cjk("WMS 盘点账实调整落表链路", "fallback");

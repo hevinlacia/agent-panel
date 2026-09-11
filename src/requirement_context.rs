@@ -55,7 +55,7 @@ pub(crate) fn requirement_api_schema() -> Value {
             "During all phases, record referenced knowledge/experience IDs as knowledgeReference events and reusable findings as learningCandidate or skillImprovementCandidate events when current-session details may help later experience summary.",
             "Requirements have a source attribute: 产品推动 (default) or 开发推动. For 开发推动 requirements, QA cannot ask product for test scope, so the dev must fill test-scenario.md (需求说明 + 开发评估的测试范围 + 测试覆盖场景) before the requirement can enter 测试中; the status API rejects the transition otherwise.",
             "Online issue requirements use lightweight statuses 排查中/已定位/已修复/已复盘/已关闭 and do not need the strict normal requirement lifecycle unless converted to category=需求.",
-            "已定位→已修复 has two paths: data-only fix pushes the issue directly to 已修复; code fix requires creating a normal requirement and binding the issue via the requirement meta.md issues field. When the bound requirement reaches 经验总结 or later, the linked issues in 排查中/已定位 are auto-advanced to 已修复 by agent-panel.",
+            "Online/test issues CAN register branches.json and write reproduction/test code on requirement branches; merge targets are limited to test/UAT env branches (backend master, frontend production are production branches and get blocked at merge time; prod MR API rejects issues). Formal production fix still goes through a normal requirement bound via the meta.md issues field; when that requirement reaches 经验总结 or later, linked issues in 排查中/已定位 are auto-advanced to 已修复 by agent-panel.",
             "Agent should call edit-plan before selecting files for non-trivial requirement edits.",
             "state.json is the source of truth for status/category; do not direct-edit it.",
             "Use appendNote for free-form progress logs; avoid replacing notes.md.",
@@ -1059,7 +1059,7 @@ pub(crate) async fn build_requirement_agent_context(
     ];
     if req.category.as_deref() == Some("线上问题") {
         rules.push(
-            "线上问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。",
+            "线上问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。允许维护 branches.json（req-branches-update 登记）并在需求分支写复现/验证代码，但只能合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被合并接口拦截；不生成生产 MR。",
         );
         rules.push(
             "每条证据必须附用户可独立复核的验证线索：日志=带时区时间范围+tid/唯一关键字；DB=验证 SQL（表/条件/预期结果）；代码=应用+文件+可搜关键字片段；配置=环境+namespace/key。agent 知道≠证据成立。",
@@ -1419,10 +1419,22 @@ pub(crate) fn any_file_check(dir: &Path, files: &[&str], label: &str, required: 
 
 pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&'static str> {
     if is_online_issue {
-        // 线上问题专用文档集：不注入需求开发文档（technical-plan/branch/config-changes 等）。
+        // 线上问题专用文档集：不注入需求开发文档（technical-plan/config-changes 等）；
+        // 复现/验证代码允许登记分支，注入 req.branchScope 供 diff/merge 使用。
         return match intent {
-            "progress" | "status" => vec!["req.rootCause", "req.memory", "req.notes"],
-            _ => vec!["req.incident", "req.rootCause", "req.memory", "req.notes"],
+            "progress" | "status" => vec![
+                "req.rootCause",
+                "req.branchScope",
+                "req.memory",
+                "req.notes",
+            ],
+            _ => vec![
+                "req.incident",
+                "req.rootCause",
+                "req.branchScope",
+                "req.memory",
+                "req.notes",
+            ],
         };
     }
     match intent {

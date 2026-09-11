@@ -1377,6 +1377,20 @@ pub(crate) fn detect_prod_target_branch(repo: &BranchRepo) -> String {
     }
 }
 
+/// 判断目标分支是否属于生产分支：后端 master、前端 production。
+/// issue 家族（线上问题/测试问题）的排查/复现代码只允许合入 test/UAT 环境分支，
+/// 该函数用于在 merge 时拦截生产分支（包括 branches.json uat_target_branch 显式覆盖的场景）。
+pub(crate) fn is_production_target_branch(repo: &BranchRepo, target_branch: &str) -> bool {
+    if is_pda_client_repo(repo) {
+        return false;
+    }
+    if is_frontend_repo(repo) {
+        target_branch == "production"
+    } else {
+        target_branch == "master"
+    }
+}
+
 pub(crate) fn normalize_merge_target(raw: &str) -> ApiResult<String> {
     let target = raw.trim().to_lowercase();
     match target.as_str() {
@@ -1594,6 +1608,7 @@ pub(crate) fn merge_overall_status(results: &[Value]) -> &'static str {
 pub(crate) async fn merge_requirement_branches(
     scope: &BranchScope,
     request: &MergeRequest,
+    block_prod_branches: bool,
 ) -> Vec<Value> {
     let mut results = Vec::new();
     for repo in &scope.repos {
@@ -1608,7 +1623,7 @@ pub(crate) async fn merge_requirement_branches(
             repo.branches.clone()
         };
         for branch in branches {
-            results.push(merge_repo_branch(repo, &branch, request).await);
+            results.push(merge_repo_branch(repo, &branch, request, block_prod_branches).await);
         }
     }
     results
@@ -1642,6 +1657,7 @@ pub(crate) async fn merge_repo_branch(
     repo: &BranchRepo,
     source_branch: &str,
     request: &MergeRequest,
+    block_prod_branches: bool,
 ) -> Value {
     let target = request.target.as_str();
     let source_branch = source_branch.trim();
@@ -1738,6 +1754,20 @@ pub(crate) async fn merge_repo_branch(
             None,
             "skipped",
             "所选目标分支不适用于当前仓库类型",
+            Some(&project_path),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+    if block_prod_branches && is_production_target_branch(repo, &target_branch) {
+        return merge_result(
+            repo,
+            source_branch,
+            target,
+            Some(&target_branch),
+            "skipped",
+            "线上问题/测试问题的排查代码仅用于测试环境复现与验证，已拦截合入生产分支；正式生产修复请通过「创建修复需求」转普通需求承接",
             Some(&project_path),
             Vec::new(),
             Vec::new(),

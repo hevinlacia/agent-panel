@@ -1121,7 +1121,14 @@ pub(crate) async fn api_requirement_merge_branch(
         ))
     })?;
     let merge_request = normalize_merge_request(&body)?;
-    let results = merge_requirement_branches(&branch_scope, &merge_request).await;
+    // issue 家族（线上问题/测试问题）允许登记分支写复现/测试代码，但禁止合入生产分支。
+    let block_prod_branches = req
+        .category
+        .as_deref()
+        .map(is_issue_category)
+        .unwrap_or(false);
+    let results =
+        merge_requirement_branches(&branch_scope, &merge_request, block_prod_branches).await;
     let status = merge_overall_status(&results);
     Ok(Json(json!({
         "ok": matches!(status, "merged" | "skipped" | "empty"),
@@ -1175,6 +1182,17 @@ pub(crate) async fn api_requirement_prod_mrs(
     form: FormOrJson<ProdMrForm>,
 ) -> ApiResult<Json<Value>> {
     let req = get_real_requirement(&state, &form.0.req_id).await?;
+    // issue 家族的排查/复现代码只允许测试环境使用，禁止进入生产分支：不生成生产 MR。
+    if req
+        .category
+        .as_deref()
+        .map(is_issue_category)
+        .unwrap_or(false)
+    {
+        return Err(ApiError::bad_request(
+            "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
+        ));
+    }
     ensure_review_gate_allows_testing(&req).await?;
     let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
