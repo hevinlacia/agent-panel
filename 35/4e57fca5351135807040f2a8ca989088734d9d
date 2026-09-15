@@ -1,0 +1,35 @@
+AGENTS.md
+  c3d0096dca307390 57
+web/src/types.ts
+  c3d0096dca307390 377-382
+src/git_workflow.rs
+  c3d0096dca307390 23-26,64-67,118-129,131-141,145,168-261,743,766,780-785,794-797,799,805,813-820
+src/main.rs
+  c3d0096dca307390 186-187,335-337
+web/src/pages/requirement.tsx
+  c3d0096dca307390 1,3,360-361,365-367,412,416,420-421,427,495-517,519,521
+src/requirement_api.rs
+  c3d0096dca307390 1017-1019,1021,1030-1031,1033,1035,1039-1041,1047,1051,1053-1101
+web/src/styles.css
+  c3d0096dca307390 876-881
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "354e57fca5351135807040f2a8ca989088734d9d",
+  "prompts": {
+    "c3d0096dca307390": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a447-26b5-76c2-8fd7-bb4f2b70152f",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 267,
+      "total_deletions": 32,
+      "accepted_lines": 266,
+      "overriden_lines": 0
+    }
+  }
+}
