@@ -1,17 +1,18 @@
 ---
 name: req-branches-update
-description: 更新或新建需求目录下的 branches.json（Agent Panel 代码差异比对用的精确分支标识文件），从 git 实测 remote 名、仓库路径和分支同步状态，保持 version 2 格式。
+description: 更新或新建需求目录下的分支登记文件（branches.json 及修复轮次 branches-round-<n>.json，Agent Panel 代码差异比对用的精确分支标识），从 git 实测 remote 名、仓库路径和分支同步状态，保持 version 2 格式。
 allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 ---
 
 # Req Branches Update
 
-用于：维护需求目录下的 `branches.json`，让 Agent Panel 做代码差异比对时精确读取项目仓库和分支，不再回退到从 `branch.md` 兜底解析。
+用于：维护需求目录下的 `branches.json`（轮次 1）与修复轮次文件 `branches-round-<n>.json`，让 Agent Panel 做代码差异比对时精确读取项目仓库和分支，不再回退到从 `branch.md` 兜底解析。
 
 适用：
 - 用户说"更新 branches.json""补充 branches.json""生成 branches.json"
 - 新需求分支确定后、发布预检前，需要给 Agent Panel 提供精确 diff 标识
 - 需求涉及多个仓库/分支，需要补充或修正 branches.json
+- 需求分支已合入生产后新起修复轮次，登记修复分支（`--round`）
 
 不适用：
 - 创建或更新需求的其他文件（用 `req-create`）
@@ -23,6 +24,7 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 - "更新 branches.json" / "补充 branches.json" / "生成 branches.json"
 - "branches.json 不准确" / "branches.json 缺仓库"
 - "给 Agent Panel 配 diff 分支" / "代码差异比对分支"
+- "登记修复分支" / "新建修复轮次" / "round 2 分支登记" / "生产后修复建分支登记"
 
 ## branches.json 格式（version 2）
 
@@ -45,6 +47,7 @@ allowed-tools: ["bash", "read", "write", "edit", "glob", "grep"]
 | --- | --- |
 | `version` | 固定 `2` |
 | `updatedAt` | 当前 epoch 毫秒时间戳，`date +%s%3N` 获取 |
+| `round` | 可选。修复轮次号：轮次 1 文件（`branches.json`）不写；轮次 ≥2 文件（`branches-round-<n>.json`）写对应数字，与 Agent Panel 创建的轮次文件格式一致 |
 | `repos` | 数组，每个元素一个仓库 |
 | `repoName` | 仓库名，取 `git remote -v` 的 origin URL 最后一段，去掉 `.git` |
 | `branches` | 该需求在该仓库使用的分支数组（需求分支，用于 diff 比对；多分支时全部列出） |
@@ -65,12 +68,15 @@ WMS 是多独立 git 仓库（`backend/`、`frontend/`、`pda/` 下各自 `.git`
 ```bash
 # 预览将写入的内容（不实际写入）
 python3 ~/.agents/scripts/req-branches-scan.py <req-id> --dry-run
+# 修复轮次（原轮次分支已合入生产封版后，登记修复分支）
+python3 ~/.agents/scripts/req-branches-scan.py <req-id> --round 2 --dry-run
 ```
 
 脚本自动实测 `repoName`（`git remote`）、`path`（`git rev-parse --show-toplevel`），按规则推断 `role`。确认无误后写入：
 
 ```bash
 python3 ~/.agents/scripts/req-branches-scan.py <req-id>
+python3 ~/.agents/scripts/req-branches-scan.py <req-id> --round 2
 ```
 
 需求目录不在默认位置时用 `--req-dir` 指定：
@@ -79,7 +85,7 @@ python3 ~/.agents/scripts/req-branches-scan.py <req-id>
 python3 ~/.agents/scripts/req-branches-scan.py <req-id> --req-dir <req-dir>
 ```
 
-> 脚本 `--check` 模式只对比不写入、输出 JSON 状态，供 `req-branch-watcher` 扩展自动检测缺失时调用，agent 一般不用。
+> 脚本 `--check` 模式只对比不写入、输出 JSON 状态，供 `req-branch-watcher` 扩展自动检测缺失时调用（仅轮次 1），agent 一般不用。
 
 ### 3. 检查与补充
 
@@ -89,6 +95,17 @@ python3 ~/.agents/scripts/req-branches-scan.py <req-id> --req-dir <req-dir>
 - **校正 `role`**：脚本按规则推断基础角色（`后端`/`前端`/`后端-BFF`/`PDA`/`后端-组件库`）。如需细分（如"后端-ES数据源"），用 `edit` 修正。
 - **未 push 分支**：脚本会提示未 push 的分支。已 push 才能被 Agent Panel 做远端 diff，未 push 的先 `git push` 再登记。
 - **未扫到的已有仓库**：脚本列出"本次未扫到分支的已有仓库"（可能分支已合并清理），确认是否仍需保留。
+
+### 3b. 修复轮次登记（--round ≥2）
+
+需求分支已合入生产分支（后端 `master` / 前端 `production`）后发现问题的修复，走独立轮次文件，**不回改已封版的 `branches.json`**：
+
+1. **创建轮次文件**（二选一）：Agent Panel diff 页点「新建修复轮次」（拷贝旧轮次 repo 结构、清空分支），或直接建空的 `branches-round-<n>.json`（`n` = 已有最大轮次 + 1）。
+2. **建修复分支**：从 `origin/master`（前端 `origin/production`）新建，命名 `<username>/fix/<req-id>-<desc>` 或 `<username>/hotfix/<req-id>-<desc>`——含同样的需求 ID，但**绝不能与旧轮次分支同名**，且必须带 `/fix/` 或 `/hotfix/` 关键字段。
+3. **扫描登记**：`python3 ~/.agents/scripts/req-branches-scan.py <req-id> --round <n>`。脚本自动：排除旧轮次已登记的同名分支（旧轮次分支仍在本地，会被误扫）、跳过缺 `/fix/`、`/hotfix/` 关键字段的分支（提示重命名后重扫）、写入前硬校验（同名或缺关键字段直接拒绝写入）。
+4. 轮次 ≥2 的分支文件在 Agent Panel diff 页通过 Round 下拉切换查看，diff 只含该轮次修复改动。
+
+`--check` 模式仅支持轮次 1；轮次 ≥2 要求 `branches.json` 已存在，否则脚本拒绝（先登记轮次 1）。
 
 ### 4. 写入并校验
 
@@ -121,13 +138,14 @@ git rev-parse <branch> origin/<branch>  # 两者相等 = 已 push
 - `updatedAt` 使用 `date +%s%3N` 的当前时间戳
 - 用 `python3 -m json.tool` 校验 JSON 合法后才算完成
 - 不要在文件中写入真实 token、密码、Cookie、私钥
+- `branches.json`（轮次 1）与 `branches-round-<n>.json`（修复轮次）均适用本清单；修复轮次分支额外校验：不与旧轮次同名、必须带 `/fix/` 或 `/hotfix/`
 - `branches.json` 与 `branch.md` 互补：前者给机器做 diff，后者给人看合并轨迹，两者都保留
 - `baseRef` 通常无需填写：前端仓库（role=`前端` 或 path 含 `frontend/`）自动用 `origin/production`，后端自动用 `origin/master`；仅当自动判断不准（如非 WMS 项目或特殊基线）时才显式写入
 
 ## Final Response
 
 ```text
-✅ 已更新: <req-dir>/branches.json
+✅ 已更新: <req-dir>/<branches|branches-round-<n>>.json（轮次 <n>）
 - 仓库数: <n>
   - <repoName>: <branches> (<role>) @ <path>
 - updatedAt: <ts>
