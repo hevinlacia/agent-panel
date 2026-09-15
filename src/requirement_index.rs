@@ -55,6 +55,81 @@ pub(crate) struct Requirement {
     pub(crate) alignment_path: Option<String>,
     pub(crate) prd_path: Option<String>,
     pub(crate) effort_estimate: Option<Value>,
+    /// 引用式需求组：本需求 group.json 的成员列表（Some 且非空 = 本需求是组）。
+    pub(crate) group_members: Option<Vec<GroupMemberRef>>,
+    /// 组发布策略：together | independent。
+    pub(crate) group_policy: Option<String>,
+    /// 本需求作为成员所属的需求组 req id 列表（扫描回填）。
+    pub(crate) member_of: Vec<String>,
+    /// 组聚合状态 = min(成员需求流状态序数)；非组或无可计算成员时为 None。
+    pub(crate) group_status: Option<String>,
+    /// 组瓶颈成员（聚合状态来源，最慢成员 req id）。
+    pub(crate) group_bottleneck: Option<String>,
+}
+
+/// 引用式需求组成员引用。磁盘格式（group.json）只要求 `reqId`（可选 `note`）；
+/// `title`/`status`/`found`/`nested` 由扫描时回填，仅存在于内存和 API 输出。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GroupMemberRef {
+    pub(crate) req_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) note: Option<String>,
+    /// 扫描回填：成员需求标题。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
+    /// 扫描回填：成员当前状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) status: Option<String>,
+    /// 扫描回填：成员需求是否在索引中找到（失效引用保留原样并标记）。
+    #[serde(default = "group_member_default_found")]
+    pub(crate) found: bool,
+    /// 扫描回填：成员自身也是需求组（不支持嵌套，validate 报 problem）。
+    #[serde(default)]
+    pub(crate) nested: bool,
+}
+
+fn group_member_default_found() -> bool {
+    true
+}
+
+/// group.json：引用式需求组定义。成员通过 reqId 引用独立存在的需求，
+/// 不做目录搬家；组状态为派生值（min 成员需求流状态），不能手动设置。
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GroupFile {
+    #[serde(default = "group_file_version")]
+    pub(crate) version: u8,
+    /// 发布策略：together（整体发布，release-check 聚合预检）| independent（成员独立发布，默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) release_policy: Option<String>,
+    #[serde(default)]
+    pub(crate) members: Vec<GroupMemberRef>,
+}
+
+fn group_file_version() -> u8 {
+    1
+}
+
+pub(crate) const GROUP_RELEASE_POLICIES: &[&str] = &["together", "independent"];
+
+/// 需求流状态序数（越小越早）；线上问题/测试问题轻流程状态不参与聚合。
+pub(crate) fn requirement_flow_status_rank(status: &str) -> Option<usize> {
+    REQ_FLOW_STATUSES.iter().position(|s| *s == status)
+}
+
+/// 读取需求目录下的 group.json；文件不存在或解析失败返回 None（validate 会报告解析问题）。
+pub(crate) async fn load_group_json(dir: &Path) -> Option<GroupFile> {
+    let raw = fs::read_to_string(dir.join(GROUP_FILE)).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// 判断需求是否是引用式需求组（有非空 group.json 成员）。
+pub(crate) async fn is_requirement_group(dir: &Path) -> bool {
+    load_group_json(dir)
+        .await
+        .map(|g| !g.members.is_empty())
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Serialize)]
@@ -214,6 +289,50 @@ pub(crate) async fn dissociate_session(
         sids.retain(|s| s != session_id);
         if sids.is_empty() {
             store.associations.remove(req_id);
+        }
+    }
+    save_associations(state, &store).await
+}
+
+/// 解析 session 关联目标：需求组 → 组自身 + 所有成员；普通需求 → 自身。
+/// 一个 session 只归属一个需求维度，组绑定时需要原子地同时绑定组与成员。
+pub(crate) async fn association_target_ids(state: &AppState, req_id: &str) -> Result<Vec<String>> {
+    let mut ids = vec![req_id.to_string()];
+    if let Ok(req) = get_real_requirement(state, req_id).await {
+        if let Some(dir) = req.req_dir.clone() {
+            if let Some(group) = load_group_json(Path::new(&dir)).await {
+                for member in group.members {
+                    if member.req_id != req_id {
+                        ids.push(member.req_id);
+                    }
+                }
+            }
+        }
+    }
+    Ok(unique_strings(ids))
+}
+
+/// 把 session 同时绑定到多个需求（组 + 成员），并从不在目标列表中的需求移除该
+/// session（保持"一个 session 归属一个需求维度"的既有语义）。
+pub(crate) async fn associate_sessions_multi(
+    state: &AppState,
+    req_ids: &[String],
+    session_id: &str,
+) -> Result<()> {
+    if req_ids.is_empty() || session_id.trim().is_empty() {
+        return Ok(());
+    }
+    let mut store = load_associations(state).await?;
+    for (k, sids) in store.associations.iter_mut() {
+        if !req_ids.contains(k) {
+            sids.retain(|s| s != session_id);
+        }
+    }
+    store.associations.retain(|_, sids| !sids.is_empty());
+    for id in req_ids {
+        let entry = store.associations.entry(id.clone()).or_default();
+        if !entry.iter().any(|s| s == session_id) {
+            entry.push(session_id.to_string());
         }
     }
     save_associations(state, &store).await
@@ -508,6 +627,11 @@ pub(crate) async fn load_requirement_from_dir(
         alignment_path: path_if_exists(dir.join("alignment.md")),
         prd_path: path_if_exists(dir.join("prd.md")),
         effort_estimate: effort,
+        group_members: None,
+        group_policy: None,
+        member_of: Vec::new(),
+        group_status: None,
+        group_bottleneck: None,
     }))
 }
 
@@ -529,12 +653,110 @@ pub(crate) async fn read_project_json(dir: &Path) -> (Vec<String>, Option<Vec<St
 
 pub(crate) async fn list_requirements(state: &AppState) -> Result<Vec<Requirement>> {
     let mut reqs = scan_hermes_requirements(state).await?;
+    // 先加载 group.json（组定义），再解析成员引用与聚合状态。
+    for req in &mut reqs {
+        if let Some(dir) = req.req_dir.clone() {
+            if let Some(group) = load_group_json(Path::new(&dir)).await {
+                req.group_policy = group
+                    .release_policy
+                    .filter(|p| GROUP_RELEASE_POLICIES.contains(&p.as_str()))
+                    .or(Some("independent".to_string()));
+                if !group.members.is_empty() {
+                    req.group_members = Some(group.members);
+                }
+            }
+        }
+    }
+    resolve_group_links(&mut reqs);
     let store = load_associations(state).await?;
     for req in &mut reqs {
         req.session_ids = store.associations.get(&req.id).cloned().unwrap_or_default();
     }
     reqs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(reqs)
+}
+
+/// 解析需求组成员引用并计算聚合状态。
+///
+/// - 成员按 reqId 全局查找（跨 scan root / project），回填 title/status/found/nested；
+/// - 组聚合状态 = min(成员需求流状态序数)，瓶颈 = 聚合状态来源成员；
+/// - 成员需求的 `member_of` 回填所属组 req id；
+/// - 自引用/找不到的成员标记 found=false，不参与聚合。
+pub(crate) fn resolve_group_links(reqs: &mut [Requirement]) {
+    #[derive(Clone)]
+    struct MemberSnapshot {
+        title: String,
+        status: String,
+        is_group: bool,
+    }
+    let snapshot: HashMap<String, MemberSnapshot> = reqs
+        .iter()
+        .map(|r| {
+            (
+                r.id.clone(),
+                MemberSnapshot {
+                    title: r.title.clone(),
+                    status: r.status.clone(),
+                    is_group: r.group_members.is_some(),
+                },
+            )
+        })
+        .collect();
+    let mut member_of: HashMap<String, Vec<String>> = HashMap::new();
+    for req in reqs.iter_mut() {
+        let Some(members) = &mut req.group_members else {
+            continue;
+        };
+        let self_id = req.id.clone();
+        let mut best: Option<(usize, String)> = None;
+        for member in members.iter_mut() {
+            if member.req_id == self_id {
+                member.found = false;
+                member.nested = false;
+                member.title = None;
+                member.status = None;
+                continue;
+            }
+            match snapshot.get(&member.req_id) {
+                Some(snap) => {
+                    member.found = true;
+                    member.nested = snap.is_group;
+                    member.title = Some(snap.title.clone());
+                    member.status = Some(snap.status.clone());
+                    member_of
+                        .entry(member.req_id.clone())
+                        .or_default()
+                        .push(self_id.clone());
+                    if !snap.is_group {
+                        if let Some(rank) = requirement_flow_status_rank(&snap.status) {
+                            if best
+                                .as_ref()
+                                .map(|(best_rank, _)| rank < *best_rank)
+                                .unwrap_or(true)
+                            {
+                                best = Some((rank, member.req_id.clone()));
+                            }
+                        }
+                    }
+                }
+                None => {
+                    member.found = false;
+                    member.nested = false;
+                    member.title = None;
+                    member.status = None;
+                }
+            }
+        }
+        if let Some((rank, bottleneck)) = best {
+            req.group_bottleneck = Some(bottleneck);
+            req.group_status = REQ_FLOW_STATUSES.get(rank).map(|s| s.to_string());
+        }
+    }
+    for req in reqs.iter_mut() {
+        if let Some(groups) = member_of.remove(&req.id) {
+            req.member_of = unique_strings(groups);
+        }
+    }
 }
 
 pub(crate) async fn get_requirement(state: &AppState, id: &str) -> Result<Option<Requirement>> {
@@ -601,6 +823,11 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         alignment_path: None,
         prd_path: None,
         effort_estimate: None,
+        group_members: None,
+        group_policy: None,
+        member_of: Vec::new(),
+        group_status: None,
+        group_bottleneck: None,
     }
 }
 

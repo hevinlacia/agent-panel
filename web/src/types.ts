@@ -41,6 +41,19 @@ export interface ExperienceSummaryJobsPayload {
 export interface ExperienceSummaryDispatchPayload { ok: boolean; report: { enabled: boolean; maxAgents: number; active: number; queued: number; completed: number; failed: number; dispatched: unknown[]; skipped: unknown[] } }
 export interface ExperienceSummaryReportPayload { ok: boolean; reqId: string; path: string; exists: boolean; content: string; job?: ExperienceSummaryJob | null }
 
+export interface GroupMemberRef {
+  reqId: string
+  note?: string
+  /** 扫描回填：成员需求标题。 */
+  title?: string
+  /** 扫描回填：成员当前状态。 */
+  status?: string
+  /** 成员需求是否在索引中找到（false = 失效引用）。 */
+  found: boolean
+  /** 成员自身也是需求组（不支持嵌套）。 */
+  nested?: boolean
+}
+
 export interface Requirement {
   id: string
   title: string
@@ -83,6 +96,16 @@ export interface Requirement {
   testScenarioPath?: string
   planRelease?: string
   effortEstimate?: EffortEstimate
+  /** 引用式需求组：本需求 group.json 的成员列表（非空 = 本需求是组）。 */
+  groupMembers?: GroupMemberRef[]
+  /** 组发布策略：independent（默认）/ together（整体发布）。 */
+  groupPolicy?: "together" | "independent"
+  /** 本需求作为成员所属的需求组 req id 列表。 */
+  memberOf?: string[]
+  /** 组聚合状态 = min(成员需求流状态)；非组时缺省。 */
+  groupStatus?: string
+  /** 组瓶颈成员（聚合状态来源，最慢成员 req id）。 */
+  groupBottleneck?: string
 }
 
 export interface RequirementAttachment {

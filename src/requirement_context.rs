@@ -40,6 +40,13 @@ pub(crate) fn requirement_api_schema() -> Value {
             {"operation": "upsertNamedSection", "endpoint": "POST /api/requirement/sections/{section}", "writes": ["mapped doc section"], "required": ["reqId", "content"], "optional": ["heading", "docType", "token", "dryRun"]}
         ],
         "eventTypes": ["progress", "decision", "knowledgeReference", "learningCandidate", "skillImprovementCandidate", "issueFound", "rootCause", "testResult", "statusTransition"],
+        "groups": {
+            "description": "引用式需求组：组需求目录下 group.json 通过 reqId 引用独立存在的成员需求，不做目录搬家；组状态为派生值 = min(成员需求流状态)，不能手动 setStatus；session 绑定组时自动绑定/解绑所有成员。",
+            "groupFile": "group.json (version=1, releasePolicy=together|independent, members=[{reqId, note?}])",
+            "create": "POST /api/requirements 传 members=[{reqId}]（可选 releasePolicy）创建组；成员必须已存在且非组，不支持组嵌套",
+            "readonlyStatus": true,
+            "context": "GET /api/requirement/context 对组需求额外返回 group 块（aggregatedStatus/bottleneck/members）"
+        },
         "agentContext": {
             "endpoint": "GET /api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000",
             "description": "returns compressed summary docs, recent structured events, recommended write APIs, fixedPhasePrompt and statePhasePrompt"
@@ -59,7 +66,8 @@ pub(crate) fn requirement_api_schema() -> Value {
             "Agent should call edit-plan before selecting files for non-trivial requirement edits.",
             "state.json is the source of truth for status/category; do not direct-edit it.",
             "Use appendNote for free-form progress logs; avoid replacing notes.md.",
-            "Use branches.json as machine-readable branch scope; branch.md is legacy/human narrative when present."
+            "Use branches.json as machine-readable branch scope; branch.md is legacy/human narrative when present.",
+            "引用式需求组（group.json）：多个高关联独立需求可组队作为整体开发，组状态 = min(成员状态) 派生只读；推进组进度 = 推进瓶颈成员；session 绑定组时自动绑定所有成员；不要对组需求调用 setStatus，也不要把组文档（整体目标/发布顺序）重复写进成员文档。"
         ]
     })
 }
@@ -1010,8 +1018,7 @@ pub(crate) async fn build_requirement_agent_context(
 ) -> ApiResult<Value> {
     let dir = req_dir_path(req)?;
     let phase_runtime = build_phase_runtime_context(state, req, intent, &dir).await;
-    let context_tokens =
-        agent_context_tokens(intent, req.category.as_deref() == Some("线上问题"));
+    let context_tokens = agent_context_tokens(intent, req.category.as_deref() == Some("线上问题"));
     let mut docs = Vec::new();
     let per_doc_budget = (budget / context_tokens.len().max(1)).clamp(300, 2_000);
     for token in context_tokens {
@@ -1172,7 +1179,12 @@ pub(crate) async fn build_phase_runtime_context(
     let entry_checks = phase_entry_checks(&req.status, dir);
     let entry_checks = if req.source == "开发推动" && req.status == "测试中" {
         let mut checks = entry_checks;
-        checks.push(file_check(dir, "test-scenario.md", "开发推动：测试场景文档（需求说明 + 开发评估的测试范围 + 测试覆盖场景）", true));
+        checks.push(file_check(
+            dir,
+            "test-scenario.md",
+            "开发推动：测试场景文档（需求说明 + 开发评估的测试范围 + 测试覆盖场景）",
+            true,
+        ));
         checks
     } else {
         entry_checks
@@ -1355,8 +1367,18 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             file_check(dir, "notes.md", "排查过程与经验库落地记录", true),
         ],
         "已关闭" => vec![
-            file_check(dir, "notes.md", "关闭原因可追溯（误报/重复/环境问题等）", true),
-            file_check(dir, "incident.md", "问题现象档案（关闭前建议补齐现象记录）", false),
+            file_check(
+                dir,
+                "notes.md",
+                "关闭原因可追溯（误报/重复/环境问题等）",
+                true,
+            ),
+            file_check(
+                dir,
+                "incident.md",
+                "问题现象档案（关闭前建议补齐现象记录）",
+                false,
+            ),
         ],
         "已完成" => vec![
             file_check(

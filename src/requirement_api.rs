@@ -167,7 +167,11 @@ pub(crate) async fn api_requirement_context(
             .unwrap_or(false);
     if agent_context {
         let limit = query.limit.unwrap_or(8).clamp(1, 30);
-        let value = build_requirement_agent_context(&state, &req, &intent, budget, limit).await?;
+        let mut value =
+            build_requirement_agent_context(&state, &req, &intent, budget, limit).await?;
+        if let Some(group) = group_context_value(&req) {
+            value["group"] = group;
+        }
         return Ok(Json(value).into_response());
     }
     let tokens = query
@@ -176,7 +180,10 @@ pub(crate) async fn api_requirement_context(
         .map(parse_token_list)
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| intent_read_tokens(&intent));
-    let value = build_requirement_context(&req, &intent, tokens, budget).await?;
+    let mut value = build_requirement_context(&req, &intent, tokens, budget).await?;
+    if let Some(group) = group_context_value(&req) {
+        value["group"] = group;
+    }
     // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
     // Programmatic callers (agents, curl) keep receiving JSON.
     let wants_html = query
@@ -193,6 +200,19 @@ pub(crate) async fn api_requirement_context(
         return Ok(Html(render_requirement_context_html(&req, &intent, &value)).into_response());
     }
     Ok(Json(value).into_response())
+}
+
+/// 组需求的聚合上下文块：成员状态、发布策略、瓶颈成员。非组需求返回 None。
+fn group_context_value(req: &Requirement) -> Option<Value> {
+    let members = req.group_members.as_ref()?;
+    Some(json!({
+        "isGroup": true,
+        "releasePolicy": req.group_policy,
+        "aggregatedStatus": req.group_status,
+        "bottleneck": req.group_bottleneck,
+        "members": members,
+        "hint": "组状态为派生值（min 成员需求流状态），不能手动设置；推进组进度 = 推进瓶颈成员；session 绑定组时自动绑定所有成员，解绑同理。",
+    }))
 }
 
 pub(crate) async fn api_requirement_experience_summary_context(
@@ -501,6 +521,8 @@ pub(crate) async fn api_requirement_status(
     let body = form.0;
     let status = canonical_status(&body.status)?;
     let req = get_real_requirement(&state, &body.req_id).await?;
+    // 需求组状态为派生值（min 成员状态），禁止手动设置。
+    ensure_group_status_locked(&req).await?;
     if should_enforce_review_gate_for_status(&req.status, &status) {
         ensure_review_gate_allows_testing(&req).await?;
     }
@@ -592,6 +614,8 @@ pub(crate) async fn api_requirement_convert_issue(
             ones: None,
             source: None,
             issues: Some(vec![issue.id.clone()]),
+            members: None,
+            release_policy: None,
             summary: Some(format!(
                 "由线上问题 {} 转出的代码修复需求；排查过程见原问题。",
                 issue.id
@@ -683,8 +707,10 @@ pub(crate) async fn api_requirement_associate(
     form: FormOrJson<AssociateForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
-    associate_session(&state, &body.req_id, &body.session_id).await?;
-    Ok(Json(json!({ "ok": true })))
+    // 需求组：session 同时绑定组与所有成员（一次调用完成，保持单一归属语义）。
+    let targets = association_target_ids(&state, &body.req_id).await?;
+    associate_sessions_multi(&state, &targets, &body.session_id).await?;
+    Ok(Json(json!({ "ok": true, "boundReqIds": targets })))
 }
 
 pub(crate) async fn api_requirement_dissociate(
@@ -692,8 +718,12 @@ pub(crate) async fn api_requirement_dissociate(
     form: FormOrJson<AssociateForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
-    dissociate_session(&state, &body.req_id, &body.session_id).await?;
-    Ok(Json(json!({ "ok": true })))
+    // 需求组：同步从组与所有成员移除 session。
+    let targets = association_target_ids(&state, &body.req_id).await?;
+    for target in &targets {
+        dissociate_session(&state, target, &body.session_id).await?;
+    }
+    Ok(Json(json!({ "ok": true, "unboundReqIds": targets })))
 }
 
 /// Resolve the requirement a dsh session is bound to (reads associations.json).
@@ -958,7 +988,9 @@ pub(crate) async fn api_requirement_review_materials_post(
 ) -> ApiResult<Json<Value>> {
     let req = get_real_requirement(&state, &form.0.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
-        ApiError::bad_request("requirement has no directory; cannot prepare review materials".to_string())
+        ApiError::bad_request(
+            "requirement has no directory; cannot prepare review materials".to_string(),
+        )
     })?);
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
         ApiError::bad_request(format!(
