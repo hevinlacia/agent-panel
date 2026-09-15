@@ -1,6 +1,6 @@
-import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, MessageSquareText, Paperclip, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
+import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, MessageSquareText, Paperclip, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { AnnotationsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, ReviewMaterialsPayload, SessionInfo, SyncBasePayload } from "../types"
+import type { AnnotationsPayload, BranchRoundInfo, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, ReviewMaterialsPayload, SessionInfo, SyncBasePayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
@@ -357,9 +357,14 @@ export function RequirementDiffPage() {
   const params = new URLSearchParams(window.location.search)
   const reqId = params.get("id") || params.get("reqId") || ""
   const initialBase = params.get("base") || "origin/master"
+  // 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次 branches-round-<n>.json。
+  const initialRound = Math.max(1, Number(params.get("round")) || 1)
   const requirements = RequirementsData()
   const req = requirements.data?.requirements.find((r) => r.id === reqId)
   const [baseRef, setBaseRef] = useState(initialBase)
+  const [round, setRound] = useState(initialRound)
+  const [creatingRound, setCreatingRound] = useState(false)
+  const rounds = useFetch<BranchRoundsPayload>(reqId ? `/api/requirement/branch-rounds?reqId=${encodeURIComponent(reqId)}` : null, [reqId])
   const [loadingDiff, setLoadingDiff] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** 快照对比模式：差异栈（新在前）+ 当前查看的下标；进入页面只读栈，点刷新才生成并入栈。 */
@@ -404,22 +409,22 @@ export function RequirementDiffPage() {
     if (body && bar && bar.scrollLeft !== body.scrollLeft) bar.scrollLeft = body.scrollLeft
   }
   const annotations = useFetch<AnnotationsPayload>(reqId ? `/api/requirement/annotations?reqId=${encodeURIComponent(reqId)}` : null, [reqId])
-  // 进入页面只加载已保存的快照栈，不自动生成；生成由「刷新代码差异」显式触发。
+  // 进入页面只加载当前轮次已保存的快照栈，不自动生成；生成由「刷新代码差异」显式触发。
   useEffect(() => {
     if (!reqId) return
     let cancelled = false
-    fetchJson<DiffSnapshotsPayload>(`/api/requirement/diff-snapshots?reqId=${encodeURIComponent(reqId)}`)
+    fetchJson<DiffSnapshotsPayload>(`/api/requirement/diff-snapshots?reqId=${encodeURIComponent(reqId)}&round=${round}`)
       .then((payload) => { if (!cancelled) { setSnapshots(payload.snapshots || []); setViewIndex(0) } })
       .catch(() => { if (!cancelled) setSnapshots([]) })
     return () => { cancelled = true }
-  }, [reqId])
-  // 生成新差异并入栈（后端保留最近 5 版）；base 不变时点刷新也会重新生成，旧版本保留可回退。
+  }, [reqId, round])
+  // 生成新差异并入栈（后端按轮次保留最近 5 版）；base 不变时点刷新也会重新生成，旧版本保留可回退。
   const generateDiff = async (base = baseRef) => {
     if (!reqId) return
     setLoadingDiff(true)
     setError(null)
     try {
-      const payload = await postForm<MasterDiffPayload>("/api/requirement/master-diff", { reqId, baseRef: base })
+      const payload = await postForm<MasterDiffPayload>("/api/requirement/master-diff", { reqId, baseRef: base, round: String(round) })
       setSnapshots(payload.snapshots || [])
       setViewIndex(0)
     } catch (err) {
@@ -487,10 +492,33 @@ export function RequirementDiffPage() {
     // 切基准分支即以新基线生成并保存一版新快照，旧快照仍在栈内可回退。
     generateDiff(next)
   }
+  // 切换分支登记轮次：只换轮次不自动生成，加载该轮次已保存的快照栈；URL 持久化以便刷新后留在同一轮次。
+  const changeRound = (next: number) => {
+    const n = Math.max(1, next)
+    setRound(n)
+    const q = new URLSearchParams(window.location.search)
+    q.set("id", reqId)
+    q.set("round", String(n))
+    window.history.replaceState(null, "", `/requirement-diff?${q.toString()}`)
+  }
+  // 新建修复轮次：后端拷贝最新轮次 repo 结构并清空分支列表（branches-round-<n+1>.json），原轮次封版；创建后切到新轮次。
+  const createRound = async () => {
+    if (!reqId || creatingRound) return
+    setCreatingRound(true)
+    try {
+      const res = await postJson<{ ok: boolean; round: number }>("/api/requirement/branch-rounds", { reqId })
+      rounds.refresh()
+      changeRound(res.round)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setCreatingRound(false)
+    }
+  }
   const title = req?.title || reqId || "分支差异"
-  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="快照对比：生成的代码差异保存为本地快照，点刷新生成新版（旧版保留可回退），右侧查看/编辑文件说明。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => generateDiff()} disabled={loadingDiff || !reqId}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />{loadingDiff ? "生成中…" : snapshots.length ? "刷新代码差异" : "生成代码差异"}</button>{viewIndex < snapshots.length - 1 ? <button onClick={() => setViewIndex((i) => Math.min(i + 1, snapshots.length - 1))} disabled={loadingDiff}><Undo2 size={15} />回退上一版</button> : null}{viewIndex > 0 ? <button onClick={() => setViewIndex(0)} disabled={loadingDiff}><Redo2 size={15} />回到最新</button> : null}</>}>
+  return <PageChrome icon={<GitBranch size={15} />} eyebrow="Diff" title={title} description="快照对比：生成的代码差异保存为本地快照，点刷新生成新版（旧版保留可回退）；分支登记支持多轮次，原始分支合入生产后新建修复轮次登记后续改动。右侧查看/编辑文件说明。" actions={<><a href={`/requirement?id=${encodeURIComponent(reqId)}`}><ArrowLeft size={15} />返回需求</a><button onClick={() => generateDiff()} disabled={loadingDiff || !reqId}><RefreshCw size={15} className={loadingDiff ? "react-spin" : ""} />{loadingDiff ? "生成中…" : snapshots.length ? "刷新代码差异" : "生成代码差异"}</button>{viewIndex < snapshots.length - 1 ? <button onClick={() => setViewIndex((i) => Math.min(i + 1, snapshots.length - 1))} disabled={loadingDiff}><Undo2 size={15} />回退上一版</button> : null}{viewIndex > 0 ? <button onClick={() => setViewIndex(0)} disabled={loadingDiff}><Redo2 size={15} />回到最新</button> : null}</>}>
     <section className="react-diff-shell">
-      <aside className="react-diff-sidebar"><div className="react-diff-compare"><span>Compare</span><select value={baseRef} onChange={(e) => changeBase(e.target.value)}><option value="origin/master">origin/master</option><option value="origin/production">origin/production</option><option value="master">master</option><option value="production">production</option></select><em>and latest version</em></div><label className="react-diff-search"><Search size={14} /><input placeholder="Search files (Ctrl+P)" onChange={(e) => { const hit = files.find((f) => f.file.path.toLowerCase().includes(e.target.value.toLowerCase())); if (hit && e.target.value) scrollToFile(`${hit.repo.repoName}:${hit.file.path}`) }} /></label><div className="react-diff-file-list">{[...new Set(review?.repos?.map((r) => r.repoName) || [])].map((repoName) => {
+      <aside className="react-diff-sidebar"><div className="react-diff-round"><span>Round</span><select value={round} onChange={(e) => changeRound(Number(e.target.value))}>{(rounds.data?.rounds || []).some((r) => r.round === round) ? null : <option key={round} value={round}>轮次 {round}</option>}{(rounds.data?.rounds || []).map((r) => <option key={r.round} value={r.round}>轮次 {r.round}{r.round === 1 ? "（原始）" : "（修复）"}{r.sealed ? " · 已封版" : ""}</option>)}</select><button className="react-diff-round-add" onClick={createRound} disabled={creatingRound || !reqId}><Plus size={13} />{creatingRound ? "创建中…" : "新建修复轮次"}</button>{rounds.data && rounds.data.latest > 1 && round === 1 ? <em>轮次 1 已封版：原需求分支已合入生产，修复改动登记在更新轮次。</em> : null}{rounds.data && rounds.data.latest === 0 ? <em>尚未登记 branches.json（req-branches-update）。</em> : null}</div><div className="react-diff-compare"><span>Compare</span><select value={baseRef} onChange={(e) => changeBase(e.target.value)}><option value="origin/master">origin/master</option><option value="origin/production">origin/production</option><option value="master">master</option><option value="production">production</option></select><em>and latest version</em></div><label className="react-diff-search"><Search size={14} /><input placeholder="Search files (Ctrl+P)" onChange={(e) => { const hit = files.find((f) => f.file.path.toLowerCase().includes(e.target.value.toLowerCase())); if (hit && e.target.value) scrollToFile(`${hit.repo.repoName}:${hit.file.path}`) }} /></label><div className="react-diff-file-list">{[...new Set(review?.repos?.map((r) => r.repoName) || [])].map((repoName) => {
           const repo = review?.repos?.find((r) => r.repoName === repoName)
           const repoFiles = files.filter((f) => f.repo.repoName === repoName)
           return <details key={repoName} className="react-diff-repo-group" open>

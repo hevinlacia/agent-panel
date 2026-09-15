@@ -1771,3 +1771,95 @@ async fn group_status_is_locked_against_manual_status_writes() {
     let group = reqs.iter().find(|r| r.id == "G-GA").expect("group");
     assert_eq!(group.group_status.as_deref(), Some("自测中"));
 }
+
+/// 分支登记轮次：round 文件命名、目录扫描（sealed 标志）、创建（结构拷贝 + 清空分支）。
+#[tokio::test]
+async fn branch_rounds_file_names_listing_and_create() {
+    assert_eq!(branch_scope_file_for_round(1), "branches.json");
+    assert_eq!(branch_scope_file_for_round(2), "branches-round-2.json");
+    assert_eq!(branch_scope_file_for_round(12), "branches-round-12.json");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    // 无登记文件时空列表。
+    assert!(list_branch_scope_rounds(dir).await.expect("empty").is_empty());
+
+    std::fs::write(
+        dir.join("branches.json"),
+        json!({"version": 2, "updatedAt": 1, "repos": [
+            {"repoName": "a", "branches": ["hevin.yang/feature/x"], "role": "后端", "path": "/tmp/a/"}
+        ]})
+        .to_string(),
+    )
+    .expect("write round1");
+    // 无关文件与非法轮次号不被扫描。
+    std::fs::write(dir.join("branches-round-0.json"), "{}").expect("write round0");
+    std::fs::write(dir.join("branches-old.json"), "{}").expect("write decoy");
+
+    let rounds = list_branch_scope_rounds(dir).await.expect("rounds");
+    assert_eq!(rounds.len(), 1);
+    assert_eq!(rounds[0].round, 1);
+    assert!(!rounds[0].sealed);
+    assert_eq!(rounds[0].repo_count, 1);
+    assert_eq!(rounds[0].branch_count, 1);
+
+    // 创建 round 2：拷贝 repo 结构、清空 branches；round 1 随之封版。
+    let (round, path, scope) = create_branch_scope_round(dir).await.expect("create round2");
+    assert_eq!(round, 2);
+    assert!(path.ends_with("branches-round-2.json"));
+    assert_eq!(scope.round, 2);
+    assert!(scope.repos.iter().all(|r| r.branches.is_empty()));
+    assert_eq!(scope.repos[0].repo_name, "a");
+    assert_eq!(scope.repos[0].role.as_deref(), Some("后端"));
+
+    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after create");
+    assert_eq!(rounds.len(), 2);
+    assert!(rounds[0].sealed, "round 1 must be sealed once round 2 exists");
+    assert!(!rounds[1].sealed);
+
+    // 可继续创建 round 3，latest 指向最大轮次。
+    let (round3, _, _) = create_branch_scope_round(dir).await.expect("create round3");
+    assert_eq!(round3, 3);
+    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after round3");
+    assert_eq!(rounds.len(), 3);
+    assert!(rounds.iter().take(2).all(|r| r.sealed));
+    assert!(!rounds[2].sealed);
+}
+
+/// 差异快照按轮次独立保留：修复轮次的新快照不挤掉原始轮次可回退的历史。
+#[tokio::test]
+async fn diff_snapshots_isolated_per_round() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let review = |commit: &str| {
+        json!({
+            "version": 1, "reqId": "R-1", "updatedAt": 1, "baseRef": "origin/master",
+            "repos": [{"repoName": "a", "targetCommit": commit, "files": [], "additions": 0, "deletions": 0}]
+        })
+    };
+    // round 1 连存 7 版（不同 commit），只保留最新 5 版。
+    for i in 0..7 {
+        save_diff_snapshot(dir, review(&format!("c{i}")), 1)
+            .await
+            .expect("save r1");
+    }
+    // round 2 存 2 版，不应挤掉 round 1 的任何一版。
+    for i in 0..2 {
+        save_diff_snapshot(dir, review(&format!("r2c{i}")), 2)
+            .await
+            .expect("save r2");
+    }
+    // 同轮次同 base+commit 重复生成不去重会翻倍；这里验证去重后仍为 5+2。
+    save_diff_snapshot(dir, review("c6"), 1).await.expect("save r1 dedup");
+    save_diff_snapshot(dir, review("r2c1"), 2).await.expect("save r2 dedup");
+
+    let doc = read_json_if_exists(&dir.join(CODE_DIFF_SNAPSHOTS_FILE))
+        .await
+        .expect("snapshots doc exists");
+    let snapshots = doc.get("snapshots").and_then(|v| v.as_array()).expect("array");
+    let round_of = |s: &serde_json::Value| s.get("round").and_then(serde_json::Value::as_u64);
+    let r1 = snapshots.iter().filter(|s| round_of(s) == Some(1)).count();
+    let r2 = snapshots.iter().filter(|s| round_of(s) == Some(2)).count();
+    assert_eq!(r1, 5, "round 1 keeps its own 5 snapshots");
+    assert_eq!(r2, 2, "round 2 keeps its own snapshots without evicting round 1");
+}
