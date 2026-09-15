@@ -338,7 +338,10 @@ fn normalize_create_id_template_splits_issue_pool() {
         normalize_create_id_template("", "线上问题").unwrap(),
         "WMS-INC-{seq}"
     );
-    assert_eq!(normalize_create_id_template("", "需求").unwrap(), "WMS-{seq}");
+    assert_eq!(
+        normalize_create_id_template("", "需求").unwrap(),
+        "WMS-{seq}"
+    );
     // 模板：issue 强制 WMS-INC 前缀，保留 suffix
     assert_eq!(
         normalize_create_id_template("WMS-{seq}", "线上问题").unwrap(),
@@ -434,6 +437,8 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
         plan_release: None,
         ones: None,
         issues: None,
+        members: None,
+        release_policy: None,
         summary: None,
         background: None,
         notes: None,
@@ -445,8 +450,14 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
         create_requirement(&state, form("aaa")),
         create_requirement(&state, form("bbb"))
     );
-    let id_a = res_a.expect("create a")["reqId"].as_str().expect("reqId a").to_string();
-    let id_b = res_b.expect("create b")["reqId"].as_str().expect("reqId b").to_string();
+    let id_a = res_a.expect("create a")["reqId"]
+        .as_str()
+        .expect("reqId a")
+        .to_string();
+    let id_b = res_b.expect("create b")["reqId"]
+        .as_str()
+        .expect("reqId b")
+        .to_string();
     assert_ne!(id_a, id_b, "parallel creates must not share a reqId");
     let mut ids = vec![id_a, id_b];
     ids.sort();
@@ -501,8 +512,14 @@ fn online_issue_statuses_map_to_online_issue_phase_prompt() {
 
 #[test]
 fn source_normalizes_to_known_values_with_default() {
-    assert_eq!(normalize_source(Some(&"开发推动".to_string())).unwrap(), "开发推动");
-    assert_eq!(normalize_source(Some(&"产品推动".to_string())).unwrap(), "产品推动");
+    assert_eq!(
+        normalize_source(Some(&"开发推动".to_string())).unwrap(),
+        "开发推动"
+    );
+    assert_eq!(
+        normalize_source(Some(&"产品推动".to_string())).unwrap(),
+        "产品推动"
+    );
     assert!(normalize_source(Some(&"外部".to_string())).is_none());
     assert!(ensure_source("开发推动").is_ok());
     assert!(ensure_source("QA").is_err());
@@ -512,20 +529,46 @@ fn source_normalizes_to_known_values_with_default() {
 fn doc_has_filled_items_rejects_template_only_content() {
     assert!(!doc_has_filled_items(""));
     assert!(!doc_has_filled_items("# 标题\n\n- 待补充\n- 待补充\n"));
-    assert!(doc_has_filled_items("# 标题\n\n- 已确认：修复出库单取消释放\n"));
-    assert!(doc_has_filled_items("| 1 | 登录 | 无 | 打开首页 | 跳转 | P0 |\n"));
+    assert!(doc_has_filled_items(
+        "# 标题\n\n- 已确认：修复出库单取消释放\n"
+    ));
+    assert!(doc_has_filled_items(
+        "| 1 | 登录 | 无 | 打开首页 | 跳转 | P0 |\n"
+    ));
 }
 
 #[test]
 fn build_meta_doc_writes_source_line() {
     let meta = build_meta_doc(
-        "WMS-100-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "开发推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s",
+        "WMS-100-x",
+        "t",
+        "需求澄清",
+        "WMS",
+        &["WMS".into()],
+        "需求",
+        "开发推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
     );
     assert!(meta.contains("source: 开发推动"));
     let default_meta = build_meta_doc(
-        "WMS-100-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s",
+        "WMS-100-x",
+        "t",
+        "需求澄清",
+        "WMS",
+        &["WMS".into()],
+        "需求",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
     );
     assert!(default_meta.contains("source: 产品推动"));
 }
@@ -533,13 +576,35 @@ fn build_meta_doc_writes_source_line() {
 #[test]
 fn build_meta_doc_writes_issues_frontmatter_when_bound() {
     let with = build_meta_doc(
-        "WMS-100-fix-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
-        "2026-01-01", "unknown", "", &["WMS-099-issue".into()], "s",
+        "WMS-100-fix-x",
+        "t",
+        "需求澄清",
+        "WMS",
+        &["WMS".into()],
+        "需求",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &["WMS-099-issue".into()],
+        "s",
     );
     assert!(with.contains("issues: WMS-099-issue"));
     let without = build_meta_doc(
-        "WMS-100-fix-x", "t", "需求澄清", "WMS", &["WMS".into()], "需求", "产品推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s",
+        "WMS-100-fix-x",
+        "t",
+        "需求澄清",
+        "WMS",
+        &["WMS".into()],
+        "需求",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
     );
     assert!(!without.contains("issues:"));
 }
@@ -556,8 +621,14 @@ fn should_auto_advance_issues_only_for_experience_or_later() {
 
 #[test]
 fn online_issue_doc_type_resolves_to_troubleshooting_md() {
-    assert_eq!(requirement_doc_file("troubleshooting").unwrap(), "troubleshooting.md");
-    assert_eq!(requirement_doc_file("排查经验").unwrap(), "troubleshooting.md");
+    assert_eq!(
+        requirement_doc_file("troubleshooting").unwrap(),
+        "troubleshooting.md"
+    );
+    assert_eq!(
+        requirement_doc_file("排查经验").unwrap(),
+        "troubleshooting.md"
+    );
     let tpl = requirement_doc_template(
         &default_requirement_for_test("WMS-001"),
         "troubleshooting.md",
@@ -574,16 +645,12 @@ fn incident_and_root_cause_doc_types_resolve_with_verifiable_evidence_templates(
     assert_eq!(requirement_doc_file("root-cause").unwrap(), "root-cause.md");
     assert_eq!(requirement_doc_file("rootcause").unwrap(), "root-cause.md");
     assert_eq!(requirement_doc_file("根因").unwrap(), "root-cause.md");
-    let incident_tpl = requirement_doc_template(
-        &default_requirement_for_test("WMS-001"),
-        "incident.md",
-    );
+    let incident_tpl =
+        requirement_doc_template(&default_requirement_for_test("WMS-001"), "incident.md");
     assert!(incident_tpl.contains("## 影响范围"));
     assert!(incident_tpl.contains("## 复现步骤"));
-    let root_cause_tpl = requirement_doc_template(
-        &default_requirement_for_test("WMS-001"),
-        "root-cause.md",
-    );
+    let root_cause_tpl =
+        requirement_doc_template(&default_requirement_for_test("WMS-001"), "root-cause.md");
     assert!(root_cause_tpl.contains("## 证据链"));
     assert!(root_cause_tpl.contains("验证 SQL"));
     assert!(root_cause_tpl.contains("可全局搜索的关键字片段"));
@@ -610,7 +677,9 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     std::fs::write(dir.join("incident.md"), "内容").unwrap();
     std::fs::write(dir.join("notes.md"), "内容").unwrap();
     let checks = phase_entry_checks("排查中", &dir);
-    assert!(checks.iter().all(|c| c["required"] == false || c["ok"] == true));
+    assert!(checks
+        .iter()
+        .all(|c| c["required"] == false || c["ok"] == true));
     // 已定位：root-cause 缺失但存量 technical-plan.md 兼容放行。
     std::fs::write(dir.join("technical-plan.md"), "存量根因记录").unwrap();
     let checks = phase_entry_checks("已定位", &dir);
@@ -643,9 +712,18 @@ fn chrono_like_unique_suffix() -> u128 {
 fn agent_context_tokens_issue_category_uses_issue_doc_set() {
     // token→file 映射必须覆盖 issue 专属 token，否则上下文组装会静默丢弃。
     assert_eq!(requirement_token_file("req.incident"), Some("incident.md"));
-    assert_eq!(requirement_token_file("req.rootCause"), Some("root-cause.md"));
-    assert_eq!(requirement_doc_type_for_token("req.incident"), Some("incident"));
-    assert_eq!(requirement_doc_type_for_token("req.rootCause"), Some("root-cause"));
+    assert_eq!(
+        requirement_token_file("req.rootCause"),
+        Some("root-cause.md")
+    );
+    assert_eq!(
+        requirement_doc_type_for_token("req.incident"),
+        Some("incident")
+    );
+    assert_eq!(
+        requirement_doc_type_for_token("req.rootCause"),
+        Some("root-cause")
+    );
     let tokens = agent_context_tokens("overview", true);
     assert!(tokens.contains(&"req.incident"));
     assert!(tokens.contains(&"req.rootCause"));
@@ -661,8 +739,21 @@ fn agent_context_tokens_issue_category_uses_issue_doc_set() {
 #[test]
 fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
     let issue_files = requirement_create_files(
-        "WMS-100-issue", "t", "排查中", "WMS", &["WMS".to_string()], "线上问题", "开发推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s", None, None,
+        "WMS-100-issue",
+        "t",
+        "排查中",
+        "WMS",
+        &["WMS".to_string()],
+        "线上问题",
+        "开发推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
+        None,
+        None,
     );
     let names: Vec<&str> = issue_files.iter().map(|(n, _)| *n).collect();
     assert!(names.contains(&"incident.md"));
@@ -672,8 +763,21 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
 
     // 测试问题与线上问题同属 issue 家族：同样脚手架 incident.md 文档集
     let test_issue_files = requirement_create_files(
-        "WMS-TST-001-uat-bug", "t", "排查中", "WMS", &["WMS".to_string()], "测试问题", "产品推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s", None, None,
+        "WMS-TST-001-uat-bug",
+        "t",
+        "排查中",
+        "WMS",
+        &["WMS".to_string()],
+        "测试问题",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
+        None,
+        None,
     );
     let test_names: Vec<&str> = test_issue_files.iter().map(|(n, _)| *n).collect();
     assert!(test_names.contains(&"incident.md"));
@@ -682,8 +786,21 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
     assert!(!test_names.contains(&"technical-plan.md"));
 
     let normal_files = requirement_create_files(
-        "WMS-101-req", "t", "需求澄清", "WMS", &["WMS".to_string()], "需求", "产品推动", "hevin",
-        "2026-01-01", "unknown", "", &[], "s", None, None,
+        "WMS-101-req",
+        "t",
+        "需求澄清",
+        "WMS",
+        &["WMS".to_string()],
+        "需求",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "",
+        &[],
+        "s",
+        None,
+        None,
     );
     let normal_names: Vec<&str> = normal_files.iter().map(|(n, _)| *n).collect();
     assert!(normal_names.contains(&"background.md"));
@@ -895,6 +1012,11 @@ fn context_page_contains_sections_and_raw_link() {
         alignment_path: None,
         prd_path: None,
         effort_estimate: None,
+        group_members: None,
+        group_policy: None,
+        member_of: Vec::new(),
+        group_status: None,
+        group_bottleneck: None,
     };
     let html = render_requirement_context_html(&req, "release-check", &value);
     assert!(html.contains("上线清单 Release Manifest"));
@@ -1337,4 +1459,315 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
     assert_eq!(view["pending"]["sessionId"], json!(sid4));
     assert_eq!(view["pending"]["used"], json!(false));
     assert_eq!(view["pending"]["harness"], json!("pi"));
+}
+
+// ---- requirement group（引用式需求组 group.json）----
+
+fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
+    RequirementCreateForm {
+        req_id: req_id.to_string(),
+        title: title.to_string(),
+        project: None,
+        projects: None,
+        group_path: None,
+        parent_req_id: None,
+        root: None,
+        status: None,
+        category: None,
+        source: None,
+        owner: None,
+        start_date: None,
+        plan_release: None,
+        ones: None,
+        issues: None,
+        members: None,
+        release_policy: None,
+        summary: None,
+        background: None,
+        notes: None,
+        dry_run: None,
+    }
+}
+
+fn group_test_state(tmp: &tempfile::TempDir) -> AppState {
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    std::fs::create_dir_all(&proj).expect("create proj dir");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    temp_app_state(
+        &data,
+        &tmp.path().join("pi-sessions"),
+        &tmp.path().join("dsh-sessions"),
+    )
+}
+
+fn group_test_member_input(id: &str) -> GroupMemberInput {
+    GroupMemberInput {
+        req_id: id.to_string(),
+        note: None,
+    }
+}
+
+#[tokio::test]
+async fn group_status_aggregation_takes_min_member_status() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-MEMBER-A", "成员A"))
+        .await
+        .expect("create member a");
+    create_requirement(&state, group_test_form("G-MEMBER-B", "成员B"))
+        .await
+        .expect("create member b");
+    let req_a = get_real_requirement(&state, "G-MEMBER-A")
+        .await
+        .expect("req a");
+    write_requirement_status(req_a.req_dir.as_deref().unwrap_or_default(), "测试中", None)
+        .await
+        .expect("set status a");
+    let req_b = get_real_requirement(&state, "G-MEMBER-B")
+        .await
+        .expect("req b");
+    write_requirement_status(req_b.req_dir.as_deref().unwrap_or_default(), "开发中", None)
+        .await
+        .expect("set status b");
+
+    let mut form = group_test_form("G-GROUP-001", "联合需求组");
+    form.members = Some(vec![
+        group_test_member_input("G-MEMBER-A"),
+        group_test_member_input("G-MEMBER-B"),
+    ]);
+    form.release_policy = Some("together".to_string());
+    create_requirement(&state, form)
+        .await
+        .expect("create group");
+
+    let reqs = list_requirements(&state).await.expect("list");
+    let group = reqs
+        .iter()
+        .find(|r| r.id == "G-GROUP-001")
+        .expect("group req");
+    let members = group.group_members.as_ref().expect("group members");
+    assert_eq!(members.len(), 2);
+    assert!(members.iter().all(|m| m.found));
+    assert_eq!(
+        members
+            .iter()
+            .find(|m| m.req_id == "G-MEMBER-A")
+            .and_then(|m| m.status.clone()),
+        Some("测试中".to_string())
+    );
+    // 总进度 = min(成员进度)：A 测试中(3)、B 开发中(1) -> 开发中，瓶颈 B。
+    assert_eq!(group.group_status.as_deref(), Some("开发中"));
+    assert_eq!(group.group_bottleneck.as_deref(), Some("G-MEMBER-B"));
+    assert_eq!(group.group_policy.as_deref(), Some("together"));
+    // 成员反向引用所属组。
+    let member = reqs
+        .iter()
+        .find(|r| r.id == "G-MEMBER-A")
+        .expect("member a");
+    assert!(member.member_of.iter().any(|g| g == "G-GROUP-001"));
+}
+
+#[tokio::test]
+async fn create_requirement_group_writes_group_json_and_defaults_policy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-M1", "成员1"))
+        .await
+        .expect("create member");
+    let mut form = group_test_form("G-G2", "默认策略组");
+    form.members = Some(vec![group_test_member_input("G-M1")]);
+    let res = create_requirement(&state, form)
+        .await
+        .expect("create group");
+    assert_eq!(res["group"]["releasePolicy"], json!("independent"));
+    let req_dir = res["reqDir"].as_str().expect("reqDir").to_string();
+    let raw = std::fs::read_to_string(std::path::Path::new(&req_dir).join(GROUP_FILE))
+        .expect("group.json exists");
+    let file: GroupFile = serde_json::from_str(&raw).expect("parse group.json");
+    assert_eq!(file.release_policy.as_deref(), Some("independent"));
+    assert_eq!(file.members.len(), 1);
+    assert_eq!(file.members[0].req_id, "G-M1");
+}
+
+#[tokio::test]
+async fn create_requirement_group_rejects_invalid_members_and_policy() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-M2", "成员2"))
+        .await
+        .expect("create member");
+
+    // 成员不存在。
+    let mut missing = group_test_form("G-G3", "坏成员组");
+    missing.members = Some(vec![group_test_member_input("G-NOPE")]);
+    let err = create_requirement(&state, missing)
+        .await
+        .expect_err("missing member must fail");
+    assert!(err.message.contains("需求组成员不存在"), "{:?}", err);
+
+    // 自引用。
+    let mut self_ref = group_test_form("G-G4", "自引用组");
+    self_ref.members = Some(vec![group_test_member_input("G-G4")]);
+    let err = create_requirement(&state, self_ref)
+        .await
+        .expect_err("self reference must fail");
+    assert!(err.message.contains("自身"), "{:?}", err);
+
+    // 非法 releasePolicy。
+    let mut bad_policy = group_test_form("G-G5", "坏策略组");
+    bad_policy.members = Some(vec![group_test_member_input("G-M2")]);
+    bad_policy.release_policy = Some("sometimes".to_string());
+    let err = create_requirement(&state, bad_policy)
+        .await
+        .expect_err("bad policy must fail");
+    assert!(err.message.contains("invalid releasePolicy"), "{:?}", err);
+
+    // releasePolicy 未随 members 一起传。
+    let mut lone_policy = group_test_form("G-G6", "孤立策略");
+    lone_policy.release_policy = Some("together".to_string());
+    let err = create_requirement(&state, lone_policy)
+        .await
+        .expect_err("lone policy must fail");
+    assert!(err.message.contains("releasePolicy"), "{:?}", err);
+
+    // 组嵌套：成员自身是组。
+    let mut inner = group_test_form("G-G7", "内层组");
+    inner.members = Some(vec![group_test_member_input("G-M2")]);
+    create_requirement(&state, inner)
+        .await
+        .expect("create inner group");
+    let mut outer = group_test_form("G-G8", "外层组");
+    outer.members = Some(vec![group_test_member_input("G-G7")]);
+    let err = create_requirement(&state, outer)
+        .await
+        .expect_err("nested group must fail");
+    assert!(err.message.contains("组嵌套"), "{:?}", err);
+}
+
+#[tokio::test]
+async fn validate_requirement_reports_group_json_problems_and_warnings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-M3", "成员3"))
+        .await
+        .expect("create member");
+    let mut form = group_test_form("G-G9", "校验组");
+    form.members = Some(vec![group_test_member_input("G-M3")]);
+    let res = create_requirement(&state, form)
+        .await
+        .expect("create group");
+    let req_dir = res["reqDir"].as_str().expect("reqDir").to_string();
+    let dir = std::path::Path::new(&req_dir);
+
+    // 合法 group.json -> ok。
+    let req = get_real_requirement(&state, "G-G9").await.expect("req");
+    let ok = validate_requirement(&state, &req).await.expect("validate");
+    assert_eq!(ok["ok"], json!(true), "{}", ok);
+
+    // 失效引用 -> warning（不阻塞）。
+    std::fs::write(
+        dir.join(GROUP_FILE),
+        json!({"version": 1, "releasePolicy": "independent", "members": [{"reqId": "G-M3"}, {"reqId": "G-GONE"}]}).to_string(),
+    )
+    .expect("write stale group.json");
+    let stale = validate_requirement(&state, &req)
+        .await
+        .expect("validate stale");
+    assert_eq!(stale["ok"], json!(true));
+    assert!(
+        stale["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|w| w.as_str().unwrap_or("").contains("G-GONE")),
+        "{}",
+        stale
+    );
+
+    // 自引用 + 非法 policy -> problems。
+    std::fs::write(
+        dir.join(GROUP_FILE),
+        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "G-G9"}]}).to_string(),
+    )
+    .expect("write bad group.json");
+    let bad = validate_requirement(&state, &req)
+        .await
+        .expect("validate bad");
+    assert_eq!(bad["ok"], json!(false));
+    assert!(bad["problems"]
+        .as_array()
+        .expect("problems")
+        .iter()
+        .any(|p| p.as_str().unwrap_or("").contains("references itself")));
+    assert!(bad["problems"]
+        .as_array()
+        .expect("problems")
+        .iter()
+        .any(|p| p.as_str().unwrap_or("").contains("releasePolicy")));
+
+    // 坏 JSON -> problem。
+    std::fs::write(dir.join(GROUP_FILE), "{ not json").expect("write broken group.json");
+    let broken = validate_requirement(&state, &req)
+        .await
+        .expect("validate broken");
+    assert_eq!(broken["ok"], json!(false));
+    assert!(broken["problems"]
+        .as_array()
+        .expect("problems")
+        .iter()
+        .any(|p| p.as_str().unwrap_or("").contains("group.json")));
+}
+
+#[tokio::test]
+async fn group_status_is_locked_against_manual_status_writes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-M4", "成员4"))
+        .await
+        .expect("create member");
+    let mut form = group_test_form("G-GA", "只读状态组");
+    form.members = Some(vec![group_test_member_input("G-M4")]);
+    create_requirement(&state, form)
+        .await
+        .expect("create group");
+
+    // PATCH / edit setStatus 路径被拦截。
+    let err = update_requirement(
+        &state,
+        RequirementPatchForm {
+            req_id: "G-GA".to_string(),
+            title: None,
+            project: None,
+            projects: None,
+            status: Some("已完成".to_string()),
+            category: None,
+            source: None,
+            owner: None,
+            start_date: None,
+            plan_release: None,
+            ones: None,
+            issues: None,
+            note: None,
+            dry_run: None,
+        },
+    )
+    .await
+    .expect_err("group status must be locked");
+    assert!(err.message.contains("派生值"), "{:?}", err);
+
+    // 成员不受影响，可以正常推进（组聚合状态随成员变化）。
+    let member = get_real_requirement(&state, "G-M4").await.expect("member");
+    write_requirement_status(
+        member.req_dir.as_deref().unwrap_or_default(),
+        "自测中",
+        None,
+    )
+    .await
+    .expect("member status ok");
+    let reqs = list_requirements(&state).await.expect("list");
+    let group = reqs.iter().find(|r| r.id == "G-GA").expect("group");
+    assert_eq!(group.group_status.as_deref(), Some("自测中"));
 }

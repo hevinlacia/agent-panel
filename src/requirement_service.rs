@@ -69,6 +69,15 @@ pub(crate) struct AnnotationsSaveForm {
     pub(crate) annotations: Option<Value>,
 }
 
+/// 引用式需求组创建入参的单个成员（reqId 必填，note 可选）。
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GroupMemberInput {
+    pub(crate) req_id: String,
+    #[serde(default)]
+    pub(crate) note: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementCreateForm {
@@ -100,6 +109,11 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) ones: Option<String>,
     /// 创建时绑定的线上问题 req id 列表（仅 category=需求 时有意义）。
     pub(crate) issues: Option<Vec<String>>,
+    /// 引用式需求组成员（reqId + 可选 note）；members 非空 = 创建需求组，
+    /// 成员必须是已存在且非组的需求，不支持嵌套。
+    pub(crate) members: Option<Vec<GroupMemberInput>>,
+    /// 组发布策略：independent（默认）/ together（整体发布）。
+    pub(crate) release_policy: Option<String>,
     #[serde(default)]
     pub(crate) summary: Option<String>,
     #[serde(default)]
@@ -374,6 +388,14 @@ pub(crate) async fn create_requirement(
     let summary = clean_optional(form.summary.as_deref()).unwrap_or_else(|| "待补充".to_string());
     let background = clean_optional(form.background.as_deref());
     let notes = clean_optional(form.notes.as_deref());
+    // 引用式需求组：members 非空时校验成员（存在、非自身、非组）并构建 group.json。
+    let group_file = build_group_file_for_create(
+        state,
+        &req_id,
+        form.members.as_ref(),
+        form.release_policy.as_deref(),
+    )
+    .await?;
 
     let files = requirement_create_files(
         &req_id,
@@ -392,14 +414,20 @@ pub(crate) async fn create_requirement(
         background.as_deref(),
         notes.as_deref(),
     );
-    let planned: Vec<String> = files
+    let mut planned: Vec<String> = files
         .iter()
         .map(|(name, _)| target_dir.join(name).to_string_lossy().to_string())
         .collect();
+    if group_file.is_some() {
+        planned.push(target_dir.join(GROUP_FILE).to_string_lossy().to_string());
+    }
     if !dry_run {
         fs::create_dir_all(&target_dir).await?;
         for (name, body) in &files {
             atomic_write_text(&target_dir.join(name), body).await?;
+        }
+        if let Some(group) = &group_file {
+            atomic_write_json(&target_dir.join(GROUP_FILE), group).await?;
         }
     }
     let validation = if dry_run {
@@ -422,8 +450,89 @@ pub(crate) async fn create_requirement(
         "projects": projects,
         "reqDir": target_dir.to_string_lossy(),
         "files": planned,
+        "group": group_file.map(|g| json!({
+            "releasePolicy": g.release_policy,
+            "members": g.members.iter().map(|m| json!({
+                "reqId": m.req_id,
+                "note": m.note,
+            })).collect::<Vec<_>>(),
+        })),
         "validation": validation,
     }))
+}
+
+/// 创建需求组时校验成员并构建 group.json 内容；members 为空时返回 None。
+///
+/// 规则：成员必须是已存在的需求；不能引用自身；成员自身不能是需求组（不支持嵌套）；
+/// releasePolicy 仅在创建组时有效，可选 together / independent（默认 independent）。
+async fn build_group_file_for_create(
+    state: &AppState,
+    self_id: &str,
+    members: Option<&Vec<GroupMemberInput>>,
+    release_policy: Option<&str>,
+) -> ApiResult<Option<GroupFile>> {
+    let Some(members) = members.filter(|m| !m.is_empty()) else {
+        if let Some(policy) = clean_optional(release_policy) {
+            return Err(ApiError::bad_request(format!(
+                "releasePolicy ({policy}) 仅在创建需求组（members 非空）时有效"
+            )));
+        }
+        return Ok(None);
+    };
+    let policy = match clean_optional(release_policy) {
+        Some(p) => {
+            if !GROUP_RELEASE_POLICIES.contains(&p.as_str()) {
+                return Err(ApiError::bad_request(format!(
+                    "invalid releasePolicy: {p}（可选 together / independent）"
+                )));
+            }
+            p
+        }
+        None => "independent".to_string(),
+    };
+    let mut refs = Vec::new();
+    for member in members {
+        let id = clean_required(member.req_id.trim(), "members[].reqId")?;
+        if id == self_id {
+            return Err(ApiError::bad_request("需求组不能引用自身作为成员"));
+        }
+        let member_req = get_real_requirement(state, &id).await.map_err(|_| {
+            ApiError::bad_request(format!("需求组成员不存在：{id}（成员必须是已存在的需求）"))
+        })?;
+        if let Some(dir) = &member_req.req_dir {
+            if is_requirement_group(Path::new(dir)).await {
+                return Err(ApiError::bad_request(format!(
+                    "需求组成员 {id} 自身已是需求组；不支持组嵌套"
+                )));
+            }
+        }
+        refs.push(GroupMemberRef {
+            req_id: id,
+            note: clean_optional(member.note.as_deref()),
+            title: None,
+            status: None,
+            found: true,
+            nested: false,
+        });
+    }
+    Ok(Some(GroupFile {
+        version: 1,
+        release_policy: Some(policy),
+        members: refs,
+    }))
+}
+
+/// 需求组状态为派生值（min 成员需求流状态），禁止手动 setStatus。
+pub(crate) async fn ensure_group_status_locked(req: &Requirement) -> ApiResult<()> {
+    if let Some(dir) = &req.req_dir {
+        if is_requirement_group(Path::new(dir)).await {
+            return Err(ApiError::bad_request(format!(
+                "{} 是引用式需求组：组状态为派生值（min 成员状态），不能手动设置，请推进成员需求状态",
+                req.id
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) async fn update_requirement(
@@ -512,14 +621,19 @@ pub(crate) async fn update_requirement(
     let mut auto_advanced_issues: Vec<String> = Vec::new();
     if let Some(status) = form.status.as_deref() {
         let status = canonical_status(status)?;
+        // 需求组状态为派生值，禁止手动设置（PATCH / edit setStatus 同样拦截）。
+        ensure_group_status_locked(&req).await?;
         if should_enforce_review_gate_for_status(&req.status, &status) {
             ensure_review_gate_allows_testing(&req).await?;
         }
         // 线上问题复盘门禁：进入「已复盘」前必须已沉淀排查经验（troubleshooting.md 含怎么排查/怎么修复），
         // 无沉淀价值的问题应直接「已关闭」而不是复盘。
-        if req.category.as_deref() == Some("线上问题") && status == "已复盘"
+        if req.category.as_deref() == Some("线上问题")
+            && status == "已复盘"
             && !doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("troubleshooting.md")).await.unwrap_or_default(),
+                &tokio::fs::read_to_string(dir.join("troubleshooting.md"))
+                    .await
+                    .unwrap_or_default(),
             )
         {
             return Err(ApiError::bad_request(
@@ -530,10 +644,14 @@ pub(crate) async fn update_requirement(
         // 存量兼容：历史问题已写 technical-plan.md 且内容成型时同样放行。
         if req.category.as_deref() == Some("线上问题") && status == "已定位" {
             let root_cause_filled = doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("root-cause.md")).await.unwrap_or_default(),
+                &tokio::fs::read_to_string(dir.join("root-cause.md"))
+                    .await
+                    .unwrap_or_default(),
             );
             let legacy_plan_filled = doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("technical-plan.md")).await.unwrap_or_default(),
+                &tokio::fs::read_to_string(dir.join("technical-plan.md"))
+                    .await
+                    .unwrap_or_default(),
             );
             if !root_cause_filled && !legacy_plan_filled {
                 return Err(ApiError::bad_request(
@@ -1397,6 +1515,49 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
     if branches_path.is_file() && read_branch_scope(&dir).await?.is_none() {
         warnings.push("branches.json exists but has no valid repos".into());
     }
+    // 引用式需求组校验：group.json 结构、发布策略、成员存在性与嵌套限制。
+    let group_path = dir.join(GROUP_FILE);
+    if group_path.is_file() {
+        match load_group_json(&dir).await {
+            Some(group) => {
+                if group.members.is_empty() {
+                    warnings.push("group.json has no members".into());
+                }
+                if let Some(policy) = &group.release_policy {
+                    if !GROUP_RELEASE_POLICIES.contains(&policy.as_str()) {
+                        problems.push(format!(
+                            "invalid group.json releasePolicy: {policy}（可选 together / independent）"
+                        ));
+                    }
+                }
+                for member in &group.members {
+                    if member.req_id == req.id {
+                        problems.push("group.json references itself as a member".into());
+                        continue;
+                    }
+                    match get_real_requirement(state, &member.req_id).await {
+                        Ok(member_req) => {
+                            if let Some(member_dir) = &member_req.req_dir {
+                                if is_requirement_group(Path::new(member_dir)).await {
+                                    problems.push(format!(
+                                        "group member {} is itself a requirement group; nesting is not supported",
+                                        member.req_id
+                                    ));
+                                }
+                            }
+                        }
+                        Err(_) => warnings.push(format!(
+                            "group member not found (stale reference): {}",
+                            member.req_id
+                        )),
+                    }
+                }
+            }
+            None => problems.push(
+                "group.json exists but is not valid (expects version/releasePolicy/members with reqId)".into(),
+            ),
+        }
+    }
     Ok(json!({
         "ok": problems.is_empty(),
         "reqId": req.id,
@@ -2052,21 +2213,14 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         "experience-summary" | "experiencesummary" | "experience-summary.md" => {
             Ok("experience-summary.md")
         }
-        "troubleshooting"
-        | "troubleshooting.md"
-        | "postmortem"
-        | "排查经验" => Ok("troubleshooting.md"),
-        "incident"
-        | "incident.md"
-        | "现象" => Ok("incident.md"),
-        "root-cause"
-        | "rootcause"
-        | "root-cause.md"
-        | "根因" => Ok("root-cause.md"),
-        "test-scenario"
-        | "testscenario"
-        | "test-scenario.md"
-        | "测试场景" => Ok("test-scenario.md"),
+        "troubleshooting" | "troubleshooting.md" | "postmortem" | "排查经验" => {
+            Ok("troubleshooting.md")
+        }
+        "incident" | "incident.md" | "现象" => Ok("incident.md"),
+        "root-cause" | "rootcause" | "root-cause.md" | "根因" => Ok("root-cause.md"),
+        "test-scenario" | "testscenario" | "test-scenario.md" | "测试场景" => {
+            Ok("test-scenario.md")
+        }
         "alignment" | "alignment.md" => Ok("alignment.md"),
         "prd" | "prd.md" => Ok("prd.md"),
         other => Err(ApiError::bad_request(format!(
@@ -2152,7 +2306,9 @@ pub(crate) fn doc_has_filled_items(body: &str) -> bool {
     }
     body.lines()
         .any(|line| line.trim().starts_with("- ") && !line.contains("待补充"))
-        || body.lines().any(|line| line.trim().starts_with("| ") && !line.contains("待补充"))
+        || body
+            .lines()
+            .any(|line| line.trim().starts_with("| ") && !line.contains("待补充"))
 }
 
 /// 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
@@ -2284,7 +2440,9 @@ pub(crate) fn phase_prompt_file(status: &str) -> &'static str {
         "开发中" => "prompts/phase-dev.md",
         "自测中" => "prompts/phase-selftest.md",
         "测试中" => "prompts/phase-testing.md",
-        "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" => "prompts/phase-online-issue.md",
+        "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" => {
+            "prompts/phase-online-issue.md"
+        }
         "经验总结" | "待上线" => "prompts/phase-experience-summary.md",
         "发布就绪" => "prompts/phase-deploy.md",
         "已完成" => "prompts/phase-done.md",

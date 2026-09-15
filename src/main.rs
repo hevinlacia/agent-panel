@@ -62,6 +62,8 @@ const DEFAULT_PROJECT_NAME: &str = "默认项目";
 const DEFAULT_REQ_ID: &str = "__default__";
 const STATE_FILE: &str = "state.json";
 const ASSOCIATIONS_FILE: &str = "associations.json";
+/// 引用式需求组定义文件：需求目录下的 group.json，members 引用其他 req id。
+const GROUP_FILE: &str = "group.json";
 const CONFIG_FILE: &str = "config.json";
 const BUSINESS_KNOWLEDGE_DIR: &str = "business-knowledge";
 const EXPERIENCES_DIR: &str = "experiences";
@@ -117,6 +119,16 @@ static REQ_STATUSES: &[&str] = &[
     "已修复",
     "已复盘",
     "已关闭",
+];
+/// 需求流状态（REQ_STATUSES 前 7 个，有序）：需求组聚合状态取成员状态的最小序数。
+static REQ_FLOW_STATUSES: &[&str] = &[
+    "需求澄清",
+    "开发中",
+    "自测中",
+    "测试中",
+    "发布就绪",
+    "经验总结",
+    "已完成",
 ];
 static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "已复盘", "已关闭"];
 static REQ_STATUS_ALIASES: &[(&str, &str)] = &[

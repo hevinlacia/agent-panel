@@ -52,7 +52,7 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 事件误发清理 | - | 无 DELETE | `/api/requirement/events` 只注册了 POST，`DELETE` 返回 405；误发只能改文件兜底，见下方「events 字段类型与误发清理」 |
 | 章节 upsert 别名 | POST/PATCH | `/api/requirement/sections/{section}` | JSON body: `reqId`, `content`; 可选 `heading`, `docType`, `token`, `dryRun`；section 如 `impact`, `test`, `boxCodeIssue` |
 | 结构化编辑 | POST | `/api/requirement/edit` | JSON/form body: `reqId`, `operation`; 支持 `setStatus`, `setCategory`, `patchMeta`, `appendNote`, `writeDoc`, `upsertSection` |
-| 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `source`, `issues`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
+| 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `source`, `issues`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `members`, `releasePolicy`, `dryRun`；`members` 非空 = 创建引用式需求组（见下方「需求组」章节） |
 | 查单需求 | GET | `/api/requirement?id=<reqId>` | 返回 `{ requirement }` |
 | 更新受控字段 | PATCH | `/api/requirement` | JSON/form body: `reqId`; 可选 `title`, `project`, `projects`, `status`, `category`, `source`, `ones`, `issues`, `owner`, `startDate`, `planRelease`, `note`, `dryRun`；兼容旧 skill，优先用 `/api/requirement/edit` |
 | 更新受控字段兼容 | POST | `/api/requirement/update` | 同 PATCH `/api/requirement`，给不方便发 PATCH 的 agent/client 使用 |
@@ -67,7 +67,7 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 更新状态 | POST | `/api/requirement/status` | form body: `reqId`, `status`, 可选 `note`, `redirect` |
 | 更新类别 | POST | `/api/requirement/category` | form body: `reqId`, `category` |
 | 更新 ONES | POST | `/api/requirement/ones` | form body: `reqId`, `ones`；推动方/绑定线上问题无专用端点，走 PATCH `source` / `issues` 字段 |
-| 关联 session | POST | `/api/requirement/associate` | form body: `reqId`, `sessionId`，成功默认 200 JSON，历史版本可能 303 |
+| 关联 session | POST | `/api/requirement/associate` | form body: `reqId`, `sessionId`；需求组自动扩展绑定组 + 所有成员，返回 `boundReqIds` |
 
 ### `/api/requirement/events` 字段类型与误发清理
 
@@ -194,6 +194,29 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/requirement/edit \
   -d '{"reqId":"<req-id>","operation":"setStatus","status":"自测中","note":"开发自测开始"}'
 ```
+
+## 需求组（group.json）
+
+多个高关联的**独立需求**可组成引用式需求组：组需求是一个标准需求目录，额外用 `group.json` 通过 reqId 引用成员；成员需求目录、文件、分支、session、发布完全独立，不做搬家。
+
+```json
+{
+  "version": 1,
+  "releasePolicy": "independent",
+  "members": [{"reqId": "WMS-042-xxx", "note": "库存占用改造"}]
+}
+```
+
+规则：
+
+- **组状态是派生值 = min(成员需求流状态序数)**（需求澄清 < 开发中 < 自测中 < 测试中 < 发布就绪 < 经验总结 < 已完成；线上问题/测试问题轻流程状态不参与聚合）。组需求调用 `setStatus` / PATCH `status` 会被拒绝；推进组进度 = 推进瓶颈成员（API 字段 `groupBottleneck`）。
+- **session 绑定自动扩展**：`/api/requirement/associate` 绑组时同时绑定组 + 所有成员（返回 `boundReqIds`）；`dissociate` 同步解绑。一个 session 仍只归属一个需求维度（绑新目标时从旧目标移除）。
+- **创建组**：`POST /api/requirements` 传 `members`（可选 `releasePolicy`）；成员必须已存在、非自身、非组（不支持嵌套）；`releasePolicy` 仅在 `members` 非空时有效。
+- **组级 context**：`GET /api/requirement/context?id=<组 reqId>`（含 `for=agent`）对组需求额外返回 `group` 块：`aggregatedStatus`/`bottleneck`/`releasePolicy`/`members`（含每个成员的 title/status/found）。
+- **validate**：失效成员引用（成员不存在）报 warning；成员是组、自引用、`releasePolicy` 非法、`group.json` 解析失败报 problem。
+- **加入/退出组** = 编辑需求目录下 `group.json` 的 `members` 列表（可直接改文件，改完跑 validate）；不要把成员需求搬进组目录。
+- **文档边界**：组文档（background/technical-plan/release-manifest）只写跨成员内容（整体目标、协同计划、发布顺序、组级上线总览）；成员细节留在各自需求文件，避免双写漂移。
+- `releasePolicy=together`（整体发布）时，发布预检应覆盖所有成员的分支/配置/测试证据；`independent`（默认）时成员独立走发布流程，组只是聚合视图。
 
 ## Workflow
 

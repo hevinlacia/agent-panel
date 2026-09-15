@@ -7,6 +7,26 @@ export function statusPill(status: string) {
   return <span className="react-status-pill" style={{ color: meta.color, background: meta.soft, borderColor: `${meta.color}55` }}>{status}</span>
 }
 
+/** 展示用状态：需求组用聚合状态（min 成员状态），普通需求用自身状态。 */
+export function effectiveStatus(req: Pick<Requirement, "status" | "groupStatus">): string {
+  return req.groupStatus || req.status
+}
+
+/** 引用式需求组徽标：成员数 + 瓶颈/失效引用提示。 */
+export function groupBadge(req: Requirement) {
+  const members = req.groupMembers ?? []
+  if (!members.length) return null
+  const missing = members.filter((m) => !m.found).length
+  const bottleneck = members.find((m) => m.reqId === req.groupBottleneck)
+  const title = [
+    `引用式需求组：${members.length} 个成员（发布策略 ${req.groupPolicy === "together" ? "整体发布" : "独立发布"}）`,
+    `组状态 = min(成员状态)，${bottleneck ? `当前瓶颈：${bottleneck.reqId}（${bottleneck.status ?? "?"}）` : "暂无可计算的成员状态"}`,
+    missing ? `⚠ ${missing} 个失效引用（成员需求不存在）` : null,
+    "session 绑定组时自动绑定所有成员；组状态不能手动设置，推进瓶颈成员即可推进组进度",
+  ].filter(Boolean).join("\n")
+  return <span className="react-status-pill react-group-badge" title={title} style={{ color: "#818cf8", background: "rgba(129, 140, 248, 0.14)", borderColor: "rgba(129, 140, 248, 0.45)" }}>组 {members.length}{missing ? "⚠" : ""}</span>
+}
+
 export function experienceSummaryStage(req: Requirement): "available" | "running" | "completed" | "failed" | "skipped" | "none" {
   const status = req.experienceSummaryJob?.status || ""
   if (status === "completed") return "completed"

@@ -9,8 +9,9 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 用于：当需要创建新需求、更新需求信息、变更需求状态或补充需求文档时，**优先通过 Agent Panel API** 生成和修改需求文件；API 不可用时才退化为直接写文件兜底。
 
 适用：
-- 用户说"创建需求"/"新建需求"/"登记需求"时生成目录和初始文件（走 API）
-- 用户说"更新需求"/"改需求标题/owner/计划上线/ONES/项目"等受控字段时（走 API）
+- 用户说“创建需求”/“新建需求”/“登记需求”时生成目录和初始文件（走 API）
+- 用户说“创建需求组”/“联合需求”/“把这几个需求组成一个整体”时创建引用式需求组（走 API，传 `members`）
+- 用户说“更新需求”/“改需求标题/owner/计划上线/ONES/项目”等受控字段时（走 API）
 - 用户说"补充需求背景/测试/影响面/配置变更/进展笔记"等文档时（走 API 的 doc/notes 接口）
 - 用户说"创建子需求"/"拆分子需求"时（走 API，传 `parentReqId`）
 - 用户说"校验需求文件结构"时（走 API validate）
@@ -40,7 +41,7 @@ API 契约详情见 `agent-panel-requirement-api` skill，本 skill 只列与创
 
 | 用途 | 方法 | 端点 | 关键参数 |
 |---|---|---|---|
-| 创建需求 | POST | `/api/requirements` | `reqId`, `title`；可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `dryRun` |
+| 创建需求 | POST | `/api/requirements` | `reqId`, `title`；可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `members`, `releasePolicy`, `dryRun` |
 | 更新受控字段 | PATCH | `/api/requirement` | `reqId`；可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun`（不便发 PATCH 时用 `POST /api/requirement/update`） |
 | 追加 notes | POST | `/api/requirement/notes` | `reqId`, `text`；可选 `title`, `sessionId`, `dryRun` |
 | 写受控文档 | PUT/POST | `/api/requirement/doc` | `reqId`, `docType`, `content`；可选 `mode=replace\|append`, `dryRun` |
@@ -235,6 +236,34 @@ curl -sS -H 'Content-Type: application/json' \
 ```
 
 API 会把子需求目录建在父需求目录下，`project` 默认继承父需求。
+
+### 2A. 创建引用式需求组（group.json）
+
+多个高关联的**独立需求**要作为一个整体开发（一个 session 同时推进、组进度看板聚合），但成员需求已独立存在、不想搬家时，创建一个组需求把它们用 reqId 引用起来：
+
+```bash
+curl -sS -H 'Content-Type: application/json' \
+  -X POST http://localhost:7331/api/requirements \
+  -d '{
+    "reqId": "WMS-{seq}-combo-checkout",
+    "title": "出库联动联合需求",
+    "summary": "组目标：整体目标/协同计划/发布顺序写在这里；成员细节仍在各自需求文件",
+    "members": [
+      {"reqId": "WMS-042-xxx", "note": "库存占用改造"},
+      {"reqId": "WMS-043-yyy"}
+    ],
+    "releasePolicy": "independent"
+  }'
+```
+
+规则：
+
+- 成员必须是**已存在**的需求，不能引用自身，成员自身不能是组（不支持嵌套）；
+- API 在组需求目录下写 `group.json`（`version`/`releasePolicy`/`members`）；`releasePolicy` 可选 `independent`（成员独立发布，默认）/ `together`（整体发布）；
+- **组状态是派生值 = min(成员需求流状态)**，不能手动 `setStatus`（接口会拒绝）；推进组进度 = 推进最慢的成员（瓶颈）；
+- 组需求文档只写跨成员内容（整体目标、协同计划、发布顺序、组级 release-manifest），不要把成员需求细节重复写进组文档；
+- session 绑定组时自动绑定/解绑所有成员（一个 session 归属一个需求维度）；
+- 不要把已有需求搬进组目录来“加入组”；加入/退出组 = 编辑 `group.json` 的 `members` 列表（可直接改文件，改完跑 validate）。
 
 ### 3. 更新需求字段（API 主路径）
 
