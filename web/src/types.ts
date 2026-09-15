@@ -374,9 +374,12 @@ export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt:
 export interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null; incrementalReview?: CodeReviewSnapshot | null }
 export interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
 export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[] } }
-export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number }
-export interface DiffSnapshotsPayload { ok: boolean; snapshots: CodeDiffSnapshot[] }
-export interface MasterDiffPayload { ok: boolean; branchScope?: BranchScope | null; snapshots: CodeDiffSnapshot[] }
+export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number; round?: number }
+export interface DiffSnapshotsPayload { ok: boolean; round?: number; snapshots: CodeDiffSnapshot[] }
+export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; snapshots: CodeDiffSnapshot[] }
+/** 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次文件 branches-round-<n>.json */
+export interface BranchRoundInfo { round: number; file: string; updatedAt: number; repoCount: number; branchCount: number; sealed: boolean }
+export interface BranchRoundsPayload { ok: boolean; reqId: string; rounds: BranchRoundInfo[]; latest: number }
 
 export interface ReviewMaterialsRepo { repoName: string; branch: string; fromCommit: string; toCommit: string; additions?: number; deletions?: number; riskTags?: string[]; diffTruncated?: boolean; linearHistory?: boolean | null }
 export interface ReviewMaterials {

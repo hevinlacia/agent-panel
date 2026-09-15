@@ -54,7 +54,7 @@ Removed architecture:
 
 1. Never read or print secret/key files: `.env`, `.env.*`, `credentials.json`, `secrets.json`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`.
 2. Do not shell-eval user input. When commands are needed, use fixed argv and validate IDs/paths first.
-3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, `code-annotations.json`, and generated context files.
+3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, `code-annotations.json`, branch-round scope files (`branches-round-*.json`), and generated context files.
 4. Pi session ids are UUIDs. Do not reintroduce `ses_` OpenCode id handling.
 5. Do not reintroduce PTY/terminal functionality unless the user explicitly asks for it.
 6. No git commit/push/branch changes without explicit user request.

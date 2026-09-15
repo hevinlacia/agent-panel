@@ -183,6 +183,8 @@ struct IdQuery {
     domain: Option<String>,
     project: Option<String>,
     scope: Option<String>,
+    /// 分支登记轮次（diff-snapshots / branch-rounds 等）：1 = 原始 branches.json。
+    round: Option<u32>,
     status: Option<String>,
     limit: Option<usize>,
     cursor: Option<usize>,
@@ -329,6 +331,10 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/diff-snapshots",
             get(api_requirement_diff_snapshots_get),
+        )
+        .route(
+            "/api/requirement/branch-rounds",
+            get(api_requirement_branch_rounds_get).post(api_requirement_branch_rounds_post),
         )
         .route(
             "/api/requirement/annotations",

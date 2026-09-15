@@ -1014,9 +1014,11 @@ pub(crate) async fn api_requirement_master_diff(
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
         ApiError::bad_request("requirement has no directory; cannot save diff snapshot".to_string())
     })?);
-    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+    let round = body.round.unwrap_or(1).max(1);
+    let scope_file = branch_scope_file_for_round(round);
+    let branch_scope = read_branch_scope_round(&req_dir, round).await?.ok_or_else(|| {
         ApiError::bad_request(format!(
-            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+            "missing {scope_file}; register the round's branches first"
         ))
     })?;
     let base_ref = body
@@ -1025,29 +1027,78 @@ pub(crate) async fn api_requirement_master_diff(
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
-    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref).await?;
-    // 快照对比模式：生成后入栈保存（保留最近 5 版，同 base+target 提交去重），
+    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
-    let snapshots = save_diff_snapshot(&req_dir, review).await?;
+    let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
     Ok(Json(
-        json!({ "ok": true, "branchScope": branch_scope, "snapshots": snapshots }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "snapshots": snapshots }),
     ))
 }
 
-/// Read the requirement's saved master-diff snapshot stack (newest first).
-/// Returns an empty list when none has been generated yet.
+/// Read the requirement's saved master-diff snapshot stack (newest first) for
+/// one branch-registration round; round defaults to 1 (original branches.json)
+/// and snapshots generated before rounds existed count as round 1.
 pub(crate) async fn api_requirement_diff_snapshots_get(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let round = query.round.unwrap_or(1).max(1);
+    let req = get_real_requirement(&state, &id).await?;
+    let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
+    let doc = read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE)).await;
+    let snapshots: Vec<Value> = doc
+        .and_then(|d| d.get("snapshots").cloned())
+        .and_then(|s| serde_json::from_value::<Vec<Value>>(s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.get("round").and_then(Value::as_u64).unwrap_or(1) as u32 == round)
+        .collect();
+    Ok(Json(json!({ "ok": true, "round": round, "snapshots": snapshots })))
+}
+
+/// List the requirement's branch-registration rounds (`branches.json` +
+/// `branches-round-*.json`) for the diff page round switcher; `latest` is the
+/// highest round found (0 when nothing is registered yet).
+pub(crate) async fn api_requirement_branch_rounds_get(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
     let id = query.id.or(query.req_id).unwrap_or_default();
     let req = get_real_requirement(&state, &id).await?;
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
-    let doc = read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE)).await;
-    let snapshots = doc
-        .and_then(|d| d.get("snapshots").cloned())
-        .unwrap_or_else(|| json!([]));
-    Ok(Json(json!({ "ok": true, "snapshots": snapshots })))
+    let rounds = list_branch_scope_rounds(&req_dir).await.unwrap_or_default();
+    let latest = rounds.last().map(|r| r.round).unwrap_or(0);
+    Ok(Json(
+        json!({ "ok": true, "reqId": req.id, "rounds": rounds, "latest": latest }),
+    ))
+}
+
+/// Create the next branch-registration round (`branches-round-<n+1>.json`)
+/// for a requirement whose branches were merged into the production branch:
+/// the previous round is sealed and the new file starts with the same repo
+/// structure but cleared branch lists, ready for registering fix branches.
+pub(crate) async fn api_requirement_branch_rounds_post(
+    State(state): State<AppState>,
+    form: FormOrJson<SyncBaseForm>,
+) -> ApiResult<Json<Value>> {
+    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request(
+            "requirement has no directory; cannot create branch round".to_string(),
+        )
+    })?);
+    ensure_requirement_dir_writable(&state, &req_dir).await?;
+    let (round, path, scope) = create_branch_scope_round(&req_dir).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "round": round,
+        "file": branch_scope_file_for_round(round),
+        "path": path,
+        "branchScope": scope,
+    })))
 }
 
 /// Read the code-annotations.json snapshot for a requirement (null when absent).
