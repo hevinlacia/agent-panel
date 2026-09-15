@@ -1,0 +1,45 @@
+src/requirement_service.rs
+  27f525d215c910fa 72-80,112-116,391-398,417,421-423,429-431,453-459,464-537,624-625,631-632,634-636,647-649,652-654,1518-1559
+src/main.rs
+  27f525d215c910fa 65-66,123-131
+src/tests.rs
+  27f525d215c910fa 440-441,453-460,515-522,532-537,543-555,559-571,579-591,595-607,624-631,648-649,652-653,680-682,715-726,742-756,766-780,789-803,1015-1019
+web/src/pages/projects.tsx
+  27f525d215c910fa 10,120
+web/src/types.ts
+  27f525d215c910fa 44-56,99-108
+src/requirement_index.rs
+  27f525d215c910fa 58-132,297-340,630-634,656-670,679-761,826-830
+web/src/pages/requirement.tsx
+  27f525d215c910fa 12,58-65,673-674,806,820,822
+src/requirement_context.rs
+  27f525d215c910fa 43-49,69-70
+web/src/features/requirements/badges.tsx
+  27f525d215c910fa 10-29
+.agents/skills/req-create/SKILL.md
+  27f525d215c910fa 12-14,44,240-266
+src/requirement_api.rs
+  27f525d215c910fa 170-174,183-186,205-217,524-525,617-618,710-713,721-726
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  27f525d215c910fa 55,70,198-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "abc8c7e3e1b502784f6faa093bf7a4335924efd4",
+  "prompts": {
+    "27f525d215c910fa": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0a295-bfa1-77ce-92ed-f84cc5a6cf47",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 572,
+      "total_deletions": 27,
+      "accepted_lines": 562,
+      "overriden_lines": 0
+    }
+  }
+}
