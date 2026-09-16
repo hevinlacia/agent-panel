@@ -1,0 +1,27 @@
+src/requirement_service.rs
+  35b9262277ec6ca0 340-346,357,1731-1732,1747-1748,1752-1756,1758-1773
+scripts/migrate_group_ids.py
+  35b9262277ec6ca0 1-189
+src/tests.rs
+  35b9262277ec6ca0 407-480
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a5549bb2a1139b1c0726946aebabca3dc017c184",
+  "prompts": {
+    "35b9262277ec6ca0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0aa39-6aef-757c-a21d-00d6631fc6ac",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 298,
+      "total_deletions": 5,
+      "accepted_lines": 296,
+      "overriden_lines": 0
+    }
+  }
+}
