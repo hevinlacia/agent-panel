@@ -93,6 +93,7 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 - 只允许一个 `{seq}`：`WMS-{seq}-{seq}` 报错。
 - 非 `dryRun` 时用原子 `mkdir` 占号，并发安全；`dryRun` 只预览不占号。
 - 不含 `{seq}` 的 `reqId` 走原校验逻辑，完全向后兼容。
+- **独立编号池**（强制，同 `{seq}` 模板会被改写前缀保留 suffix，其它前缀的具体 id 被拒）：`category=线上问题` → `WMS-INC-{seq}`；`category=测试问题` → `WMS-TST-{seq}`；需求组（`members` 非空，只能 `category=需求`）→ `WMS-GRP-{seq}`。
 
 示例：
 
@@ -119,6 +120,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 - `category=线上问题` 用轻流程：排查中 → 已定位 → 已修复 → 已复盘（有价值路径）/ 已关闭（无沉淀价值）；旧状态「已确认」自动映射到「已定位」。
 - `category=测试问题`（独立编号池 `WMS-TST-{seq}`）：承接 UAT 测试反馈中不属于常规需求的轻量问题，与线上问题共用同一轻流程；硬门禁（已定位 root-cause / 已复盘 troubleshooting）只对线上问题生效，测试问题按需沉淀；测试问题不参与 `issues` 绑定，需要常规开发承接时另建 category=需求 的需求。
+- **需求组**（独立编号池 `WMS-GRP-{seq}`）：`members` 非空即组，只能 `category=需求`；组是需求聚合视图（group.json 引用成员），不占用 `WMS-<seq>` 需求池；组状态 = min(成员状态) 派生，不能手动 setStatus。
 - 已定位→已修复 双路径：数据修复直接推进；代码修复创建普通需求并绑定问题（需求 meta.md `issues` 字段），需求进入 ≥经验总结 时系统自动把关联问题推进到已修复。
 - 已复盘门禁：进入「已复盘」前必须已填写 `troubleshooting.md` 排查经验（怎么排查 + 怎么修复），否则状态接口拒绝。
 - 开发推动门禁：`source=开发推动` 的需求进入「测试中」前必须先完成 `test-scenario.md` 测试场景文档，否则状态接口拒绝。

@@ -245,7 +245,7 @@ API 会把子需求目录建在父需求目录下，`project` 默认继承父需
 curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/requirements \
   -d '{
-    "reqId": "WMS-{seq}-combo-checkout",
+    "reqId": "WMS-GRP-{seq}-combo-checkout",
     "title": "出库联动联合需求",
     "summary": "组目标：整体目标/协同计划/发布顺序写在这里；成员细节仍在各自需求文件",
     "members": [
@@ -258,6 +258,8 @@ curl -sS -H 'Content-Type: application/json' \
 
 规则：
 
+- **组用独立编号池 `WMS-GRP-<序号>-<slug>`**（强制，同线上问题 `WMS-INC-` 模式）：空 reqId 或 `WMS-{seq}-*` 模板会自动改用 `WMS-GRP-{seq}`；不占用 `WMS-<seq>` 需求池，其它形态的组 reqId 会被拒绝；
+- 组只能使用 `category=需求`（线上问题/测试问题不支持组）；
 - 成员必须是**已存在**的需求，不能引用自身，成员自身不能是组（不支持嵌套）；
 - API 在组需求目录下写 `group.json`（`version`/`releasePolicy`/`members`）；`releasePolicy` 可选 `independent`（成员独立发布，默认）/ `together`（整体发布）；
 - **组状态是派生值 = min(成员需求流状态)**，不能手动 `setStatus`（接口会拒绝）；推进组进度 = 推进最慢的成员（瓶颈）；
