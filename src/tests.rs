@@ -335,36 +335,36 @@ fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
 fn normalize_create_id_template_splits_issue_pool() {
     // 空模板：按类别给默认池
     assert_eq!(
-        normalize_create_id_template("", "线上问题").unwrap(),
+        normalize_create_id_template("", "线上问题", false).unwrap(),
         "WMS-INC-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("", "需求").unwrap(),
+        normalize_create_id_template("", "需求", false).unwrap(),
         "WMS-{seq}"
     );
     // 模板：issue 强制 WMS-INC 前缀，保留 suffix
     assert_eq!(
-        normalize_create_id_template("WMS-{seq}", "线上问题").unwrap(),
+        normalize_create_id_template("WMS-{seq}", "线上问题", false).unwrap(),
         "WMS-INC-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-{seq}-hotfix", "线上问题").unwrap(),
+        normalize_create_id_template("WMS-{seq}-hotfix", "线上问题", false).unwrap(),
         "WMS-INC-{seq}-hotfix"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-INC-{seq}", "线上问题").unwrap(),
+        normalize_create_id_template("WMS-INC-{seq}", "线上问题", false).unwrap(),
         "WMS-INC-{seq}"
     );
     // 具体 id：需求透传；issue 必须 WMS-INC-<序号> 形态
     assert_eq!(
-        normalize_create_id_template("WMS-112-fix-x", "需求").unwrap(),
+        normalize_create_id_template("WMS-112-fix-x", "需求", false).unwrap(),
         "WMS-112-fix-x"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-INC-031-x", "线上问题").unwrap(),
+        normalize_create_id_template("WMS-INC-031-x", "线上问题", false).unwrap(),
         "WMS-INC-031-x"
     );
-    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题").is_err());
+    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题", false).is_err());
     // 前缀分池：INC 序号独立于需求序号
     assert_eq!(
         compute_next_seq_from_ids(
@@ -384,24 +384,98 @@ fn normalize_create_id_template_splits_issue_pool() {
     );
     // 测试问题独立编号池：默认 WMS-TST-{seq}，强制 TST 前缀，与 INC/需求池互不干扰
     assert_eq!(
-        normalize_create_id_template("", "测试问题").unwrap(),
+        normalize_create_id_template("", "测试问题", false).unwrap(),
         "WMS-TST-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("TST-{seq}-uat-bug", "测试问题").unwrap(),
+        normalize_create_id_template("TST-{seq}-uat-bug", "测试问题", false).unwrap(),
         "WMS-TST-{seq}-uat-bug"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题").unwrap(),
+        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题", false).unwrap(),
         "WMS-TST-005-uat-bug"
     );
-    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题").is_err());
-    assert!(normalize_create_id_template("WMS-005-x", "测试问题").is_err());
+    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题", false).is_err());
+    assert!(normalize_create_id_template("WMS-005-x", "测试问题", false).is_err());
     // 需求类别不受 TST 池影响：模板原样透传
     assert_eq!(
-        normalize_create_id_template("WMS-TST-005-x", "需求").unwrap(),
+        normalize_create_id_template("WMS-TST-005-x", "需求", false).unwrap(),
         "WMS-TST-005-x"
     );
+}
+
+#[test]
+fn normalize_create_id_template_enforces_group_pool() {
+    // 空模板：需求组默认 WMS-GRP-{seq} 独立编号池
+    assert_eq!(
+        normalize_create_id_template("", "需求", true).unwrap(),
+        "WMS-GRP-{seq}"
+    );
+    // {seq} 模板：改写前缀为 WMS-GRP，保留 suffix
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}", "需求", true).unwrap(),
+        "WMS-GRP-{seq}"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}-combo-checkout", "需求", true).unwrap(),
+        "WMS-GRP-{seq}-combo-checkout"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-GRP-{seq}", "需求", true).unwrap(),
+        "WMS-GRP-{seq}"
+    );
+    // 具体 id：必须 WMS-GRP-<序号> 形态，否则拒绝（组不占用 WMS-<seq> 需求池）
+    assert_eq!(
+        normalize_create_id_template("WMS-GRP-001-combo", "需求", true).unwrap(),
+        "WMS-GRP-001-combo"
+    );
+    assert!(normalize_create_id_template("WMS-126-combo", "需求", true).is_err());
+    // 组编号池独立：GRP 序号独立于需求序号
+    assert_eq!(
+        compute_next_seq_from_ids(
+            &[
+                "WMS-126-remove-rabbitmq-combo".to_string(),
+                "WMS-GRP-003-a".to_string(),
+                "WMS-INC-031-b".to_string(),
+            ],
+            "WMS-GRP",
+            None
+        ),
+        4
+    );
+}
+
+#[tokio::test]
+async fn create_requirement_group_rejects_issue_category_and_legacy_pool_id() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = group_test_state(&tmp);
+    create_requirement(&state, group_test_form("G-M3", "成员3"))
+        .await
+        .expect("create member");
+
+    // 组不能使用 issue 类别
+    let mut issue_group = group_test_form("WMS-GRP-001-bad", "issue 类别组");
+    issue_group.category = Some("线上问题".to_string());
+    issue_group.members = Some(vec![group_test_member_input("G-M3")]);
+    let err = create_requirement(&state, issue_group)
+        .await
+        .expect_err("group with issue category must fail");
+    assert!(err.message.contains("category=需求"), "{:?}", err);
+
+    // 组必须使用 WMS-GRP 池：legacy 需求池形态被拒
+    let mut legacy = group_test_form("WMS-126-legacy-combo", "需求池 id 的组");
+    legacy.members = Some(vec![group_test_member_input("G-M3")]);
+    let err = create_requirement(&state, legacy)
+        .await
+        .expect_err("legacy pool group id must fail");
+    assert!(err.message.contains("WMS-GRP"), "{:?}", err);
+
+    // 默认池 + {seq} 模板：组创建成功并自动分配 WMS-GRP-001
+    let mut ok = group_test_form("", "默认池组");
+    ok.members = Some(vec![group_test_member_input("G-M3")]);
+    ok.req_id = "WMS-GRP-{seq}-combo".to_string();
+    let res = create_requirement(&state, ok).await.expect("create group");
+    assert_eq!(res["reqId"], json!("WMS-GRP-001-combo"));
 }
 
 /// 并行创建不得撞号（回归）：两个 `{seq}` 模板并发创建（slug 不同）必须拿到连续且
@@ -1533,7 +1607,7 @@ async fn group_status_aggregation_takes_min_member_status() {
         .await
         .expect("set status b");
 
-    let mut form = group_test_form("G-GROUP-001", "联合需求组");
+    let mut form = group_test_form("WMS-GRP-001-aggregation", "联合需求组");
     form.members = Some(vec![
         group_test_member_input("G-MEMBER-A"),
         group_test_member_input("G-MEMBER-B"),
@@ -1546,7 +1620,7 @@ async fn group_status_aggregation_takes_min_member_status() {
     let reqs = list_requirements(&state).await.expect("list");
     let group = reqs
         .iter()
-        .find(|r| r.id == "G-GROUP-001")
+        .find(|r| r.id == "WMS-GRP-001-aggregation")
         .expect("group req");
     let members = group.group_members.as_ref().expect("group members");
     assert_eq!(members.len(), 2);
@@ -1567,7 +1641,7 @@ async fn group_status_aggregation_takes_min_member_status() {
         .iter()
         .find(|r| r.id == "G-MEMBER-A")
         .expect("member a");
-    assert!(member.member_of.iter().any(|g| g == "G-GROUP-001"));
+    assert!(member.member_of.iter().any(|g| g == "WMS-GRP-001-aggregation"));
 }
 
 #[tokio::test]
@@ -1577,7 +1651,7 @@ async fn create_requirement_group_writes_group_json_and_defaults_policy() {
     create_requirement(&state, group_test_form("G-M1", "成员1"))
         .await
         .expect("create member");
-    let mut form = group_test_form("G-G2", "默认策略组");
+    let mut form = group_test_form("WMS-GRP-002", "默认策略组");
     form.members = Some(vec![group_test_member_input("G-M1")]);
     let res = create_requirement(&state, form)
         .await
@@ -1601,7 +1675,7 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
         .expect("create member");
 
     // 成员不存在。
-    let mut missing = group_test_form("G-G3", "坏成员组");
+    let mut missing = group_test_form("WMS-GRP-003", "坏成员组");
     missing.members = Some(vec![group_test_member_input("G-NOPE")]);
     let err = create_requirement(&state, missing)
         .await
@@ -1609,15 +1683,15 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
     assert!(err.message.contains("需求组成员不存在"), "{:?}", err);
 
     // 自引用。
-    let mut self_ref = group_test_form("G-G4", "自引用组");
-    self_ref.members = Some(vec![group_test_member_input("G-G4")]);
+    let mut self_ref = group_test_form("WMS-GRP-004", "自引用组");
+    self_ref.members = Some(vec![group_test_member_input("WMS-GRP-004")]);
     let err = create_requirement(&state, self_ref)
         .await
         .expect_err("self reference must fail");
     assert!(err.message.contains("自身"), "{:?}", err);
 
     // 非法 releasePolicy。
-    let mut bad_policy = group_test_form("G-G5", "坏策略组");
+    let mut bad_policy = group_test_form("WMS-GRP-005", "坏策略组");
     bad_policy.members = Some(vec![group_test_member_input("G-M2")]);
     bad_policy.release_policy = Some("sometimes".to_string());
     let err = create_requirement(&state, bad_policy)
@@ -1626,7 +1700,7 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
     assert!(err.message.contains("invalid releasePolicy"), "{:?}", err);
 
     // releasePolicy 未随 members 一起传。
-    let mut lone_policy = group_test_form("G-G6", "孤立策略");
+    let mut lone_policy = group_test_form("WMS-GRP-006", "孤立策略");
     lone_policy.release_policy = Some("together".to_string());
     let err = create_requirement(&state, lone_policy)
         .await
@@ -1634,13 +1708,13 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
     assert!(err.message.contains("releasePolicy"), "{:?}", err);
 
     // 组嵌套：成员自身是组。
-    let mut inner = group_test_form("G-G7", "内层组");
+    let mut inner = group_test_form("WMS-GRP-007", "内层组");
     inner.members = Some(vec![group_test_member_input("G-M2")]);
     create_requirement(&state, inner)
         .await
         .expect("create inner group");
-    let mut outer = group_test_form("G-G8", "外层组");
-    outer.members = Some(vec![group_test_member_input("G-G7")]);
+    let mut outer = group_test_form("WMS-GRP-008", "外层组");
+    outer.members = Some(vec![group_test_member_input("WMS-GRP-007")]);
     let err = create_requirement(&state, outer)
         .await
         .expect_err("nested group must fail");
@@ -1654,7 +1728,7 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     create_requirement(&state, group_test_form("G-M3", "成员3"))
         .await
         .expect("create member");
-    let mut form = group_test_form("G-G9", "校验组");
+    let mut form = group_test_form("WMS-GRP-009", "校验组");
     form.members = Some(vec![group_test_member_input("G-M3")]);
     let res = create_requirement(&state, form)
         .await
@@ -1663,7 +1737,7 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     let dir = std::path::Path::new(&req_dir);
 
     // 合法 group.json -> ok。
-    let req = get_real_requirement(&state, "G-G9").await.expect("req");
+    let req = get_real_requirement(&state, "WMS-GRP-009").await.expect("req");
     let ok = validate_requirement(&state, &req).await.expect("validate");
     assert_eq!(ok["ok"], json!(true), "{}", ok);
 
@@ -1690,7 +1764,7 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     // 自引用 + 非法 policy -> problems。
     std::fs::write(
         dir.join(GROUP_FILE),
-        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "G-G9"}]}).to_string(),
+        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "WMS-GRP-009"}]}).to_string(),
     )
     .expect("write bad group.json");
     let bad = validate_requirement(&state, &req)
@@ -1728,7 +1802,7 @@ async fn group_status_is_locked_against_manual_status_writes() {
     create_requirement(&state, group_test_form("G-M4", "成员4"))
         .await
         .expect("create member");
-    let mut form = group_test_form("G-GA", "只读状态组");
+    let mut form = group_test_form("WMS-GRP-010", "只读状态组");
     form.members = Some(vec![group_test_member_input("G-M4")]);
     create_requirement(&state, form)
         .await
@@ -1738,7 +1812,7 @@ async fn group_status_is_locked_against_manual_status_writes() {
     let err = update_requirement(
         &state,
         RequirementPatchForm {
-            req_id: "G-GA".to_string(),
+            req_id: "WMS-GRP-010".to_string(),
             title: None,
             project: None,
             projects: None,
@@ -1768,7 +1842,7 @@ async fn group_status_is_locked_against_manual_status_writes() {
     .await
     .expect("member status ok");
     let reqs = list_requirements(&state).await.expect("list");
-    let group = reqs.iter().find(|r| r.id == "G-GA").expect("group");
+    let group = reqs.iter().find(|r| r.id == "WMS-GRP-010").expect("group");
     assert_eq!(group.group_status.as_deref(), Some("自测中"));
 }
 

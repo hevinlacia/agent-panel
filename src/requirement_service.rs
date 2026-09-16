@@ -337,6 +337,13 @@ pub(crate) async fn create_requirement(
         status = "排查中".to_string();
     }
     ensure_status(&status)?;
+    // 需求组（members 非空）只能使用 category=需求；issue 家族不支持组。
+    let is_group = form.members.as_ref().is_some_and(|m| !m.is_empty());
+    if is_group && is_issue_category(&category) {
+        return Err(ApiError::bad_request(
+            "需求组（members 非空）只能使用 category=需求；线上问题/测试问题不支持组",
+        ));
+    }
     let dry_run = form.dry_run.unwrap_or(false);
     // 串行化创建临界区：{seq} 占号靠扫描已有需求，扫描 -> 预留目录 -> 写 meta.md 必须
     // 原子完成，否则两个并行创建会观察到同一个 max seq 且各自成功（目录名含 slug 不同，
@@ -347,7 +354,7 @@ pub(crate) async fn create_requirement(
         Some(state.requirement_create_lock.lock().await)
     };
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
-    let id_template = normalize_create_id_template(form.req_id.trim(), &category)?;
+    let id_template = normalize_create_id_template(form.req_id.trim(), &category, is_group)?;
     let (req_id, target_dir) =
         resolve_req_id_and_target_dir(state, &base, &id_template, &form, dry_run).await?;
 
@@ -1721,6 +1728,8 @@ pub(crate) fn ensure_req_id(value: &str) -> ApiResult<String> {
 pub(crate) const ISSUE_ID_PREFIX: &str = "WMS-INC";
 /// 测试问题独立编号池：承接 UAT 测试反馈中不属于常规需求的轻量问题。
 pub(crate) const TEST_ISSUE_ID_PREFIX: &str = "WMS-TST";
+/// 需求组（引用式需求组，group.json）独立编号池：组是需求聚合视图，不占用 WMS-<seq> 需求池。
+pub(crate) const GROUP_ID_PREFIX: &str = "WMS-GRP";
 
 /// issue 家族类别（共用轻量状态机与 incident.md 文档集）：线上问题 / 测试问题。
 pub(crate) fn is_issue_category(category: &str) -> bool {
@@ -1735,12 +1744,33 @@ fn issue_id_prefix(category: &str) -> Option<&'static str> {
     }
 }
 
-/// 创建时按类别规范化 reqId 模板：
+/// 创建时按类别/形态规范化 reqId 模板：
+/// - 需求组（members 非空）强制使用 `WMS-GRP-{seq}` 独立编号池，规则与 issue 家族一致；
 /// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`，测试问题 `WMS-TST-{seq}`）；
 /// - issue 类别强制使用本类别前缀：模板改写前缀保留 suffix；具体 id 校验形态，避免误用需求池；
 /// - 需求模板原样透传。
-pub(crate) fn normalize_create_id_template(raw: &str, category: &str) -> ApiResult<String> {
+pub(crate) fn normalize_create_id_template(
+    raw: &str,
+    category: &str,
+    is_group: bool,
+) -> ApiResult<String> {
     let v = raw.trim();
+    if is_group {
+        if v.is_empty() {
+            return Ok(format!("{GROUP_ID_PREFIX}-{{seq}}"));
+        }
+        if v.contains("{seq}") {
+            let (_, suffix) = split_seq_template(v)?;
+            return Ok(format!("{GROUP_ID_PREFIX}-{{seq}}{suffix}"));
+        }
+        let re = Regex::new(&format!("^{GROUP_ID_PREFIX}-(\\d+)(-|$)")).expect("valid regex");
+        if !re.is_match(v) {
+            return Err(ApiError::bad_request(format!(
+                "需求组 reqId 必须使用 {GROUP_ID_PREFIX}-<序号> 独立编号（如 {GROUP_ID_PREFIX}-001-slug）；组是需求聚合视图，不占用 WMS-<seq> 需求池"
+            )));
+        }
+        return Ok(v.to_string());
+    }
     let Some(prefix) = issue_id_prefix(category) else {
         return Ok(if v.is_empty() {
             "WMS-{seq}".to_string()
