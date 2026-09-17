@@ -86,23 +86,17 @@ function SessionLogEntryView({ entry }: { entry: SessionLogEntry }) {
   return <article className={`react-session-log-entry react-session-log-${kind}`}><header><span>{kind}</span><strong>{entry.title || kind}</strong><em>#{entry.line}{entry.timestamp ? ` · ${formatDateTime(entry.timestamp)}` : ""}</em></header>{entry.tools?.length ? <div className="react-chip-list">{entry.tools.map((tool, i) => <span key={`${entry.line}-${i}-${tool.id || tool.name}`}>{tool.kind === "result" ? "✓" : "↪"} {tool.name || "tool"}</span>)}</div> : null}{text ? <pre>{text}</pre> : <p className="react-muted">无文本内容</p>}</article>
 }
 
-export function SessionChipList({ sessionIds }: { sessionIds: string[] }) {
-  return <div className="react-chip-list">{sessionIds.map((sid) => <a key={sid} href={`/session?id=${encodeURIComponent(sid)}`}>{sid.slice(0, 8)}…</a>)}</div>
-}
-
 export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds: string[]; onClose: () => void; harness?: "pi" | "dsh-web" | "dsh-tui" }) {
   const { data, loading, error } = useFetch<{ sessions: SessionInfo[]; missing: string[] }>(sessionIds.length ? `/api/sessions/resolve?ids=${encodeURIComponent(sessionIds.join(","))}` : null, [sessionIds.join(",")])
-  const config = useFetch<ConfigPayload>("/api/config")
-  const dshProfile = config.data?.dshProfile || "dsh-tui"
   const byId = useMemo(() => {
     const map = new Map<string, SessionInfo>()
     for (const s of data?.sessions || []) map.set(s.id, s)
     return map
   }, [data])
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const copyOpen = async (sid: string) => {
+  const copyId = async (sid: string) => {
     try {
-      await navigator.clipboard.writeText(openCommand(byId.get(sid) ?? { id: sid }, dshProfile))
+      await navigator.clipboard.writeText(sid)
       setCopiedId(sid)
       window.setTimeout(() => setCopiedId((cur) => cur === sid ? null : cur), 1600)
     } catch {
@@ -134,11 +128,9 @@ export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds:
               <li key={s.id} className="react-session-row">
                 <div className="react-session-info">
                   <strong title={s.title}>{s.title || "(无标题)"}</strong>
-                  <code>{s.id}</code>
                 </div>
                 <div className="react-session-actions">
-                  <a href={`/session?id=${encodeURIComponent(s.id)}`} title="查看 session 详情">详情</a>
-                  <button type="button" className="react-copy-link-btn" onClick={() => copyOpen(s.id)} title="复制打开命令到剪贴板"><Copy size={13} />{copiedId === s.id ? "已复制" : "复制命令"}</button>
+                  <button type="button" className="react-copy-link-btn" onClick={() => copyId(s.id)} title="复制 session id 到剪贴板"><Copy size={13} />{copiedId === s.id ? "已复制" : "复制 ID"}</button>
                 </div>
               </li>
             ))}
