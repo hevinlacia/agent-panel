@@ -1211,7 +1211,7 @@ pub(crate) async fn api_requirement_merge_branch(
         .map(is_issue_category)
         .unwrap_or(false);
     let results =
-        merge_requirement_branches(&branch_scope, &merge_request, block_prod_branches).await;
+        merge_requirement_branches(&branch_scope, &merge_request, block_prod_branches, &read_config(&state).await.unwrap_or_default().merge_excluded_repos).await;
     let status = merge_overall_status(&results);
     Ok(Json(json!({
         "ok": matches!(status, "merged" | "skipped" | "empty"),
