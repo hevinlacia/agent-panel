@@ -50,10 +50,7 @@ impl DshClient {
             .await
             .with_context(|| format!("dsh ({url}) unreachable"))?;
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| String::new());
+        let text = response.text().await.unwrap_or_else(|_| String::new());
         if !status.is_success() {
             return Err(anyhow!("dsh {method} HTTP {status}: {text}"));
         }
@@ -83,7 +80,11 @@ impl DshClient {
     /// Preallocate a session with the given id. `cwd` is optional: an absent or
     /// empty value omits it so the host falls back to its own working directory.
     /// Returns the created session id (echoed by the host).
-    pub(crate) async fn create_session(&self, session_id: &str, cwd: Option<&str>) -> Result<String> {
+    pub(crate) async fn create_session(
+        &self,
+        session_id: &str,
+        cwd: Option<&str>,
+    ) -> Result<String> {
         let mut payload = json!({ "sessionId": session_id });
         if let Some(c) = cwd {
             if !c.is_empty() {

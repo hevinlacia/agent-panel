@@ -12,9 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::{fs, process::Command, time::timeout};
 
-use crate::{
-    agent_panel_skill_path, paths, ApiError, ApiResult, AppState, FormOrJson, IdQuery,
-};
+use crate::{agent_panel_skill_path, paths, ApiError, ApiResult, AppState, FormOrJson, IdQuery};
 
 pub(crate) async fn api_capability_sources(
     State(state): State<AppState>,

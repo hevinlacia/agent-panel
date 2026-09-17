@@ -404,11 +404,16 @@ pub(crate) async fn prepare_review_materials(
         Some(existing) => {
             let drifts = review_snapshot_drifts(req_dir).await;
             if drifts.is_empty() {
-                if review_artifact_newer_than_review_docs(req_dir, CODE_REVIEW_INCREMENTAL_FILE).await {
-                    if let Some(inc) = read_json_if_exists(&req_dir.join(CODE_REVIEW_INCREMENTAL_FILE)).await {
+                if review_artifact_newer_than_review_docs(req_dir, CODE_REVIEW_INCREMENTAL_FILE)
+                    .await
+                {
+                    if let Some(inc) =
+                        read_json_if_exists(&req_dir.join(CODE_REVIEW_INCREMENTAL_FILE)).await
+                    {
                         (
                             "incremental-pending",
-                            "上一次生成的增量审查包还没有产生更新的审查结论，直接复用，不重复生成".to_string(),
+                            "上一次生成的增量审查包还没有产生更新的审查结论，直接复用，不重复生成"
+                                .to_string(),
                             "incremental",
                             inc,
                         )
@@ -422,7 +427,9 @@ pub(crate) async fn prepare_review_materials(
                         )
                     }
                 } else {
-                    if review_artifact_requires_fresh_review(req_dir, &req_dir.join("review.md")).await {
+                    if review_artifact_requires_fresh_review(req_dir, &req_dir.join("review.md"))
+                        .await
+                    {
                         warnings.push(
                             "全量快照刚刷新且比 review.md 结论新，需基于最新快照重新给出 Review Gate 结论".to_string(),
                         );
@@ -516,7 +523,11 @@ pub(crate) async fn prepare_review_materials(
     let risk_tags: Vec<String> = review_doc
         .get("riskTags")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     let inventory_risk = review_doc
         .get("inventoryRisk")
@@ -548,7 +559,11 @@ pub(crate) async fn prepare_review_materials(
         "reviewer 无写权限：annotations 内容先随审查结论一起输出，由主 agent 复核后调 `PUT /api/requirement/annotations` 落盘（全量覆盖旧版）；写入时机与审查快照同批，说明锚定当前审查 diff，避免说明栏与代码漂移".to_string(),
     );
     for repo in &repos_summary {
-        if repo.get("diffTruncated").and_then(Value::as_bool).unwrap_or(false) {
+        if repo
+            .get("diffTruncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
             handoff_hints.push(format!(
                 "仓库 {} 的 diff 超过输出上限被截断，审查结论需注明覆盖范围，必要时分仓重试",
                 repo.get("repoName").and_then(Value::as_str).unwrap_or("?")
@@ -797,13 +812,17 @@ pub(crate) async fn save_diff_snapshot(
         // history stack.
         let sig = (
             round,
-            obj.get("baseRef").and_then(|v| v.as_str()).map(str::to_string),
+            obj.get("baseRef")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
             repo_commit_signature(&snapshot),
         );
         snapshots.retain(|s| {
             let other_sig = (
                 s.get("round").and_then(Value::as_u64).unwrap_or(1) as u32,
-                s.get("baseRef").and_then(|v| v.as_str()).map(str::to_string),
+                s.get("baseRef")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
                 repo_commit_signature(s),
             );
             other_sig != sig
@@ -3206,7 +3225,10 @@ pub(crate) async fn git(
         .chain(full_args.iter().map(|a| shell_quote(a)))
         .collect::<Vec<_>>()
         .join(" ");
-    let fut = Command::new("git").args(&full_args).current_dir(cwd).output();
+    let fut = Command::new("git")
+        .args(&full_args)
+        .current_dir(cwd)
+        .output();
     match timeout(Duration::from_millis(timeout_ms), fut).await {
         Ok(Ok(output)) => {
             let (stdout, stdout_truncated) = limit_output(

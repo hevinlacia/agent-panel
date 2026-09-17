@@ -1641,7 +1641,10 @@ async fn group_status_aggregation_takes_min_member_status() {
         .iter()
         .find(|r| r.id == "G-MEMBER-A")
         .expect("member a");
-    assert!(member.member_of.iter().any(|g| g == "WMS-GRP-001-aggregation"));
+    assert!(member
+        .member_of
+        .iter()
+        .any(|g| g == "WMS-GRP-001-aggregation"));
 }
 
 #[tokio::test]
@@ -1737,7 +1740,9 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     let dir = std::path::Path::new(&req_dir);
 
     // 合法 group.json -> ok。
-    let req = get_real_requirement(&state, "WMS-GRP-009").await.expect("req");
+    let req = get_real_requirement(&state, "WMS-GRP-009")
+        .await
+        .expect("req");
     let ok = validate_requirement(&state, &req).await.expect("validate");
     assert_eq!(ok["ok"], json!(true), "{}", ok);
 
@@ -1764,7 +1769,8 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     // 自引用 + 非法 policy -> problems。
     std::fs::write(
         dir.join(GROUP_FILE),
-        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "WMS-GRP-009"}]}).to_string(),
+        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "WMS-GRP-009"}]})
+            .to_string(),
     )
     .expect("write bad group.json");
     let bad = validate_requirement(&state, &req)
@@ -1856,7 +1862,10 @@ async fn branch_rounds_file_names_listing_and_create() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
     // 无登记文件时空列表。
-    assert!(list_branch_scope_rounds(dir).await.expect("empty").is_empty());
+    assert!(list_branch_scope_rounds(dir)
+        .await
+        .expect("empty")
+        .is_empty());
 
     std::fs::write(
         dir.join("branches.json"),
@@ -1886,15 +1895,22 @@ async fn branch_rounds_file_names_listing_and_create() {
     assert_eq!(scope.repos[0].repo_name, "a");
     assert_eq!(scope.repos[0].role.as_deref(), Some("后端"));
 
-    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after create");
+    let rounds = list_branch_scope_rounds(dir)
+        .await
+        .expect("rounds after create");
     assert_eq!(rounds.len(), 2);
-    assert!(rounds[0].sealed, "round 1 must be sealed once round 2 exists");
+    assert!(
+        rounds[0].sealed,
+        "round 1 must be sealed once round 2 exists"
+    );
     assert!(!rounds[1].sealed);
 
     // 可继续创建 round 3，latest 指向最大轮次。
     let (round3, _, _) = create_branch_scope_round(dir).await.expect("create round3");
     assert_eq!(round3, 3);
-    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after round3");
+    let rounds = list_branch_scope_rounds(dir)
+        .await
+        .expect("rounds after round3");
     assert_eq!(rounds.len(), 3);
     assert!(rounds.iter().take(2).all(|r| r.sealed));
     assert!(!rounds[2].sealed);
@@ -1924,18 +1940,28 @@ async fn diff_snapshots_isolated_per_round() {
             .expect("save r2");
     }
     // 同轮次同 base+commit 重复生成不去重会翻倍；这里验证去重后仍为 5+2。
-    save_diff_snapshot(dir, review("c6"), 1).await.expect("save r1 dedup");
-    save_diff_snapshot(dir, review("r2c1"), 2).await.expect("save r2 dedup");
+    save_diff_snapshot(dir, review("c6"), 1)
+        .await
+        .expect("save r1 dedup");
+    save_diff_snapshot(dir, review("r2c1"), 2)
+        .await
+        .expect("save r2 dedup");
 
     let doc = read_json_if_exists(&dir.join(CODE_DIFF_SNAPSHOTS_FILE))
         .await
         .expect("snapshots doc exists");
-    let snapshots = doc.get("snapshots").and_then(|v| v.as_array()).expect("array");
+    let snapshots = doc
+        .get("snapshots")
+        .and_then(|v| v.as_array())
+        .expect("array");
     let round_of = |s: &serde_json::Value| s.get("round").and_then(serde_json::Value::as_u64);
     let r1 = snapshots.iter().filter(|s| round_of(s) == Some(1)).count();
     let r2 = snapshots.iter().filter(|s| round_of(s) == Some(2)).count();
     assert_eq!(r1, 5, "round 1 keeps its own 5 snapshots");
-    assert_eq!(r2, 2, "round 2 keeps its own snapshots without evicting round 1");
+    assert_eq!(
+        r2, 2,
+        "round 2 keeps its own snapshots without evicting round 1"
+    );
 }
 
 #[tokio::test]
