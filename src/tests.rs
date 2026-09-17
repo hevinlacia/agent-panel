@@ -1937,3 +1937,58 @@ async fn diff_snapshots_isolated_per_round() {
     assert_eq!(r1, 5, "round 1 keeps its own 5 snapshots");
     assert_eq!(r2, 2, "round 2 keeps its own snapshots without evicting round 1");
 }
+
+#[tokio::test]
+async fn merge_skips_repos_on_exclusion_list() {
+    let scope = BranchScope {
+        repos: vec![BranchRepo {
+            repo_name: "yl-cwhsea-wms-components".into(),
+            branches: vec!["feat/x".into()],
+            role: Some("组件库".into()),
+            path: Some("/tmp/agent-panel-nonexistent-repo".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let request = MergeRequest {
+        target: "uat".into(),
+        target_branch: "uat".into(),
+        repo_kind: Some("backend".into()),
+    };
+    let results = merge_requirement_branches(
+        &scope,
+        &request,
+        false,
+        &["yl-cwhsea-wms-components".to_string()],
+    )
+    .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["status"], "skipped");
+    assert_eq!(results[0]["excluded"], true);
+    // 排除名单命中不应触发 git 操作（path 指向不存在的目录，若走到合并会返回 failed）
+    assert!(results[0]["message"].as_str().unwrap().contains("排除名单"));
+}
+
+#[tokio::test]
+async fn merge_does_not_skip_repos_outside_exclusion_list() {
+    let scope = BranchScope {
+        repos: vec![BranchRepo {
+            repo_name: "yl-cwhsea-wms-log-api".into(),
+            branches: vec!["feat/x".into()],
+            role: Some("后端".into()),
+            path: Some("/tmp/agent-panel-nonexistent-repo".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let request = MergeRequest {
+        target: "uat".into(),
+        target_branch: "uat".into(),
+        repo_kind: Some("backend".into()),
+    };
+    let results = merge_requirement_branches(&scope, &request, false, &[]).await;
+    assert_eq!(results.len(), 1);
+    // 不在排除名单 → 正常走合并流程（此处 path 不存在，结果是 failed 而非 skipped/excluded）
+    assert_ne!(results[0]["excluded"], true);
+    assert_ne!(results[0]["status"], "skipped");
+}
