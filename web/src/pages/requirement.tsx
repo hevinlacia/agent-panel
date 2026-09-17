@@ -12,7 +12,7 @@ import { Markdown } from "../markdown"
 import { effectiveStatus, experienceSummaryPill, groupBadge, onesBadge, projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
-import { SessionChipList, SessionListModal } from "./sessions"
+import { SessionListModal } from "./sessions"
 
 /** 关联线上问题面板：普通需求绑定线上问题（meta.md issues 字段），需求进入 >= 经验总结 时系统自动推进关联问题。 */
 function LinkedIssuesPanel({ req, issues, onSaved }: { req: Requirement; issues: Requirement[]; onSaved: () => void }) {
@@ -598,16 +598,39 @@ function markdownPreview(content: string, expanded: boolean, max = 2600): { text
   return { text: `${clean.slice(0, max)}\n…`, truncated: true }
 }
 
-function RequirementDocPanel({ id, req, docType, title, kicker, description, path, actions }: { id: string; req: Requirement; docType: string; title: string; kicker: string; description: string; path?: string; actions?: React.ReactNode }) {
+function RequirementDocPanel({ id, req, docType, title, kicker, description, path, actions, jumpOnly }: { id: string; req: Requirement; docType: string; title: string; kicker: string; description: string; path?: string; actions?: React.ReactNode; jumpOnly?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const doc = useFetch<RequirementDocPayload>(req.reqDir ? `/api/requirement/doc?id=${encodeURIComponent(req.id)}&file=${encodeURIComponent(docType)}` : null, [req.id, docType])
+  const doc = useFetch<RequirementDocPayload>(!jumpOnly && req.reqDir ? `/api/requirement/doc?id=${encodeURIComponent(req.id)}&file=${encodeURIComponent(docType)}` : null, [req.id, docType])
   const content = doc.data?.content || ""
   const preview = markdownPreview(content, expanded)
-  const chip = doc.loading ? "loading" : doc.data?.exists ? doc.data.file : path ? "path only" : "missing"
+  const chip = jumpOnly ? "点击查看全文" : doc.loading ? "loading" : doc.data?.exists ? doc.data.file : path ? "path only" : "missing"
+  const shownPath = jumpOnly ? path : doc.data?.path || path
   return <section id={id} className="react-panel react-doc-panel"><PanelHead kicker={kicker} title={title} chip={chip} />
     <p className="react-muted">{description}</p>
-    <div className="react-actions">{actions}{path || doc.data?.path ? <code className="react-doc-path">{doc.data?.path || path}</code> : null}</div>
-    {doc.error ? <p className="react-effort-error">加载失败：{doc.error}</p> : doc.loading ? <LoadingCard label="正在加载文档…" /> : preview.text ? <><pre className="react-doc-preview">{preview.text}</pre>{preview.truncated || expanded ? <div className="react-actions"><button type="button" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全文"}</button></div> : null}</> : <p className="react-muted">暂无内容。可在需求澄清阶段生成或更新该文档。</p>}
+    <div className="react-actions">{actions}{shownPath ? <code className="react-doc-path">{shownPath}</code> : null}</div>
+    {jumpOnly ? null : <>{doc.error ? <p className="react-effort-error">加载失败：{doc.error}</p> : doc.loading ? <LoadingCard label="正在加载文档…" /> : preview.text ? <><pre className="react-doc-preview">{preview.text}</pre>{preview.truncated || expanded ? <div className="react-actions"><button type="button" onClick={() => setExpanded((v) => !v)}>{expanded ? "收起" : "展开全文"}</button></div> : null}</> : <p className="react-muted">暂无内容。可在需求澄清阶段生成或更新该文档。</p>}</>}
+  </section>
+}
+
+/** 关联 PRD 面板：需求目录存在 prd.md（目前为飞书 PRD 存档）时，从存档提取来源链接展示，右侧一键复制。 */
+function RequirementPrdPanel({ req }: { req: Requirement }) {
+  const doc = useFetch<RequirementDocPayload>(req.prdPath ? `/api/requirement/doc?id=${encodeURIComponent(req.id)}&doc=prd` : null, [req.id])
+  const [copied, setCopied] = useState(false)
+  const link = useMemo(() => (doc.data?.content || "").match(/https?:\/\/[^\s)\]}"'，。；』」]+/)?.[0] || "", [doc.data])
+  const copyLink = async () => {
+    if (!link) return
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return <section id="prd" className="react-panel react-doc-panel"><PanelHead kicker="PRD" title="关联 PRD" chip={doc.loading ? "loading" : link ? "飞书文档" : "prd.md"} />
+    <p className="react-muted">需求关联的产品 PRD（目前为飞书文档）：prd.md 是存档全文，点击链接直接打开飞书原文，右侧按钮一键复制链接。</p>
+    <div className="react-actions">{doc.loading ? null : link ? <><a className="react-prd-link" href={link} target="_blank" rel="noreferrer">{link}</a><button type="button" className="react-copy-link-btn" title="复制 PRD 链接" onClick={copyLink}><Copy size={13} />{copied ? "已复制" : "复制链接"}</button></> : <><code className="react-doc-path">{req.prdPath}</code><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=prd`}><Library size={15} />查看存档全文</a></>}</div>
+    {doc.error ? <p className="react-effort-error">PRD 加载失败：{doc.error}</p> : null}
   </section>
 }
 
@@ -627,33 +650,54 @@ function attachmentFormatTime(ms: number): string {
 }
 
 function RequirementAttachmentsPanel({ req }: { req: Requirement }) {
+  // full=1：后端返回附件全文（上限 200KB），供展开全文与一键复制；正文只在展开后渲染。
   const { data, error, loading } = useFetch<RequirementAttachmentsPayload>(
-    req.reqDir ? `/api/requirement/attachments?id=${encodeURIComponent(req.id)}` : null,
+    req.reqDir ? `/api/requirement/attachments?id=${encodeURIComponent(req.id)}&full=1` : null,
     [req.id],
   )
   const rows = data?.attachments ?? []
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set())
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const previewable = (row: RequirementAttachment) => TEXT_ATTACHMENT_EXTS.has(row.extension) && Boolean((row.sample || "").trim())
-  const copyAttachment = async (row: RequirementAttachment) => {
+  const toggle = (filename: string) => {
+    setExpandedKeys((cur) => {
+      const next = new Set(cur)
+      if (next.has(filename)) next.delete(filename)
+      else next.add(filename)
+      return next
+    })
+  }
+  const copyText = async (key: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(row.sample || "")
-      setCopiedKey(row.filename)
-      window.setTimeout(() => setCopiedKey((k) => (k === row.filename ? null : k)), 1600)
+      await navigator.clipboard.writeText(text)
+      setCopiedKey(key)
+      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1600)
     } catch {
       setCopiedKey(null)
     }
   }
   const chip = loading ? "loading" : error ? "error" : `${rows.length} 个文件`
   return <section id="attachments" className="react-panel react-attachments-panel"><PanelHead kicker="Attachments" title="附件" chip={chip} />
-    <p className="react-muted">展示需求目录 <code>attachments/</code> 下的非代码资产（排查数据、SQL、截图、导出件等），与上线清单相互独立；线上问题排查过程中沉淀的附件也在这里直接可见。</p>
-    {error ? <p className="react-effort-error">附件加载失败：{error}</p> : loading ? <LoadingCard label="正在加载附件…" /> : rows.length === 0 ? <p className="react-muted">暂无附件。</p> : <>
-      <div className="react-table-wrap react-attachment-wrap"><table className="react-code-file-table"><thead><tr><th>文件</th><th>类型/统计</th><th>大小</th><th>更新时间</th><th>路径</th></tr></thead><tbody>{rows.map((row) => <tr key={row.filename}><td><code>{row.filename}</code></td><td>{row.summary.length ? row.summary.join(" / ") : row.extension || "-"}</td><td>{attachmentHumanBytes(row.size)}</td><td>{attachmentFormatTime(row.mtime)}</td><td><code>{row.relativePath || row.path}</code></td></tr>)}</tbody></table></div>
-      <div className="react-attachment-files">{rows.map((row) => {
-        const canPreview = previewable(row)
-        const summary = row.summary.length ? row.summary.join(" / ") : row.extension || "-"
-        return <details key={row.filename} className="react-attachment-file"><summary><span className="react-attachment-name">{row.filename}</span><span className="react-attachment-badge">{summary}</span><span className="react-attachment-size">{attachmentHumanBytes(row.size)}</span>{canPreview ? null : <span className="react-attachment-note">二进制/不可预览</span>}</summary>{canPreview ? <div className="react-attachment-file-body"><div className="react-attachment-actions"><button type="button" className="react-copy-link-btn" onClick={() => copyAttachment(row)}>{copiedKey === row.filename ? "已复制" : "一键复制"}</button><code className="react-attachment-path">{row.path}</code></div><pre>{row.sample}</pre></div> : <div className="react-attachment-file-body"><code className="react-attachment-path">{row.path}</code><p className="react-muted">该文件为二进制或不可预览内容，请按路径打开核对。</p></div>}</details>
-      })}</div>
-    </>}
+    <p className="react-muted">展示需求目录 <code>attachments/</code> 下的非代码资产（排查数据、SQL、截图、导出件等），与上线清单相互独立；不再展示概要表格，默认全部折叠，点击附件标题展开全文，标题右侧可一键复制附件内容或文件路径。</p>
+    {error ? <p className="react-effort-error">附件加载失败：{error}</p> : loading ? <LoadingCard label="正在加载附件…" /> : rows.length === 0 ? <p className="react-muted">暂无附件。</p> : <div className="react-attachment-files">{rows.map((row) => {
+      const canPreview = previewable(row)
+      const badge = row.summary.length ? row.summary.join(" / ") : row.extension || "-"
+      const open = expandedKeys.has(row.filename)
+      return <div key={row.filename} className={`react-attachment-file${open ? " react-attachment-open" : ""}`}>
+        <div className="react-attachment-head" role={canPreview ? "button" : undefined} onClick={() => canPreview && toggle(row.filename)}>
+          {canPreview ? <span className="react-attachment-caret">▸</span> : null}
+          <span className="react-attachment-name">{row.filename}</span>
+          <span className="react-attachment-badge">{badge}</span>
+          <span className="react-attachment-size">{attachmentHumanBytes(row.size)} · {attachmentFormatTime(row.mtime)}</span>
+          {canPreview ? null : <span className="react-attachment-note">二进制/不可预览</span>}
+          <span className="react-attachment-head-actions" onClick={(e) => e.stopPropagation()}>
+            {canPreview ? <button type="button" className="react-copy-link-btn" title="复制附件全文内容" onClick={() => copyText(`content:${row.filename}`, row.sample)}><Copy size={12} />{copiedKey === `content:${row.filename}` ? "已复制" : "复制内容"}</button> : null}
+            <button type="button" className="react-copy-link-btn" title="复制附件文件路径" onClick={() => copyText(`path:${row.filename}`, row.path)}><Copy size={12} />{copiedKey === `path:${row.filename}` ? "已复制" : "复制路径"}</button>
+          </span>
+        </div>
+        {open && canPreview ? <div className="react-attachment-file-body"><pre>{row.sample}</pre></div> : null}
+      </div>
+    })}</div>}
   </section>
 }
 
@@ -832,7 +876,9 @@ export function RequirementPage() {
   return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req && !isOnlineIssue ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#attachments"><Paperclip size={15} />附件</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req && !isOnlineIssue ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
       <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={<>{statusPill(effectiveStatus(req))}{groupBadge(req)}{experienceSummaryPill(req)}</>} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>预计发版 {req.planRelease || "unknown"}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span><span>来源 {req.source ?? "产品推动"}{req.source === "开发推动" ? "（需测试场景文档）" : ""}</span>{req.memberOf?.length ? <span>所属组 {req.memberOf.map((g) => <a key={g} href={`/requirement?id=${encodeURIComponent(g)}`}>{g}</a>)}</span> : null}</div><PlanReleaseForm req={req} onSaved={refresh} /><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
-      <RequirementDocPanel id="technical-plan" req={req} docType="technical-plan" title="技术方案" kicker="Implementation Plan" path={req.technicalPlanPath} description="Agent 执行需求过程中持续维护：先看总体实现路径、影响范围、风险、灰度/回滚和验证计划，再进入代码差异人工审查。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=design&tokens=req.technicalPlan,req.impact,req.branchScope,req.codeReview&budget=4000&format=html`} target="_blank" rel="noreferrer">方案上下文</a></>} />
+      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={String(isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0))} /><p className="react-muted">本需求绑定的终端 session；卡片不再平铺历史 session，点击「查看全部」弹窗展示完整列表，可一键复制 session id。</p><div className="react-actions">{(isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0)) ? <button type="button" onClick={() => setShowSessions(true)} title="弹窗查看全部关联 session，可一键复制 session id"><List size={13} />查看全部 session（{isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0)}）</button> : null}{isDshWeb ? <button onClick={newDshWebSession}>为需求开启 dsh web session</button> : <><button type="button" onClick={() => copyLatestCommand(false)} title="复制最新终端命令；session 被使用后再次点击会自动换新 session id"><Copy size={13} />{copyFeedback === "copied" ? "已复制" : "复制命令"}</button><button type="button" onClick={() => copyLatestCommand(true)} title="无视使用状态强制更换 session id，并复制新命令；用于“是否已使用”判断失误时兜底"><RefreshCw size={13} />{copyFeedback === "refreshed" ? "已刷新并复制" : "强制刷新"}</button></>}</div>{isDshWeb ? <div className="react-command-wrap"><code className="react-command">/requirement-bind {req.id}</code><button type="button" className="react-copy-link-btn" onClick={copyBindCommand} title="复制绑定命令，到 dsh web 聊天框粘贴"><Copy size={13} />{bindCmdCopied ? "已复制" : "复制"}</button></div> : shownCommand ? <><div className="react-command-wrap"><code className="react-command">{shownCommand}</code><button type="button" className="react-copy-link-btn" onClick={copyShownCommand} title="再次复制当前显示的命令"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div><p className="react-muted">{pendingSession.data?.pending ? (pendingSession.data.pending.used ? "该命令的 session 已被使用：再次点击“复制命令”会自动换新 session id。" : "重复点击“复制命令”复用同一 session id；命令被使用后自动换新。判断失误时用“强制刷新”。") : "尚未生成命令：点击“复制命令”会生成并复制；命令被使用后再次点击会自动换新。"}</p></> : null}{!isDshWeb && copyError ? <p className="react-effort-error">{copyError}</p> : null}{isDshWeb ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可复制上面的绑定命令到任一 dsh session 聊天框。</p></div> : <p className="react-muted">复制上面的绑定命令，粘贴到 dsh web 聊天框（任意 session），即可把该 session 关联到本需求。</p> : null}{showSessions && (isDsh ? dshSessionIds.length : req.sessionIds?.length) ? <SessionListModal sessionIds={isDsh ? dshSessionIds : req.sessionIds} harness={curHarness} onClose={() => setShowSessions(false)} /> : null}</section>
+      {req.prdPath ? <RequirementPrdPanel req={req} /> : null}
+      <RequirementDocPanel id="technical-plan" req={req} docType="technical-plan" title="技术方案" kicker="Implementation Plan" path={req.technicalPlanPath} jumpOnly description="Agent 执行需求过程中持续维护：先看总体实现路径、影响范围、风险、灰度/回滚和验证计划，再进入代码差异人工审查。卡片不再内嵌概要，点击「方案上下文」在独立页面查看全文，页面左上角可返回需求详情。" actions={<><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=technical-plan`}><Library size={15} />方案上下文</a></>} />
       {req.source === "开发推动" && !isOnlineIssue ? <RequirementDocPanel id="test-scenario" req={req} docType="test-scenario" title="测试场景" kicker="Test Scenario" path={req.testScenarioPath} description="开发推动的需求，测试无法向产品确认测试范围，本档由开发负责：需求说明（这个需求是干嘛的）+ 开发评估的测试范围 + 测试覆盖场景，让测试自主评估与补充用例；进入「测试中」前强制校验。" actions={<><a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=test-scenario&title=${encodeURIComponent("测试场景文档")}`}><Library size={15} />整页查看</a><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=design&tokens=req.technicalPlan,req.branchScope&budget=4000&format=html`} target="_blank" rel="noreferrer">方案上下文</a></>} /> : null}
       {!isOnlineIssue ? <RequirementDocPanel id="release-manifest" req={req} docType="release-manifest" title="上线清单" kicker="Release Manifest" path={req.releaseManifestPath} description="贯穿需求全流程维护：集中展示 DB 表、配置、Topic/Group、Job、开关、接口和上线人工动作，避免发布时遗漏。" actions={<><a href={`/api/requirement/context?id=${encodeURIComponent(req.id)}&intent=release-check&tokens=req.releaseManifest,req.attachments,req.configChanges,req.branchScope&budget=5000&format=html`} target="_blank" rel="noreferrer">清单上下文</a></>} /> : null}
       <RequirementAttachmentsPanel req={req} />
@@ -848,7 +894,6 @@ export function RequirementPage() {
       <GroupMembersPanel req={req} />
       <OnesPanel req={req} onSaved={refresh} />
       <section className="react-panel"><PanelHead kicker="Status" title={isGroup ? "需求组状态（派生）" : isOnlineIssue ? "线上问题状态" : isIssueFamily ? "测试问题状态" : "状态切换"} /><p className="react-muted">{isGroup ? "引用式需求组的状态为派生值（min 成员需求流状态），不能手动设置；在成员需求详情页推进状态即可同步组进度，瓶颈成员见「需求组成员」面板。成员需求文件、分支、session 和发布互相独立，可按发布策略（releasePolicy）各成员独立发布或整体发布。" : isOnlineIssue ? "线上问题专用流程：排查中 → 已定位 → 已修复 → 已复盘。排查/复现需要改代码时，可直接用 req-branches-update 登记 branches.json 并在需求分支开发，合入 test/UAT 环境分支验证；生产分支（后端 master/前端 production）被强制拦截，不生成生产 MR。正式生产修复创建普通需求并在需求「关联线上问题」面板绑定本问题（或直接点「创建修复需求」），需求进入经验总结后系统自动推进关联问题。有价值的问题在「排查经验」面板沉淀 troubleshooting.md（怎么排查 + 怎么修复），进入已复盘前强制校验；无沉淀价值直接已关闭。" : isIssueFamily ? "测试问题流程：排查中 → 已定位 → 已修复 → 已复盘，与线上问题共用轻量状态机，但硬门禁更轻：进入已定位/已复盘不强制 root-cause.md 和排查经验，小问题可直接修复后推进，有复用价值时按需沉淀。排查/复现代码可直接登记分支开发，仅允许合入 test/UAT 环境分支，禁止合入生产分支。测试问题不绑定普通需求；需要常规开发承接时创建 category=需求 的需求跟进。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 发布就绪 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。开发推动（source=开发推动）的需求进入测试中前必须先完成「测试场景」文档，否则状态接口会拒绝。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }} disabled={isGroup} title={isGroup ? "需求组状态为派生值（min 成员状态），不能手动设置" : undefined}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || isGroup}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>创建修复需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") || statusMessage.startsWith("转换失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}{fixReqId ? <> <a href={`/requirement?id=${encodeURIComponent(fixReqId)}`}>打开修复需求 →</a></> : null}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button><label>推动方</label><select value={source} onChange={(e) => setSource(e.target.value)}><option value="">{req.source ?? "产品推动"}</option>{REQ_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}</select><button onClick={submitSource} disabled={!source || savingSource} title={req.source === "开发推动" ? "切回产品推动" : "切为开发推动：进入测试中前必须先完成测试场景文档"}>{savingSource ? "保存中…" : "保存推动方"}</button></div></section>
-      <section className="react-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={req.sessionIds?.length ? <button type="button" className="react-chip-count-btn" onClick={() => setShowSessions(true)} title="查看全部关联 session"><List size={13} />{isDsh ? dshSessionIds.length : req.sessionIds.length}</button> : "0"} />{isDsh ? dshSessionIds.length ? <SessionChipList sessionIds={dshSessionIds} /> : <p className="react-muted">暂无关联的 dsh session。</p> : req.sessionIds?.length ? <SessionChipList sessionIds={req.sessionIds} /> : <p className="react-muted">暂无关联 session。</p>}<div className="react-actions">{isDshWeb ? <button onClick={newDshWebSession}>为需求开启 dsh web session</button> : <><button type="button" onClick={() => copyLatestCommand(false)} title="复制最新终端命令；session 被使用后再次点击会自动换新 session id"><Copy size={13} />{copyFeedback === "copied" ? "已复制" : "复制命令"}</button><button type="button" onClick={() => copyLatestCommand(true)} title="无视使用状态强制更换 session id，并复制新命令；用于“是否已使用”判断失误时兜底"><RefreshCw size={13} />{copyFeedback === "refreshed" ? "已刷新并复制" : "强制刷新"}</button></>}</div>{isDshWeb ? <div className="react-command-wrap"><code className="react-command">/requirement-bind {req.id}</code><button type="button" className="react-copy-link-btn" onClick={copyBindCommand} title="复制绑定命令，到 dsh web 聊天框粘贴"><Copy size={13} />{bindCmdCopied ? "已复制" : "复制"}</button></div> : shownCommand ? <><div className="react-command-wrap"><code className="react-command">{shownCommand}</code><button type="button" className="react-copy-link-btn" onClick={copyShownCommand} title="再次复制当前显示的命令"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div><p className="react-muted">{pendingSession.data?.pending ? (pendingSession.data.pending.used ? "该命令的 session 已被使用：再次点击“复制命令”会自动换新 session id。" : "重复点击“复制命令”复用同一 session id；命令被使用后自动换新。判断失误时用“强制刷新”。") : "尚未生成命令：点击“复制命令”会生成并复制；命令被使用后再次点击会自动换新。"}</p></> : null}{!isDshWeb && copyError ? <p className="react-effort-error">{copyError}</p> : null}{isDshWeb ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可复制上面的绑定命令到任一 dsh session 聊天框。</p></div> : <p className="react-muted">复制上面的绑定命令，粘贴到 dsh web 聊天框（任意 session），即可把该 session 关联到本需求。</p> : null}{showSessions && (isDsh ? dshSessionIds.length : req.sessionIds?.length) ? <SessionListModal sessionIds={isDsh ? dshSessionIds : req.sessionIds} harness={curHarness} onClose={() => setShowSessions(false)} /> : null}</section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>

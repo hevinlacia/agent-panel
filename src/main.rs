@@ -174,6 +174,8 @@ struct IdQuery {
     file: Option<String>,
     intent: Option<String>,
     budget: Option<usize>,
+    /// 附件接口专用：full=1 时返回附件全文（上限 200KB）而非 600 字符摘要。
+    full: Option<String>,
     tokens: Option<String>,
     #[serde(rename = "for")]
     for_agent: Option<String>,
