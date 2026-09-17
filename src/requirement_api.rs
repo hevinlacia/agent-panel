@@ -1016,11 +1016,13 @@ pub(crate) async fn api_requirement_master_diff(
     })?);
     let round = body.round.unwrap_or(1).max(1);
     let scope_file = branch_scope_file_for_round(round);
-    let branch_scope = read_branch_scope_round(&req_dir, round).await?.ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "missing {scope_file}; register the round's branches first"
-        ))
-    })?;
+    let branch_scope = read_branch_scope_round(&req_dir, round)
+        .await?
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "missing {scope_file}; register the round's branches first"
+            ))
+        })?;
     let base_ref = body
         .base_ref
         .as_deref()
@@ -1055,7 +1057,9 @@ pub(crate) async fn api_requirement_diff_snapshots_get(
         .into_iter()
         .filter(|s| s.get("round").and_then(Value::as_u64).unwrap_or(1) as u32 == round)
         .collect();
-    Ok(Json(json!({ "ok": true, "round": round, "snapshots": snapshots })))
+    Ok(Json(
+        json!({ "ok": true, "round": round, "snapshots": snapshots }),
+    ))
 }
 
 /// List the requirement's branch-registration rounds (`branches.json` +
@@ -1210,8 +1214,16 @@ pub(crate) async fn api_requirement_merge_branch(
         .as_deref()
         .map(is_issue_category)
         .unwrap_or(false);
-    let results =
-        merge_requirement_branches(&branch_scope, &merge_request, block_prod_branches, &read_config(&state).await.unwrap_or_default().merge_excluded_repos).await;
+    let results = merge_requirement_branches(
+        &branch_scope,
+        &merge_request,
+        block_prod_branches,
+        &read_config(&state)
+            .await
+            .unwrap_or_default()
+            .merge_excluded_repos,
+    )
+    .await;
     let status = merge_overall_status(&results);
     Ok(Json(json!({
         "ok": matches!(status, "merged" | "skipped" | "empty"),

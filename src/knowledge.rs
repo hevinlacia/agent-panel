@@ -1226,15 +1226,13 @@ async fn remove_knowledge_index_line(meta_path: &Path, id: &str) {
     };
     let lines: Vec<String> = existing
         .lines()
-        .filter(|l| {
-            match serde_json::from_str::<Value>(l) {
-                Ok(v) => v
-                    .get("id")
-                    .and_then(|i| i.as_str())
-                    .map(|i| i != id)
-                    .unwrap_or(true),
-                Err(_) => true,
-            }
+        .filter(|l| match serde_json::from_str::<Value>(l) {
+            Ok(v) => v
+                .get("id")
+                .and_then(|i| i.as_str())
+                .map(|i| i != id)
+                .unwrap_or(true),
+            Err(_) => true,
         })
         .map(|l| l.to_string())
         .collect();
