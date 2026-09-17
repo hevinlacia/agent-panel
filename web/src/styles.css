@@ -650,22 +650,23 @@ button, input, select, textarea { font: inherit; }
 .react-doc-preview { max-height: 420px; overflow: auto; margin: 14px 0 0; border: 1px solid var(--react-border); border-radius: 18px; padding: 16px; background: rgba(4,8,14,.78); color: var(--react-text); white-space: pre-wrap; word-break: break-word; font: .82rem/1.62 var(--react-mono); }
 .react-doc-preview + .react-actions { margin-top: 12px; }
 .react-attachments-panel { grid-column: 1 / -1; border-color: rgba(45,212,191,.2); }
-.react-attachment-files { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
-.react-attachment-file { border: 1px solid var(--react-border); border-radius: 14px; background: rgba(4,8,14,.55); }
-.react-attachment-file.react-attachment-open { border-color: var(--react-border-strong); }
-.react-attachment-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; }
-.react-attachment-head[role="button"] { cursor: pointer; }
-.react-attachment-head[role="button"]:hover .react-attachment-name { color: var(--react-cyan); }
-.react-attachment-caret { color: var(--react-faint); transition: transform 120ms ease; }
-.react-attachment-file.react-attachment-open .react-attachment-caret { transform: rotate(90deg); }
-.react-attachment-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.react-attachment-name { font-family: var(--react-mono); font-weight: 700; color: var(--react-text); word-break: break-all; }
+/* 附件双栏查看器：左列表（名称右侧复制按钮）、右全文，附件多/单文件大时左右独立滚动 */
+.react-att-layout { display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 14px; margin-top: 14px; height: clamp(380px, 56vh, 700px); }
+.react-att-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--react-border); border-radius: 14px; background: rgba(4,8,14,.55); }
+.react-att-item { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 10px; border: 1px solid transparent; cursor: pointer; }
+.react-att-item:hover { background: rgba(34,211,238,.06); }
+.react-att-item.react-att-active { border-color: rgba(34,211,238,.38); background: rgba(34,211,238,.09); }
+.react-att-item-name { min-width: 0; font: 700 .76rem var(--react-mono); color: var(--react-text); word-break: break-all; }
+.react-att-item-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.react-att-item-actions .react-copy-link-btn { padding: 3px 7px; }
+.react-att-main { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 12px 14px; border: 1px solid var(--react-border); border-radius: 14px; background: rgba(4,8,14,.55); overflow: hidden; }
+.react-att-main-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.react-att-main-head strong { font: 700 .85rem var(--react-mono); color: #fff; word-break: break-all; }
+.react-att-main pre { flex: 1; min-height: 0; margin: 0; overflow: auto; background: rgba(6,10,18,.9); border: 1px solid var(--react-border); border-radius: 10px; padding: 12px 14px; font-family: var(--react-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--react-text); }
 .react-attachment-badge { color: var(--react-cyan); font-size: 12px; font-weight: 700; }
 .react-attachment-size { color: var(--react-faint); font-size: 12px; }
-.react-attachment-note { color: var(--react-amber); font-size: 12px; font-weight: 700; }
-.react-attachment-file-body { padding: 0 14px 14px; }
 .react-attachment-path { font-size: 11px; color: var(--react-faint); word-break: break-all; }
-.react-attachment-file pre { background: rgba(6,10,18,.9); border: 1px solid var(--react-border); border-radius: 10px; padding: 12px 14px; overflow: auto; font-family: var(--react-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 420px; margin: 0; color: var(--react-text); }
+@media (max-width: 1040px) { .react-att-layout { grid-template-columns: 1fr; height: auto; } .react-att-list { max-height: 260px; } .react-att-main { min-height: 340px; } }
 
 /* PRD 关联卡片：展示飞书文档链接 + 一键复制 */
 .react-prd-link { color: var(--react-cyan); font: 700 .78rem var(--react-mono); word-break: break-all; }
