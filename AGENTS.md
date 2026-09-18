@@ -15,11 +15,11 @@ Current architecture:
 - `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_ai.rs` — Git AI health checks, suspect record refresh, note re-push, and fix-note agent dispatch.
-- `src/git_workflow.rs` — Requirement branch scope, code-review diff generation, sync-base, merge status, and GitLab MR helpers.
+- `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器）。
 - `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save.
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
-- `src/requirement_service.rs` — Requirement create/update/edit/doc/event/state validation and write helpers.
-- `src/requirement_context.rs` — Requirement schema, token context, phase runtime, review gate, and context HTML rendering.
+- `src/requirement_service.rs` — Module root: requirement API form DTOs; submodules under `src/requirement_service/`: `create`（创建/更新/备注/事件）、`events`（事件渲染与规范化）、`doc`（文档写入/编辑/章节）、`validate`（需求校验）、`paths`（路径安全与可写根解析）、`id_pool`（编号池/序号分配）、`templates`（建单文件与文档模板）、`state`（状态写入/自动推进）、`phase_prompt`（阶段 prompt 加载）。
+- `src/requirement_context.rs` — Module root: submodule declarations only; submodules under `src/requirement_context/`: `schema`（API schema/token 表）、`intent`（意图与 token 映射）、`context_html`（上下文构建与 HTML 渲染）、`phase`（阶段运行时上下文）、`review_gate`（代码审查门禁判定）、`review_drift`（审查快照漂移与风险读取）。
 - `src/experience_summary.rs` — Experience-summary job state, auto-dispatch loops, completion fallback, and startup context injection.
 - `src/sessions.rs` — Pi session JSONL scanning, timeline parsing, and session APIs.
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
@@ -66,6 +66,7 @@ Removed architecture:
 - Scope CSS with `.react-*` selectors.
 - Prefer small JSON APIs and plain file formats that agents can inspect.
 - When splitting large files, extract low-coupling leaf modules first (API helpers, formatters, DTOs, domain constants, shared UI chrome, pure markdown/frontmatter helpers, capability adapters, mock servers, config screens) and run `cargo test` / frontend typecheck after each step.
+- Backend module-split pattern (established): keep `<mod>.rs` as module root (shared types/forms + `mod` decls + `pub(crate) use <sub>::*;` re-exports), put submodules in `<mod>/`; each submodule starts with `use super::*;` so crate-root glob paths (`main.rs` re-exports) keep working without touching callers. Move code verbatim, then let `cargo check` drive visibility fixes (`pub(super)` for cross-submodule private helpers).
 - Keep shared frontend API DTOs in `web/src/types.ts`; feature utilities such as diff parsing should import those DTOs instead of duplicating near-miss types.
 - Keep reusable frontend infrastructure in `web/src/lib/`, cross-page presentational UI in `web/src/components/`, route-level pages in `web/src/pages/`, and feature-specific UI/helpers under `web/src/features/`; page/feature splits should preserve these boundaries.
 - Generated bundle `public/dashboard-react/` and Rust `target/` are build outputs.
