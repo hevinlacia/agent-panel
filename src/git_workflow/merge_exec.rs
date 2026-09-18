@@ -4,6 +4,7 @@ pub(crate) async fn merge_requirement_branches(
     scope: &BranchScope,
     request: &MergeRequest,
     block_prod_branches: bool,
+    merge_excluded_repos: &[String],
 ) -> Vec<Value> {
     let mut results = Vec::new();
     for repo in &scope.repos {
@@ -11,6 +12,21 @@ pub(crate) async fn merge_requirement_branches(
             if repo_kind(repo) != kind {
                 continue;
             }
+        }
+        if merge_excluded_repos
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(repo.repo_name.trim()))
+        {
+            results.push(json!({
+                "repoName": repo.repo_name,
+                "role": repo.role,
+                "status": "skipped",
+                "excluded": true,
+                "target": request.target,
+                "targetBranch": request.target_branch,
+                "message": "已被合并排除名单跳过（Agent Panel 设置页可配置）",
+            }));
+            continue;
         }
         let branches = if repo.branches.is_empty() {
             vec![String::new()]

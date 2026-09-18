@@ -55,6 +55,10 @@ pub(crate) struct AppConfig {
     pub(crate) experience_summary_max_agents: usize,
     #[serde(default)]
     pub(crate) env_vars: Vec<Value>,
+    /// 需求分支合并（test/UAT）时跳过的仓库清单（按 repoName 精确匹配，设置页维护）。
+    /// 适合 jar 组件库等不走环境分支的仓库。
+    #[serde(default)]
+    pub(crate) merge_excluded_repos: Vec<String>,
     #[serde(default)]
     pub(crate) cainiao_mock_enabled: bool,
     #[serde(default = "default_cainiao_mock_port")]
@@ -120,6 +124,7 @@ impl Default for AppConfig {
             experience_summary_pi_model: String::new(),
             experience_summary_max_agents: default_experience_summary_max_agents(),
             env_vars: Vec::new(),
+            merge_excluded_repos: Vec::new(),
             cainiao_mock_enabled: false,
             cainiao_mock_port: DEFAULT_CAINIAO_MOCK_PORT,
             browser_auth: BrowserAuthConfig::default(),
@@ -152,6 +157,7 @@ pub(crate) struct ConfigPatch {
     pub(crate) experience_summary_max_agents: Option<usize>,
     pub(crate) cainiao_mock_enabled: Option<bool>,
     pub(crate) cainiao_mock_port: Option<u16>,
+    pub(crate) merge_excluded_repos: Option<Vec<String>>,
     pub(crate) browser_auth: Option<BrowserAuthConfig>,
 }
 
@@ -230,6 +236,9 @@ pub(crate) async fn api_config_post(
     if let Some(v) = patch.cainiao_mock_port {
         cfg.cainiao_mock_port = v;
     }
+    if let Some(v) = patch.merge_excluded_repos {
+        cfg.merge_excluded_repos = normalize_repo_name_list(v);
+    }
     if let Some(v) = patch.browser_auth {
         cfg.browser_auth = normalize_browser_auth_config(v);
     }
@@ -253,6 +262,7 @@ pub(crate) async fn read_config(state: &AppState) -> Result<AppConfig> {
     }
     let mut cfg: AppConfig = serde_json::from_str(&raw).unwrap_or_default();
     cfg.requirement_scan_roots = normalize_scan_roots(cfg.requirement_scan_roots);
+    cfg.merge_excluded_repos = normalize_repo_name_list(cfg.merge_excluded_repos);
     cfg.experience_summary_max_agents =
         clamp_experience_summary_max_agents(cfg.experience_summary_max_agents);
     Ok(cfg)
@@ -260,6 +270,20 @@ pub(crate) async fn read_config(state: &AppState) -> Result<AppConfig> {
 
 pub(crate) async fn write_config(state: &AppState, cfg: &AppConfig) -> Result<()> {
     atomic_write_json(&config_path(state), cfg).await
+}
+
+/// 归一化仓库名清单：去空白/首尾斜杠、去空项、去重，保序。
+pub(crate) fn normalize_repo_name_list(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for raw in values {
+        let trimmed = raw.trim().trim_matches('/').to_string();
+        if trimmed.is_empty() || !seen.insert(trimmed.clone()) {
+            continue;
+        }
+        out.push(trimmed);
+    }
+    out
 }
 
 pub(crate) fn normalize_scan_roots(values: Vec<String>) -> Vec<String> {

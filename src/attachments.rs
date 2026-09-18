@@ -24,12 +24,19 @@ pub(crate) async fn api_attachments(
     let req = get_real_requirement(&state, &id).await?;
     let dir = PathBuf::from(req.req_dir.unwrap_or_default());
     // full=1 时返回附件全文（上限 200KB），供需求详情页折叠全文展示与一键复制；默认只带 600 字符摘要。
-    let full = matches!(query.full.as_deref(), Some("1") | Some("true") | Some("yes"));
+    let full = matches!(
+        query.full.as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    );
     let rows = requirement_attachment_rows(&dir, query.budget.unwrap_or(600), full).await;
     Ok(Json(json!({ "attachments": rows })))
 }
 
-pub(crate) async fn requirement_attachment_rows(dir: &Path, sample_budget: usize, full: bool) -> Vec<Value> {
+pub(crate) async fn requirement_attachment_rows(
+    dir: &Path,
+    sample_budget: usize,
+    full: bool,
+) -> Vec<Value> {
     let attachments_dir = dir.join("attachments");
     let mut rows = Vec::new();
     if let Ok(mut rd) = fs::read_dir(&attachments_dir).await {
@@ -84,7 +91,14 @@ pub(crate) async fn requirement_attachment_rows(dir: &Path, sample_budget: usize
                         summary.push(format!("{alter_count} ALTER"));
                     }
                 }
-                let (excerpt, truncated) = truncate_chars(&raw, if full { 200_000 } else { sample_budget.min(1200) });
+                let (excerpt, truncated) = truncate_chars(
+                    &raw,
+                    if full {
+                        200_000
+                    } else {
+                        sample_budget.min(1200)
+                    },
+                );
                 sample = if truncated {
                     format!("{}\n…", excerpt.trim_end())
                 } else {

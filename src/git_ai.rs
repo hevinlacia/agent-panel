@@ -614,8 +614,8 @@ pub(crate) async fn api_git_ai_suspect_fix_note(
     // git-ai-fix-note skill. The skill path resolves to the WMS project-local
     // copy (symlinked into ~/.agents/skills as well).
     if still_missing {
-        let skill_path =
-            Some(crate::paths::wms_skills_dir().join("git-ai-fix-note/SKILL.md")).filter(|p| p.exists());
+        let skill_path = Some(crate::paths::wms_skills_dir().join("git-ai-fix-note/SKILL.md"))
+            .filter(|p| p.exists());
         match skill_path {
             Some(path) => {
                 let prompt = format!(

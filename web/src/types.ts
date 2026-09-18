@@ -213,6 +213,7 @@ export interface ConfigPayload {
   experienceSummaryMaxAgents?: number
   cainiaoMockEnabled?: boolean
   cainiaoMockPort?: number
+  mergeExcludedRepos?: string[]
 }
 
 export interface HarnessCurrent {

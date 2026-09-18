@@ -1641,7 +1641,10 @@ async fn group_status_aggregation_takes_min_member_status() {
         .iter()
         .find(|r| r.id == "G-MEMBER-A")
         .expect("member a");
-    assert!(member.member_of.iter().any(|g| g == "WMS-GRP-001-aggregation"));
+    assert!(member
+        .member_of
+        .iter()
+        .any(|g| g == "WMS-GRP-001-aggregation"));
 }
 
 #[tokio::test]
@@ -1737,7 +1740,9 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     let dir = std::path::Path::new(&req_dir);
 
     // 合法 group.json -> ok。
-    let req = get_real_requirement(&state, "WMS-GRP-009").await.expect("req");
+    let req = get_real_requirement(&state, "WMS-GRP-009")
+        .await
+        .expect("req");
     let ok = validate_requirement(&state, &req).await.expect("validate");
     assert_eq!(ok["ok"], json!(true), "{}", ok);
 
@@ -1764,7 +1769,8 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
     // 自引用 + 非法 policy -> problems。
     std::fs::write(
         dir.join(GROUP_FILE),
-        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "WMS-GRP-009"}]}).to_string(),
+        json!({"version": 1, "releasePolicy": "maybe", "members": [{"reqId": "WMS-GRP-009"}]})
+            .to_string(),
     )
     .expect("write bad group.json");
     let bad = validate_requirement(&state, &req)
@@ -1856,7 +1862,10 @@ async fn branch_rounds_file_names_listing_and_create() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = tmp.path();
     // 无登记文件时空列表。
-    assert!(list_branch_scope_rounds(dir).await.expect("empty").is_empty());
+    assert!(list_branch_scope_rounds(dir)
+        .await
+        .expect("empty")
+        .is_empty());
 
     std::fs::write(
         dir.join("branches.json"),
@@ -1886,15 +1895,22 @@ async fn branch_rounds_file_names_listing_and_create() {
     assert_eq!(scope.repos[0].repo_name, "a");
     assert_eq!(scope.repos[0].role.as_deref(), Some("后端"));
 
-    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after create");
+    let rounds = list_branch_scope_rounds(dir)
+        .await
+        .expect("rounds after create");
     assert_eq!(rounds.len(), 2);
-    assert!(rounds[0].sealed, "round 1 must be sealed once round 2 exists");
+    assert!(
+        rounds[0].sealed,
+        "round 1 must be sealed once round 2 exists"
+    );
     assert!(!rounds[1].sealed);
 
     // 可继续创建 round 3，latest 指向最大轮次。
     let (round3, _, _) = create_branch_scope_round(dir).await.expect("create round3");
     assert_eq!(round3, 3);
-    let rounds = list_branch_scope_rounds(dir).await.expect("rounds after round3");
+    let rounds = list_branch_scope_rounds(dir)
+        .await
+        .expect("rounds after round3");
     assert_eq!(rounds.len(), 3);
     assert!(rounds.iter().take(2).all(|r| r.sealed));
     assert!(!rounds[2].sealed);
@@ -1924,16 +1940,81 @@ async fn diff_snapshots_isolated_per_round() {
             .expect("save r2");
     }
     // 同轮次同 base+commit 重复生成不去重会翻倍；这里验证去重后仍为 5+2。
-    save_diff_snapshot(dir, review("c6"), 1).await.expect("save r1 dedup");
-    save_diff_snapshot(dir, review("r2c1"), 2).await.expect("save r2 dedup");
+    save_diff_snapshot(dir, review("c6"), 1)
+        .await
+        .expect("save r1 dedup");
+    save_diff_snapshot(dir, review("r2c1"), 2)
+        .await
+        .expect("save r2 dedup");
 
     let doc = read_json_if_exists(&dir.join(CODE_DIFF_SNAPSHOTS_FILE))
         .await
         .expect("snapshots doc exists");
-    let snapshots = doc.get("snapshots").and_then(|v| v.as_array()).expect("array");
+    let snapshots = doc
+        .get("snapshots")
+        .and_then(|v| v.as_array())
+        .expect("array");
     let round_of = |s: &serde_json::Value| s.get("round").and_then(serde_json::Value::as_u64);
     let r1 = snapshots.iter().filter(|s| round_of(s) == Some(1)).count();
     let r2 = snapshots.iter().filter(|s| round_of(s) == Some(2)).count();
     assert_eq!(r1, 5, "round 1 keeps its own 5 snapshots");
-    assert_eq!(r2, 2, "round 2 keeps its own snapshots without evicting round 1");
+    assert_eq!(
+        r2, 2,
+        "round 2 keeps its own snapshots without evicting round 1"
+    );
+}
+
+#[tokio::test]
+async fn merge_skips_repos_on_exclusion_list() {
+    let scope = BranchScope {
+        repos: vec![BranchRepo {
+            repo_name: "yl-cwhsea-wms-components".into(),
+            branches: vec!["feat/x".into()],
+            role: Some("组件库".into()),
+            path: Some("/tmp/agent-panel-nonexistent-repo".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let request = MergeRequest {
+        target: "uat".into(),
+        target_branch: "uat".into(),
+        repo_kind: Some("backend".into()),
+    };
+    let results = merge_requirement_branches(
+        &scope,
+        &request,
+        false,
+        &["yl-cwhsea-wms-components".to_string()],
+    )
+    .await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["status"], "skipped");
+    assert_eq!(results[0]["excluded"], true);
+    // 排除名单命中不应触发 git 操作（path 指向不存在的目录，若走到合并会返回 failed）
+    assert!(results[0]["message"].as_str().unwrap().contains("排除名单"));
+}
+
+#[tokio::test]
+async fn merge_does_not_skip_repos_outside_exclusion_list() {
+    let scope = BranchScope {
+        repos: vec![BranchRepo {
+            repo_name: "yl-cwhsea-wms-log-api".into(),
+            branches: vec!["feat/x".into()],
+            role: Some("后端".into()),
+            path: Some("/tmp/agent-panel-nonexistent-repo".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let request = MergeRequest {
+        target: "uat".into(),
+        target_branch: "uat".into(),
+        repo_kind: Some("backend".into()),
+    };
+    let results = merge_requirement_branches(&scope, &request, false, &[]).await;
+    assert_eq!(results.len(), 1);
+    // 不在排除名单 → 正常走合并流程（此处 path 不存在，结果是 failed 而非 skipped/excluded）
+    assert_ne!(results[0]["excluded"], true);
+    assert_ne!(results[0]["status"], "skipped");
 }

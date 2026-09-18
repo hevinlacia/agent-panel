@@ -10,11 +10,7 @@ use reqwest::{header, Method, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{fs, net::TcpStream};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-    MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 use crate::*;
 
@@ -203,7 +199,17 @@ pub(crate) async fn api_auth_site_check(
     let cookies = load_chrome_cookies(&auth).await?.1;
     let cookie_status = site_cookie_status(site, &cookies);
     let login = if let Some(check) = &site.login_check {
-        match send_site_request(site, check.method.as_str(), &check.path, HashMap::new(), None, None, &cookies).await {
+        match send_site_request(
+            site,
+            check.method.as_str(),
+            &check.path,
+            HashMap::new(),
+            None,
+            None,
+            &cookies,
+        )
+        .await
+        {
             Ok(resp) => json!({
                 "ok": resp.status == check.expect,
                 "status": resp.status,
@@ -235,7 +241,8 @@ pub(crate) async fn api_auth_site_request(
     let site = find_site(&auth, &site_id)?;
     ensure_site_enabled(site)?;
     let method = form.method.trim().to_uppercase();
-    let path = clean_path(&form.path).ok_or_else(|| ApiError::bad_request("path must start with /"))?;
+    let path =
+        clean_path(&form.path).ok_or_else(|| ApiError::bad_request("path must start with /"))?;
     ensure_allowed_method(&method)?;
     ensure_allowed_path(site, &path)?;
     let cookies = load_chrome_cookies(&auth).await?.1;
@@ -251,7 +258,9 @@ pub(crate) async fn api_auth_site_request(
     .await;
     match &result {
         Ok(resp) => {
-            append_auth_audit(&state, site, &method, &path, Some(resp.status), None).await.ok();
+            append_auth_audit(&state, site, &method, &path, Some(resp.status), None)
+                .await
+                .ok();
             Ok(Json(resp.to_json()))
         }
         Err(err) => {
@@ -263,7 +272,10 @@ pub(crate) async fn api_auth_site_request(
     }
 }
 
-fn find_site<'a>(auth: &'a BrowserAuthConfig, site_id: &str) -> ApiResult<&'a BrowserAuthSiteConfig> {
+fn find_site<'a>(
+    auth: &'a BrowserAuthConfig,
+    site_id: &str,
+) -> ApiResult<&'a BrowserAuthSiteConfig> {
     auth.sites
         .iter()
         .find(|site| site.id == site_id)
@@ -274,14 +286,19 @@ fn ensure_site_enabled(site: &BrowserAuthSiteConfig) -> ApiResult<()> {
     if site.enabled {
         Ok(())
     } else {
-        Err(ApiError::bad_request(format!("auth site disabled: {}", site.id)))
+        Err(ApiError::bad_request(format!(
+            "auth site disabled: {}",
+            site.id
+        )))
     }
 }
 
 fn ensure_allowed_method(method: &str) -> ApiResult<()> {
     match method {
         "GET" | "POST" | "PUT" | "PATCH" | "DELETE" => Ok(()),
-        _ => Err(ApiError::bad_request(format!("unsupported method: {method}"))),
+        _ => Err(ApiError::bad_request(format!(
+            "unsupported method: {method}"
+        ))),
     }
 }
 
@@ -327,9 +344,16 @@ fn site_cookie_status(site: &BrowserAuthSiteConfig, cookies: &[ChromeCookie]) ->
     let domains = resolved_cookie_domains(site);
     let matching = cookies
         .iter()
-        .filter(|cookie| domains.iter().any(|domain| cookie_matches_domain(cookie, domain)))
+        .filter(|cookie| {
+            domains
+                .iter()
+                .any(|domain| cookie_matches_domain(cookie, domain))
+        })
         .collect::<Vec<_>>();
-    let http_only = matching.iter().filter(|cookie| cookie.value.len() > 0).count();
+    let http_only = matching
+        .iter()
+        .filter(|cookie| cookie.value.len() > 0)
+        .count();
     let domains = matching
         .iter()
         .map(|cookie| cookie.domain.clone())
@@ -388,9 +412,7 @@ async fn load_chrome_cookies(auth: &BrowserAuthConfig) -> Result<(String, Vec<Ch
             tracing::warn!(error = %db_err, "Chrome cookie DB read failed; falling back to CDP");
             match load_chrome_cookies_cdp(auth, &allowlist).await {
                 Ok(cookies) => Ok(("cdp".into(), cookies)),
-                Err(cdp_err) => Err(anyhow!(
-                    "cookie DB: {db_err:#}; CDP fallback: {cdp_err:#}"
-                )),
+                Err(cdp_err) => Err(anyhow!("cookie DB: {db_err:#}; CDP fallback: {cdp_err:#}")),
             }
         }
     }
@@ -553,7 +575,9 @@ async fn cdp_call(
     if let Some(session_id) = session_id {
         req.insert("sessionId".into(), json!(session_id));
     }
-    stream.send(Message::Text(Value::Object(req).to_string().into())).await?;
+    stream
+        .send(Message::Text(Value::Object(req).to_string().into()))
+        .await?;
     while let Some(msg) = stream.next().await {
         let msg = msg?;
         let text = match msg {
@@ -656,7 +680,8 @@ async fn send_site_request(
 }
 
 fn site_url(site: &BrowserAuthSiteConfig, path: &str) -> Result<Url> {
-    let base = Url::parse(&site.base_url).with_context(|| format!("invalid baseUrl for {}", site.id))?;
+    let base =
+        Url::parse(&site.base_url).with_context(|| format!("invalid baseUrl for {}", site.id))?;
     base.join(path)
         .with_context(|| format!("invalid request path for {}: {path}", site.id))
 }
@@ -665,10 +690,16 @@ fn ensure_allowed_host(site: &BrowserAuthSiteConfig, url: &Url) -> Result<()> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow!("request URL has no host"))?;
-    if resolved_allowed_hosts(site).iter().any(|allowed| host == allowed) {
+    if resolved_allowed_hosts(site)
+        .iter()
+        .any(|allowed| host == allowed)
+    {
         Ok(())
     } else {
-        Err(anyhow!("host {host} is not allowed for auth site {}", site.id))
+        Err(anyhow!(
+            "host {host} is not allowed for auth site {}",
+            site.id
+        ))
     }
 }
 
@@ -692,7 +723,10 @@ fn cookie_header_for(
         if !cookie_path_matches(cookie, path) {
             continue;
         }
-        if !domains.iter().any(|domain| cookie_matches_domain(cookie, domain)) {
+        if !domains
+            .iter()
+            .any(|domain| cookie_matches_domain(cookie, domain))
+        {
             continue;
         }
         if !cookie_domain_matches_host(cookie, host) {
@@ -706,7 +740,9 @@ fn cookie_header_for(
 fn cookie_matches_domain(cookie: &ChromeCookie, configured_domain: &str) -> bool {
     let domain = normalize_domain(&cookie.domain);
     let configured = normalize_domain(configured_domain);
-    domain == configured || domain.ends_with(&format!(".{configured}")) || configured.ends_with(&format!(".{domain}"))
+    domain == configured
+        || domain.ends_with(&format!(".{configured}"))
+        || configured.ends_with(&format!(".{domain}"))
 }
 
 fn cookie_domain_matches_host(cookie: &ChromeCookie, host: &str) -> bool {
@@ -716,7 +752,11 @@ fn cookie_domain_matches_host(cookie: &ChromeCookie, host: &str) -> bool {
 }
 
 fn cookie_path_matches(cookie: &ChromeCookie, path: &str) -> bool {
-    let cookie_path = if cookie.path.is_empty() { "/" } else { &cookie.path };
+    let cookie_path = if cookie.path.is_empty() {
+        "/"
+    } else {
+        &cookie.path
+    };
     path.starts_with(cookie_path)
 }
 
@@ -735,7 +775,12 @@ fn is_expired(cookie: &ChromeCookie) -> bool {
 fn is_forbidden_request_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
-        "cookie" | "authorization" | "proxy-authorization" | "host" | "connection" | "content-length"
+        "cookie"
+            | "authorization"
+            | "proxy-authorization"
+            | "host"
+            | "connection"
+            | "content-length"
     )
 }
 

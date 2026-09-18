@@ -52,7 +52,11 @@ pub(crate) async fn load_chrome_cookies_db(allowlist: &[String]) -> Result<Vec<C
     let password = read_master_secret().await?;
     let key = derive_v11_key(&password);
     let cookies = read_cookies_snapshot(&db, &key, allowlist)?;
-    tracing::info!(count = cookies.len(), "read {} cookies from Chrome DB (no CDP)", cookies.len());
+    tracing::info!(
+        count = cookies.len(),
+        "read {} cookies from Chrome DB (no CDP)",
+        cookies.len()
+    );
     Ok(cookies)
 }
 
@@ -220,8 +224,7 @@ fn read_cookies_snapshot(
         std::process::id(),
         now_ms()
     ));
-    std::fs::create_dir_all(&tmp)
-        .with_context(|| format!("create temp dir {}", tmp.display()))?;
+    std::fs::create_dir_all(&tmp).with_context(|| format!("create temp dir {}", tmp.display()))?;
     let snapshot = tmp.join("Cookies");
     for suffix in ["", "-wal", "-shm"] {
         let src = PathBuf::from(format!("{}{}", db.to_string_lossy(), suffix));
@@ -240,11 +243,9 @@ fn read_cookies_file(
     key: &[u8; 16],
     allowlist: &[String],
 ) -> Result<Vec<ChromeCookie>> {
-    let conn = rusqlite::Connection::open_with_flags(
-        snapshot,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .with_context(|| format!("open cookie DB {}", snapshot.display()))?;
+    let conn =
+        rusqlite::Connection::open_with_flags(snapshot, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open cookie DB {}", snapshot.display()))?;
 
     // 兼容不同 Chrome 版本的表结构：优先 value，其次 encrypted_value。
     let has_encrypted = table_has_column(&conn, "cookies", "encrypted_value")?;
