@@ -16,7 +16,7 @@ allowed-tools: ["bash", "read"]
 
 不适用：
 - 稳定、通用、可执行的长期流程；这类内容应沉淀为 skill。
-- WMS 测试造数、API 模板、状态图、finder/verifier/recipe；用 WMS 项目内的 `~/Developer/company/WMS/.agents/testdata/`，或用 Agent Panel `GET /api/capabilities?project=WMS` 检索能力。
+- WMS 测试造数、API 模板、状态图、finder/verifier/recipe；用 WMS 项目内的 `$WMS_WORKSPACE_ROOT/.agents/testdata/`，或用 Agent Panel `GET /api/capabilities?project=WMS` 检索能力。
 - Agent Panel 服务不可用且任务要求离线直接改文件；此时可按项目 AGENTS.md 的文件格式手工处理。
 
 ## Trigger
@@ -36,7 +36,7 @@ $WMS_WORKSPACE_ROOT/.agents/business-knowledge/
   README.md
   meta/*.yaml     # 纯 YAML 属性/概述，程序默认读取
   items/*.md      # 完整正文，按需读取
-  index.jsonl     # 脚本生成的检索缓存（migrate/enrich 脚本产物）。API 查询不依赖它（动态扫 meta/）；POST 保存后不会自动更新，需手工 repair 或跑脚本重建（见下）
+  index.jsonl     # 检索缓存（新版 Agent Panel POST /api/knowledge 会同步写入/更新对应行；API 查询不依赖它，动态扫 meta/）
 
 $WMS_WORKSPACE_ROOT/.agents/experiences/
   README.md
@@ -136,12 +136,12 @@ curl -sS 'http://localhost:7331/api/agent/items/full?id=<id>&section=判断接�
 
 ## Write Workflow
 
-> **必须显式传 `root`**：`POST /api/knowledge` 不传 `root` 且 `scope=project` 时，服务端会取第一个 project storage root（可能是 agent-panel 自身仓库），导致 WMS 条目误落到 `~/Developer/tools/agent-panel/.agents/` 下。写 WMS 知识/经验时永远带 `"root": "/home/hevin/Developer/company/WMS"`；更新已有条目（带 `id`）会按 ID 定位原地更新，不受此影响。
+> **必须显式传 `root`**：`POST /api/knowledge` 不传 `root` 且 `scope=project` 时，服务端会取第一个 project storage root（可能是 agent-panel 自身仓库），导致 WMS 条目误落到 `~/Developer/tools/agent-panel/.agents/` 下。写 WMS 知识/经验时永远带 `"root": "$WMS_WORKSPACE_ROOT"`（当前为 `/home/hevin/Developer/company/云仓/WMS`，工作区迁移后以 workspace-registry 解析为准，旧路径 `~/Developer/company/WMS` 已失效）；更新已有条目（带 `id`）会按 ID 定位原地更新，不受此影响。
 
 > **必须显式传 `id`（避免退化 id）**：新增 WMS 知识/经验时**务必显式传 `id`**（ASCII 字母数字 + `-`/`_`/`.`，如 `biz-wms-cycle-count-inventory-adjust`）。
 > 原因：`POST /api/knowledge` 未传 `id` 时，服务端按 `{prefix}-{domain}-{titleSlug}` 自动生成 id，而 slug 化只保留 ASCII 字符，**中文标题会自动退化成只剩 domain**（如标题"WMS 盘点账实调整落表链路"→ `biz-wms-wms`），id 无语义、易混淆、不便引用。显式传 `id` 可得到稳定语义化 id，后续更新/引用也更可靠。
 
-> **保存后不自动更新 index.jsonl**：`POST /api/knowledge` 只写 `meta/` + `items/`，**不会更新 `index.jsonl`**（该缓存由 `scripts/migrate-wms-knowledge.py` / `scripts/enrich-wms-knowledge-relations.py` 生成）。API 查询动态扫 `meta/`，新条目即时可检索，不受影响；若需索引一致，幂等 append 一行（参考已有条目 JSON 行格式）或跑 `enrich-wms-knowledge-relations.py --write` 重建。
+> **index.jsonl 同步行为（2026-09-18 实测）**：新版 Agent Panel `POST /api/knowledge` 在写 `meta/` + `items/` 的同时会**自动写入/更新 `index.jsonl` 对应行**（含 tags/triggerTerms/summary 等字段），本文早期“POST 不更新 index.jsonl”的描述已过时。API 查询动态扫 `meta/`，不依赖索引；保存后用 `grep <id> index.jsonl` 确认行已生成，缺失（旧版本）时幂等 append 一行（参考已有条目 JSON 行格式）或跑 `enrich-wms-knowledge-relations.py --write` 重建。注意：API 自动维护索引可能连带刷新其他条目的行（updatedAt 变化、补齐历史缺失行），git 提交前用 `git diff` 按条目 id 分离本任务行，只 stage 相关变更，不要整文件混提。
 
 > **无 DELETE 端点**：清理错误/过期条目 = `trash-put meta/<id>.yaml items/<id>.md`，顺手从 `index.jsonl` 移除对应行（如已 append）。
 
@@ -152,7 +152,7 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/knowledge \
   -d '{
     "kind": "businessKnowledge",
-    "root": "/home/hevin/Developer/company/WMS",
+    "root": "/home/hevin/Developer/company/云仓/WMS",
     "title": "WMS 出库单状态流转",
     "domain": "wms",
     "project": "WMS",
@@ -178,7 +178,7 @@ curl -sS -H 'Content-Type: application/json' \
   -X POST http://localhost:7331/api/knowledge \
   -d '{
     "kind": "experience",
-    "root": "/home/hevin/Developer/company/WMS",
+    "root": "/home/hevin/Developer/company/云仓/WMS",
     "title": "WMS 路由前缀导致 302",
     "domain": "wms",
     "project": "WMS",
@@ -229,7 +229,7 @@ python3 scripts/enrich-wms-knowledge-relations.py --write         # 写回 meta 
 ## Required Checks
 
 - 查询类任务：最终说明使用了哪些 `id`，是否展开全文/章节。
-- 写入类任务：确认 `meta` 和 `items` 都存在，`source_path` 可解析；**新增条目必须检查返回的 `metaPath` 落在目标项目 root 下**（如 `/home/hevin/Developer/company/WMS/.agents/...`），发现落在 agent-panel 自身仓库立即用 `trash-put` 清理重写；批量补齐关系字段后确认 `index.jsonl` 已重建。
+- 写入类任务：确认 `meta` 和 `items` 都存在，`source_path` 可解析；**新增条目必须检查返回的 `metaPath` 落在目标项目 root 下**（如 `$WMS_WORKSPACE_ROOT/.agents/...`），发现落在 agent-panel 自身仓库立即用 `trash-put` 清理重写；新增后确认 `index.jsonl` 已含该 id（新版自动写入，缺失时幂等 append）。
 - 写入类任务：确认 `id` 语义化（非 `biz-wms-wms` 这类退化 id）；若因未显式传 `id` 产生退化 id，用显式 id 重建并 `trash-put` 清理旧条目（含 index.jsonl 对应行）。
 - WMS 任务：不要使用已弃用的 `.agents/knowledge/wms-test` / `.agents/knowledge/wms-graph` 作为默认入口。
 - 服务不可用：报告 `AGENT_PANEL_DOWN`，再按 fallback 文件规则处理。
