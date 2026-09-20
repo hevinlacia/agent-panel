@@ -1,0 +1,23 @@
+web/src/pages/requirement.tsx
+  24d2f9ecc5be5b77 914
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "00c3d08c272178155b652c26b0641bf04b375786",
+  "prompts": {
+    "24d2f9ecc5be5b77": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0bc6c-d2aa-7604-a2cb-6051040fa2fd",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
