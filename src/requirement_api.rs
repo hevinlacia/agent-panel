@@ -584,27 +584,31 @@ pub(crate) async fn api_requirement_status_flow(
             .unwrap_or(false);
         let mut gates = Vec::new();
         for gate_id in gate_ids {
-            let historical = if crossed {
-                gate_checks.get(to).map(|s| s.as_str())
-            } else {
-                None
-            };
-            let (gate_state, reason) = match historical {
-                Some("skipped") => (
+            let historical = gate_checks.get(to).map(|s| s.as_str());
+            let (gate_state, reason) = match (crossed, historical) {
+                (true, Some("skipped")) => (
                     "unverified",
                     "人工在面板上修改状态，跳过门禁校验".to_string(),
                 ),
-                Some("none") => (
+                (true, Some("none")) => (
                     "unverified",
                     "系统自动流转，未经过门禁校验".to_string(),
                 ),
-                Some("passed") => (
+                (true, Some("passed")) => (
                     "passed",
                     "流转时已通过门禁校验".to_string(),
                 ),
-                _ => {
-                    // 未走过的流转预览：agent 现在推进会被拦还是放行；
-                    // 历史数据无 gateCheck 时回退当前实时评估。
+                // 门禁配置化前的历史流转没有 gateCheck 记录：不臆断通过与否，标未校验。
+                (true, None) => (
+                    "unverified",
+                    "历史流转，未记录门禁校验结果".to_string(),
+                ),
+                (true, Some(_)) => (
+                    "unverified",
+                    "历史流转，未记录门禁校验结果".to_string(),
+                ),
+                // 未走过的流转预览：agent 现在推进会被拦还是放行。
+                (false, _) => {
                     let eval = evaluate_status_gate(&gate_id, &req).await;
                     if eval.passed {
                         ("passed", eval.reason)
