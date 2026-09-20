@@ -157,7 +157,7 @@ pub(crate) fn template_impact(req_id: &str) -> String {
 }
 
 pub(crate) fn template_test(req_id: &str) -> String {
-    format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归记录\n- ⬜ 待执行\n")
+    format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测清单\n\n> 自测中推进「测试中」前必须逐项填写（自测门禁）：每项都要有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因。\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归记录\n- ⬜ 待执行\n")
 }
 
 pub(crate) fn template_test_scenario(req_id: &str) -> String {

@@ -18,7 +18,11 @@ use crate::*;
 pub(crate) struct StatusForm {
     pub(crate) req_id: String,
     pub(crate) status: String,
+    #[serde(default)]
     pub(crate) note: Option<String>,
+    /// 调用方标识："ui" = 人在 Panel 界面上修改，跳过状态门禁；不传或其它值 = agent/API 推进，强制校验门禁。
+    #[serde(default)]
+    pub(crate) via: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,7 +312,9 @@ mod events;
 mod id_pool;
 mod paths;
 mod phase_prompt;
+mod selftest_gate;
 mod state;
+mod status_gates;
 mod templates;
 mod validate;
 
@@ -318,6 +324,8 @@ pub(crate) use events::*;
 pub(crate) use id_pool::*;
 pub(crate) use paths::*;
 pub(crate) use phase_prompt::*;
+pub(crate) use selftest_gate::*;
 pub(crate) use state::*;
+pub(crate) use status_gates::*;
 pub(crate) use templates::*;
 pub(crate) use validate::*;

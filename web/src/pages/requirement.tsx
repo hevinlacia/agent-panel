@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, GitMerge, Library, Lightbulb, List, MessageSquareText, Paperclip, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
-import type { AnnotationsPayload, BranchRoundInfo, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, ReviewMaterialsPayload, SessionInfo, SyncBasePayload } from "../types"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import type { AnnotationsPayload, BranchRoundInfo, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, CodeReviewPayload, CodeReviewSnapshot, DiffSnapshotsPayload, HarnessCurrent, MasterDiffPayload, MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRepoKind, MergeTarget, NewSessionPayload, PendingSessionPayload, ProdMrPayload, ProdMrResult, ReqCategory, ReqStatus, Requirement, RequirementAttachment, RequirementAttachmentsPayload, RequirementDocPayload, ReviewGatePayload, ReviewMaterialsPayload, SessionInfo, StatusFlowPayload, StatusFlowTransition, SyncBasePayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, formatDateTime, relAge } from "../lib/format"
@@ -728,6 +728,42 @@ function RequirementFilesPanel({ req }: { req: Requirement }) {
   </section>
 }
 
+function statusFlowNodeState(i: number, currentIndex: number | null): "done" | "current" | "todo" {
+  if (currentIndex == null || i > currentIndex) return "todo"
+  return i === currentIndex ? "current" : "done"
+}
+
+function StatusFlowJunction({ transition }: { transition: StatusFlowTransition }) {
+  const gates = transition?.gates || []
+  return <div className="react-statusflow-link">
+    <span className="react-statusflow-line" />
+    {gates.length ? <div className="react-statusflow-gates">
+      {gates.map((g) => <div key={g.id} className={`react-statusflow-gate is-${g.state}`} title={g.reason}>
+        <span className="react-statusflow-mark">{g.state === "passed" ? "✓" : g.state === "failed" ? "✗" : "○"}</span>
+        <span className="react-statusflow-gate-label">{g.label}</span>
+        <em>{g.state === "passed" ? "已通过" : g.state === "failed" ? "未通过" : "未校验"}</em>
+      </div>)}</div> : null}
+  </div>
+}
+
+function StatusFlowCard({ req }: { req: Requirement }) {
+  const flow = useFetch<StatusFlowPayload>(req.id ? `/api/requirement/status-flow?id=${encodeURIComponent(req.id)}` : null)
+  const data = flow.data
+  return <section id="status-flow" className="react-panel react-statusflow-panel">
+    <PanelHead kicker="Status Flow" title="状态流转与门禁" chip={data ? `当前 ${data.currentStatus}` : flow.loading ? "loading" : "-"} />
+    <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工在面板上改状态跳过门禁，悬停看原因）。门禁只在 agent 推进状态时强制校验，规则在 Settings 页配置。</p>
+    {flow.error ? <p className="react-effort-error">{flow.error}</p> : !data ? <p className="react-muted">加载中…</p> : <div className="react-statusflow-strip">
+      {data.statuses.map((s, i) => <Fragment key={s}>
+        {i > 0 ? <StatusFlowJunction transition={data.transitions[i - 1]} /> : null}
+        <div className={`react-statusflow-node is-${statusFlowNodeState(i, data.currentIndex)}`}>
+          <span className="react-statusflow-dot">{statusFlowNodeState(i, data.currentIndex) === "done" ? "✓" : ""}</span>
+          <span>{s}</span>
+          {statusFlowNodeState(i, data.currentIndex) === "current" ? <em>当前</em> : null}
+        </div>
+      </Fragment>)}</div>}
+  </section>
+}
+
 export function RequirementPage() {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
   const { data, error, loading, refresh } = RequirementsData()
@@ -787,7 +823,7 @@ export function RequirementPage() {
     setSavingStatus(true)
     setStatusMessage(null)
     try {
-      await postForm("/api/requirement/status", { reqId: req.id, status, note })
+      await postForm("/api/requirement/status", { reqId: req.id, status, note, via: "ui" })
       setStatusMessage("状态已保存")
       refresh()
     } catch (err) {
@@ -871,6 +907,7 @@ export function RequirementPage() {
   return <PageChrome icon={<GitBranch size={15} />} eyebrow="Requirement" title={req?.title || id || "Requirement"} description={req?.description || "需求详情、状态流转、技术方案、上线清单、业务背景、经验总结与关联 session。"} actions={<><a href="/projects"><ArrowLeft size={15} />返回需求列表</a>{req ? <a href="#technical-plan"><FileCode2 size={15} />技术方案</a> : null}{req && !isOnlineIssue ? <a href="#release-manifest"><AlertTriangle size={15} />上线清单</a> : null}{req ? <a href="#attachments"><Paperclip size={15} />附件</a> : null}{req ? <a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=background&title=${encodeURIComponent("业务背景文档")}`}><Library size={15} />业务背景</a> : null}{req ? <a href="#experience-summary"><Lightbulb size={15} />经验总结</a> : null}{req && !isOnlineIssue ? <a href="#code-review"><GitBranch size={15} />代码差异</a> : null}</>}>
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : !req ? <EmptyCard>需求不存在：{id}</EmptyCard> : <div className="react-detail-grid">
       <section className="react-panel"><PanelHead kicker="Overview" title="需求信息" chip={<>{statusPill(effectiveStatus(req))}{groupBadge(req)}{experienceSummaryPill(req)}</>} /><div className="react-meta-grid"><span>Req ID <code>{req.id}</code></span><span>项目 {projectsOf(req)}</span><span>创建 {formatDate(req.createdAt)}</span><span>更新 {relAge(req.updatedAt)}</span><span>预计发版 {req.planRelease || "unknown"}</span><span>目录 {req.reqDir || "-"}</span><span>类别 {req.category || "需求"}</span><span>来源 {req.source ?? "产品推动"}{req.source === "开发推动" ? "（需测试场景文档）" : ""}</span>{req.memberOf?.length ? <span>所属组 {req.memberOf.map((g) => <a key={g} href={`/requirement?id=${encodeURIComponent(g)}`}>{g}</a>)}</span> : null}</div><PlanReleaseForm req={req} onSaved={refresh} /><p className="react-detail-desc">{req.description || "暂无描述"}</p></section>
+      <StatusFlowCard req={req} />
       <section className="react-panel react-sessions-panel"><PanelHead kicker="Sessions" title="关联 Session" chip={String(isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0))} /><p className="react-muted">本需求绑定的终端 session；卡片不再平铺历史 session，点击「查看全部」弹窗展示完整列表，可一键复制 session id。</p><div className="react-actions">{(isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0)) ? <button type="button" onClick={() => setShowSessions(true)} title="弹窗查看全部关联 session，可一键复制 session id"><List size={13} />查看全部 session（{isDsh ? dshSessionIds.length : (req.sessionIds?.length ?? 0)}）</button> : null}{isDshWeb ? <button onClick={newDshWebSession}>为需求开启 dsh web session</button> : <><button type="button" onClick={() => copyLatestCommand(false)} title="复制最新终端命令；session 被使用后再次点击会自动换新 session id"><Copy size={13} />{copyFeedback === "copied" ? "已复制" : "复制命令"}</button><button type="button" onClick={() => copyLatestCommand(true)} title="无视使用状态强制更换 session id，并复制新命令；用于“是否已使用”判断失误时兜底"><RefreshCw size={13} />{copyFeedback === "refreshed" ? "已刷新并复制" : "强制刷新"}</button></>}</div>{isDshWeb ? <div className="react-command-wrap"><code className="react-command">/requirement-bind {req.id}</code><button type="button" className="react-copy-link-btn" onClick={copyBindCommand} title="复制绑定命令，到 dsh web 聊天框粘贴"><Copy size={13} />{bindCmdCopied ? "已复制" : "复制"}</button></div> : shownCommand ? <><div className="react-command-wrap"><code className="react-command">{shownCommand}</code><button type="button" className="react-copy-link-btn" onClick={copyShownCommand} title="再次复制当前显示的命令"><Copy size={13} />{copied ? "已复制" : "复制"}</button></div><p className="react-muted">{pendingSession.data?.pending ? (pendingSession.data.pending.used ? "该命令的 session 已被使用：再次点击“复制命令”会自动换新 session id。" : "重复点击“复制命令”复用同一 session id；命令被使用后自动换新。判断失误时用“强制刷新”。") : "尚未生成命令：点击“复制命令”会生成并复制；命令被使用后再次点击会自动换新。"}</p></> : null}{!isDshWeb && copyError ? <p className="react-effort-error">{copyError}</p> : null}{isDshWeb ? dshSession ? <div className="react-dsh-session"><p className="react-save-hint">已在 dsh web（{dshSession.url || "3080"}）创建并绑定 session：<code>{dshSession.sessionId}</code></p>{dshSession.url ? <a className="react-link" href={dshSession.url} target="_blank" rel="noreferrer">打开 dsh web GUI 继续会话 ↗</a> : null}<p className="react-muted">需求上下文会在下一条消息注入该 session；也可复制上面的绑定命令到任一 dsh session 聊天框。</p></div> : <p className="react-muted">复制上面的绑定命令，粘贴到 dsh web 聊天框（任意 session），即可把该 session 关联到本需求。</p> : null}{showSessions && (isDsh ? dshSessionIds.length : req.sessionIds?.length) ? <SessionListModal sessionIds={isDsh ? dshSessionIds : req.sessionIds} harness={curHarness} onClose={() => setShowSessions(false)} /> : null}</section>
       {!isOnlineIssue ? <CodeReviewPanel req={req} /> : null}
       {req.prdPath ? <RequirementPrdPanel req={req} /> : null}
@@ -888,7 +925,7 @@ export function RequirementPage() {
       {!isIssueFamily ? <LinkedIssuesPanel req={req} issues={data?.requirements || []} onSaved={refresh} /> : null}
       <GroupMembersPanel req={req} />
       <OnesPanel req={req} onSaved={refresh} />
-      <section className="react-panel"><PanelHead kicker="Status" title={isGroup ? "需求组状态（派生）" : isOnlineIssue ? "线上问题状态" : isIssueFamily ? "测试问题状态" : "状态切换"} /><p className="react-muted">{isGroup ? "引用式需求组的状态为派生值（min 成员需求流状态），不能手动设置；在成员需求详情页推进状态即可同步组进度，瓶颈成员见「需求组成员」面板。成员需求文件、分支、session 和发布互相独立，可按发布策略（releasePolicy）各成员独立发布或整体发布。" : isOnlineIssue ? "线上问题专用流程：排查中 → 已定位 → 已修复 → 已复盘。排查/复现需要改代码时，可直接用 req-branches-update 登记 branches.json 并在需求分支开发，合入 test/UAT 环境分支验证；生产分支（后端 master/前端 production）被强制拦截，不生成生产 MR。正式生产修复创建普通需求并在需求「关联线上问题」面板绑定本问题（或直接点「创建修复需求」），需求进入经验总结后系统自动推进关联问题。有价值的问题在「排查经验」面板沉淀 troubleshooting.md（怎么排查 + 怎么修复），进入已复盘前强制校验；无沉淀价值直接已关闭。" : isIssueFamily ? "测试问题流程：排查中 → 已定位 → 已修复 → 已复盘，与线上问题共用轻量状态机，但硬门禁更轻：进入已定位/已复盘不强制 root-cause.md 和排查经验，小问题可直接修复后推进，有复用价值时按需沉淀。排查/复现代码可直接登记分支开发，仅允许合入 test/UAT 环境分支，禁止合入生产分支。测试问题不绑定普通需求；需要常规开发承接时创建 category=需求 的需求跟进。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 发布就绪 → 经验总结 → 已完成。自测中推进到测试中前必须通过代码审查门禁，旧状态会自动兼容映射。开发推动（source=开发推动）的需求进入测试中前必须先完成「测试场景」文档，否则状态接口会拒绝。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }} disabled={isGroup} title={isGroup ? "需求组状态为派生值（min 成员状态），不能手动设置" : undefined}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || isGroup}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>创建修复需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") || statusMessage.startsWith("转换失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}{fixReqId ? <> <a href={`/requirement?id=${encodeURIComponent(fixReqId)}`}>打开修复需求 →</a></> : null}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button><label>推动方</label><select value={source} onChange={(e) => setSource(e.target.value)}><option value="">{req.source ?? "产品推动"}</option>{REQ_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}</select><button onClick={submitSource} disabled={!source || savingSource} title={req.source === "开发推动" ? "切回产品推动" : "切为开发推动：进入测试中前必须先完成测试场景文档"}>{savingSource ? "保存中…" : "保存推动方"}</button></div></section>
+      <section className="react-panel"><PanelHead kicker="Status" title={isGroup ? "需求组状态（派生）" : isOnlineIssue ? "线上问题状态" : isIssueFamily ? "测试问题状态" : "状态切换"} /><p className="react-muted">{isGroup ? "引用式需求组的状态为派生值（min 成员需求流状态），不能手动设置；在成员需求详情页推进状态即可同步组进度，瓶颈成员见「需求组成员」面板。成员需求文件、分支、session 和发布互相独立，可按发布策略（releasePolicy）各成员独立发布或整体发布。" : isOnlineIssue ? "线上问题专用流程：排查中 → 已定位 → 已修复 → 已复盘。排查/复现需要改代码时，可直接用 req-branches-update 登记 branches.json 并在需求分支开发，合入 test/UAT 环境分支验证；生产分支（后端 master/前端 production）被强制拦截，不生成生产 MR。正式生产修复创建普通需求并在需求「关联线上问题」面板绑定本问题（或直接点「创建修复需求」），需求进入经验总结后系统自动推进关联问题。有价值的问题在「排查经验」面板沉淀 troubleshooting.md（怎么排查 + 怎么修复），进入已复盘前强制校验；无沉淀价值直接已关闭。" : isIssueFamily ? "测试问题流程：排查中 → 已定位 → 已修复 → 已复盘，与线上问题共用轻量状态机，但硬门禁更轻：进入已定位/已复盘不强制 root-cause.md 和排查经验，小问题可直接修复后推进，有复用价值时按需沉淀。排查/复现代码可直接登记分支开发，仅允许合入 test/UAT 环境分支，禁止合入生产分支。测试问题不绑定普通需求；需要常规开发承接时创建 category=需求 的需求跟进。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 发布就绪 → 经验总结 → 已完成，旧状态会自动兼容映射。状态门禁在 Settings 页配置（内置默认：进入「测试中」需代码审查 + 测试场景文档；「自测中 → 测试中」还需 test.md「自测清单」逐项填写结果、失败/无法测试项写明具体原因；线上问题定位/复盘另有硬门禁）。Agent 通过 API 推进状态时强制校验门禁；在面板上人工修改状态直接跳过门禁。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }} disabled={isGroup} title={isGroup ? "需求组状态为派生值（min 成员状态），不能手动设置" : undefined}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || isGroup}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>创建修复需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") || statusMessage.startsWith("转换失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}{fixReqId ? <> <a href={`/requirement?id=${encodeURIComponent(fixReqId)}`}>打开修复需求 →</a></> : null}</p> : null}<div className="react-inline-form react-category-form"><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button><label>推动方</label><select value={source} onChange={(e) => setSource(e.target.value)}><option value="">{req.source ?? "产品推动"}</option>{REQ_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}</select><button onClick={submitSource} disabled={!source || savingSource} title={req.source === "开发推动" ? "切回产品推动" : "切为开发推动：进入测试中前必须先完成测试场景文档"}>{savingSource ? "保存中…" : "保存推动方"}</button></div></section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>

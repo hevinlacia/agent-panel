@@ -160,16 +160,6 @@ pub(crate) fn canonical_status(value: &str) -> ApiResult<String> {
         .ok_or_else(|| ApiError::bad_request(format!("invalid status: {value}")))
 }
 
-pub(crate) fn should_enforce_review_gate_for_status(
-    current_status: &str,
-    target_status: &str,
-) -> bool {
-    // Keep the original status-transition gate: only block when entering 测试中.
-    // If a requirement is already 测试中 and code changes, review_gate_decision detects
-    // stale code-review snapshots by comparing reviewed targetCommit with current HEAD.
-    current_status != "测试中" && target_status == "测试中"
-}
-
 pub(crate) fn normalize_category(value: Option<&String>) -> Option<String> {
     let raw = value?.trim();
     if REQ_CATEGORIES.contains(&raw) {

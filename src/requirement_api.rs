@@ -1,4 +1,7 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 use axum::{
     extract::{Path as AxumPath, Query, State},
@@ -514,6 +517,124 @@ pub(crate) async fn api_requirement_edit(
     Ok(Json(value))
 }
 
+/// 需求状态流转视图：全量状态序列 + 当前位置 + 相邻流转上的门禁及通过情况。
+/// 门禁三态：passed（校验且通过）/ failed（当前不满足，会拦住 agent 推进）/
+/// unverified（流转时人工跳过或系统自动流转，未校验）。
+pub(crate) async fn api_requirement_status_flow(
+    State(state): State<AppState>,
+    Query(q): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = q
+        .id
+        .or(q.req_id)
+        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let req = get_real_requirement(&state, &id).await?;
+    let is_issue = req
+        .category
+        .as_deref()
+        .map(is_issue_category)
+        .unwrap_or(false);
+    let statuses: Vec<String> = (if is_issue {
+        ISSUE_STATUSES.to_vec()
+    } else {
+        REQ_FLOW_STATUSES.to_vec()
+    })
+    .into_iter()
+    .map(|s| s.to_string())
+    .collect();
+    let current_index = statuses
+        .iter()
+        .position(|s| *s == req.status)
+        .map(|i| i as u32);
+    // 历史流转里每个状态最近一次进入时的门禁校验方式（gateCheck）。
+    let mut gate_checks: HashMap<String, String> = HashMap::new();
+    if let Some(dir) = req.req_dir.as_deref() {
+        if let Ok(Some(state_json)) = read_requirement_state(Path::new(dir)).await {
+            if let Some(history) = state_json.get("history").and_then(Value::as_array) {
+                for entry in history {
+                    if let (Some(st), Some(gc)) = (
+                        entry.get("status").and_then(Value::as_str),
+                        entry.get("gateCheck").and_then(Value::as_str),
+                    ) {
+                        gate_checks.insert(st.to_string(), gc.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let cfg = read_config(&state).await.unwrap_or_default();
+    let rules = effective_status_gates(&cfg);
+    let mut transitions = Vec::new();
+    for pair in statuses.windows(2) {
+        let (from, to) = (pair[0].as_str(), pair[1].as_str());
+        let gate_ids = rules
+            .iter()
+            .find(|r| r.from == from && r.to == to)
+            .map(|r| r.gates.clone())
+            .unwrap_or_default();
+        // 该流转是否已被走完（目标状态已到达或已越过）。
+        let crossed = current_index
+            .map(|ci| {
+                statuses
+                    .iter()
+                    .position(|s| s == to)
+                    .map(|ti| ti <= ci as usize)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let mut gates = Vec::new();
+        for gate_id in gate_ids {
+            let historical = if crossed {
+                gate_checks.get(to).map(|s| s.as_str())
+            } else {
+                None
+            };
+            let (gate_state, reason) = match historical {
+                Some("skipped") => (
+                    "unverified",
+                    "人工在面板上修改状态，跳过门禁校验".to_string(),
+                ),
+                Some("none") => (
+                    "unverified",
+                    "系统自动流转，未经过门禁校验".to_string(),
+                ),
+                Some("passed") => (
+                    "passed",
+                    "流转时已通过门禁校验".to_string(),
+                ),
+                _ => {
+                    // 未走过的流转预览：agent 现在推进会被拦还是放行；
+                    // 历史数据无 gateCheck 时回退当前实时评估。
+                    let eval = evaluate_status_gate(&gate_id, &req).await;
+                    if eval.passed {
+                        ("passed", eval.reason)
+                    } else {
+                        ("failed", eval.reason)
+                    }
+                }
+            };
+            gates.push(json!({
+                "id": gate_id,
+                "label": status_gate_label(&gate_id),
+                "state": gate_state,
+                "reason": reason,
+            }));
+        }
+        transitions.push(json!({ "from": from, "to": to, "gates": gates }));
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "category": req.category,
+        "currentStatus": req.status,
+        "currentKnown": current_index.is_some(),
+        "statuses": statuses,
+        "currentIndex": current_index,
+        "transitions": transitions,
+        "checkedAt": now_ms(),
+    })))
+}
+
 pub(crate) async fn api_requirement_status(
     State(state): State<AppState>,
     form: FormOrJson<StatusForm>,
@@ -523,16 +644,20 @@ pub(crate) async fn api_requirement_status(
     let req = get_real_requirement(&state, &body.req_id).await?;
     // 需求组状态为派生值（min 成员状态），禁止手动设置。
     ensure_group_status_locked(&req).await?;
-    if should_enforce_review_gate_for_status(&req.status, &status) {
-        ensure_review_gate_allows_testing(&req).await?;
+    // 状态流转门禁（配置驱动）：agent/API 推进时强校验；via=ui 表示人在 Panel 界面上修改，直接跳过。
+    let gate_check = if body.via.as_deref() == Some("ui") {
+        GateCheckMode::Skipped
+    } else {
+        GateCheckMode::Passed
+    };
+    if body.via.as_deref() != Some("ui") {
+        ensure_status_transition_gates(&state, &req, &status).await?;
     }
-    if req.source == "开发推动" && status == "测试中" {
-        ensure_test_scenario_allows_testing(&req).await?;
-    }
-    let st = write_requirement_status(
+    let st = write_requirement_status_checked(
         req.req_dir.as_deref().unwrap_or_default(),
         &status,
         body.note.as_deref(),
+        gate_check,
     )
     .await?;
     if !matches!(st.get("changed").and_then(Value::as_bool), Some(false)) {
