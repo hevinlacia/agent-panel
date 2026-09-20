@@ -555,10 +555,8 @@ button, input, select, textarea { font: inherit; }
 .react-tab-row a.active,
 .react-tab-row button.active { border-color: var(--react-border-strong); background: rgba(34,211,238,0.14); color: #fff; }
 .react-tab-row select.react-tab-select { margin-left: auto; min-width: 150px; border: 1px solid var(--react-border); border-radius: 10px; padding: 7px 9px; background: rgba(255,255,255,.045); color: var(--react-text); font: .74rem var(--react-mono); outline: none; cursor: pointer; }
-.react-detail-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr); gap: 18px; }
-.react-detail-grid > .react-panel:first-child { grid-column: 1 / -1; }
-/* 关联 Session 与代码审查门禁同为高频卡片，统一占满整行 */
-.react-sessions-panel { grid-column: 1 / -1; }
+/* 需求详情页：所有卡片等宽、单列堆叠，不出现一行两卡 */
+.react-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .react-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; color: var(--react-muted); font: 0.82rem var(--react-mono); }
 .react-file-group { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(148,163,184,.14); }
 .react-file-group:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
@@ -991,6 +989,6 @@ button, input, select, textarea { font: inherit; }
 .react-billable-summary span:first-child { font: 800 .78rem var(--react-mono); color: #bbf7d0; letter-spacing: .02em; }
 .react-billable-summary strong { font: 850 1.5rem var(--react-mono); color: #4ade80; }
 .react-billable-summary .react-muted { color: var(--react-muted); font: .74rem var(--react-mono); }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-diff-topbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
-@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-detail-grid,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-diff-topbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
+@media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
 .react-warn-note { color: #d97706; font: 600 .72rem var(--react-mono); }
