@@ -197,6 +197,45 @@ export interface SessionLogEntry { line: number; type: string; timestamp?: numbe
 export interface SessionLogPayload { ok: boolean; sessionId: string; path: string; cursor: number; total: number; hasMore: boolean; updatedAt: number; entries: SessionLogEntry[] }
 export interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 
+export interface StatusGateRule {
+  from: ReqStatus | string
+  to: ReqStatus | string
+  gates: string[]
+}
+
+export interface StatusGateDef {
+  id: string
+  label: string
+  description: string
+}
+
+/** 门禁三态：passed 校验且通过 / failed 未通过（会拦 agent）/ unverified 未校验（人工或系统跳过） */
+export type StatusFlowGateState = "passed" | "failed" | "unverified"
+
+export interface StatusFlowGate {
+  id: string
+  label: string
+  state: StatusFlowGateState
+  reason: string
+}
+
+export interface StatusFlowTransition {
+  from: string
+  to: string
+  gates: StatusFlowGate[]
+}
+
+export interface StatusFlowPayload {
+  ok: boolean
+  reqId: string
+  category?: string | null
+  currentStatus: string
+  currentKnown: boolean
+  statuses: string[]
+  currentIndex: number | null
+  transitions: StatusFlowTransition[]
+}
+
 export interface ConfigPayload {
   harness?: string
   dshProfile?: string
@@ -214,6 +253,10 @@ export interface ConfigPayload {
   cainiaoMockEnabled?: boolean
   cainiaoMockPort?: number
   mergeExcludedRepos?: string[]
+  /** 未配置（undefined）时后端使用内置默认门禁；显式空数组 = 关闭所有门禁。 */
+  statusGates?: StatusGateRule[] | null
+  availableStatusGates?: StatusGateDef[]
+  effectiveStatusGates?: StatusGateRule[]
 }
 
 export interface HarnessCurrent {

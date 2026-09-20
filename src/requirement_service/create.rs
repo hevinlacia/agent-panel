@@ -328,52 +328,16 @@ pub(crate) async fn update_requirement(
         let status = canonical_status(status)?;
         // 需求组状态为派生值，禁止手动设置（PATCH / edit setStatus 同样拦截）。
         ensure_group_status_locked(&req).await?;
-        if should_enforce_review_gate_for_status(&req.status, &status) {
-            ensure_review_gate_allows_testing(&req).await?;
-        }
-        // 线上问题复盘门禁：进入「已复盘」前必须已沉淀排查经验（troubleshooting.md 含怎么排查/怎么修复），
-        // 无沉淀价值的问题应直接「已关闭」而不是复盘。
-        if req.category.as_deref() == Some("线上问题")
-            && status == "已复盘"
-            && !doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("troubleshooting.md"))
-                    .await
-                    .unwrap_or_default(),
-            )
-        {
-            return Err(ApiError::bad_request(
-                "进入「已复盘」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
-            ));
-        }
-        // 线上问题定位门禁：进入「已定位」前必须填完根因与修复决策（root-cause.md：根因 + 可复核证据链 + 修复路径决策），
-        // 存量兼容：历史问题已写 technical-plan.md 且内容成型时同样放行。
-        if req.category.as_deref() == Some("线上问题") && status == "已定位" {
-            let root_cause_filled = doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("root-cause.md"))
-                    .await
-                    .unwrap_or_default(),
-            );
-            let legacy_plan_filled = doc_has_filled_items(
-                &tokio::fs::read_to_string(dir.join("technical-plan.md"))
-                    .await
-                    .unwrap_or_default(),
-            );
-            if !root_cause_filled && !legacy_plan_filled {
-                return Err(ApiError::bad_request(
-                    "进入「已定位」前必须先完成 root-cause.md（根因 + 可复核证据链 + 修复路径决策，至少一条非「待补充」记录）；每条证据要附用户可独立复核的线索：日志=时间范围+tid/关键字，DB=验证 SQL，代码=应用+文件+可搜关键字；存量问题已填 technical-plan.md 的可直接推进",
-                ));
-            }
-        }
-        // 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
-        if req.source == "开发推动" && status == "测试中" {
-            ensure_test_scenario_allows_testing(&req).await?;
-        }
+        // 状态流转门禁（配置驱动）：review / selftest-checklist / test-scenario / issue-*。
+        // edit 接口主要供 agent 与脚本使用，始终强校验；人工在 Panel UI 上改状态走 status 接口并跳过。
+        ensure_status_transition_gates(state, &req, &status).await?;
         changes.push("state.status".into());
         if !dry_run {
-            let st = write_requirement_status(
+            let st = write_requirement_status_checked(
                 dir.to_string_lossy().as_ref(),
                 &status,
                 form.note.as_deref(),
+                GateCheckMode::Passed,
             )
             .await?;
             if !matches!(st.get("changed").and_then(Value::as_bool), Some(false)) {

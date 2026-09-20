@@ -73,26 +73,40 @@ pub(crate) fn doc_has_filled_items(body: &str) -> bool {
             .any(|line| line.trim().starts_with("| ") && !line.contains("待补充"))
 }
 
-/// 开发推动的需求测试门禁：进入「测试中」前必须先完成测试场景文档。
-pub(crate) async fn ensure_test_scenario_allows_testing(req: &Requirement) -> ApiResult<()> {
-    let Some(dir) = req.req_dir.as_deref() else {
-        return Ok(());
-    };
-    let body = tokio::fs::read_to_string(PathBuf::from(dir).join("test-scenario.md"))
-        .await
-        .unwrap_or_default();
-    if doc_has_filled_items(&body) {
-        return Ok(());
+/// 一次状态流转当时的门禁校验方式，写入 state.json 历史供状态流转卡片区分展示。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GateCheckMode {
+    /// agent/API 推进：门禁已强制校验且通过（未通过会在写入前被拦截）。
+    Passed,
+    /// 人工在面板 UI 上修改：跳过门禁，未校验。
+    Skipped,
+    /// 系统内部流转（自动推进/类别切换/自动完成等）：不涉及门禁。
+    None,
+}
+
+impl GateCheckMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            GateCheckMode::Passed => "passed",
+            GateCheckMode::Skipped => "skipped",
+            GateCheckMode::None => "none",
+        }
     }
-    Err(ApiError::bad_request(
-        "开发推动的需求进入「测试中」前必须先完成测试场景文档 test-scenario.md（需求说明 + 开发评估的测试范围 + 测试覆盖场景）；请在需求详情页「测试场景」面板生成并填写，或让 agent 通过 doc API 更新",
-    ))
 }
 
 pub(crate) async fn write_requirement_status(
     req_dir: &str,
     new_status: &str,
     note: Option<&str>,
+) -> Result<Value> {
+    write_requirement_status_checked(req_dir, new_status, note, GateCheckMode::None).await
+}
+
+pub(crate) async fn write_requirement_status_checked(
+    req_dir: &str,
+    new_status: &str,
+    note: Option<&str>,
+    gate_check: GateCheckMode,
 ) -> Result<Value> {
     let dir = PathBuf::from(req_dir);
     let path = dir.join(STATE_FILE);
@@ -115,7 +129,8 @@ pub(crate) async fn write_requirement_status(
             "from": from,
             "at": now_ms(),
             "note": note.unwrap_or(""),
-            "skippedStatuses": skipped_statuses(from.as_deref(), new_status)
+            "skippedStatuses": skipped_statuses(from.as_deref(), new_status),
+            "gateCheck": gate_check.as_str()
         })
     } else {
         Value::Null
