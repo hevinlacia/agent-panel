@@ -186,12 +186,10 @@ function CodeReviewPanel({ req }: { req: Requirement }) {
       setPreparingMaterials(false)
     }
   }
-  return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Review Gate" title="代码审查门禁" chip={gate.data?.gate?.label || (gate.loading ? "loading" : "gate")} />
-    <div className={`react-review-gate react-review-gate-${gate.data?.gate?.status || "unknown"}`}><strong>{gate.data?.gate?.label || "读取中"}</strong><span>{gate.data?.gate?.reason || "自测中推进到测试中前必须完成代码审查门禁。"}</span>{gate.data?.gate?.source ? <em>source: {gate.data.gate.source}</em> : null}</div>
+  return <section id="code-review" className="react-panel react-code-review-panel"><PanelHead kicker="Code Diff" title="代码差异" />
     {gateRiskTags.length ? <div className="react-review-risk-tags"><strong>风险标签</strong>{gateRiskTags.map((tag) => <span key={tag} className="react-review-tag">{tag}</span>)}</div> : null}
     {inventoryRisk ? <div className="react-review-gate react-review-gate-blocked"><strong>⚠ 库存高危风险</strong><span>本次改动命中库存相关文件/表，门禁强制要求库存账本专项评估：单据活跃/死亡、DB 库存(onHand/allocated/临时库位/回库单)、redis 可用量(建单-、真取消+、恢复-、回退保持占用)、重复释放、遗漏占用、幂等、验证证据(DB/redis/日志/单测)。未补充前即使 PASS 也不通过。</span></div> : null}
     {gateStale ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong>{staleRepos.length ? <ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul> : null}<p>优先生成增量审查包，只审上次已审 commit 到当前 HEAD 的新增 diff；非线性历史再回退全量审查。</p></div> : null}
-    {gate.data?.gate?.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{gate.data.gate.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
     {gate.error ? <p className="react-effort-error">门禁加载失败：{gate.error}</p> : null}
     <div className="react-actions"><button onClick={refreshScan} disabled={!canScan || refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />{review ? "刷新全量差异" : "生成代码差异"}</button>{gateStale ? <button onClick={refreshIncrementalScan} disabled={!canScan || refreshingIncremental}><RefreshCw size={15} className={refreshingIncremental ? "react-spin" : ""} />生成增量审查包</button> : null}<button onClick={prepareMaterials} disabled={!canScan || preparingMaterials} title="一键备料：无快照生成全量、有漂移生成增量包、非线性历史回退全量；返回快照路径供 reviewer 直接 read，审查产出同步维护差异页说明栏（code-annotations.json）"><RefreshCw size={15} className={preparingMaterials ? "react-spin" : ""} />{preparingMaterials ? "备料中…" : "准备审查材料"}</button><button onClick={syncBase} disabled={!canScan || syncing} title="fetch 远端生产分支并 reset 本地 master/production 到最新,工作区有改动时自动跳过"><RefreshCw size={15} className={syncing ? "react-spin" : ""} />{syncing ? "同步中…" : "同步生产基线"}</button>{review ? <button onClick={() => setShowDiff((v) => !v)}>{showDiff ? "隐藏 unified diff" : "展示 unified diff"}</button> : null}<a href={`/requirement-diff?id=${encodeURIComponent(req.id)}&base=origin%2Fmaster`}><GitBranch size={15} />打开分支差异页</a></div>
     {syncPayload?.results?.length ? <details className="react-review-repo" open><summary><span><strong>生产基线同步</strong><em>{formatDateTime(syncPayload.generatedAt)}</em></span><span className="react-review-size">{syncPayload.results.filter((r) => r.ok).length}/{syncPayload.results.length} ok</span></summary><div className="react-table-wrap react-code-file-wrap"><table className="react-code-file-table"><thead><tr><th>应用</th><th>本地分支</th><th>状态</th><th>before</th><th>after</th><th>说明</th></tr></thead><tbody>{syncPayload.results.map((r) => <tr key={r.repoName}><td><strong>{r.repoName}</strong></td><td><code>{r.localBranch || r.baseRef || "-"}</code></td><td><span className={`react-merge-status ${r.ok ? "merged" : "conflict"}`}>{r.status}</span></td><td><code>{r.beforeCommit || "-"}</code></td><td><code>{r.afterCommit || "-"}</code></td><td>{r.message}{r.warnings?.length ? <em>{r.warnings.join("; ")}</em> : null}</td></tr>)}</tbody></table></div></details> : null}
@@ -733,16 +731,16 @@ function statusFlowNodeState(i: number, currentIndex: number | null): "done" | "
   return i === currentIndex ? "current" : "done"
 }
 
-function StatusFlowJunction({ transition }: { transition: StatusFlowTransition }) {
+function StatusFlowJunction({ reqId, transition }: { reqId: string; transition: StatusFlowTransition }) {
   const gates = transition?.gates || []
   return <div className="react-statusflow-link">
     <span className="react-statusflow-line" />
     {gates.length ? <div className="react-statusflow-gates">
-      {gates.map((g) => <div key={g.id} className={`react-statusflow-gate is-${g.state}`} title={g.reason}>
+      {gates.map((g) => <a key={g.id} className={`react-statusflow-gate is-${g.state}`} title={g.reason} href={`/requirement-gate?id=${encodeURIComponent(reqId)}&gate=${encodeURIComponent(g.id)}`}>
         <span className="react-statusflow-mark">{g.state === "passed" ? "✓" : g.state === "failed" ? "✗" : "○"}</span>
         <span className="react-statusflow-gate-label">{g.label}</span>
         <em>{g.state === "passed" ? "已通过" : g.state === "failed" ? "未通过" : "未校验"}</em>
-      </div>)}</div> : null}
+      </a>)}</div> : null}
   </div>
 }
 
@@ -751,10 +749,10 @@ function StatusFlowCard({ req }: { req: Requirement }) {
   const data = flow.data
   return <section id="status-flow" className="react-panel react-statusflow-panel">
     <PanelHead kicker="Status Flow" title="状态流转与门禁" chip={data ? `当前 ${data.currentStatus}` : flow.loading ? "loading" : "-"} />
-    <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工在面板上改状态跳过门禁，悬停看原因）。门禁只在 agent 推进状态时强制校验，规则在 Settings 页配置。</p>
+    <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工在面板上改状态跳过门禁，悬停看原因）。点击具体门禁可跳转门禁验证详情页。门禁只在 agent 推进状态时强制校验，规则在 Settings 页配置。</p>
     {flow.error ? <p className="react-effort-error">{flow.error}</p> : !data ? <p className="react-muted">加载中…</p> : <div className="react-statusflow-strip">
       {data.statuses.map((s, i) => <Fragment key={s}>
-        {i > 0 ? <StatusFlowJunction transition={data.transitions[i - 1]} /> : null}
+        {i > 0 ? <StatusFlowJunction reqId={req.id} transition={data.transitions[i - 1]} /> : null}
         <div className={`react-statusflow-node is-${statusFlowNodeState(i, data.currentIndex)}`}>
           <span className="react-statusflow-dot">{statusFlowNodeState(i, data.currentIndex) === "done" ? "✓" : ""}</span>
           <span>{s}</span>

@@ -236,6 +236,40 @@ export interface StatusFlowPayload {
   transitions: StatusFlowTransition[]
 }
 
+/** 门禁验证详情页：实时校验状态 + 按门禁类型的详细内容（字段按 gate 类型可选） */
+export interface StatusGateDetail {
+  status?: string
+  label?: string
+  allowsTesting?: boolean
+  reason?: string
+  source?: string | null
+  reviewPath?: string
+  aiReviewPath?: string
+  riskTags?: string[]
+  inventoryRisk?: boolean
+  staleRepos?: ReviewGateStaleRepo[]
+  incrementalReview?: CodeReviewSnapshot | null
+  actions?: string[]
+  problems?: string[]
+  applicable?: boolean
+  filled?: boolean
+  rootCauseFilled?: boolean
+  legacyPlanFilled?: boolean
+  category?: string | null
+}
+
+export interface StatusGateDetailPayload {
+  ok: boolean
+  reqId: string
+  gate: string
+  label: string
+  description: string
+  state: "passed" | "failed" | "unverified"
+  reason: string
+  detail: StatusGateDetail | null
+  checkedAt: number
+}
+
 export interface ConfigPayload {
   harness?: string
   dshProfile?: string
