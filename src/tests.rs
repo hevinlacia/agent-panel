@@ -2316,3 +2316,53 @@ async fn merge_does_not_skip_repos_outside_exclusion_list() {
     assert_ne!(results[0]["excluded"], true);
     assert_ne!(results[0]["status"], "skipped");
 }
+
+/// 门禁验证详情页 API：实时校验状态 + 按门禁类型的详细内容。
+#[tokio::test]
+async fn status_gate_detail_reports_state_and_detail() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-001");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-001\ntitle: 门禁详情测试\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({
+        "requirementScanRoots": [proj.to_string_lossy()],
+        "statusGates": [
+            { "from": "自测中", "to": "测试中", "gates": ["selftest-checklist"] }
+        ]
+    });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let detail_of = |gate: &str| {
+        api_requirement_status_gate_detail(
+            State(state.clone()),
+            Query(GateDetailQuery {
+                id: Some("T-001".into()),
+                req_id: None,
+                gate: Some(gate.into()),
+            }),
+        )
+    };
+    // 自测清单门禁：缺 test.md → failed + problems 非空。
+    let v = detail_of("selftest-checklist").await.expect("detail").0;
+    assert_eq!(v["state"], json!("failed"));
+    assert_eq!(v["label"], json!("自测清单门禁"));
+    let problems = v["detail"]["problems"].as_array().expect("problems");
+    assert!(!problems.is_empty());
+    // 代码审查门禁：无 review 文档 → failed + 门禁动作非空（详情页承接原卡片的门禁动作）。
+    let v = detail_of("review").await.expect("detail").0;
+    assert_eq!(v["state"], json!("failed"));
+    let actions = v["detail"]["actions"].as_array().expect("actions");
+    assert!(!actions.is_empty());
+    // 未知门禁 id：评估放行（dispatch 兑底语义一致）。
+    let v = detail_of("nope").await.expect("detail").0;
+    assert_eq!(v["state"], json!("passed"));
+}

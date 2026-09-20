@@ -281,6 +281,7 @@ async fn main() -> Result<()> {
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route("/api/requirement/status-flow", get(api_requirement_status_flow))
+        .route("/api/requirement/status-gate-detail", get(api_requirement_status_gate_detail))
         .route("/api/requirement/category", post(api_requirement_category))
         .route(
             "/api/requirement/convert-issue",

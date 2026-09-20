@@ -799,6 +799,12 @@ button, input, select, textarea { font: inherit; }
 .react-statusflow-gate.is-failed { color: #fca5a5; border: 1px solid rgba(248,113,113,.45); background: rgba(248,113,113,.08); }
 .react-statusflow-gate.is-unverified { color: #94a3b8; border: 1px dashed rgba(148,163,184,.5); background: transparent; }
 .react-statusflow-mark { font-weight: 800; }
+/* 门禁验证详情页 */
+.react-gate-detail-state { display: inline-flex; gap: 12px; padding: 10px 16px; border-radius: 12px; font: 700 .92rem var(--react-mono); margin: 6px 0 12px; }
+.react-gate-detail-state strong { font-size: .95rem; }
+.react-gate-detail-state em { font-style: normal; font-weight: 800; letter-spacing: .08em; }
+.react-gate-detail-time { color: var(--react-muted); font: .68rem var(--react-mono); margin-left: 6px; }
+.react-gate-detail-pre { margin: 10px 0 0; padding: 14px; border: 1px solid var(--react-border); border-radius: 12px; background: #080c13; color: var(--react-text); font: .78rem/1.6 var(--react-mono); white-space: pre; overflow-x: auto; }
 .react-settings-layout { display: flex; flex-direction: column; gap: 18px; }
 .react-editor-label { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; color: var(--react-muted); font: 800 0.68rem var(--react-mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .react-editor-label textarea,

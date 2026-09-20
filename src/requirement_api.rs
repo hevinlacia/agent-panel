@@ -9,6 +9,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     Json,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::fs;
 use uuid::Uuid;
@@ -515,6 +516,108 @@ pub(crate) async fn api_requirement_edit(
 ) -> ApiResult<Json<Value>> {
     let value = apply_requirement_edit(&state, form.0).await?;
     Ok(Json(value))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GateDetailQuery {
+    pub(crate) id: Option<String>,
+    #[serde(alias = "reqId")]
+    pub(crate) req_id: Option<String>,
+    pub(crate) gate: Option<String>,
+}
+
+/// 门禁验证详情页：单个门禁的当前实时校验状态 + 门禁相关的详细内容
+/// （review 含审查结论/风险标签/库存风险/快照漂移/门禁动作；selftest 含问题清单等）。
+pub(crate) async fn api_requirement_status_gate_detail(
+    State(state): State<AppState>,
+    Query(q): Query<GateDetailQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = q
+        .id
+        .or(q.req_id)
+        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let gate_id = q.gate.unwrap_or_default().trim().to_string();
+    if gate_id.is_empty() {
+        return Err(ApiError::bad_request("missing gate"));
+    }
+    let req = get_real_requirement(&state, &id).await?;
+    let eval = evaluate_status_gate(&gate_id, &req).await;
+    let def = STATUS_GATE_DEFS.iter().find(|d| d.id == gate_id);
+    let label = def
+        .map(|d| d.label.to_string())
+        .unwrap_or_else(|| gate_id.clone());
+    let description = def.map(|d| d.description.to_string()).unwrap_or_default();
+    let detail = match gate_id.as_str() {
+        "review" => review_gate_json(&req).await?.get("gate").cloned().unwrap_or(Value::Null),
+        "selftest-checklist" => {
+            let problems = selftest_checklist_problems(&req).await;
+            json!({ "problems": problems })
+        }
+        "test-scenario" => {
+            let body = match req.req_dir.as_deref() {
+                Some(dir) => tokio::fs::read_to_string(PathBuf::from(dir).join("test-scenario.md"))
+                    .await
+                    .unwrap_or_default(),
+                None => String::new(),
+            };
+            json!({
+                "source": req.source,
+                "applicable": req.source == "开发推动",
+                "filled": doc_has_filled_items(&body),
+            })
+        }
+        "issue-root-cause" => {
+            let (root_cause, legacy) = match req.req_dir.as_deref() {
+                Some(dir) => (
+                    doc_has_filled_items(
+                        &tokio::fs::read_to_string(PathBuf::from(dir).join("root-cause.md"))
+                            .await
+                            .unwrap_or_default(),
+                    ),
+                    doc_has_filled_items(
+                        &tokio::fs::read_to_string(PathBuf::from(dir).join("technical-plan.md"))
+                            .await
+                            .unwrap_or_default(),
+                    ),
+                ),
+                None => (false, false),
+            };
+            json!({
+                "category": req.category,
+                "applicable": req.category.as_deref() == Some("线上问题"),
+                "rootCauseFilled": root_cause,
+                "legacyPlanFilled": legacy,
+            })
+        }
+        "issue-troubleshooting" => {
+            let filled = match req.req_dir.as_deref() {
+                Some(dir) => doc_has_filled_items(
+                    &tokio::fs::read_to_string(PathBuf::from(dir).join("troubleshooting.md"))
+                        .await
+                        .unwrap_or_default(),
+                ),
+                None => false,
+            };
+            json!({
+                "category": req.category,
+                "applicable": req.category.as_deref() == Some("线上问题"),
+                "filled": filled,
+            })
+        }
+        _ => Value::Null,
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "gate": gate_id,
+        "label": label,
+        "description": description,
+        "state": if eval.passed { "passed" } else { "failed" },
+        "reason": eval.reason,
+        "detail": detail,
+        "checkedAt": now_ms(),
+    })))
 }
 
 /// 需求状态流转视图：全量状态序列 + 当前位置 + 相邻流转上的门禁及通过情况。

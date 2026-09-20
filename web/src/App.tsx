@@ -106,6 +106,7 @@ import { SettingsPage } from "./pages/settings"
 import { SchedulersPage } from "./pages/schedulers"
 import { AuthSitesPage } from "./pages/auth-sites"
 import { RequirementDocPage, RequirementDiffPage, RequirementMergePage, RequirementPage } from "./pages/requirement"
+import { RequirementGatePage } from "./pages/requirement-gate"
 
 
 const PROJECT_OPTIONS = [
@@ -142,7 +143,7 @@ const navItems = [
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
-  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc"
+  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc" || path === "/requirement-gate"
   if (href === "/release-plan") return path === "/release-plan"
   if (href === "/ones-missing") return path === "/ones-missing"
   if (href === "/issues") return path === "/issues"
@@ -165,6 +166,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
   if (path === "/requirement-doc") return { eyebrow: "Requirement Doc", title: "需求文档" }
+  if (path === "/requirement-gate") return { eyebrow: "Gate", title: "门禁详情" }
   if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
   if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
@@ -215,6 +217,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
     : path === "/requirement-doc" ? <RequirementDocPage />
+    : path === "/requirement-gate" ? <RequirementGatePage />
     : path === "/requirement-diff" ? <RequirementDiffPage />
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
