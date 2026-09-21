@@ -32,7 +32,8 @@ pub(crate) fn requirement_api_schema() -> Value {
             {"operation": "recordEvent", "endpoint": "POST /api/requirement/events", "writes": ["events.jsonl", "req.notes"], "required": ["reqId", "type", "summary"], "optional": ["details", "evidence", "decisions", "todos", "relatedFiles", "relatedKnowledgeIds", "triggerTerms", "relatedRepos", "relatedTables", "relatedApis", "candidateType", "dedupeKey", "confidence", "target", "testCases", "idempotencyKey", "appendNote", "dryRun"]},
             {"operation": "writeDoc", "writes": ["token/docType"], "required": ["reqId", "token or docType", "content"], "optional": ["mode=replace|append", "dryRun"]},
             {"operation": "upsertSection", "writes": ["token/docType"], "required": ["reqId", "token or docType", "heading", "content"], "optional": ["dryRun"]},
-            {"operation": "upsertNamedSection", "endpoint": "POST /api/requirement/sections/{section}", "writes": ["mapped doc section"], "required": ["reqId", "content"], "optional": ["heading", "docType", "token", "dryRun"]}
+            {"operation": "upsertNamedSection", "endpoint": "POST /api/requirement/sections/{section}", "writes": ["mapped doc section"], "required": ["reqId", "content"], "optional": ["heading", "docType", "token", "dryRun"]},
+            {"operation": "saveBranchRegistration", "endpoint": "PUT /api/requirement/branch-registration", "writes": ["req.branches"], "required": ["reqId", "repos"], "optional": ["round", "confirmBranchChange", "confirmRemoval", "verifyRemote"], "description": "分支登记全量替换（本轮应有仓库清单）；分支经 git 实测校验，同仓同分支幂等，换分支需 confirmBranchChange、删仓库需 confirmRemoval；禁止手写 branches.json"}
         ],
         "eventTypes": ["progress", "decision", "knowledgeReference", "learningCandidate", "skillImprovementCandidate", "issueFound", "rootCause", "testResult", "statusTransition"],
         "groups": {
@@ -41,6 +42,13 @@ pub(crate) fn requirement_api_schema() -> Value {
             "create": "POST /api/requirements 传 members=[{reqId}]（可选 releasePolicy）创建组；成员必须已存在且非组，不支持组嵌套",
             "readonlyStatus": true,
             "context": "GET /api/requirement/context 对组需求额外返回 group 块（aggregatedStatus/bottleneck/members）"
+        },
+        "branchRegistration": {
+            "description": "分支登记收口：branches.json / branches-round-N.json 只能通过 panel API 写入，禁止 agent 手写文件。PUT 为全量替换（repos=本轮应有仓库完整清单），panel 负责 git 实测分支存在、role/path 推断、去重与原子写。",
+            "get": "GET /api/requirement/branch-registration?reqId=&round= 查询当前登记",
+            "put": "PUT /api/requirement/branch-registration（reqId + round? + repos[{repoName, branch, role?, path?, baseRef?}] + confirmBranchChange?/confirmRemoval?/verifyRemote?）",
+            "dedupe": "同仓同分支重复提交幂等（alreadyRegistered 语义 = changes.unchanged）；同仓换分支默认 409 拦截（列出已登记分支），confirmBranchChange: true 显式确认后替换；未出现在提交清单里的已登记仓库默认拦截，confirmRemoval: true 确认移除",
+            "verify": "分支经本地 rev-parse origin/<branch> 校验；本地未 fetch 时带 verifyRemote: true 走 ls-remote 联网确认"
         },
         "docParts": {
             "description": "文档分册：核心文档（notes/technical-plan/background/test 等）明细量大时拆分到 docs/<doc-base>/<NNN>-<slug>.md，主文档退化为索引（概览 + 末尾 ## 分册索引 段，panel 自动维护）；避免单需求文件无限膨胀，agent 按索引精准读所需分册。",
