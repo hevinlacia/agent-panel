@@ -538,7 +538,7 @@ button, input, select, textarea { font: inherit; }
 .react-linked-issue-chip .react-status-pill { font-size: 0.62rem; padding: 1px 7px; }
 .react-linked-issue-chip .react-copy-link-btn { padding: 1px 5px; font-size: 0.62rem; }
 
-/* ===== 子需求（sub-requirement）=====
+/* ===== 子需求（sub-requirement）===== */
 .react-sub-badge { color: #67e8f9; font-weight: 600; }
 .react-sub-create-form { flex-wrap: wrap; }
 .react-sub-create-form input { min-width: 180px; }
@@ -550,8 +550,8 @@ button, input, select, textarea { font: inherit; }
 .react-sub-op-conflict, .react-sub-op-failed { color: #f87171; }
 .react-sub-op-skipped, .react-sub-op-partial, .react-sub-op-pending, .react-sub-op-idle { color: #fbbf24; }
 .react-card-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; justify-content: center; }
-.react-req-card .react-card-copy-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(34,211,238,.38); border-radius: 999px; padding: 6px 11px; background: rgba(34,211,238,.1); color: var(--react-cyan); font: 800 .68rem var(--react-mono); letter-spacing: .04em; cursor: pointer; white-space: nowrap; }
-.react-req-card .react-card-copy-btn:hover { background: rgba(34,211,238,.18); color: #fff; border-color: rgba(34,211,238,.45); }
+.react-req-card .react-card-copy-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(34,211,238,.45); border-radius: 999px; padding: 4px 10px; background: rgba(34,211,238,.14); color: #67e8f9; font: 800 .68rem var(--react-mono); letter-spacing: .04em; cursor: pointer; white-space: nowrap; }
+.react-req-card .react-card-copy-btn:hover { background: rgba(34,211,238,.26); color: #a5f3fc; border-color: rgba(34,211,238,.6); }
 .react-req-card .react-card-copy-btn:disabled { opacity: .55; cursor: wait; }
 .react-card-copy-error { color: #f87171; font: 800 .62rem var(--react-mono); }
 .react-req-card { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
@@ -893,8 +893,11 @@ button, input, select, textarea { font: inherit; }
 .react-prod-mr-table td em { margin-top: 5px; color: #fca5a5; font-style: normal; white-space: normal; }
 .react-prod-mr-table a { color: var(--react-cyan); font-weight: 850; text-decoration: none; }
 .react-prod-mr-table a:hover { text-decoration: underline; }
-.react-copy-link-btn { border: 1px solid rgba(34,211,238,.38); border-radius: 999px; padding: 6px 10px; background: rgba(34,211,238,.1); color: var(--react-cyan); font: 800 .7rem var(--react-mono); cursor: pointer; white-space: nowrap; }
-.react-copy-link-btn:hover { background: rgba(34,211,238,.18); color: #fff; }
+.react-copy-link-btn { border: 1px solid rgba(34,211,238,.4); border-radius: 999px; padding: 4px 9px; background: rgba(34,211,238,.12); color: var(--react-cyan); font: 800 .7rem var(--react-mono); cursor: pointer; white-space: nowrap; }
+.react-copy-link-btn:hover { background: rgba(34,211,238,.22); color: #a5f3fc; }
+/* 详情页复制命令/强制刷新等复制族按钮：与未关联 ONES 徽标同款浅色透明药丸风格。 */
+.react-actions button.react-ghost-btn { padding: 6px 12px; background: rgba(34,211,238,.14); border-color: rgba(34,211,238,.45); color: #67e8f9; }
+.react-actions button.react-ghost-btn:hover { background: rgba(34,211,238,.26); color: #a5f3fc; border-color: rgba(34,211,238,.6); }
 .react-prod-mr-status { display: inline-flex !important; width: fit-content; border: 1px solid var(--react-border); border-radius: 999px; padding: 4px 9px; background: rgba(255,255,255,.035); font: 800 .7rem var(--react-mono); }
 .react-prod-mr-status.created { color: #86efac; border-color: rgba(34,197,94,.38); background: rgba(34,197,94,.12); }
 .react-prod-mr-status.reused { color: #93c5fd; border-color: rgba(59,130,246,.38); background: rgba(59,130,246,.12); }
