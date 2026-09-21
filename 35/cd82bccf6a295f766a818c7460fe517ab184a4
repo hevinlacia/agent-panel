@@ -1,0 +1,25 @@
+src/git_workflow/code_review.rs
+  86fab4fbd5a45c84 65-69,71-72,123-133,247-257,308-324,365,576-607
+src/main.rs
+  86fab4fbd5a45c84 78-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "35cd82bccf6a295f766a818c7460fe517ab184a4",
+  "prompts": {
+    "86fab4fbd5a45c84": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c1ae-47cc-7743-908a-88ab3c1d7fc5",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 4,
+      "accepted_lines": 84,
+      "overriden_lines": 1
+    }
+  }
+}
