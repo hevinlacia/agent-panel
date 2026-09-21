@@ -472,6 +472,7 @@ pub(crate) async fn build_requirement_agent_context(
         "Prefer recordEvent for facts/status/evidence/decisions; it stores events.jsonl and can append notes.md.",
         "Prefer sections/{section} or upsertSection for targeted impact/test/background/technical-plan updates.",
         "Doc parts: a core doc with a `## 分册索引` section keeps details in docs/<doc>/<NNN>-<slug>.md parts; the main file is an index. Read part files directly by their relPath when details are needed; create new parts via POST /api/requirement/doc-part instead of appending to oversized main docs (validate warns over the split threshold).",
+        "Branch registration goes through GET/PUT /api/requirement/branch-registration (PUT is a full replacement: repos is the complete list of repositories that should exist in this round, one entry per repository {repoName, branch, role?, path?, baseRef?}; the branch is verified via git). Do not hand-write branches.json / branches-round-*.json; re-registering the same repository with the same branch is idempotent, changing branches requires confirmBranchChange, removing repositories requires confirmRemoval.",
         "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
         "Read full docs only when this compressed context is insufficient.",
     ];
@@ -509,7 +510,8 @@ pub(crate) async fn build_requirement_agent_context(
             "upsertSection": "/api/requirement/sections/{section}",
             "edit": "/api/requirement/edit",
             "validate": "/api/requirement/validate",
-            "refreshAgentContext": format!("/api/requirement/context?id={}&for=agent&intent={}&budget={}", req.id, intent, budget)
+            "refreshAgentContext": format!("/api/requirement/context?id={}&for=agent&intent={}&budget={}", req.id, intent, budget),
+            "branchRegistration": format!("/api/requirement/branch-registration?reqId={}", req.id)
         },
         "rules": rules
     }))

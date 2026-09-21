@@ -3097,3 +3097,164 @@ async fn selftest_gate_waived_for_hotfix_requirements() {
     assert!(!normal.is_hotfix());
     assert!(selftest_checklist_problems(&normal).await.is_empty() == false);
 }
+
+
+#[tokio::test]
+async fn branch_registration_put_validates_and_dedupes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-910");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-910\ntitle: 分支登记测试\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+
+    // fixture：真实 git 仓库（backend 层），带 origin/feature/x 远程追踪引用
+    let repo_dir = proj.join("backend").join("rl-log-api");
+    std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repo_dir)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .expect("git")
+    };
+    assert!(run(&["init", "-b", "main"]).status.success());
+    std::fs::write(repo_dir.join("f.txt"), "v1").expect("write file");
+    assert!(run(&["add", "."]).status.success());
+    assert!(run(&["commit", "-m", "init"]).status.success());
+    assert!(run(&["branch", "feature/x"]).status.success());
+    assert!(run(&["update-ref", "refs/remotes/origin/feature/x", "refs/heads/feature/x"]).status.success());
+
+    let put = |state2: AppState, repos: Value, confirm_change: bool, confirm_removal: bool| {
+        api_requirement_branch_registration_put(
+            State(state2),
+            FormOrJson(BranchRegistrationSaveForm {
+                req_id: "T-910".into(),
+                round: None,
+                repos: Some(repos),
+                confirm_branch_change: confirm_change,
+                confirm_removal: confirm_removal,
+                verify_remote: false,
+            }),
+        )
+    };
+
+    // 1) 首次登记：path 省略（从空登记 + 无 workspace root → 必须显式 path）
+    let err = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/x" }]),
+        false,
+        false,
+    )
+    .await
+    .expect_err("path unresolvable should 400");
+    assert!(err.message.contains("显式提供 path"), "{}", err.message);
+
+    // 2) 显式 path + 分支实测 → added；role 从 backend 路径推断
+    let repo_path_str = repo_dir.to_string_lossy().to_string();
+    let v = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/x", "path": repo_path_str }]),
+        false,
+        false,
+    )
+    .await
+    .expect("register");
+    assert_eq!(v.0["changes"]["added"], json!(["rl-log-api"]));
+    assert_eq!(v.0["scope"]["repos"][0]["role"], json!("后端"));
+    assert_eq!(v.0["scope"]["repos"][0]["path"], json!(repo_path_str));
+    let on_disk = std::fs::read_to_string(req_dir.join("branches.json")).expect("branches.json");
+    assert!(on_disk.contains("feature/x"));
+
+    // 3) 同仓同分支重复提交 → 幂等 unchanged
+    let v = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/x", "path": repo_path_str }]),
+        false,
+        false,
+    )
+    .await
+    .expect("idempotent");
+    assert_eq!(v.0["changes"]["unchanged"], json!(["rl-log-api"]));
+
+    // 4) 换分支未确认 → 400 列出已登记分支
+    let err = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),
+        false,
+        false,
+    )
+    .await
+    .expect_err("branch change must be confirmed");
+    assert!(err.message.contains("confirmBranchChange"), "{}", err.message);
+    assert!(err.message.contains("feature/x"), "{}", err.message);
+
+    // 5) 换分支确认 → updated + warning；分支 feature/y 未建 → 400 提示实测失败
+    let err = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),
+        true,
+        false,
+    )
+    .await
+    .expect_err("feature/y does not exist");
+    assert!(err.message.contains("feature/y"), "{}", err.message);
+    assert!(run(&["branch", "feature/y"]).status.success());
+    assert!(run(&["update-ref", "refs/remotes/origin/feature/y", "refs/heads/feature/y"]).status.success());
+    let v = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),
+        true,
+        false,
+    )
+    .await
+    .expect("branch change confirmed");
+    assert_eq!(v.0["changes"]["updated"], json!(["rl-log-api"]));
+    assert_eq!(v.0["scope"]["repos"][0]["branches"], json!(["feature/y"]));
+
+    // 6) 登记第二个仓库后，提交清单漏掉它 → 400 提示 confirmRemoval
+    let _ = put(
+        state.clone(),
+        json!([
+            { "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str },
+            { "repoName": "rl-two", "branch": "feature/y", "path": repo_dir.to_string_lossy() }
+        ]),
+        false,
+        false,
+    )
+    .await
+    .expect("add second repo");
+    let err = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),
+        false,
+        false,
+    )
+    .await
+    .expect_err("removal must be confirmed");
+    assert!(err.message.contains("confirmRemoval"), "{}", err.message);
+    assert!(err.message.contains("rl-two"), "{}", err.message);
+    let v = put(
+        state.clone(),
+        json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),
+        false,
+        true,
+    )
+    .await
+    .expect("removal confirmed");
+    assert_eq!(v.0["changes"]["removed"], json!(["rl-two"]));
+}

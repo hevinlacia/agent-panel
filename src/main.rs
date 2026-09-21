@@ -309,6 +309,10 @@ async fn main() -> Result<()> {
             "/api/requirement/review-checklist",
             get(api_requirement_review_checklist_get).put(api_requirement_review_checklist_put),
         )
+        .route(
+            "/api/requirement/branch-registration",
+            get(api_requirement_branch_registration_get).put(api_requirement_branch_registration_put),
+        )
         .route("/api/requirement/status-gate-detail", get(api_requirement_status_gate_detail))
         .route("/api/requirement/category", post(api_requirement_category))
         .route(

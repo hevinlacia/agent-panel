@@ -1689,6 +1689,388 @@ pub(crate) async fn api_requirement_review_checklist_put(
     Ok(Json(json!({ "ok": true, "checklist": doc })))
 }
 
+// ===== 分支登记（branches.json 收口到 panel：校验 + 去重 + 原子写，agent 不手写文件）=====
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchRegistrationSaveForm {
+    pub(crate) req_id: String,
+    #[serde(default)]
+    pub(crate) round: Option<u32>,
+    #[serde(default)]
+    pub(crate) repos: Option<Value>,
+    #[serde(default)]
+    pub(crate) confirm_branch_change: bool,
+    #[serde(default)]
+    pub(crate) confirm_removal: bool,
+    #[serde(default)]
+    pub(crate) verify_remote: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BranchRegistrationQuery {
+    pub(crate) id: Option<String>,
+    #[serde(alias = "reqId")]
+    pub(crate) req_id: Option<String>,
+    #[serde(default)]
+    pub(crate) round: Option<u32>,
+}
+
+fn expand_registration_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed == "~" {
+        return home_dir().ok();
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        return home_dir().ok().map(|h| h.join(rest));
+    }
+    Some(PathBuf::from(trimmed))
+}
+
+/// 登记存储沿用 ~ 风格（与存量 branches.json 一致）。
+fn store_registration_path(expanded: &Path) -> String {
+    if let Ok(home) = home_dir() {
+        if let Ok(rest) = expanded.strip_prefix(&home) {
+            return format!("~/{}", rest.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    expanded.to_string_lossy().to_string()
+}
+
+fn infer_repo_role(path: &Path, repo_name: &str) -> Option<String> {
+    let haystack = path.to_string_lossy().to_string();
+    if repo_name.contains("components") {
+        return Some("后端-组件库".to_string());
+    }
+    if haystack.contains("/frontend/") {
+        return Some("前端".to_string());
+    }
+    if haystack.contains("/pda/") {
+        return Some("PDA".to_string());
+    }
+    if haystack.contains("/backend/") {
+        return Some("后端".to_string());
+    }
+    None
+}
+
+/// 解析仓库本地路径：条目显式提供优先；否则在已登记条目的 workspace 下探测同名目录。
+fn resolve_repo_path(
+    repo_name: &str,
+    provided: Option<&str>,
+    workspace_roots: &[PathBuf],
+) -> Result<PathBuf, ApiError> {
+    if let Some(raw) = provided {
+        let expanded = expand_registration_path(raw).ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "repo {repo_name} 的 path 无法解析：\"{raw}\""
+            ))
+        })?;
+        if !expanded.is_dir() {
+            return Err(ApiError::bad_request(format!(
+                "repo {repo_name} 的 path 不存在或不是目录：{}（请确认本地 checkout 位置）",
+                expanded.display()
+            )));
+        }
+        return Ok(expanded);
+    }
+    for root in workspace_roots {
+        for tier in ["backend", "frontend", "pda", "components", ""] {
+            let candidate = if tier.is_empty() {
+                root.join(repo_name)
+            } else {
+                root.join(tier).join(repo_name)
+            };
+            if candidate.is_dir() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(ApiError::bad_request(format!(
+        "无法解析 repo {repo_name} 的本地路径（当前登记为空或未找到同名目录）：请在该条目显式提供 path（~/ 开头或绝对路径）"
+    )))
+}
+
+/// 分支真实性校验：本地 rev-parse origin/<branch>；失败且 verifyRemote=true 时 ls-remote 联网兜底。
+async fn verify_repo_branch(
+    repo_name: &str,
+    path: &Path,
+    branch: &str,
+    verify_remote: bool,
+) -> Result<(), ApiError> {
+    let local = git(
+        path,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/remotes/origin/{branch}"),
+        ],
+        15_000,
+        4_000,
+    )
+    .await;
+    if local.ok {
+        return Ok(());
+    }
+    if verify_remote {
+        let remote = git(
+            path,
+            &["ls-remote", "--heads", "origin", branch],
+            30_000,
+            8_000,
+        )
+        .await;
+        if remote.ok && !remote.stdout.trim().is_empty() {
+            return Ok(());
+        }
+        return Err(ApiError::bad_request(format!(
+            "repo {repo_name} 分支校验失败：本地 origin/{branch} 与 ls-remote 联网均未找到该分支；请确认分支名与是否已推送"
+        )));
+    }
+    Err(ApiError::bad_request(format!(
+        "repo {repo_name} 分支校验失败：本地 origin/{branch} 不存在（可能未 fetch，或分支名写错）。请核对分支名；确认分支存在但本地过期时，带 verifyRemote: true 重试（ls-remote 联网确认）"
+    )))
+}
+
+/// 查询当前分支登记（指定轮次）。
+pub(crate) async fn api_requirement_branch_registration_get(
+    State(state): State<AppState>,
+    Query(q): Query<BranchRegistrationQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = q
+        .id
+        .or(q.req_id)
+        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let req = get_real_requirement(&state, &id).await?;
+    let round = q.round.unwrap_or(1).max(1);
+    let scope = read_branch_scope_round(
+        &PathBuf::from(req.req_dir.unwrap_or_default()),
+        round,
+    )
+    .await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "round": round,
+        "file": branch_scope_file_for_round(round),
+        "scope": scope,
+    })))
+}
+
+/// 分支登记全量替换：repos 提交本轮应有清单，panel 负责 git 实测/去重/原子写。
+/// 重复登记幂等；换分支与删仓库是敏感操作，需 confirmBranchChange / confirmRemoval 显式确认。
+pub(crate) async fn api_requirement_branch_registration_put(
+    State(state): State<AppState>,
+    form: FormOrJson<BranchRegistrationSaveForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request("requirement has no directory; cannot save branch registration".to_string())
+    })?);
+    ensure_requirement_dir_writable(&state, &req_dir).await?;
+    let round = body.round.unwrap_or(1).max(1);
+    let existing = read_branch_scope_round(&req_dir, round).await?;
+
+    let Some(list) = body.repos.as_ref().and_then(Value::as_array) else {
+        return Err(ApiError::bad_request(format!(
+            "repos 必须是数组（每项 {{repoName, branch, role?, path?, baseRef?}}），全量替换语义不可省略；查现状先调 GET /api/requirement/branch-registration?reqId={}&round={round}",
+            req.id
+        )));
+    };
+    if list.is_empty() {
+        return Err(ApiError::bad_request(
+            "repos 不能为空：登记至少要列出一个仓库；如需清空登记请手动删除登记文件（半手工场景）".to_string(),
+        ));
+    }
+
+    // workspace roots：取已登记条目路径的上两级（<workspace>/<tier>/<repo> → <workspace>），用于 path 自动解析。
+    let mut workspace_roots: Vec<PathBuf> = Vec::new();
+    if let Some(ex) = &existing {
+        for r in &ex.repos {
+            if let Some(p) = &r.path {
+                if let Some(expanded) = expand_registration_path(p) {
+                    if let Some(root) = expanded.parent().and_then(Path::parent) {
+                        let root_buf = root.to_path_buf();
+                        if !workspace_roots.contains(&root_buf) {
+                            workspace_roots.push(root_buf);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 归一化提交条目 + 提交清单内部去重
+    let mut entries: Vec<BranchRepo> = Vec::new();
+    let mut submitted_names: Vec<String> = Vec::new();
+    for (index, entry) in list.iter().enumerate() {
+        let no = index + 1;
+        let Some(obj) = entry.as_object() else {
+            return Err(ApiError::bad_request(format!(
+                "repos[{no}] 必须是对象 {{repoName, branch, role?, path?, baseRef?}}"
+            )));
+        };
+        let repo_name = obj
+            .get("repoName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if repo_name.is_empty() {
+            return Err(ApiError::bad_request(format!("repos[{no}].repoName 不能为空")));
+        }
+        if submitted_names.iter().any(|n| n == repo_name) {
+            return Err(ApiError::bad_request(format!(
+                "提交清单内部重复：repo {repo_name} 出现多次；一个仓库一条"
+            )));
+        }
+        submitted_names.push(repo_name.to_string());
+        let branch = obj
+            .get("branch")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if branch.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "repos[{no}].branch 不能为空（repo {repo_name}）"
+            )));
+        }
+        let path_raw = obj
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let expanded_path = resolve_repo_path(repo_name, path_raw, &workspace_roots)?;
+        let role = obj
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| infer_repo_role(&expanded_path, repo_name));
+        let base_ref = obj
+            .get("baseRef")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        entries.push(BranchRepo {
+            repo_name: repo_name.to_string(),
+            branches: vec![branch.to_string()],
+            role,
+            path: Some(store_registration_path(&expanded_path)),
+            base_ref,
+            test_target_branch: None,
+            uat_target_branch: None,
+        });
+    }
+
+    // diff：删仓库确认
+    let mut removed: Vec<String> = Vec::new();
+    let mut pending_removal: Vec<String> = Vec::new();
+    if let Some(ex) = &existing {
+        for r in &ex.repos {
+            if submitted_names.iter().any(|n| n == &r.repo_name) {
+                continue;
+            }
+            if body.confirm_removal {
+                removed.push(r.repo_name.clone());
+            } else {
+                pending_removal.push(r.repo_name.clone());
+            }
+        }
+    }
+    if !pending_removal.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "以下仓库在当前登记中但未出现在提交清单里：{}。确认移除请带 confirmRemoval: true 重试（防手滑漏仓）",
+            pending_removal.join("、")
+        )));
+    }
+
+    // diff：新增/更新/未变 + 换分支确认
+    let mut added: Vec<String> = Vec::new();
+    let mut updated: Vec<String> = Vec::new();
+    let mut unchanged: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut to_verify: Vec<(String, PathBuf, String)> = Vec::new();
+    for entry in &entries {
+        let branch = entry.branches[0].clone();
+        let Some(ex) = existing.as_ref().and_then(|scope| {
+            scope.repos.iter().find(|r| r.repo_name == entry.repo_name)
+        }) else {
+            added.push(entry.repo_name.clone());
+            to_verify.push((
+                entry.repo_name.clone(),
+                expand_registration_path(entry.path.as_deref().unwrap_or_default())
+                    .unwrap_or_default(),
+                branch,
+            ));
+            continue;
+        };
+        if ex.branches.iter().any(|b| b == &branch) {
+            if ex.role == entry.role
+                && ex.path == entry.path
+                && ex.base_ref == entry.base_ref
+            {
+                unchanged.push(entry.repo_name.clone());
+            } else {
+                updated.push(entry.repo_name.clone());
+            }
+        } else if !body.confirm_branch_change {
+            return Err(ApiError::bad_request(format!(
+                "repo {} 已登记分支 {:?}，本次提交的是 {:?}。换分支是敏感操作：带 confirmBranchChange: true 重试（原分支将被替换）",
+                entry.repo_name, ex.branches, branch
+            )));
+        } else {
+            warnings.push(format!(
+                "repo {} 分支变更：{:?} → {:?}",
+                entry.repo_name, ex.branches, branch
+            ));
+            updated.push(entry.repo_name.clone());
+            to_verify.push((
+                entry.repo_name.clone(),
+                expand_registration_path(entry.path.as_deref().unwrap_or_default())
+                    .unwrap_or_default(),
+                branch,
+            ));
+        }
+    }
+
+    // 分支真实性校验（新增 + 换分支；未变条目上次登记时已验证）
+    for (repo_name, path, branch) in &to_verify {
+        verify_repo_branch(repo_name, path, branch, body.verify_remote).await?;
+    }
+
+    let scope = BranchScope {
+        version: 2,
+        updated_at: now_ms(),
+        repos: entries,
+        fallback: existing.map(|e| e.fallback).unwrap_or(false),
+        round,
+    };
+    let file = branch_scope_file_for_round(round);
+    atomic_write_json(&req_dir.join(&file), &scope).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "round": round,
+        "file": file,
+        "changes": {
+            "added": added,
+            "updated": updated,
+            "unchanged": unchanged,
+            "removed": removed,
+        },
+        "warnings": warnings,
+        "scope": scope,
+    })))
+}
+
 pub(crate) async fn api_requirement_sync_base(
     State(state): State<AppState>,
     form: FormOrJson<SyncBaseForm>,
