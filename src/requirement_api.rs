@@ -654,10 +654,9 @@ pub(crate) async fn api_requirement_status_gate_detail(
     State(state): State<AppState>,
     Query(q): Query<GateDetailQuery>,
 ) -> ApiResult<Json<Value>> {
-    let id = q
-        .id
-        .or(q.req_id)
-        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let id =
+        q.id.or(q.req_id)
+            .ok_or_else(|| ApiError::bad_request("missing id"))?;
     let gate_id = q.gate.unwrap_or_default().trim().to_string();
     if gate_id.is_empty() {
         return Err(ApiError::bad_request("missing gate"));
@@ -670,7 +669,11 @@ pub(crate) async fn api_requirement_status_gate_detail(
         .unwrap_or_else(|| gate_id.clone());
     let description = def.map(|d| d.description.to_string()).unwrap_or_default();
     let detail = match gate_id.as_str() {
-        "review" => review_gate_json(&req).await?.get("gate").cloned().unwrap_or(Value::Null),
+        "review" => review_gate_json(&req)
+            .await?
+            .get("gate")
+            .cloned()
+            .unwrap_or(Value::Null),
         "selftest-checklist" => {
             let problems = selftest_checklist_problems(&req).await;
             json!({ "problems": problems })
@@ -748,10 +751,9 @@ pub(crate) async fn api_requirement_status_flow(
     State(state): State<AppState>,
     Query(q): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
-    let id = q
-        .id
-        .or(q.req_id)
-        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let id =
+        q.id.or(q.req_id)
+            .ok_or_else(|| ApiError::bad_request("missing id"))?;
     let req = get_real_requirement(&state, &id).await?;
     let is_issue = req
         .category
@@ -811,29 +813,31 @@ pub(crate) async fn api_requirement_status_flow(
             .unwrap_or(false);
         let mut gates = Vec::new();
         for gate_id in gate_ids {
+            // 门禁校验的是工作产物（审查材料、自测清单等），不是状态怎么改的：
+            // 流转时通过 → 保留通过记录；人工/系统跳过或未记录 → 实时评估门禁材料，
+            // 材料当前满足即视为通过（注明为实时评估），不满足才标未校验并给出缺失原因。
             let historical = gate_checks.get(to).map(|s| s.as_str());
             let (gate_state, reason) = match (crossed, historical) {
-                (true, Some("skipped")) => (
-                    "unverified",
-                    "人工在面板上修改状态，跳过门禁校验".to_string(),
-                ),
-                (true, Some("none")) => (
-                    "unverified",
-                    "系统自动流转，未经过门禁校验".to_string(),
-                ),
-                (true, Some("passed")) => (
-                    "passed",
-                    "流转时已通过门禁校验".to_string(),
-                ),
-                // 门禁配置化前的历史流转没有 gateCheck 记录：不臆断通过与否，标未校验。
-                (true, None) => (
-                    "unverified",
-                    "历史流转，未记录门禁校验结果".to_string(),
-                ),
-                (true, Some(_)) => (
-                    "unverified",
-                    "历史流转，未记录门禁校验结果".to_string(),
-                ),
+                (true, Some("passed")) => ("passed", "流转时已通过门禁校验".to_string()),
+                (true, historical) => {
+                    let eval = evaluate_status_gate(&gate_id, &req).await;
+                    let entry_note = match historical {
+                        Some("skipped") => "人工在面板上修改状态，跳过门禁校验",
+                        Some("none") => "系统自动流转，未经过门禁校验",
+                        _ => "历史流转，未记录门禁校验结果",
+                    };
+                    if eval.passed {
+                        (
+                            "passed",
+                            format!("{entry_note}；门禁材料当前满足（实时评估通过）"),
+                        )
+                    } else {
+                        (
+                            "unverified",
+                            format!("{entry_note}，且门禁材料当前不满足：{}", eval.reason),
+                        )
+                    }
+                }
                 // 未走过的流转预览：agent 现在推进会被拦还是放行。
                 (false, _) => {
                     let eval = evaluate_status_gate(&gate_id, &req).await;

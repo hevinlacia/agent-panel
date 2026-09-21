@@ -459,6 +459,42 @@ async fn status_flow_reports_gate_states_with_unverified() {
         .as_str()
         .expect("reason")
         .contains("已通过门禁校验"));
+
+    // 5) 用户场景：门禁材料完好，人工 via=ui 回退再重进测试中 → 不再标 unverified，
+    //    实时评估材料满足 → 显示 passed（注明实时评估）。
+    let _ = api_requirement_status(
+        State(state.clone()),
+        FormOrJson(StatusForm {
+            req_id: "T-001".into(),
+            status: "自测中".into(),
+            note: None,
+            via: Some("ui".into()),
+        }),
+    )
+    .await
+    .expect("ui rollback");
+    let _ = api_requirement_status(
+        State(state.clone()),
+        FormOrJson(StatusForm {
+            req_id: "T-001".into(),
+            status: "测试中".into(),
+            note: None,
+            via: Some("ui".into()),
+        }),
+    )
+    .await
+    .expect("ui re-enter");
+    let v = flow().await;
+    let gate = junction_gate(&v);
+    assert_eq!(
+        gate["state"],
+        json!("passed"),
+        "材料满足时人工流转也应显示通过"
+    );
+    assert!(gate["reason"]
+        .as_str()
+        .expect("reason")
+        .contains("实时评估通过"));
 }
 
 #[test]
