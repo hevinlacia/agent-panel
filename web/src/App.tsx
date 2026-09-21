@@ -105,7 +105,10 @@ import { SessionPage, SessionsPage } from "./pages/sessions"
 import { SettingsPage } from "./pages/settings"
 import { SchedulersPage } from "./pages/schedulers"
 import { AuthSitesPage } from "./pages/auth-sites"
-import { RequirementDocPage, RequirementDiffPage, RequirementMergePage, RequirementPage } from "./pages/requirement"
+import { RequirementPage } from "./pages/requirement"
+import { RequirementDocPage } from "./pages/requirement-doc"
+import { RequirementDiffPage } from "./pages/requirement-diff"
+import { RequirementMergePage } from "./pages/requirement-merge"
 import { RequirementGatePage } from "./pages/requirement-gate"
 
 
