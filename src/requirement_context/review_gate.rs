@@ -27,7 +27,9 @@ pub(crate) struct ReviewSnapshotDrift {
 
 pub(crate) async fn review_gate_json(req: &Requirement) -> ApiResult<Value> {
     let gate = review_gate_decision(req).await?;
-    let (risk_tags, inventory_risk) = code_review_risk_for(&req_dir_path(req)?).await;
+    let dir = req_dir_path(req)?;
+    let (risk_tags, inventory_risk) = code_review_risk_for(&dir).await;
+    let checklist = review_checklist_summary(&load_review_checklist(&dir).await);
     Ok(json!({
         "ok": true,
         "reqId": req.id,
@@ -41,6 +43,7 @@ pub(crate) async fn review_gate_json(req: &Requirement) -> ApiResult<Value> {
             "aiReviewPath": gate.ai_review_path.to_string_lossy(),
             "riskTags": risk_tags,
             "inventoryRisk": inventory_risk,
+            "checklist": checklist,
             "actions": gate.actions,
             "staleRepos": gate.stale_repos,
             "incrementalReview": gate.incremental_review,
@@ -58,6 +61,88 @@ pub(crate) async fn ensure_review_gate_allows_testing(req: &Requirement) -> ApiR
         "Code Review Gate 未通过（{}）：{}。请先补充 review.md / code-review-ai.md 并明确 `Review Gate: PASS`，或在 review.md 记录 `Review Gate: WAIVED` + 豁免原因。",
         gate.label, gate.reason
     )))
+}
+
+/// 审查清单（review-checklist.json）的加载结果。
+enum ReviewChecklistState {
+    Missing,
+    Invalid(String),
+    Valid(Value),
+}
+
+fn review_checklist_schema_hint() -> String {
+    "期望格式：{\"reqId\":\"<需求ID>\",\"items\":[{\"id\":\"C1\",\"title\":\"检查项标题\",\"conclusion\":\"pass|fail|na\",\"note\":\"选填说明\",\"evidence\":\"选填证据\"}]}；items 必须是非空数组，conclusion 只允许 pass / fail / na".to_string()
+}
+
+/// 加载并校验审查清单；格式问题一律返回 Invalid（带精确修复指引），不猜格式。
+async fn load_review_checklist(req_dir: &Path) -> ReviewChecklistState {
+    let Ok(raw) = tokio::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).await else {
+        return ReviewChecklistState::Missing;
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&raw) else {
+        return ReviewChecklistState::Invalid(
+            "review-checklist.json 不是合法 JSON；请调 PUT /api/requirement/review-checklist 重建（写入时自动校验格式）"
+                .to_string(),
+        );
+    };
+    let Some(items) = doc
+        .get("items")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    else {
+        return ReviewChecklistState::Invalid(
+            "review-checklist.json 的 items 必须是非空数组；请调 PUT /api/requirement/review-checklist 重建"
+                .to_string(),
+        );
+    };
+    for item in items {
+        let conclusion = item
+            .get("conclusion")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_lowercase();
+        if !["pass", "fail", "na"].contains(&conclusion.as_str()) {
+            let id = item.get("id").and_then(Value::as_str).unwrap_or("?");
+            let title = item.get("title").and_then(Value::as_str).unwrap_or("");
+            return ReviewChecklistState::Invalid(format!(
+                "清单项 {id}（{title}）的 conclusion = \"{conclusion}\" 非法：只允许 pass / fail / na；请调 PUT /api/requirement/review-checklist 修正"
+            ));
+        }
+    }
+    ReviewChecklistState::Valid(doc)
+}
+
+/// 门禁详情用：清单概要（机器判定状态 + 逐项内容）。
+fn review_checklist_summary(state: &ReviewChecklistState) -> Value {
+    match state {
+        ReviewChecklistState::Missing => {
+            json!({ "present": false, "total": 0, "concluded": 0, "failed": 0 })
+        }
+        ReviewChecklistState::Invalid(msg) => {
+            json!({ "present": false, "error": msg, "total": 0, "concluded": 0, "failed": 0 })
+        }
+        ReviewChecklistState::Valid(doc) => {
+            let items = doc
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let failed: Vec<Value> = items
+                .iter()
+                .filter(|i| i.get("conclusion").and_then(Value::as_str) == Some("fail"))
+                .map(|i| json!({ "id": i.get("id"), "title": i.get("title") }))
+                .collect();
+            json!({
+                "present": true,
+                "total": items.len(),
+                "concluded": items.len(),
+                "failed": failed.len(),
+                "failedItems": failed,
+                "items": items,
+            })
+        }
+    }
 }
 
 pub(crate) async fn review_gate_decision(req: &Requirement) -> ApiResult<ReviewGateDecision> {
@@ -147,6 +232,81 @@ pub(crate) async fn review_gate_decision(req: &Requirement) -> ApiResult<ReviewG
     }
     for (source, path, raw) in &docs {
         if review_gate_passed(raw) {
+            // 审查清单硬校验：清单列出的每一项都必须有结论（pass/fail/na），全部有结论才继续放行链路。
+            let checklist = load_review_checklist(&dir).await;
+            match &checklist {
+                ReviewChecklistState::Missing => {
+                    return Ok(ReviewGateDecision {
+                        status: "checklist-missing".into(),
+                        label: "审查清单缺失".into(),
+                        allows_testing: false,
+                        reason: "review-checklist.json 不存在：门禁要求审查清单列出的每一项都有结论（pass/fail/na）后才能放行".into(),
+                        source: Some(source.clone()),
+                        review_path: review_path.clone(),
+                        ai_review_path: ai_review_path.clone(),
+                        actions: vec![
+                            "整理本次审查要点（每仓库关键风险、幂等/并发、库存、配置、部署顺序等），逐项给出结论".to_string(),
+                            format!("调用 PUT /api/requirement/review-checklist 写入清单，body 示例：{{\"reqId\":\"{}\",\"items\":[{{\"id\":\"C1\",\"title\":\"幂等与并发安全\",\"conclusion\":\"pass\",\"note\":\"...\",\"evidence\":\"...\"}}]}}", req.id),
+                            "conclusion 枚举：pass=通过 / fail=未通过 / na=不适用；存在 fail 项会被拦截；保存后自动渲染进 review.md「## 审查清单」小节".to_string(),
+                        ],
+                        stale_repos: Vec::new(),
+                        incremental_review: None,
+                    });
+                }
+                ReviewChecklistState::Invalid(msg) => {
+                    return Ok(ReviewGateDecision {
+                        status: "checklist-error".into(),
+                        label: "审查清单格式错误".into(),
+                        allows_testing: false,
+                        reason: msg.clone(),
+                        source: Some(source.clone()),
+                        review_path: review_path.clone(),
+                        ai_review_path: ai_review_path.clone(),
+                        actions: vec![
+                            "按上方错误信息修正清单；推荐直接调 PUT /api/requirement/review-checklist 重建（写入时自动校验格式）".to_string(),
+                            review_checklist_schema_hint(),
+                        ],
+                        stale_repos: Vec::new(),
+                        incremental_review: None,
+                    });
+                }
+                ReviewChecklistState::Valid(doc) => {
+                    let items = doc
+                        .get("items")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    let failed: Vec<String> = items
+                        .iter()
+                        .filter(|i| i.get("conclusion").and_then(Value::as_str) == Some("fail"))
+                        .map(|i| {
+                            format!(
+                                "{}（{}）",
+                                i.get("id").and_then(Value::as_str).unwrap_or("?"),
+                                i.get("title").and_then(Value::as_str).unwrap_or("")
+                            )
+                        })
+                        .collect();
+                    if !failed.is_empty() {
+                        return Ok(ReviewGateDecision {
+                            status: "blocked".into(),
+                            label: "清单存在未通过项".into(),
+                            allows_testing: false,
+                            reason: format!("审查清单 {} 项结论为 fail：{}", failed.len(), failed.join("、")),
+                            source: Some(source.clone()),
+                            review_path: review_path.clone(),
+                            ai_review_path: ai_review_path.clone(),
+                            actions: vec![
+                                "修复对应问题后重新审查，把结论改为 pass（写明修复 commit/验证证据）".to_string(),
+                                "业务确认带风险提测时，在 review.md 明确 `Review Gate: WAIVED` + 豁免原因".to_string(),
+                            ],
+                            stale_repos: Vec::new(),
+                            incremental_review: None,
+                        });
+                    }
+                    // 全部 pass/na：清单齐备，继续库存专项与新鲜度检查。
+                }
+            }
             // 库存高危风险：即使写了 PASS，若未包含库存账本专项评估，门禁仍不通过
             if inventory_risk && !review_has_inventory_evidence(raw) {
                 return Ok(ReviewGateDecision {
@@ -185,7 +345,7 @@ pub(crate) async fn review_gate_decision(req: &Requirement) -> ApiResult<ReviewG
                 status: "passed".into(),
                 label: "审查通过".into(),
                 allows_testing: true,
-                reason: "review 文档记录了通过结论，且审查快照覆盖当前需求分支 HEAD".into(),
+                reason: "review 文档记录了通过结论，审查清单全部项均有结论，且审查快照覆盖当前需求分支 HEAD".into(),
                 source: Some(source.clone()),
                 review_path,
                 ai_review_path,
