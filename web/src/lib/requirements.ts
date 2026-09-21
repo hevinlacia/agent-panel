@@ -2,6 +2,8 @@ import type { ReqCategory, ReqStatus } from "../types"
 
 export const REQ_FLOW_STATUSES: ReqStatus[] = ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"]
 export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "已复盘", "已关闭"]
+/** 子需求（大需求拆出的并行执行单元）独立轻量状态机：无门禁，环境集成/发布/经验总结都在父需求走。 */
+export const SUB_REQ_STATUSES: ReqStatus[] = ["需求创建", "开发中", "已合入", "已取消"]
 export const REQ_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, ...ISSUE_STATUSES]
 export const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题", "测试问题"]
 export const REQ_SOURCES = ["产品推动", "开发推动"] as const
@@ -23,4 +25,7 @@ export const statusMeta: Record<string, { color: string; soft: string }> = {
   已修复: { color: "#22d3ee", soft: "rgba(34, 211, 238, 0.14)" },
   已复盘: { color: "#818cf8", soft: "rgba(129, 140, 248, 0.14)" },
   已关闭: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
+  // 子需求轻量状态
+  需求创建: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
+  已合入: { color: "#34d399", soft: "rgba(52, 211, 153, 0.14)" },
 }

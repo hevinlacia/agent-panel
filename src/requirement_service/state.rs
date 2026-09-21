@@ -23,6 +23,54 @@ pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
     matches!(new_status, "经验总结" | "发布就绪" | "已完成")
 }
 
+/// 子需求轻量状态机流转合法性：需求创建 → 开发中 → 已合入；前两态可直接已取消；
+/// 已合入/已取消为终态不可重开（后续增量拆新子需求）。无门禁（合入主需求不校验 Review Gate，
+/// 代码审查在父需求内统一走）。
+pub(crate) fn ensure_sub_req_status_transition(
+    req: &Requirement,
+    new_status: &str,
+) -> ApiResult<()> {
+    if !SUB_REQ_STATUSES.contains(&new_status) {
+        return Err(ApiError::bad_request(format!(
+            "子需求状态只能是 {} 之一，不能设置为 {new_status}（环境集成/发布/经验总结都在父需求流转）",
+            SUB_REQ_STATUSES.join("/")
+        )));
+    }
+    let from = req.status.as_str();
+    if from == new_status {
+        return Ok(());
+    }
+    let allowed: &[&str] = match from {
+        "需求创建" => &["开发中", "已取消"],
+        "开发中" => &["已合入", "已取消"],
+        "已合入" | "已取消" => &[],
+        // 兼容历史：子需求状态缺失/异常时允许进入任意子状态重新规整。
+        _ => SUB_REQ_STATUSES,
+    };
+    if allowed.contains(&new_status) {
+        Ok(())
+    } else if allowed.is_empty() {
+        Err(ApiError::bad_request(format!(
+            "子需求 {from} 是终态，不可再流转；后续增量请拆新子需求"
+        )))
+    } else {
+        Err(ApiError::bad_request(format!(
+            "子需求状态不允许从 {from} 流转到 {new_status}（允许：{}）",
+            allowed.join("/")
+        )))
+    }
+}
+
+/// 普通需求/issue 禁止使用子需求专属状态（避免状态集污染需求主流）。
+pub(crate) fn ensure_status_allowed_for_non_sub(new_status: &str) -> ApiResult<()> {
+    if SUB_ONLY_STATUSES.contains(&new_status) {
+        return Err(ApiError::bad_request(format!(
+            "{new_status} 是子需求专属状态，普通需求/线上问题不能使用"
+        )));
+    }
+    Ok(())
+}
+
 /// 需求进入 >= 经验总结 后，自动把绑定的、仍处于排查中/已定位的线上问题推进到已修复。
 /// 已修复/已复盘/已关闭的线上问题不会被回退；绑定错误或目录不可写时静默跳过。
 pub(crate) async fn auto_advance_linked_issues(

@@ -231,6 +231,90 @@ pub(crate) async fn resolve_req_id_and_target_dir(
     unreachable!("retry loop exhausted without returning")
 }
 
+/// 从需求 id 提取票号前缀（首段连续到第一个全数字段）：`WMS-049-wave-pick-task` ->
+/// `WMS-049`，`WMS-INC-007-foo` -> `WMS-INC-007`；无数字段返回 None。
+pub(crate) fn extract_ticket_prefix(req_id: &str) -> Option<String> {
+    let mut acc = String::new();
+    for seg in req_id.split('-') {
+        if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
+            return Some(if acc.is_empty() {
+                seg.to_string()
+            } else {
+                format!("{acc}-{seg}")
+            });
+        }
+        if seg.is_empty() {
+            return None;
+        }
+        if acc.is_empty() {
+            acc = seg.to_string();
+        } else {
+            acc = format!("{acc}-{seg}");
+        }
+    }
+    None
+}
+
+/// 解析子需求 req id 与目标目录（目录平铺在父需求同级，ID = `<父票号>-S<n>[-slug]`）。
+///
+/// - n 在父需求维度内递增（max+1），已取消/已合入的编号不复用（自然不复用：只取 max+1）；
+/// - 碰撞（同名目录或已有同 id 需求）时递增 n 重试，最多 5 次；
+/// - 调用方需持有 `state.requirement_create_lock`（非 dry-run），与普通创建共享串行化语义。
+pub(crate) async fn resolve_sub_req_id_and_target_dir(
+    state: &AppState,
+    parent: &Requirement,
+    slug: Option<&str>,
+    dry_run: bool,
+) -> ApiResult<(String, PathBuf)> {
+    let ticket = extract_ticket_prefix(&parent.id).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "cannot derive sub-requirement id from parent id `{}` (no numeric ticket segment)",
+            parent.id
+        ))
+    })?;
+    let slug_seg = match slug.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(s) => format!("-{}", ensure_safe_segment(s, "slug")?),
+        None => String::new(),
+    };
+    let reqs = scan_hermes_requirements(state).await?;
+    let mut max_seq: u64 = 0;
+    let mut existing_ids: HashSet<String> = HashSet::new();
+    for r in &reqs {
+        existing_ids.insert(r.id.clone());
+        if r.parent_req_id.as_deref() == Some(parent.id.as_str()) {
+            if let Some(n) = sub_req_seq(&r.id) {
+                if n > max_seq {
+                    max_seq = n;
+                }
+            }
+        }
+    }
+    // 平铺在父需求同级目录（req 根或父需求所在分组目录）。
+    let parent_dir = req_dir_path(parent)?;
+    let base = parent_dir
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| ApiError::bad_request("parent requirement dir has no parent directory"))?;
+    let mut n = max_seq + 1;
+    let max_retries: u32 = 5;
+    for _attempt in 0..=max_retries {
+        let req_id = format!("{ticket}-S{n}{slug_seg}");
+        ensure_req_id(&req_id)?;
+        let target_dir = base.join(&req_id);
+        if existing_ids.contains(&req_id) || target_dir.exists() {
+            n += 1;
+            continue;
+        }
+        if !dry_run {
+            fs::create_dir(&target_dir).await?;
+        }
+        return Ok((req_id, target_dir));
+    }
+    Err(ApiError::bad_request(
+        "cannot allocate a free sub-requirement id after retries; try a different slug",
+    ))
+}
+
 pub(crate) fn ensure_safe_segment(value: &str, field: &str) -> ApiResult<String> {
     let v = value.trim();
     if v.is_empty() || v == "." || v == ".." || v.len() > 128 {

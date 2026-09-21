@@ -2,9 +2,10 @@ use super::*;
 
 pub(crate) fn requirement_api_schema() -> Value {
     json!({
-        "version": 3,
+        "version": 4,
         "flow": ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"],
         "statusValues": REQ_STATUSES,
+        "subStatuses": SUB_REQ_STATUSES,
         "statusAliases": REQ_STATUS_ALIASES,
         "categoryValues": REQ_CATEGORIES,
         "tokens": requirement_token_specs_json(),
@@ -23,6 +24,7 @@ pub(crate) fn requirement_api_schema() -> Value {
         ],
         "operations": [
             {"operation": "setStatus", "writes": ["req.state"], "required": ["reqId", "status"], "optional": ["note", "dryRun"]},
+            {"operation": "createSub", "endpoint": "POST /api/requirement/create-sub", "writes": ["req.meta", "req.state", "req.docs"], "required": ["parentReqId", "title"], "optional": ["slug", "owner", "summary", "dryRun"], "description": "从父需求拆出子需求（并行执行单元）；仅建记录，分支用 /api/requirement/sub/init-branches 初始化"},
             {"operation": "setCategory", "writes": ["req.state"], "required": ["reqId", "category"], "optional": ["dryRun"]},
             {"operation": "patchMeta", "writes": ["req.meta"], "required": ["reqId", "fields"], "allowedFields": ["title", "project", "owner", "startDate", "planRelease", "ones"]},
             {"operation": "appendNote", "writes": ["req.notes"], "required": ["reqId", "text"], "optional": ["title", "sessionId", "dryRun"]},
@@ -38,6 +40,15 @@ pub(crate) fn requirement_api_schema() -> Value {
             "create": "POST /api/requirements 传 members=[{reqId}]（可选 releasePolicy）创建组；成员必须已存在且非组，不支持组嵌套",
             "readonlyStatus": true,
             "context": "GET /api/requirement/context 对组需求额外返回 group 块（aggregatedStatus/bottleneck/members）"
+        },
+        "subRequirements": {
+            "description": "子需求：从大需求（父需求）中途拆出的并行执行单元，提高大需求并行开发速度；与需求组互补（组=已建需求中途聚合，子需求=大需求中途拆分）。目录平铺，ID=<父票号>-S<n>[-slug]（如 WMS-049-S1-fix-logging），n 在父需求内递增且不复用；父子关系记在子需求 meta.md 的 parent-req-id（source of truth）。",
+            "statuses": "需求创建 → 开发中 → 已合入；需求创建/开发中可直接已取消（终态不可重开）；无门禁，合入主需求不校验 Review Gate（代码审查在父需求内统一走）",
+            "boundary": "子需求不绑 ONES/plan-release/issues、不切类别；环境集成（合 test/UAT）、发布、经验总结都在父需求做；子分支合回父分支，不直接碰共享环境分支",
+            "create": "POST /api/requirement/create-sub（parentReqId+title+slug?+summary?）；仅建记录不建分支；自动复制父需求 background/technical-plan/impact/test 文档作快照起点并标注快照来源",
+            "branches": "POST /api/requirement/sub/init-branches：以父需求 branches.json 为模板派生子分支 <父分支>-sub<n>（每仓，可删减 repo 子集），baseRef=父分支，可一键建分支+worktree",
+            "merge": "POST /api/requirement/sub/sync-parent 同步父分支最新成果到子分支（冲突在子分支解）；POST /api/requirement/sub/merge-to-parent 合回父分支（成功后自动推进已合入）",
+            "list": "GET /api/requirements 默认不含子需求，传 includeSubs=true 包含；父需求 DTO 内嵌 subReqs 回填"
         },
         "agentContext": {
             "endpoint": "GET /api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000",

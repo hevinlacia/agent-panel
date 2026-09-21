@@ -534,6 +534,18 @@ button, input, select, textarea { font: inherit; }
 .react-linked-issue-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(148, 163, 184, 0.3); border-radius: 999px; padding: 3px 10px; }
 .react-linked-issue-chip .react-status-pill { font-size: 0.62rem; padding: 1px 7px; }
 .react-linked-issue-chip .react-copy-link-btn { padding: 1px 5px; font-size: 0.62rem; }
+
+/* ===== 子需求（sub-requirement）=====
+.react-sub-badge { color: #67e8f9; font-weight: 600; }
+.react-sub-create-form { flex-wrap: wrap; }
+.react-sub-create-form input { min-width: 180px; }
+.react-sub-op-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.react-sub-op-repo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 8px; padding: 6px 10px; font-size: 0.72rem; }
+.react-sub-op-repo code { font-size: 0.68rem; }
+.react-sub-op-status { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.react-sub-op-merged, .react-sub-op-ok, .react-sub-op-upToDate, .react-sub-op-created, .react-sub-op-exists { color: #34d399; }
+.react-sub-op-conflict, .react-sub-op-failed { color: #f87171; }
+.react-sub-op-skipped, .react-sub-op-partial, .react-sub-op-pending, .react-sub-op-idle { color: #fbbf24; }
 .react-card-side { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; justify-content: center; }
 .react-req-card .react-card-copy-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(34,211,238,.38); border-radius: 999px; padding: 6px 11px; background: rgba(34,211,238,.1); color: var(--react-cyan); font: 800 .68rem var(--react-mono); letter-spacing: .04em; cursor: pointer; white-space: nowrap; }
 .react-req-card .react-card-copy-btn:hover { background: rgba(34,211,238,.18); color: #fff; border-color: rgba(34,211,238,.45); }

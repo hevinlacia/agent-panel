@@ -82,6 +82,27 @@ pub(crate) struct GroupMemberInput {
     pub(crate) note: Option<String>,
 }
 
+/// 创建子需求入参：从父需求拆出并行执行单元。ID 由服务端分配（`<父票号>-S<n>[-slug]`），
+/// 目录平铺；复制父需求 background/technical-plan/impact/test 文档作快照起点；
+/// 不绑 ONES/plan-release/issues（由父需求承载），不建分支（P2 一键初始化）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubRequirementCreateForm {
+    pub(crate) parent_req_id: String,
+    pub(crate) title: String,
+    /// slug 追加在 `-S<n>` 之后（ASCII 路径安全字符）；缺省时 ID 为 `<父票号>-S<n>`。
+    #[serde(default)]
+    pub(crate) slug: Option<String>,
+    /// 覆盖 owner，默认继承父需求。
+    #[serde(default)]
+    pub(crate) owner: Option<String>,
+    /// 子需求 scope 摘要（写入 meta Summary）。
+    #[serde(default)]
+    pub(crate) summary: Option<String>,
+    #[serde(default)]
+    pub(crate) dry_run: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementCreateForm {

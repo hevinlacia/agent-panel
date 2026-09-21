@@ -122,6 +122,7 @@ mod merge_exec;
 mod merge_options;
 mod prod_mr;
 mod scan;
+mod sub_branch;
 mod sync_base;
 
 pub(crate) use branch_scope::*;
@@ -131,4 +132,5 @@ pub(crate) use merge_exec::*;
 pub(crate) use merge_options::*;
 pub(crate) use prod_mr::*;
 pub(crate) use scan::*;
+pub(crate) use sub_branch::*;
 pub(crate) use sync_base::*;

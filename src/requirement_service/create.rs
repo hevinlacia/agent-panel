@@ -118,6 +118,7 @@ pub(crate) async fn create_requirement(
         &summary,
         background.as_deref(),
         notes.as_deref(),
+        None,
     );
     let mut planned: Vec<String> = files
         .iter()
@@ -162,6 +163,173 @@ pub(crate) async fn create_requirement(
                 "note": m.note,
             })).collect::<Vec<_>>(),
         })),
+        "validation": validation,
+    }))
+}
+
+/// 创建子需求：从大需求（父需求）拆出并行执行单元。
+///
+/// - ID 由服务端分配：`<父票号>-S<n>[-slug]`，目录平铺在父需求同级，不占全局 seq 池；
+/// - 复制父需求 background/technical-plan/impact/test 文档作快照起点（标注快照来源，
+///   之后独立维护）；不复制 events/state/branches/code-review；
+/// - 不绑 ONES/plan-release/issues（父需求承载）；不建分支（分支初始化走
+///   POST /api/requirement/sub/init-branches，以父分支为 base 派生 `-sub<n>` 分支）；
+/// - 初始状态 需求创建，走子需求独立轻量状态机。
+pub(crate) async fn create_sub_requirement(
+    state: &AppState,
+    form: SubRequirementCreateForm,
+) -> ApiResult<Value> {
+    let title = clean_required(&form.title, "title")?;
+    let parent = get_real_requirement(state, &form.parent_req_id).await?;
+    if parent.category.as_deref() != Some("需求") {
+        return Err(ApiError::bad_request(format!(
+            "父需求 {} 不是 category=需求 的普通需求，不能拆子需求",
+            parent.id
+        )));
+    }
+    if parent.group_members.is_some() {
+        return Err(ApiError::bad_request(format!(
+            "{} 是引用式需求组，不支持拆子需求（如需并行请对成员需求各自推进）",
+            parent.id
+        )));
+    }
+    if parent.is_sub_req || parent.parent_req_id.is_some() {
+        return Err(ApiError::bad_request(format!(
+            "{} 已是子需求；不支持子需求嵌套（只允许一层拆分）",
+            parent.id
+        )));
+    }
+    if matches!(parent.status.as_str(), "经验总结" | "已完成") {
+        return Err(ApiError::bad_request(format!(
+            "父需求 {} 已进入 {}，不再拆子需求",
+            parent.id, parent.status
+        )));
+    }
+    let dry_run = form.dry_run.unwrap_or(false);
+    // 与普通创建共享串行化临界区：子需求编号也靠扫描已有需求分配。
+    let _create_guard = if dry_run {
+        None
+    } else {
+        Some(state.requirement_create_lock.lock().await)
+    };
+    let (req_id, target_dir) =
+        resolve_sub_req_id_and_target_dir(state, &parent, form.slug.as_deref(), dry_run).await?;
+    let projects = parent.projects.clone();
+    let project = projects
+        .first()
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
+    // 父需求目录：后续复制文档与继承 owner 都要用。
+    let parent_dir = req_dir_path(&parent)?;
+    let parent_meta = fs::read_to_string(parent_dir.join("meta.md"))
+        .await
+        .unwrap_or_default();
+    let parent_owner = parse_frontmatter(&parent_meta)
+        .fields
+        .get("owner")
+        .cloned()
+        .unwrap_or_default();
+    let owner = clean_optional(form.owner.as_deref()).unwrap_or_else(|| {
+        if parent_owner.trim().is_empty() {
+            "unknown".to_string()
+        } else {
+            parent_owner
+        }
+    });
+    let start_date = today_ymd();
+    let summary = clean_optional(form.summary.as_deref()).unwrap_or_else(|| "待补充".to_string());
+    let status = "需求创建";
+
+    // 复制父需求文档作快照起点（预置快照标注；空文件/缺失跳过）。
+    let mut copied_docs = Vec::<String>::new();
+    let mut snapshot_files: Vec<(&'static str, String)> = Vec::new();
+    for doc in ["background.md", "technical-plan.md", "impact.md", "test.md"] {
+        let src = parent_dir.join(doc);
+        let raw = if src.is_file() {
+            fs::read_to_string(&src).await.unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let body = format!("{}{}", snapshot_note(&parent.id, doc), raw.trim_start());
+        snapshot_files.push((doc, body));
+        copied_docs.push(doc.to_string());
+    }
+
+    let mut files = requirement_create_files(
+        &req_id,
+        &title,
+        status,
+        &project,
+        &projects,
+        "需求",
+        &parent.source,
+        &owner,
+        &start_date,
+        "unknown",
+        "",
+        &[],
+        &summary,
+        None,
+        None,
+        Some(parent.id.as_str()),
+    );
+    // 父需求快照覆盖同名的 background/technical-plan 模板，impact/test 直接追加。
+    for (name, body) in snapshot_files {
+        if let Some(slot) = files.iter_mut().find(|(n, _)| *n == name) {
+            slot.1 = body;
+        } else {
+            files.push((name, body));
+        }
+    }
+    let planned: Vec<String> = files
+        .iter()
+        .map(|(name, _)| target_dir.join(name).to_string_lossy().to_string())
+        .collect();
+    if !dry_run {
+        for (name, body) in &files {
+            atomic_write_text(&target_dir.join(name), body).await?;
+        }
+    }
+    let validation = if dry_run {
+        json!({ "ok": true, "dryRun": true, "problems": [], "warnings": [] })
+    } else {
+        let req = load_requirement_from_dir(&target_dir, &req_id, &[project.clone()], &[])
+            .await?
+            .ok_or_else(|| anyhow!("created sub-requirement cannot be loaded"))?;
+        validate_requirement(state, &req).await?
+    };
+    // 父需求 notes 留痕（dry-run 跳过）。
+    if !dry_run {
+        let note = format!(
+            "拆分子需求：`{}`（{}）；子分支以父分支为 base，合回父分支后父需求统一集成。",
+            req_id, title
+        );
+        let _ = append_requirement_note(
+            state,
+            RequirementNoteForm {
+                req_id: parent.id.clone(),
+                text: note,
+                title: Some("拆分子需求".to_string()),
+                session_id: None,
+                dry_run: Some(false),
+            },
+        )
+        .await;
+    }
+    Ok(json!({
+        "ok": true,
+        "dryRun": dry_run,
+        "reqId": req_id,
+        "title": title,
+        "status": status,
+        "parentReqId": parent.id,
+        "reqDir": target_dir.to_string_lossy(),
+        "files": planned,
+        "copiedDocs": copied_docs,
+        "nextStep": "子需求仅建记录不建分支；并行开发前调 POST /api/requirement/sub/init-branches 以父分支为 base 派生 -sub<n> 分支",
         "validation": validation,
     }))
 }
@@ -245,6 +413,17 @@ pub(crate) async fn update_requirement(
     form: RequirementPatchForm,
 ) -> ApiResult<Value> {
     let req = get_real_requirement(state, &form.req_id).await?;
+    // 子需求字段边界：ONES/plan-release/issues/类别都由父需求承载，不允许在子需求上设置。
+    if req.is_sub_req
+        && (form.ones.is_some()
+            || form.plan_release.is_some()
+            || form.issues.is_some()
+            || form.category.is_some())
+    {
+        return Err(ApiError::bad_request(
+            "子需求不绑定 ONES/plan-release/issues，也不能切换类别（这些由父需求承载）",
+        ));
+    }
     let dir = req_dir_path(&req)?;
     ensure_requirement_dir_writable(state, &dir).await?;
     let dry_run = form.dry_run.unwrap_or(false);
@@ -328,6 +507,12 @@ pub(crate) async fn update_requirement(
         let status = canonical_status(status)?;
         // 需求组状态为派生值，禁止手动设置（PATCH / edit setStatus 同样拦截）。
         ensure_group_status_locked(&req).await?;
+        // 子需求走独立轻量状态机；普通需求/issue 禁止使用子需求专属状态。
+        if req.is_sub_req {
+            ensure_sub_req_status_transition(&req, &status)?;
+        } else {
+            ensure_status_allowed_for_non_sub(&status)?;
+        }
         // 状态流转门禁（配置驱动）：review / selftest-checklist / test-scenario / issue-*。
         // edit 接口主要供 agent 与脚本使用，始终强校验；人工在 Panel UI 上改状态走 status 接口并跳过。
         ensure_status_transition_gates(state, &req, &status).await?;

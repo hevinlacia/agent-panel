@@ -33,6 +33,7 @@ mod requirement_api;
 mod requirement_context;
 mod requirement_index;
 mod requirement_service;
+mod requirement_sub;
 mod sessions;
 mod util;
 
@@ -54,6 +55,7 @@ use requirement_api::*;
 use requirement_context::*;
 use requirement_index::*;
 use requirement_service::*;
+use requirement_sub::*;
 use sessions::*;
 use util::*;
 
@@ -131,6 +133,12 @@ static REQ_FLOW_STATUSES: &[&str] = &[
     "已完成",
 ];
 static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "已复盘", "已关闭"];
+/// 子需求（sub-requirement）独立轻量状态机：从大需求拆出的并行执行单元。
+/// 流转：需求创建 → 开发中 → 已合入；需求创建/开发中可直接已取消（终态，不可重开）。
+/// 子需求不涉及环境集成（test/uat 合并、发布、经验总结都在父需求做），无门禁。
+static SUB_REQ_STATUSES: &[&str] = &["需求创建", "开发中", "已合入", "已取消"];
+/// 仅子需求可用的状态（“开发中”与需求流共用）；普通需求/issue 设置这些状态会被拒。
+static SUB_ONLY_STATUSES: &[&str] = &["需求创建", "已合入", "已取消"];
 static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("需求对齐", "需求澄清"),
     ("方案设计", "需求澄清"),
@@ -193,6 +201,9 @@ struct IdQuery {
     include_full: Option<bool>,
     section: Option<String>,
     format: Option<String>,
+    /// 需求列表专用：默认不展示子需求，传 true 时包含（camelCase includeSubs 亦可）。
+    #[serde(alias = "includeSubs")]
+    include_subs: Option<bool>,
 }
 
 #[tokio::main]
@@ -371,6 +382,22 @@ async fn main() -> Result<()> {
             "/api/requirement/effort-estimate",
             post(api_effort_estimate),
         )
+        .route(
+            "/api/requirement/create-sub",
+            post(api_requirement_create_sub),
+        )
+        .route(
+            "/api/requirement/sub/init-branches",
+            post(api_requirement_sub_init_branches),
+        )
+        .route(
+            "/api/requirement/sub/sync-parent",
+            post(api_requirement_sub_sync_parent),
+        )
+        .route(
+            "/api/requirement/sub/merge-to-parent",
+            post(api_requirement_sub_merge_to_parent),
+        )
         .route("/api/sessions", get(api_sessions))
         .route("/api/session", get(api_session))
         .route("/api/session/log", get(api_session_log))
@@ -489,6 +516,8 @@ async fn api_dashboard_stats(
     Query(query): Query<DashboardStatsQuery>,
 ) -> ApiResult<Json<Value>> {
     let mut reqs = list_requirements(&state).await?;
+    // 子需求是父需求的并行执行单元，不独立计入面板统计（进度在父需求详情展示）。
+    reqs.retain(|r| !r.is_sub_req);
     if let Some(project) = query
         .project
         .as_deref()
