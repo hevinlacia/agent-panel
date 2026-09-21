@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import type { Requirement } from "../../types"
 import { postForm, postJson } from "../../lib/api"
 import { statusPill } from "./badges"
+import { REQ_CATEGORIES, REQ_SOURCES } from "../../lib/requirements"
 import { PanelHead } from "../../components/ui"
 
 export function LinkedIssuesPanel({ req, issues, onSaved }: { req: Requirement; issues: Requirement[]; onSaved: () => void }) {
@@ -76,25 +77,50 @@ export function OnesBindModal({ req, onClose, onSaved }: { req: Requirement; onC
   return <div className="react-modal-backdrop" onClick={onClose}><div className="react-modal react-ones-modal" onClick={(e) => e.stopPropagation()}><div className="react-modal-head"><div><span>ONES</span><h3>登记 ONES 任务关联</h3></div><button type="button" className="react-modal-close" onClick={onClose} title="关闭">✕</button></div><div className="react-modal-form"><p className="react-muted"><code>{req.id}</code> {req.title}</p><p className="react-muted">粘贴 ONES 网址、编号，或直接从 ONES 复制的整段文本（编号 + 标题 + 链接），会自动识别为可点击引用；留空保存可清除关联。</p><div className="react-inline-form"><input autoFocus value={ones} onChange={(e) => { setOnes(e.target.value); setFeedback(null) }} placeholder="ONES 网址 / 编号 / 带链接的复制文本" onKeyDown={(e) => { if (e.key === "Enter") submit() }} /><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button>{req.ones ? <button type="button" onClick={() => { setOnes(""); }} disabled={saving}>清空输入</button> : null}</div>{feedback ? <p className={feedback.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</div></div></div>
 }
 
-export function PlanReleaseForm({ req, onSaved }: { req: Requirement; onSaved: () => void }) {
-  const current = req.planRelease && req.planRelease !== "unknown" ? req.planRelease : ""
-  const [planRelease, setPlanRelease] = useState(current)
+/** 需求信息卡字段编辑弹窗：类别 / 推动方 / 预计发版。 */
+export type ReqEditField = "category" | "source" | "planRelease"
+
+const FIELD_META: Record<ReqEditField, { title: string; kicker: string }> = {
+  category: { title: "修改类别", kicker: "Category" },
+  source: { title: "修改推动方", kicker: "Source" },
+  planRelease: { title: "修改预计发版", kicker: "Plan Release" },
+}
+
+export function ReqFieldEditModal({ req, field, onClose, onSaved }: { req: Requirement; field: ReqEditField; onClose: () => void; onSaved: () => void }) {
+  const initial = field === "category" ? (req.category || "需求") : field === "source" ? (req.source ?? "产品推动") : (req.planRelease && req.planRelease !== "unknown" ? req.planRelease : "")
+  const [value, setValue] = useState(initial)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
-  useEffect(() => { setPlanRelease(current) }, [req.planRelease])
-  const changed = planRelease !== current
-  const submit = async (value: string) => {
-    if (saving) return
+  const changed = value.trim() !== initial.trim()
+  const submit = async () => {
+    if (saving || !changed) return
     setSaving(true)
+    setFeedback(null)
     try {
-      await postForm("/api/requirement/update", { reqId: req.id, planRelease: value || "unknown" })
-      setFeedback(value ? `预计发版已保存：${value}` : "已清除预计发版日期（unknown）")
+      if (field === "category") await postForm("/api/requirement/category", { reqId: req.id, category: value })
+      else if (field === "source") await postForm("/api/requirement/update", { reqId: req.id, source: value })
+      else await postForm("/api/requirement/update", { reqId: req.id, planRelease: value.trim() || "unknown" })
       onSaved()
+      onClose()
     } catch (err) {
       setFeedback(`保存失败：${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(false)
     }
   }
-  return <><div className="react-inline-form react-category-form"><label>预计发版</label><input type="date" value={planRelease} onChange={(e) => { setPlanRelease(e.target.value); setFeedback(null) }} /><button onClick={() => submit(planRelease)} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button>{current ? <button type="button" onClick={() => { setPlanRelease(""); setFeedback(null); submit("") }}>清除</button> : null}</div>{feedback ? <p className="react-save-hint">{feedback}</p> : null}</>
+  const clearRelease = async () => {
+    if (saving) return
+    setSaving(true)
+    setFeedback(null)
+    try {
+      await postForm("/api/requirement/update", { reqId: req.id, planRelease: "unknown" })
+      onSaved()
+      onClose()
+    } catch (err) {
+      setFeedback(`清除失败：${err instanceof Error ? err.message : String(err)}`)
+      setSaving(false)
+    }
+  }
+  const meta = FIELD_META[field]
+  return <div className="react-modal-backdrop" onClick={onClose}><div className="react-modal" onClick={(e) => e.stopPropagation()}><div className="react-modal-head"><div><span>{meta.kicker}</span><h3>{meta.title}</h3></div><button type="button" className="react-modal-close" onClick={onClose} title="关闭">✕</button></div><div className="react-modal-form"><p className="react-muted"><code>{req.id}</code> {req.title}</p>{field === "planRelease" ? <div className="react-inline-form"><input type="date" autoFocus value={value} onChange={(e) => { setValue(e.target.value); setFeedback(null) }} /></div> : <div className="react-inline-form"><select autoFocus value={value} onChange={(e) => { setValue(e.target.value); setFeedback(null) }}>{field === "category" ? REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>) : REQ_SOURCES.map((src) => <option key={src} value={src}>{src}</option>)}</select></div>}{field === "source" ? <p className="react-muted">开发推动：进入测试中前必须先完成测试场景文档（test-scenario.md）。</p> : null}<div className="react-inline-form"><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button>{field === "planRelease" ? <button type="button" onClick={clearRelease} disabled={saving || !initial}>清除预计发版</button> : null}</div>{feedback ? <p className={feedback.startsWith("保存失败") || feedback.startsWith("清除失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</div></div></div>
 }
