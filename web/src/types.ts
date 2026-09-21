@@ -325,6 +325,7 @@ export interface StatusGateDetail {
   } | null
   actions?: string[]
   problems?: string[]
+  hotfix?: boolean
   applicable?: boolean
   filled?: boolean
   rootCauseFilled?: boolean

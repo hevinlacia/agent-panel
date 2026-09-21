@@ -3079,3 +3079,21 @@ async fn review_gate_requires_completed_checklist() {
     assert_eq!(decision.status, "checklist-error");
     assert!(!decision.allows_testing);
 }
+
+#[tokio::test]
+async fn selftest_gate_waived_for_hotfix_requirements() {
+    // 抢修模式（issues 非空）：test.md 缺失也放行
+    let mut hotfix = default_requirement(Vec::new());
+    hotfix.id = "T-902".to_string();
+    hotfix.req_dir = Some("/nonexistent-t-902".to_string());
+    hotfix.issues = vec!["WMS-999-hotfix-source".to_string()];
+    assert!(hotfix.is_hotfix());
+    assert!(selftest_checklist_problems(&hotfix).await.is_empty());
+
+    // 普通需求：test.md 缺失 → 仍拦截
+    let mut normal = default_requirement(Vec::new());
+    normal.id = "T-903".to_string();
+    normal.req_dir = Some("/nonexistent-t-903".to_string());
+    assert!(!normal.is_hotfix());
+    assert!(selftest_checklist_problems(&normal).await.is_empty() == false);
+}

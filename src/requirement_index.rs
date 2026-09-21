@@ -73,6 +73,13 @@ pub(crate) struct Requirement {
     pub(crate) sub_reqs: Vec<SubReqRef>,
 }
 
+impl Requirement {
+    /// 抢修模式：关联了线上问题的需求（抢修场景速度优先）。
+    /// 默认不要求写单测、自测门禁默认放行；用户明确要求时仍按常规执行。
+    pub(crate) fn is_hotfix(&self) -> bool {
+        !self.issues.is_empty()
+    }
+}
 /// 引用式需求组成员引用。磁盘格式（group.json）只要求 `reqId`（可选 `note`）；
 /// `title`/`status`/`found`/`nested` 由扫描时回填，仅存在于内存和 API 输出。
 #[derive(Debug, Serialize, Deserialize, Clone)]

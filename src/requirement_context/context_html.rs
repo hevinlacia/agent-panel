@@ -475,6 +475,11 @@ pub(crate) async fn build_requirement_agent_context(
         "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
         "Read full docs only when this compressed context is insufficient.",
     ];
+    if req.is_hotfix() {
+        rules.push(
+            "抢修模式（已关联线上问题）：默认不要求写单测/补单测，速度优先——仅当用户明确要求时才写单测；自测门禁默认放行，test.md 自测清单可按需简化；回归以关联线上问题的复现路径与修复验证为准。",
+        );
+    }
     if req.category.as_deref() == Some("线上问题") {
         rules.push(
             "线上问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。允许维护 branches.json（req-branches-update 登记）并在需求分支写复现/验证代码，但只能合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被合并接口拦截；不生成生产 MR。",

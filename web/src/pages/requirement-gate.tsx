@@ -46,6 +46,7 @@ function SelftestGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPa
   const problems = detail.problems || []
   return <section className="react-panel"><PanelHead kicker="Selftest Checklist" title="自测清单校验详情" />
     <p className="react-muted">校验目标：test.md「## 自测清单」表格——列出测试项目且每项有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因。</p>
+    {detail.hotfix ? <p className="react-save-hint">抢修模式（已关联线上问题）：自测门禁默认放行，速度优先；用户明确要求自测时再补 test.md 自测清单。</p> : null}
     {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ 自测清单校验通过：每项都有测试结果，未通过项均附具体原因。</p>}
     <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`| # | 自测项 | 结果 | 失败/无法测试原因 |
 | --- | --- | --- | --- |
