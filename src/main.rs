@@ -5,7 +5,7 @@ use axum::{
     extract::{Query, State},
     http::{StatusCode, Uri},
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -79,6 +79,8 @@ const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
 const CODE_REVIEW_PATCH_FILE: &str = "code-review-diff.patch";
 const CODE_REVIEW_INCREMENTAL_PATCH_FILE: &str = "code-review-incremental-diff.patch";
 const CODE_ANNOTATIONS_FILE: &str = "code-annotations.json";
+/// 审查清单（机器可判定的逐项结论）：审查门禁 PASS 路径的硬校验数据源。
+const REVIEW_CHECKLIST_FILE: &str = "review-checklist.json";
 const CODE_DIFF_SNAPSHOTS_FILE: &str = "code-diff-snapshots.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
 const EXPERIENCE_SUMMARY_JOB_FILE: &str = "experience-summary-job.json";
@@ -303,6 +305,10 @@ async fn main() -> Result<()> {
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route("/api/requirement/status-flow", get(api_requirement_status_flow))
+        .route(
+            "/api/requirement/review-checklist",
+            get(api_requirement_review_checklist_get).put(api_requirement_review_checklist_put),
+        )
         .route("/api/requirement/status-gate-detail", get(api_requirement_status_gate_detail))
         .route("/api/requirement/category", post(api_requirement_category))
         .route(

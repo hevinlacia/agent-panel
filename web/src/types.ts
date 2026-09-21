@@ -314,6 +314,15 @@ export interface StatusGateDetail {
   inventoryRisk?: boolean
   staleRepos?: ReviewGateStaleRepo[]
   incrementalReview?: CodeReviewSnapshot | null
+  checklist?: {
+    present?: boolean
+    total?: number
+    concluded?: number
+    failed?: number
+    error?: string
+    failedItems?: { id?: string; title?: string }[]
+    items?: { id?: string; title?: string; conclusion?: string; note?: string; evidence?: string }[]
+  } | null
   actions?: string[]
   problems?: string[]
   applicable?: boolean

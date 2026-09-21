@@ -29,6 +29,12 @@ function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayl
       <p className="react-muted">门禁判定：{detail.reason || "-"}</p>
       {detail.riskTags?.length ? <div className="react-review-risk-tags"><strong>风险标签</strong>{detail.riskTags.map((tag) => <span key={tag} className="react-review-tag">{tag}</span>)}</div> : null}
       {detail.inventoryRisk ? <div className="react-review-gate react-review-gate-blocked"><strong>⚠ 库存高危风险</strong><span>本次改动命中库存相关文件/表，门禁强制要求库存账本专项评估：单据活跃/死亡、DB 库存(onHand/allocated/临时库位/回库单)、redis 可用量(建单-、真取消+、恢复-、回退保持占用)、重复释放、遗漏占用、幂等、验证证据(DB/redis/日志/单测)。未补充前即使 PASS 也不通过。</span></div> : null}
+      {detail.checklist ? (() => {
+        const c = detail.checklist
+        if (!c.present) return <div className="react-drive-blockers"><strong>审查清单缺失</strong><p>{c.error || "review-checklist.json 不存在：门禁要求审查清单列出的每一项都有结论（pass/fail/na）才放行。用 PUT /api/requirement/review-checklist 写入清单。"}</p></div>
+        const mark = (v?: string) => v === "pass" ? "✅ pass" : v === "fail" ? "❌ fail" : "➖ na"
+        return <div className="react-drive-blockers"><strong>审查清单（{c.total} 项{c.failed ? `，${c.failed} 项 fail` : "，全部有结论"}）</strong><ul>{(c.items || []).map((item) => <li key={item.id}><code>{item.id}</code> {item.title} —— <strong>{mark(item.conclusion)}</strong>{item.note ? <span className="react-muted">（{item.note}）</span> : null}{item.evidence ? <span className="react-muted"> 证据：{item.evidence}</span> : null}</li>)}</ul></div>
+      })() : null}
       {staleRepos.length ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong><ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul><p>优先生成增量审查包，只审上次已审 commit 到当前 HEAD 的新增 diff；非线性历史再回退全量审查。</p></div> : null}
       {detail.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{detail.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
       <p className="react-muted">生成/刷新差异与审查材料请到需求详情页「代码差异」卡片操作。</p>

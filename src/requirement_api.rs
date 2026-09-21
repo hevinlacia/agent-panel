@@ -1516,6 +1516,179 @@ pub(crate) async fn api_requirement_annotations_put(
     Ok(Json(json!({ "ok": true, "annotations": annotations })))
 }
 
+/// 审查清单结论枚举；逐项结论齐备（无 fail）是审查门禁放行的硬条件之一。
+const REVIEW_CHECKLIST_CONCLUSIONS: [&str; 3] = ["pass", "fail", "na"];
+
+fn review_checklist_schema_hint() -> String {
+    "期望格式：{\"reqId\":\"<需求ID>\",\"items\":[{\"id\":\"C1\",\"title\":\"检查项标题\",\"conclusion\":\"pass|fail|na\",\"note\":\"选填说明\",\"evidence\":\"选填证据\"}]}；items 必须是非空数组，conclusion 只允许 pass / fail / na（不区分大小写）".to_string()
+}
+
+/// 校验审查清单 items：结构/枚举不合法时返回带 schema 提示的 400，让 agent 当场知道怎么改。
+fn validate_review_checklist_items(items: &Value) -> Result<Vec<Value>, ApiError> {
+    let Some(list) = items.as_array() else {
+        return Err(ApiError::bad_request(format!(
+            "items 必须是非空数组。{}",
+            review_checklist_schema_hint()
+        )));
+    };
+    if list.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "items 不能为空：审查清单至少要列出一项检查项。{}",
+            review_checklist_schema_hint()
+        )));
+    }
+    let mut out = Vec::new();
+    for (index, entry) in list.iter().enumerate() {
+        let no = index + 1;
+        let Some(obj) = entry.as_object() else {
+            return Err(ApiError::bad_request(format!(
+                "items[{no}] 必须是对象。{}",
+                review_checklist_schema_hint()
+            )));
+        };
+        let title = obj
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if title.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "items[{no}].title 不能为空：每一项写清楚检查了什么（例：幂等与并发安全）。{}",
+                review_checklist_schema_hint()
+            )));
+        }
+        let raw_conclusion = obj
+            .get("conclusion")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        let conclusion = raw_conclusion.to_lowercase();
+        if !REVIEW_CHECKLIST_CONCLUSIONS.contains(&conclusion.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "items[{no}].conclusion = \"{raw_conclusion}\" 不合法：只允许 pass / fail / na（不区分大小写）。{}",
+                review_checklist_schema_hint()
+            )));
+        }
+        for key in ["note", "evidence"] {
+            if let Some(v) = obj.get(key) {
+                if !v.is_null() && v.as_str().is_none() {
+                    return Err(ApiError::bad_request(format!(
+                        "items[{no}].{key} 必须是字符串或省略。{}",
+                        review_checklist_schema_hint()
+                    )));
+                }
+            }
+        }
+        let id = obj
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("C{no}"));
+        out.push(json!({
+            "id": id,
+            "title": title,
+            "conclusion": conclusion,
+            "note": obj.get("note").and_then(Value::as_str).unwrap_or_default(),
+            "evidence": obj.get("evidence").and_then(Value::as_str).unwrap_or_default(),
+        }));
+    }
+    Ok(out)
+}
+
+/// 把清单渲染成 review.md 的受管小节（人类可读视图；机器判定读 review-checklist.json）。
+fn render_review_checklist_block(items: &[Value]) -> String {
+    let mut rows = String::new();
+    for item in items {
+        let mark = match item["conclusion"].as_str() {
+            Some("pass") => "✅",
+            Some("fail") => "❌",
+            _ => "➖",
+        };
+        let cell = |key: &str| item[key].as_str().unwrap_or_default().replace('|', "\\|");
+        rows.push_str(&format!(
+            "| {} | {} | {} {} | {} | {} |\n",
+            item["id"].as_str().unwrap_or_default(),
+            cell("title"),
+            mark,
+            item["conclusion"].as_str().unwrap_or_default(),
+            cell("note"),
+            cell("evidence"),
+        ));
+    }
+    format!(
+        "<!-- panel:review-checklist:start -->\n## 审查清单\n\n| # | 检查项 | 结论 | 说明 | 证据 |\n| --- | --- | --- | --- | --- |\n{rows}<!-- panel:review-checklist:end -->"
+    )
+}
+
+/// review.md 中插入或替换受管清单块；review.md 不存在时创建最小骨架。
+async fn upsert_review_checklist_md(req_id: &str, req_dir: &Path, block: &str) -> Result<()> {
+    let path = req_dir.join("review.md");
+    let existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+    let updated = if existing.trim().is_empty() {
+        format!("# {req_id} 代码审查门禁\n\nReview Gate: 待审查结论\n\n{block}\n")
+    } else if let Some(start) = existing.find("<!-- panel:review-checklist:start -->") {
+        let end = existing
+            .find("<!-- panel:review-checklist:end -->")
+            .map(|i| i + "<!-- panel:review-checklist:end -->".len())
+            .unwrap_or(existing.len());
+        format!("{}{}{}", &existing[..start], block, &existing[end..])
+    } else {
+        format!("{}\n\n{block}\n", existing.trim_end())
+    };
+    atomic_write_text(&path, &updated).await
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewChecklistSaveForm {
+    pub(crate) req_id: String,
+    #[serde(default)]
+    pub(crate) items: Option<Value>,
+}
+
+/// 读取需求的审查清单（不存在时 checklist 为 null）。
+pub(crate) async fn api_requirement_review_checklist_get(
+    State(state): State<AppState>,
+    Query(q): Query<GateDetailQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = q
+        .id
+        .or(q.req_id)
+        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let req = get_real_requirement(&state, &id).await?;
+    let checklist = read_json_if_exists(
+        &PathBuf::from(req.req_dir.unwrap_or_default()).join(REVIEW_CHECKLIST_FILE),
+    )
+    .await;
+    Ok(Json(json!({ "ok": true, "reqId": req.id, "checklist": checklist })))
+}
+
+/// 保存审查清单：严格校验后写 review-checklist.json，并同步渲染 review.md 受管小节。
+pub(crate) async fn api_requirement_review_checklist_put(
+    State(state): State<AppState>,
+    form: FormOrJson<ReviewChecklistSaveForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
+        ApiError::bad_request("requirement has no directory; cannot save review checklist".to_string())
+    })?);
+    ensure_requirement_dir_writable(&state, &req_dir).await?;
+    let items = validate_review_checklist_items(&body.items.unwrap_or(Value::Null))?;
+    let block = render_review_checklist_block(&items);
+    let doc = json!({
+        "version": 1,
+        "reqId": req.id,
+        "updatedAt": now_ms(),
+        "items": items,
+    });
+    atomic_write_json(&req_dir.join(REVIEW_CHECKLIST_FILE), &doc).await?;
+    upsert_review_checklist_md(&req.id, &req_dir, &block).await?;
+    Ok(Json(json!({ "ok": true, "checklist": doc })))
+}
+
 pub(crate) async fn api_requirement_sync_base(
     State(state): State<AppState>,
     form: FormOrJson<SyncBaseForm>,

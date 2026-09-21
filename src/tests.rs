@@ -2930,3 +2930,152 @@ async fn diff_patch_export_writes_multiline_companion() {
         "空快照应清掉旧 patch 文件"
     );
 }
+
+#[tokio::test]
+async fn review_checklist_put_validates_and_renders_review_md() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-900");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-900\ntitle: 审查清单测试\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+
+    // 1) conclusion 非法 → 400 且错误信息教格式
+    let bad = api_requirement_review_checklist_put(
+        State(state.clone()),
+        FormOrJson(ReviewChecklistSaveForm {
+            req_id: "T-900".into(),
+            items: Some(json!([{ "id": "C1", "title": "幂等", "conclusion": "todo" }])),
+        }),
+    )
+    .await;
+    let err = bad.expect_err("invalid conclusion must be rejected");
+    assert!(err.message.contains("只允许 pass / fail / na"), "{}", err.message);
+    assert!(err.message.contains("items"), "错误信息应包含 schema 提示");
+
+    // 2) 合法保存 → 写 review-checklist.json + review.md 受管小节
+    let ok = api_requirement_review_checklist_put(
+        State(state.clone()),
+        FormOrJson(ReviewChecklistSaveForm {
+            req_id: "T-900".into(),
+            items: Some(json!([
+                { "id": "C1", "title": "幂等与并发安全", "conclusion": "PASS", "note": "锁内复查" },
+                { "id": "C2", "title": "部署顺序", "conclusion": "na" }
+            ])),
+        }),
+    )
+    .await
+    .expect("valid save");
+    assert_eq!(ok.0["ok"], json!(true));
+    let saved = std::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).expect("checklist file");
+    assert!(saved.contains("\"conclusion\": \"pass\""), "conclusion 归一化为小写: {saved}");
+    let review_md = std::fs::read_to_string(req_dir.join("review.md")).expect("review.md");
+    assert!(review_md.contains("<!-- panel:review-checklist:start -->"));
+    assert!(review_md.contains("✅ pass"));
+    assert!(review_md.contains("➖ na"));
+
+    // 3) 重复保存 → 受管块替换而非叠加
+    let _ = api_requirement_review_checklist_put(
+        State(state.clone()),
+        FormOrJson(ReviewChecklistSaveForm {
+            req_id: "T-900".into(),
+            items: Some(json!([{ "title": "新要点", "conclusion": "fail", "note": "发现问题" }])),
+        }),
+    )
+    .await
+    .expect("resave");
+    let review_md = std::fs::read_to_string(req_dir.join("review.md")).expect("review.md v2");
+    assert_eq!(
+        review_md.matches("<!-- panel:review-checklist:start -->").count(),
+        1,
+        "受管块只保留一份"
+    );
+    assert!(review_md.contains("❌ fail"));
+    // 缺 id 自动编号 C1
+    let saved = std::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).expect("checklist v2");
+    assert!(saved.contains("\"id\": \"C1\""));
+}
+
+#[tokio::test]
+async fn review_gate_requires_completed_checklist() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-901");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-901\ntitle: 门禁清单校验\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-901 审查\n\nReview Gate: PASS\n",
+    )
+    .expect("write review.md");
+    let mut req = default_requirement(Vec::new());
+    req.id = "T-901".to_string();
+    req.title = "门禁清单校验".to_string();
+    req.status = "自测中".to_string();
+    req.req_dir = Some(req_dir.to_string_lossy().to_string());
+
+    // 1) 无清单 → checklist-missing（即使写了 PASS 也不放行）
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "checklist-missing");
+    assert!(!decision.allows_testing);
+
+    // 2) 清单有 fail 项 → blocked
+    std::fs::write(
+        req_dir.join(REVIEW_CHECKLIST_FILE),
+        json!({
+            "version": 1, "reqId": "T-901",
+            "items": [
+                { "id": "C1", "title": "幂等", "conclusion": "pass" },
+                { "id": "C2", "title": "部署顺序", "conclusion": "fail" }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write checklist");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "blocked", "{}", decision.reason);
+    assert!(decision.reason.contains("C2"), "{}", decision.reason);
+
+    // 3) 全部 pass/na + PASS 标记 → passed
+    std::fs::write(
+        req_dir.join(REVIEW_CHECKLIST_FILE),
+        json!({
+            "version": 1, "reqId": "T-901",
+            "items": [
+                { "id": "C1", "title": "幂等", "conclusion": "pass" },
+                { "id": "C2", "title": "部署顺序", "conclusion": "na", "note": "单仓" }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write checklist v2");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "passed", "{}", decision.reason);
+    assert!(decision.allows_testing);
+
+    // 4) 清单 JSON 损坏 → checklist-error
+    std::fs::write(req_dir.join(REVIEW_CHECKLIST_FILE), "{oops").expect("corrupt");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "checklist-error");
+    assert!(!decision.allows_testing);
+}

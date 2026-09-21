@@ -342,6 +342,9 @@ pub(crate) async fn prepare_review_materials(
     handoff_hints.push(
         "reviewer 无写权限：annotations 内容先随审查结论一起输出，由主 agent 复核后调 `PUT /api/requirement/annotations` 落盘（全量覆盖旧版）；写入时机与审查快照同批，说明锚定当前审查 diff，避免说明栏与代码漂移".to_string(),
     );
+    handoff_hints.push(
+        "审查必须产出结构化清单 review-checklist.json：把本次审查要点逐项列成清单（每仓库关键风险、幂等/并发、库存、配置、部署顺序等），reviewer 随结论输出、主 agent 复核后调 `PUT /api/requirement/review-checklist` 落盘，每项 conclusion ∈ pass/fail/na；门禁要求全部项有结论且无 fail 项 + `Review Gate: PASS` 才放行，缺清单或缺结论会被拦截".to_string(),
+    );
     for repo in &repos_summary {
         if repo
             .get("diffTruncated")
