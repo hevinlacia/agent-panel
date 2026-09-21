@@ -65,6 +65,12 @@ pub(crate) struct Requirement {
     pub(crate) group_status: Option<String>,
     /// 组瓶颈成员（聚合状态来源，最慢成员 req id）。
     pub(crate) group_bottleneck: Option<String>,
+    /// 子需求：meta.md frontmatter `parent-req-id`；None = 不是子需求。
+    pub(crate) parent_req_id: Option<String>,
+    /// 派生字段：是否子需求（parent_req_id 非空）。
+    pub(crate) is_sub_req: bool,
+    /// 本需求作为父需求时拆出的子需求列表（扫描回填，按 reqId 查找子需求回填）。
+    pub(crate) sub_reqs: Vec<SubReqRef>,
 }
 
 /// 引用式需求组成员引用。磁盘格式（group.json）只要求 `reqId`（可选 `note`）；
@@ -109,6 +115,36 @@ pub(crate) struct GroupFile {
 
 fn group_file_version() -> u8 {
     1
+}
+
+/// 子需求引用（父需求视角）。子需求自身是完整需求记录（meta.md 写 parent-req-id，
+/// 目录平铺在 req 根下）；title/status/found 由扫描回填，仅存在于内存和 API 输出。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubReqRef {
+    pub(crate) req_id: String,
+    /// 扫描回填：子需求标题。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
+    /// 扫描回填：子需求当前状态（子需求轻量状态机）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) status: Option<String>,
+    /// 扫描回填：子需求是否在索引中找到。
+    #[serde(default)]
+    pub(crate) found: bool,
+    /// 扫描回填：子需求是否已合入主需求（status=已合入）。
+    #[serde(default)]
+    pub(crate) merged: bool,
+    /// 扫描回填：子需求是否已取消。
+    #[serde(default)]
+    pub(crate) cancelled: bool,
+}
+
+/// 从子需求 req id 提取序号：`WMS-049-S1-xxx` -> 1，`WMS-049-S2` -> 2。
+pub(crate) fn sub_req_seq(req_id: &str) -> Option<u64> {
+    let re = Regex::new(r"-S(\d+)(-|$)").ok()?;
+    let caps = re.captures(req_id)?;
+    caps[1].parse::<u64>().ok()
 }
 
 pub(crate) const GROUP_RELEASE_POLICIES: &[&str] = &["together", "independent"];
@@ -532,6 +568,12 @@ pub(crate) async fn load_requirement_from_dir(
         .get("plan-release")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let parent_req_id = fm
+        .fields
+        .get("parent-req-id")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let is_sub_req = parent_req_id.is_some();
     let mut explicit_projects = Vec::new();
     explicit_projects.extend(split_list(fm.fields.get("project")));
     explicit_projects.extend(split_list(fm.fields.get("projects")));
@@ -632,6 +674,9 @@ pub(crate) async fn load_requirement_from_dir(
         member_of: Vec::new(),
         group_status: None,
         group_bottleneck: None,
+        parent_req_id,
+        is_sub_req,
+        sub_reqs: Vec::new(),
     }))
 }
 
@@ -668,6 +713,7 @@ pub(crate) async fn list_requirements(state: &AppState) -> Result<Vec<Requiremen
         }
     }
     resolve_group_links(&mut reqs);
+    resolve_sub_req_links(&mut reqs);
     let store = load_associations(state).await?;
     for req in &mut reqs {
         req.session_ids = store.associations.get(&req.id).cloned().unwrap_or_default();
@@ -759,6 +805,48 @@ pub(crate) fn resolve_group_links(reqs: &mut [Requirement]) {
     }
 }
 
+/// 解析子需求反向索引：父需求的 `sub_reqs` 回填所有 `parent-req-id` 指向它的子需求。
+///
+/// - 子需求是完整需求记录（meta.md 写 parent-req-id，目录平铺），无需父侧清单文件；
+/// - 按 reqId 全局查找子需求，回填 title/status/found/merged/cancelled；
+/// - 找不到父需求的子需求保留自身 parent_req_id 字段不变（validate 不强校验父存在性）。
+pub(crate) fn resolve_sub_req_links(reqs: &mut [Requirement]) {
+    let snapshot: HashMap<String, (String, String)> = reqs
+        .iter()
+        .map(|r| (r.id.clone(), (r.title.clone(), r.status.clone())))
+        .collect();
+    let mut sub_reqs_by_parent: HashMap<String, Vec<SubReqRef>> = HashMap::new();
+    for req in reqs.iter() {
+        let Some(parent_id) = req.parent_req_id.clone() else {
+            continue;
+        };
+        let mut sub = SubReqRef {
+            req_id: req.id.clone(),
+            title: None,
+            status: None,
+            found: false,
+            merged: false,
+            cancelled: false,
+        };
+        if let Some((title, status)) = snapshot.get(&req.id) {
+            sub.found = true;
+            sub.title = Some(title.clone());
+            sub.status = Some(status.clone());
+            sub.merged = status == "已合入";
+            sub.cancelled = status == "已取消";
+        }
+        sub_reqs_by_parent.entry(parent_id).or_default().push(sub);
+    }
+    for req in reqs.iter_mut() {
+        if let Some(subs) = sub_reqs_by_parent.remove(&req.id) {
+            // 按子需求序号排序（-S1、-S2…），找不到序号的排最后。
+            let mut subs = subs;
+            subs.sort_by_key(|s| sub_req_seq(&s.req_id).unwrap_or(u64::MAX));
+            req.sub_reqs = subs;
+        }
+    }
+}
+
 pub(crate) async fn get_requirement(state: &AppState, id: &str) -> Result<Option<Requirement>> {
     if id == DEFAULT_REQ_ID {
         let store = load_associations(state).await?;
@@ -828,6 +916,9 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         member_of: Vec::new(),
         group_status: None,
         group_bottleneck: None,
+        parent_req_id: None,
+        is_sub_req: false,
+        sub_reqs: Vec::new(),
     }
 }
 

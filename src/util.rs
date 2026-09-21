@@ -148,7 +148,7 @@ pub(crate) fn normalize_status_value(value: &str) -> Option<String> {
     if let Some((_, canonical)) = REQ_STATUS_ALIASES.iter().find(|(alias, _)| *alias == raw) {
         return Some((*canonical).to_string());
     }
-    if REQ_STATUSES.contains(&raw) {
+    if REQ_STATUSES.contains(&raw) || SUB_REQ_STATUSES.contains(&raw) {
         Some(raw.to_string())
     } else {
         None

@@ -33,3 +33,13 @@ export function readSidebarCollapsed(): boolean {
 export function persistSidebarCollapsed(collapsed: boolean) {
   try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0") } catch { /* ignore */ }
 }
+
+export const PROJECT_SHOW_SUB_REQS_KEY = "agent-panel.projects.showSubReqs"
+
+export function readShowSubReqs(): boolean {
+  try { return localStorage.getItem(PROJECT_SHOW_SUB_REQS_KEY) === "1" } catch { return false }
+}
+
+export function persistShowSubReqs(show: boolean) {
+  try { localStorage.setItem(PROJECT_SHOW_SUB_REQS_KEY, show ? "1" : "0") } catch { /* ignore */ }
+}

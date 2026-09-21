@@ -17,6 +17,7 @@ pub(crate) fn requirement_create_files(
     summary: &str,
     background: Option<&str>,
     notes: Option<&str>,
+    parent_req_id: Option<&str>,
 ) -> Vec<(&'static str, String)> {
     let meta = build_meta_doc(
         req_id,
@@ -32,6 +33,7 @@ pub(crate) fn requirement_create_files(
         ones,
         issues,
         summary,
+        parent_req_id,
     );
     let mut files: Vec<(&'static str, String)> = vec![
         ("meta.md", meta),
@@ -74,6 +76,7 @@ pub(crate) fn build_meta_doc(
     ones: &str,
     issues: &[String],
     summary: &str,
+    parent_req_id: Option<&str>,
 ) -> String {
     let mut fm = vec![
         format!("req-id: {}", yaml_quote(req_id)),
@@ -81,6 +84,10 @@ pub(crate) fn build_meta_doc(
         format!("status: {}", yaml_quote(status)),
         format!("project: {}", yaml_quote(project)),
     ];
+    if let Some(parent) = parent_req_id {
+        // 子需求：frontmatter 记录父需求（meta.md 是父子关系的 source of truth）。
+        fm.push(format!("parent-req-id: {}", yaml_quote(parent)));
+    }
     if projects.len() > 1 {
         fm.push(format!("projects: {}", yaml_quote(&projects.join(", "))));
     }
@@ -95,8 +102,11 @@ pub(crate) fn build_meta_doc(
     if !issues.is_empty() {
         fm.push(format!("issues: {}", yaml_quote(&issues.join(", "))));
     }
+    let parent_line = parent_req_id
+        .map(|p| format!("\n- Parent requirement: {}", p))
+        .unwrap_or_default();
     format!(
-        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
+        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}{}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
         fm.join("\n"),
         req_id,
         title,
@@ -106,7 +116,18 @@ pub(crate) fn build_meta_doc(
         start_date,
         plan_release,
         projects.join(" / "),
+        parent_line,
         summary.trim()
+    )
+}
+
+/// 子需求复制父需求文档时预置的快照标注：明确内容是创建时点的快照，之后独立维护。
+pub(crate) fn snapshot_note(parent_req_id: &str, doc_file: &str) -> String {
+    format!(
+        "> 快照自父需求 `{}` 的 {} @ {}；子需求创建后本文档独立维护，父需求后续修改不会自动同步。\n\n",
+        parent_req_id,
+        doc_file,
+        today_ymd()
     )
 }
 

@@ -16,8 +16,15 @@ use uuid::Uuid;
 
 use crate::*;
 
-pub(crate) async fn api_requirements(State(state): State<AppState>) -> ApiResult<Json<Value>> {
-    let requirements = list_requirements(&state).await?;
+pub(crate) async fn api_requirements(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let mut requirements = list_requirements(&state).await?;
+    // 默认不展示子需求：列表是需求池，子需求从父需求详情页进入；调试/全量场景传 includeSubs=true。
+    if !query.include_subs.unwrap_or(false) {
+        requirements.retain(|r| !r.is_sub_req);
+    }
     Ok(Json(json!({ "requirements": requirements })))
 }
 
@@ -35,6 +42,14 @@ pub(crate) async fn api_requirements_post(
     form: FormOrJson<RequirementCreateForm>,
 ) -> ApiResult<Json<Value>> {
     let created = create_requirement(&state, form.0).await?;
+    Ok(Json(created))
+}
+
+pub(crate) async fn api_requirement_create_sub(
+    State(state): State<AppState>,
+    form: FormOrJson<SubRequirementCreateForm>,
+) -> ApiResult<Json<Value>> {
+    let created = create_sub_requirement(&state, form.0).await?;
     Ok(Json(created))
 }
 
@@ -176,6 +191,12 @@ pub(crate) async fn api_requirement_context(
         if let Some(group) = group_context_value(&req) {
             value["group"] = group;
         }
+        if let Some(sub_ctx) = sub_req_context_value(&req) {
+            value["subRequirements"] = sub_ctx;
+        }
+        if let Some(parent_ctx) = parent_context_value(&state, &req).await {
+            value["parentRequirement"] = parent_ctx;
+        }
         return Ok(Json(value).into_response());
     }
     let tokens = query
@@ -187,6 +208,12 @@ pub(crate) async fn api_requirement_context(
     let mut value = build_requirement_context(&req, &intent, tokens, budget).await?;
     if let Some(group) = group_context_value(&req) {
         value["group"] = group;
+    }
+    if let Some(sub_ctx) = sub_req_context_value(&req) {
+        value["subRequirements"] = sub_ctx;
+    }
+    if let Some(parent_ctx) = parent_context_value(&state, &req).await {
+        value["parentRequirement"] = parent_ctx;
     }
     // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
     // Programmatic callers (agents, curl) keep receiving JSON.
@@ -216,6 +243,43 @@ fn group_context_value(req: &Requirement) -> Option<Value> {
         "bottleneck": req.group_bottleneck,
         "members": members,
         "hint": "组状态为派生值（min 成员需求流状态），不能手动设置；推进组进度 = 推进瓶颈成员；session 绑定组时自动绑定所有成员，解绑同理。",
+    }))
+}
+
+/// 父需求的子需求上下文块：子需求状态一览与并行进度。无子需求返回 None。
+fn sub_req_context_value(req: &Requirement) -> Option<Value> {
+    if req.sub_reqs.is_empty() {
+        return None;
+    }
+    let total = req.sub_reqs.len();
+    let merged = req.sub_reqs.iter().filter(|s| s.merged).count();
+    let cancelled = req.sub_reqs.iter().filter(|s| s.cancelled).count();
+    let active = total - merged - cancelled;
+    Some(json!({
+        "isParent": true,
+        "subReqs": req.sub_reqs,
+        "progress": { "total": total, "merged": merged, "active": active, "cancelled": cancelled },
+        "hint": "子需求是并行执行单元：各自分支以父分支为 base，合回父分支后由父需求统一集成（Review Gate/环境集成/发布都在父需求走）。拆分 POST /api/requirement/create-sub；分支初始化 POST /api/requirement/sub/init-branches。",
+    }))
+}
+
+/// 子需求的父需求上下文块：父需求状态、兄弟子需求进度。非子需求返回 None。
+async fn parent_context_value(state: &AppState, req: &Requirement) -> Option<Value> {
+    let parent_id = req.parent_req_id.as_deref()?;
+    let parent = get_real_requirement(state, parent_id).await.ok()?;
+    // 父需求的 sub_reqs 已含全部兄弟（含自身）：过滤自身后就是兄弟列表。
+    let siblings: Vec<Value> = parent
+        .sub_reqs
+        .iter()
+        .filter(|s| s.req_id != req.id)
+        .map(|s| json!({ "reqId": s.req_id, "title": s.title, "status": s.status, "merged": s.merged, "cancelled": s.cancelled }))
+        .collect();
+    Some(json!({
+        "parentReqId": parent.id,
+        "parentTitle": parent.title,
+        "parentStatus": parent.status,
+        "siblings": siblings,
+        "hint": "子需求上下文与父需求联动：兄弟子需求合入父分支后，先同步父分支（POST /api/requirement/sub/sync-parent）拉齐成果再继续开发；完成开发后 POST /api/requirement/sub/merge-to-parent（confirm=true）合回父分支。",
     }))
 }
 
@@ -637,7 +701,10 @@ pub(crate) async fn api_requirement_status_flow(
         .as_deref()
         .map(is_issue_category)
         .unwrap_or(false);
-    let statuses: Vec<String> = (if is_issue {
+    let statuses: Vec<String> = (if req.is_sub_req {
+        // 子需求独立轻量状态机：无门禁，transitions 里的 gates 自然为空。
+        SUB_REQ_STATUSES.to_vec()
+    } else if is_issue {
         ISSUE_STATUSES.to_vec()
     } else {
         REQ_FLOW_STATUSES.to_vec()
@@ -751,6 +818,12 @@ pub(crate) async fn api_requirement_status(
     let req = get_real_requirement(&state, &body.req_id).await?;
     // 需求组状态为派生值（min 成员状态），禁止手动设置。
     ensure_group_status_locked(&req).await?;
+    // 子需求走独立轻量状态机；普通需求/issue 禁止使用子需求专属状态。
+    if req.is_sub_req {
+        ensure_sub_req_status_transition(&req, &status)?;
+    } else {
+        ensure_status_allowed_for_non_sub(&status)?;
+    }
     // 状态流转门禁（配置驱动）：agent/API 推进时强校验；via=ui 表示人在 Panel 界面上修改，直接跳过。
     let gate_check = if body.via.as_deref() == Some("ui") {
         GateCheckMode::Skipped

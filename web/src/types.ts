@@ -5,7 +5,7 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已取消"
 export type ReqCategory = "需求" | "线上问题" | "测试问题"
 
 export interface EffortEstimate {
@@ -52,6 +52,40 @@ export interface GroupMemberRef {
   found: boolean
   /** 成员自身也是需求组（不支持嵌套）。 */
   nested?: boolean
+}
+
+/** 子需求引用（父需求视角）；title/status/found 由扫描回填。 */
+export interface SubReqRef {
+  reqId: string
+  title?: string
+  status?: string
+  found: boolean
+  merged?: boolean
+  cancelled?: boolean
+}
+
+/** 子需求分支操作（init-branches / sync-parent / merge-to-parent）的单仓结果。 */
+export interface SubRepoOpResult {
+  repoName: string
+  role?: string
+  sourceBranch?: string
+  targetBranch?: string
+  parentBranch?: string
+  subBranch?: string
+  branchStatus?: string
+  worktreeStatus?: string
+  worktreePath?: string
+  status: string
+  message?: string
+}
+
+/** 子需求分支操作的聚合响应。 */
+export interface SubBranchOpResult {
+  ok: boolean
+  reqId: string
+  parentReqId?: string
+  repos?: SubRepoOpResult[]
+  statusState?: unknown
 }
 
 export interface Requirement {
@@ -106,6 +140,12 @@ export interface Requirement {
   groupStatus?: string
   /** 组瓶颈成员（聚合状态来源，最慢成员 req id）。 */
   groupBottleneck?: string
+  /** 子需求：meta.md frontmatter parent-req-id；存在即子需求。 */
+  parentReqId?: string
+  /** 派生字段：是否子需求。 */
+  isSubReq?: boolean
+  /** 本需求作为父需求时拆出的子需求列表（扫描回填）。 */
+  subReqs?: SubReqRef[]
 }
 
 export interface RequirementAttachment {
