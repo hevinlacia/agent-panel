@@ -492,7 +492,10 @@ button, input, select, textarea { font: inherit; }
 .react-settings-grid input,
 .react-settings-grid select,
 .react-inline-form input,
-.react-inline-form select { width: 100%; border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,0.045); color: var(--react-text); outline: none; }
+.react-inline-form select { border: 1px solid var(--react-border); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,0.045); color: var(--react-text); outline: none; }
+/* 卡片宽度一致是针对卡片本身：内部表单元素按内容自适应，不强制满宽（选择框自适应内容，文本输入限宽内弹性伸展）。 */
+.react-inline-form input { flex: 1 1 220px; width: auto; max-width: 440px; }
+.react-inline-form select { flex: 0 1 auto; width: auto; min-width: 110px; }
 .react-status-options { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 10px; margin-top: 12px; }
 .react-filter-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(148,163,184,.12); }
 .react-filter-section-head span { color: var(--react-cyan); font: 900 .68rem var(--react-mono); letter-spacing: .14em; text-transform: uppercase; flex-shrink: 0; }
@@ -797,6 +800,14 @@ button, input, select, textarea { font: inherit; }
 /* 需求详情页：状态流转与门禁卡片 */
 .react-statusflow-strip { display: flex; align-items: flex-start; overflow-x: auto; padding: 8px 2px 4px; }
 .react-statusflow-node { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--react-border); background: rgba(255,255,255,.03); color: var(--react-muted); font: 700 .78rem var(--react-mono); white-space: nowrap; }
+.react-statusflow-node.is-clickable { cursor: pointer; transition: border-color .15s, background .15s, transform .15s; }
+.react-statusflow-node.is-clickable:hover { border-color: rgba(34,211,238,.55); background: rgba(34,211,238,.1); transform: translateY(-1px); }
+.react-modal-overlay { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgba(2, 6, 23, .6); backdrop-filter: blur(2px); }
+.react-modal-card { width: min(420px, 92vw); border: 1px solid var(--react-border-strong); border-radius: 20px; background: var(--react-panel-strong); padding: 18px 20px; box-shadow: 0 18px 50px rgba(2, 6, 23, .55); }
+.react-modal-card h3 { margin: 0 0 8px; font: 800 .95rem var(--react-mono); color: var(--react-text); }
+.react-modal-card p { margin: 0 0 6px; font: .78rem/1.6 var(--react-mono); color: var(--react-muted); }
+.react-modal-card p strong { color: var(--react-text); }
+.react-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .react-statusflow-node.is-done { color: #5eead4; border-color: rgba(94,234,212,.4); background: rgba(94,234,212,.08); }
 .react-statusflow-node.is-current { color: #fff; border-color: rgba(34,211,238,.65); background: rgba(34,211,238,.16); box-shadow: 0 0 14px rgba(34,211,238,.22); }
 .react-statusflow-node em { font: 800 .6rem var(--react-mono); color: var(--react-cyan); letter-spacing: .1em; font-style: normal; }
