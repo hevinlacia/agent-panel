@@ -1,0 +1,23 @@
+web/src/features/requirements/status-flow-card.tsx
+  86fab4fbd5a45c84 1,3,24,27-57,60,64-70,76-87,90-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0401661f31b2f91f2080f01cd65bf9cf4a7f8d68",
+  "prompts": {
+    "86fab4fbd5a45c84": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c1ae-47cc-7743-908a-88ab3c1d7fc5",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    }
+  }
+}
