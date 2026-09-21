@@ -1,10 +1,10 @@
 import { AlertTriangle, ArrowLeft, Copy, FileCode2, GitBranch, Library, Lightbulb, List, Paperclip, RefreshCw } from "lucide-react"
 import { useMemo, useState } from "react"
-import type { HarnessCurrent, NewSessionPayload, PendingSessionPayload, ReqCategory, ReqStatus, SessionInfo } from "../types"
+import type { HarnessCurrent, NewSessionPayload, PendingSessionPayload, ReqCategory, SessionInfo } from "../types"
 import { postForm, postJson, useFetch } from "../lib/api"
 import { copyRequirementSessionCommand } from "../features/requirements/session-command"
 import { formatDate, relAge } from "../lib/format"
-import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_SOURCES, SUB_REQ_STATUSES } from "../lib/requirements"
+import { REQ_CATEGORIES, REQ_SOURCES } from "../lib/requirements"
 import { effectiveStatus, experienceSummaryPill, groupBadge, onesBadge, projectsOf, statusPill } from "../features/requirements/badges"
 import { CodeReviewPanel } from "../features/requirements/code-review-panel"
 import { MergeBranchPanel, ProdMrPanel } from "../features/requirements/branch-ops-panels"
@@ -34,11 +34,8 @@ export function RequirementPage() {
     const agents = new Map((resolved.data?.sessions ?? []).map((s) => [s.id.replace(/^session-/, ""), s.agent]))
     return req.sessionIds.filter((sid) => agents.get(sid.replace(/^session-/, "")) === "dsh")
   }, [curHarness, req?.sessionIds, resolved.data])
-  const [note, setNote] = useState("")
-  const [status, setStatus] = useState<ReqStatus | "">("")
   const [category, setCategory] = useState<ReqCategory | "">("")
   const [source, setSource] = useState<string>("")
-  const [savingStatus, setSavingStatus] = useState(false)
   const [savingCategory, setSavingCategory] = useState(false)
   const [savingSource, setSavingSource] = useState(false)
   const [summaryWorking, setSummaryWorking] = useState(false)
@@ -60,31 +57,16 @@ export function RequirementPage() {
   const isOnlineIssue = req?.category === "线上问题"
   /** 子需求：独立轻量状态机（需求创建→开发中→已合入/已取消），无门禁。 */
   const isSub = Boolean(req?.isSubReq)
-  const statusOptions = isSub ? SUB_REQ_STATUSES : isIssueFamily ? ISSUE_STATUSES : REQ_FLOW_STATUSES
   const [fixReqId, setFixReqId] = useState<string | null>(null)
   const convertIssue = async () => {
     if (!req || req.category !== "线上问题") return
     try {
-      const res = await postJson<{ ok: boolean; fixReqId?: string }>("/api/requirement/convert-issue", { reqId: req.id, note: note || "线上问题转代码修复需求" })
+      const res = await postJson<{ ok: boolean; fixReqId?: string }>("/api/requirement/convert-issue", { reqId: req.id, note: "线上问题转代码修复需求" })
       setFixReqId(res.fixReqId || null)
       setStatusMessage(res.fixReqId ? `已创建代码修复需求 ${res.fixReqId} 并绑定本问题；需求进入经验总结后自动推进本问题到已修复` : "已转普通需求流程")
       refresh()
     } catch (err) {
       setStatusMessage(`转换失败：${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-  const submitStatus = async () => {
-    if (!req || !status || savingStatus) return
-    setSavingStatus(true)
-    setStatusMessage(null)
-    try {
-      await postForm("/api/requirement/status", { reqId: req.id, status, note, via: "ui" })
-      setStatusMessage("状态已保存")
-      refresh()
-    } catch (err) {
-      setStatusMessage(`状态保存失败：${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setSavingStatus(false)
     }
   }
   const submitCategory = async () => {
@@ -181,7 +163,7 @@ export function RequirementPage() {
       {!isSub ? <GroupMembersPanel req={req} /> : null}
       {!isSub ? <SubRequirementsPanel req={req} onSaved={refresh} /> : null}
       {!isSub ? <OnesPanel req={req} onSaved={refresh} /> : null}
-      <section className="react-panel"><PanelHead kicker="Status" title={isGroup ? "需求组状态（派生）" : isSub ? "子需求状态" : isOnlineIssue ? "线上问题状态" : isIssueFamily ? "测试问题状态" : "状态切换"} /><p className="react-muted">{isGroup ? "引用式需求组的状态为派生值（min 成员需求流状态），不能手动设置；在成员需求详情页推进状态即可同步组进度，瓶颈成员见「需求组成员」面板。成员需求文件、分支、session 和发布互相独立，可按发布策略（releasePolicy）各成员独立发布或整体发布。" : isSub ? "子需求流程：需求创建 → 开发中 → 已合入；开发中/需求创建可直接已取消（终态不可重开，后续增量拆新子需求）。子需求是父需求拆出的并行执行单元：分支以父分支为 base，开发完成后在「子需求分支操作」卡片合回父分支；环境集成（test/UAT）、发布、Review Gate 和经验总结都在父需求做，子需求无状态门禁、不绑 ONES/plan-release/issues。" : isOnlineIssue ? "线上问题专用流程：排查中 → 已定位 → 已修复 → 已复盘。排查/复现需要改代码时，可直接用 req-branches-update 登记 branches.json 并在需求分支开发，合入 test/UAT 环境分支验证；生产分支（后端 master/前端 production）被强制拦截，不生成生产 MR。正式生产修复创建普通需求并在需求「关联线上问题」面板绑定本问题（或直接点「创建修复需求」），需求进入经验总结后系统自动推进关联问题。有价值的问题在「排查经验」面板沉淀 troubleshooting.md（怎么排查 + 怎么修复），进入已复盘前强制校验；无沉淀价值直接已关闭。" : isIssueFamily ? "测试问题流程：排查中 → 已定位 → 已修复 → 已复盘，与线上问题共用轻量状态机，但硬门禁更轻：进入已定位/已复盘不强制 root-cause.md 和排查经验，小问题可直接修复后推进，有复用价值时按需沉淀。排查/复现代码可直接登记分支开发，仅允许合入 test/UAT 环境分支，禁止合入生产分支。测试问题不绑定普通需求；需要常规开发承接时创建 category=需求 的需求跟进。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 发布就绪 → 经验总结 → 已完成，旧状态会自动兼容映射。状态门禁在 Settings 页配置（内置默认：进入「测试中」需代码审查 + 测试场景文档；「自测中 → 测试中」还需 test.md「自测清单」逐项填写结果、失败/无法测试项写明具体原因；线上问题定位/复盘另有硬门禁）。Agent 通过 API 推进状态时强制校验门禁；在面板上人工修改状态直接跳过门禁。"}</p><div className="react-inline-form"><select value={status} onChange={(e) => { setStatus(e.target.value as ReqStatus); setStatusMessage(null) }} disabled={isGroup} title={isGroup ? "需求组状态为派生值（min 成员状态），不能手动设置" : undefined}><option value="">选择状态</option>{statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</select><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="备注" /><button onClick={submitStatus} disabled={!status || savingStatus || isGroup}>{savingStatus ? "保存中…" : "保存状态"}</button>{isOnlineIssue ? <button type="button" onClick={convertIssue}>创建修复需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("状态保存失败") || statusMessage.startsWith("转换失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}{fixReqId ? <> <a href={`/requirement?id=${encodeURIComponent(fixReqId)}`}>打开修复需求 →</a></> : null}</p> : null}<div className="react-inline-form react-category-form">{!isSub ? <><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></> : null}<label>推动方</label><select value={source} onChange={(e) => setSource(e.target.value)}><option value="">{req.source ?? "产品推动"}</option>{REQ_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}</select><button onClick={submitSource} disabled={!source || savingSource} title={req.source === "开发推动" ? "切回产品推动" : "切为开发推动：进入测试中前必须先完成测试场景文档"}>{savingSource ? "保存中…" : "保存推动方"}</button></div></section>
+      <section className="react-panel"><PanelHead kicker="Status" title={isGroup ? "需求组状态（派生）" : isSub ? "子需求状态" : isOnlineIssue ? "线上问题状态" : isIssueFamily ? "测试问题状态" : "状态与类别"} /><p className="react-muted">{isGroup ? "引用式需求组的状态为派生值（min 成员需求流状态），不能手动设置；在成员需求详情页推进状态即可同步组进度，瓶颈成员见「需求组成员」面板。成员需求文件、分支、session 和发布互相独立，可按发布策略（releasePolicy）各成员独立发布或整体发布。" : isSub ? "子需求流程：需求创建 → 开发中 → 已合入；开发中/需求创建可直接已取消（终态不可重开，后续增量拆新子需求）。子需求是父需求拆出的并行执行单元：分支以父分支为 base，开发完成后在「子需求分支操作」卡片合回父分支；环境集成（test/UAT）、发布、Review Gate 和经验总结都在父需求做，子需求无状态门禁、不绑 ONES/plan-release/issues。" : isOnlineIssue ? "线上问题专用流程：排查中 → 已定位 → 已修复 → 已复盘。排查/复现需要改代码时，可直接用 req-branches-update 登记 branches.json 并在需求分支开发，合入 test/UAT 环境分支验证；生产分支（后端 master/前端 production）被强制拦截，不生成生产 MR。正式生产修复创建普通需求并在需求「关联线上问题」面板绑定本问题（或直接点「创建修复需求」），需求进入经验总结后系统自动推进关联问题。有价值的问题在「排查经验」面板沉淀 troubleshooting.md（怎么排查 + 怎么修复），进入已复盘前强制校验；无沉淀价值直接已关闭。" : isIssueFamily ? "测试问题流程：排查中 → 已定位 → 已修复 → 已复盘，与线上问题共用轻量状态机，但硬门禁更轻：进入已定位/已复盘不强制 root-cause.md 和排查经验，小问题可直接修复后推进，有复用价值时按需沉淀。排查/复现代码可直接登记分支开发，仅允许合入 test/UAT 环境分支，禁止合入生产分支。测试问题不绑定普通需求；需要常规开发承接时创建 category=需求 的需求跟进。" : "新版流程：需求澄清 → 开发中 → 自测中 → 测试中 → 发布就绪 → 经验总结 → 已完成，旧状态会自动兼容映射。状态门禁在 Settings 页配置（内置默认：进入「测试中」需代码审查 + 测试场景文档；「自测中 → 测试中」还需 test.md「自测清单」逐项填写结果、失败/无法测试项写明具体原因；线上问题定位/复盘另有硬门禁）。Agent 通过 API 推进状态时强制校验门禁；在面板上人工修改状态直接跳过门禁。"}</p><div className="react-inline-form">{isOnlineIssue ? <button type="button" onClick={convertIssue}>创建修复需求</button> : null}</div>{statusMessage ? <p className={statusMessage.startsWith("转换失败") ? "react-effort-error" : "react-save-hint"}>{statusMessage}{fixReqId ? <> <a href={`/requirement?id=${encodeURIComponent(fixReqId)}`}>打开修复需求 →</a></> : null}</p> : null}<div className="react-inline-form react-category-form">{!isSub ? <><label>类别</label><select value={category} onChange={(e) => setCategory(e.target.value as ReqCategory)}><option value="">{req.category ?? "需求"}</option>{REQ_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}</select><button onClick={submitCategory} disabled={!category || savingCategory}>{savingCategory ? "保存中…" : "保存类别"}</button></> : null}<label>推动方</label><select value={source} onChange={(e) => setSource(e.target.value)}><option value="">{req.source ?? "产品推动"}</option>{REQ_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}</select><button onClick={submitSource} disabled={!source || savingSource} title={req.source === "开发推动" ? "切回产品推动" : "切为开发推动：进入测试中前必须先完成测试场景文档"}>{savingSource ? "保存中…" : "保存推动方"}</button></div></section>
       <RequirementFilesPanel req={req} />
     </div>}
   </PageChrome>
