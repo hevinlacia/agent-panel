@@ -438,6 +438,48 @@ pub(crate) fn summarize_requirement_doc(raw: &str, max_chars: usize) -> (Value, 
     )
 }
 
+/// 追加型文档（notes）的摘要变体：headings 取末尾 12 个（最新章节优先），
+/// 列表/节选行从尾部收集，截断也取尾——与“最新内容优先”一致。
+pub(crate) fn summarize_requirement_doc_tail(raw: &str, max_chars: usize) -> (Value, bool) {
+    if raw.trim().is_empty() {
+        return (json!({ "headings": [], "excerpt": "" }), false);
+    }
+    let mut headings: Vec<(usize, String)> =
+        raw.lines().filter_map(parse_markdown_heading).collect();
+    if headings.len() > 12 {
+        headings.drain(..headings.len() - 12);
+    }
+    let headings: Vec<Value> = headings
+        .into_iter()
+        .map(|(level, text)| json!({ "level": level, "text": text }))
+        .collect();
+    let candidate_lines: Vec<&str> = raw
+        .lines()
+        .filter(|line| {
+            let t = line.trim();
+            t.starts_with("- ")
+                || t.starts_with("* ")
+                || t.starts_with("##")
+                || t.starts_with("###")
+        })
+        .collect();
+    let candidate_lines = if candidate_lines.len() > 80 {
+        candidate_lines[candidate_lines.len() - 80..].to_vec()
+    } else {
+        candidate_lines
+    };
+    let base = if candidate_lines.is_empty() {
+        raw.trim().to_string()
+    } else {
+        candidate_lines.join("\n")
+    };
+    let (excerpt, truncated) = truncate_chars_tail(&base, max_chars);
+    (
+        json!({ "headings": headings, "excerpt": excerpt }),
+        truncated,
+    )
+}
+
 pub(crate) async fn read_recent_requirement_events(path: &Path, limit: usize) -> Vec<Value> {
     let raw = fs::read_to_string(path).await.unwrap_or_default();
     let mut events: Vec<Value> = raw
@@ -489,6 +531,24 @@ pub(crate) fn truncate_chars(raw: &str, max_chars: usize) -> (String, bool) {
             "{}\n…[truncated; {} chars total]",
             excerpt.trim_end(),
             count
+        ),
+        true,
+    )
+}
+
+/// 取尾截断：保留末尾 max_chars 字符。用于 notes 等追加型文档——最新内容在尾部，
+/// 头部截断会让 agent 永远看不到最新进展。
+pub(crate) fn truncate_chars_tail(raw: &str, max_chars: usize) -> (String, bool) {
+    let count = raw.chars().count();
+    if count <= max_chars {
+        return (raw.to_string(), false);
+    }
+    let excerpt: String = raw.chars().skip(count - max_chars).collect();
+    (
+        format!(
+            "…[truncated; {} chars total，已取尾部最新内容]\n{}",
+            count,
+            excerpt.trim_start()
         ),
         true,
     )

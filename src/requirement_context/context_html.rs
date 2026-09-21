@@ -40,9 +40,14 @@ pub(crate) async fn build_requirement_context(
         let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
         let slots_left = total.saturating_sub(idx).max(1);
         let per_file_budget = (remaining / slots_left).clamp(300, 3_000);
+        // notes 是追加型文档：最新内容在尾部，截断取尾（最新优先）；其余文档仍取头。
         let (content, truncated, chars) = if exists && remaining > 0 {
             let raw = fs::read_to_string(&path).await.unwrap_or_default();
-            let (excerpt, truncated) = truncate_chars(&raw, per_file_budget);
+            let (excerpt, truncated) = if file == "notes.md" {
+                truncate_chars_tail(&raw, per_file_budget)
+            } else {
+                truncate_chars(&raw, per_file_budget)
+            };
             let chars = excerpt.chars().count();
             remaining = remaining.saturating_sub(chars);
             (excerpt, truncated, chars)
@@ -442,7 +447,12 @@ pub(crate) async fn build_requirement_agent_context(
         };
         let path = dir.join(file);
         let raw = fs::read_to_string(&path).await.unwrap_or_default();
-        let (summary, truncated) = summarize_requirement_doc(&raw, per_doc_budget);
+        // notes 追加型文档取尾摘要（最新章节/最新记录优先），其余文档取头。
+        let (summary, truncated) = if file == "notes.md" {
+            summarize_requirement_doc_tail(&raw, per_doc_budget)
+        } else {
+            summarize_requirement_doc(&raw, per_doc_budget)
+        };
         docs.push(json!({
             "token": token,
             "file": file,
@@ -461,6 +471,7 @@ pub(crate) async fn build_requirement_agent_context(
         "Skipped phase gaps are risk flags, not hard blockers: record them and continue the user's current task unless a safety gate blocks it.",
         "Prefer recordEvent for facts/status/evidence/decisions; it stores events.jsonl and can append notes.md.",
         "Prefer sections/{section} or upsertSection for targeted impact/test/background/technical-plan updates.",
+        "Doc parts: a core doc with a `## 分册索引` section keeps details in docs/<doc>/<NNN>-<slug>.md parts; the main file is an index. Read part files directly by their relPath when details are needed; create new parts via POST /api/requirement/doc-part instead of appending to oversized main docs (validate warns over the split threshold).",
         "Keep technical-plan.md current when implementation direction, affected files, risks or validation strategy changes.",
         "Read full docs only when this compressed context is insufficient.",
     ];

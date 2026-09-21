@@ -103,6 +103,24 @@ pub(crate) async fn api_requirement_doc(
     Ok(Json(value))
 }
 
+pub(crate) async fn api_requirement_doc_part_post(
+    State(state): State<AppState>,
+    form: FormOrJson<DocPartCreateForm>,
+) -> ApiResult<Json<Value>> {
+    let created = create_doc_part(&state, form.0).await?;
+    Ok(Json(created))
+}
+
+pub(crate) async fn api_requirement_doc_parts_get(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let doc_type = query.file.as_deref().or(query.kind.as_deref());
+    let value = list_doc_parts(&state, &req_id, doc_type).await?;
+    Ok(Json(value))
+}
+
 pub(crate) async fn api_requirement_doc_get(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
@@ -114,19 +132,26 @@ pub(crate) async fn api_requirement_doc_get(
         .as_deref()
         .or(query.kind.as_deref())
         .unwrap_or("background");
-    let doc_file = requirement_doc_file(doc_type)?;
+    // 分册路径（docs/<base>/<file>.md）与主文档 docType 双支持：分册无模板，直接读全文。
+    let is_part_path = doc_type.contains('/');
     let dir = req_dir_path(&req)?;
-    let path = dir.join(doc_file);
+    let (doc_file, path) = if is_part_path {
+        let rel = resolve_doc_part_rel_path(doc_type)?;
+        (rel.clone(), dir.join(&rel))
+    } else {
+        let doc_file = requirement_doc_file(doc_type)?;
+        (doc_file.to_string(), dir.join(doc_file))
+    };
     let exists = path.is_file();
     let content = if exists {
         fs::read_to_string(&path).await.unwrap_or_default()
     } else {
         String::new()
     };
-    let template = if exists {
+    let template = if exists || is_part_path {
         String::new()
     } else {
-        requirement_doc_template(&req, doc_file)
+        requirement_doc_template(&req, requirement_doc_file(doc_type)?)
     };
     Ok(Json(json!({
         "ok": true,
@@ -197,6 +222,9 @@ pub(crate) async fn api_requirement_context(
         if let Some(parent_ctx) = parent_context_value(&state, &req).await {
             value["parentRequirement"] = parent_ctx;
         }
+        if let Some(parts_ctx) = doc_parts_context_value(&req).await {
+            value["docParts"] = parts_ctx;
+        }
         return Ok(Json(value).into_response());
     }
     let tokens = query
@@ -214,6 +242,9 @@ pub(crate) async fn api_requirement_context(
     }
     if let Some(parent_ctx) = parent_context_value(&state, &req).await {
         value["parentRequirement"] = parent_ctx;
+    }
+    if let Some(parts_ctx) = doc_parts_context_value(&req).await {
+        value["docParts"] = parts_ctx;
     }
     // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
     // Programmatic callers (agents, curl) keep receiving JSON.
@@ -280,6 +311,32 @@ async fn parent_context_value(state: &AppState, req: &Requirement) -> Option<Val
         "parentStatus": parent.status,
         "siblings": siblings,
         "hint": "子需求上下文与父需求联动：兄弟子需求合入父分支后，先同步父分支（POST /api/requirement/sub/sync-parent）拉齐成果再继续开发；完成开发后 POST /api/requirement/sub/merge-to-parent（confirm=true）合回父分支。",
+    }))
+}
+
+/// 文档分册上下文块：需求目录下存在 docs/<doc>/ 分册时，列出各分册（relPath/title/bytes），
+/// agent 按需 read 分册全文。无分册返回 None。
+async fn doc_parts_context_value(req: &Requirement) -> Option<Value> {
+    let dir = req_dir_path(req).ok()?;
+    let parts = scan_doc_parts(&dir, None).await.ok()?;
+    if parts.is_empty() {
+        return None;
+    }
+    let mut docs: std::collections::BTreeMap<String, Vec<Value>> = Default::default();
+    for p in &parts {
+        docs.entry(p.doc_base.clone()).or_default().push(json!({
+            "file": p.rel_path,
+            "title": p.title,
+            "bytes": p.bytes,
+            "updatedAt": p.updated_at,
+            "indexLinked": p.index_linked,
+        }));
+    }
+    Some(json!({
+        "hasParts": true,
+        "docs": docs,
+        "splitWarnBytes": DOC_SPLIT_WARN_BYTES,
+        "hint": "有分册的核心文档主文件是索引（主文档末尾 ## 分册索引 段）：notes 的 summaryDocs 摘要取尾部最新内容；需要完整细节按 file 相对路径直接 read 对应分册；新增明细用 POST /api/requirement/doc-part 创建分册，不要继续往超过拆分阈值的主文档追加正文。",
     }))
 }
 

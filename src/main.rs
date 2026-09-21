@@ -289,6 +289,14 @@ async fn main() -> Result<()> {
                 .post(api_requirement_doc)
                 .put(api_requirement_doc),
         )
+        .route(
+            "/api/requirement/doc-part",
+            post(api_requirement_doc_part_post),
+        )
+        .route(
+            "/api/requirement/doc-parts",
+            get(api_requirement_doc_parts_get),
+        )
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route("/api/requirement/status-flow", get(api_requirement_status_flow))

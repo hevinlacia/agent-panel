@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) fn requirement_api_schema() -> Value {
     json!({
-        "version": 4,
+        "version": 5,
         "flow": ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"],
         "statusValues": REQ_STATUSES,
         "subStatuses": SUB_REQ_STATUSES,
@@ -25,6 +25,7 @@ pub(crate) fn requirement_api_schema() -> Value {
         "operations": [
             {"operation": "setStatus", "writes": ["req.state"], "required": ["reqId", "status"], "optional": ["note", "dryRun"]},
             {"operation": "createSub", "endpoint": "POST /api/requirement/create-sub", "writes": ["req.meta", "req.state", "req.docs"], "required": ["parentReqId", "title"], "optional": ["slug", "owner", "summary", "dryRun"], "description": "从父需求拆出子需求（并行执行单元）；仅建记录，分支用 /api/requirement/sub/init-branches 初始化"},
+            {"operation": "createDocPart", "endpoint": "POST /api/requirement/doc-part", "writes": ["docs/<doc>/<NNN>-<slug>.md", "req.docIndex"], "required": ["reqId", "docType", "slug", "content"], "optional": ["title", "summary", "dryRun"], "description": "创建文档分册并在主文档末尾追加索引行：大需求明细拆分册，主文件只留概览+分册清单；单分册建议 ≤300 行"},
             {"operation": "setCategory", "writes": ["req.state"], "required": ["reqId", "category"], "optional": ["dryRun"]},
             {"operation": "patchMeta", "writes": ["req.meta"], "required": ["reqId", "fields"], "allowedFields": ["title", "project", "owner", "startDate", "planRelease", "ones"]},
             {"operation": "appendNote", "writes": ["req.notes"], "required": ["reqId", "text"], "optional": ["title", "sessionId", "dryRun"]},
@@ -40,6 +41,15 @@ pub(crate) fn requirement_api_schema() -> Value {
             "create": "POST /api/requirements 传 members=[{reqId}]（可选 releasePolicy）创建组；成员必须已存在且非组，不支持组嵌套",
             "readonlyStatus": true,
             "context": "GET /api/requirement/context 对组需求额外返回 group 块（aggregatedStatus/bottleneck/members）"
+        },
+        "docParts": {
+            "description": "文档分册：核心文档（notes/technical-plan/background/test 等）明细量大时拆分到 docs/<doc-base>/<NNN>-<slug>.md，主文档退化为索引（概览 + 末尾 ## 分册索引 段，panel 自动维护）；避免单需求文件无限膨胀，agent 按索引精准读所需分册。",
+            "layout": "docs/<doc-base>/<NNN>-<slug>.md，NNN 三位序号稳定排序，单分册建议 ≤300 行；分册缺 H1 时 panel 自动补标题行",
+            "create": "POST /api/requirement/doc-part（reqId+docType+slug+content，可选 title/summary/dryRun）：自动分配序号并追加索引行到主文档",
+            "list": "GET /api/requirement/doc-parts?reqId=&file=<docType>：分册清单（relPath/title/bytes/updatedAt/indexLinked）+ 主文档大小与拆分阈值",
+            "read": "GET /api/requirement/doc?id=&file=docs/<doc-base>/<NNN>-<slug>.md 直接读分册全文",
+            "ctx": "agent context 返回 docParts 块（各分册 relPath/title/bytes/indexLinked）；notes 的 summaryDocs 摘要取尾部最新内容",
+            "threshold": "validate 对 >40KB 的主文档与分册均告警；未被主文档索引引用的分册也告警（indexLinked=false）"
         },
         "subRequirements": {
             "description": "子需求：从大需求（父需求）中途拆出的并行执行单元，提高大需求并行开发速度；与需求组互补（组=已建需求中途聚合，子需求=大需求中途拆分）。目录平铺，ID=<父票号>-S<n>[-slug]（如 WMS-049-S1-fix-logging），n 在父需求内递增且不复用；父子关系记在子需求 meta.md 的 parent-req-id（source of truth）。",
