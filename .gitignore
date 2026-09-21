@@ -23,3 +23,6 @@ id_rsa*
 id_ed25519*
 credentials.json
 secrets.json
+
+# agent-panel 的代码变更一律在 worktree/<repo>-<slug> 下进行，不入库
+worktree/
