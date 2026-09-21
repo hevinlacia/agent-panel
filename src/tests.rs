@@ -2700,3 +2700,162 @@ async fn sub_requirement_create_flow_end_to_end() {
     .expect_err("nested sub must be rejected");
     assert!(format!("{:?}", nested).contains("不支持子需求嵌套"));
 }
+
+// ===================== 文档分册（doc parts）单元测试 =====================
+
+#[test]
+fn truncate_chars_tail_keeps_latest_content() {
+    let (out, truncated) = truncate_chars_tail("abcdef", 4);
+    assert!(truncated);
+    assert!(out.ends_with("cdef"));
+    assert!(out.starts_with("…[truncated"));
+    let (out, truncated) = truncate_chars_tail("abc", 10);
+    assert!(!truncated);
+    assert_eq!(out, "abc");
+}
+
+#[test]
+fn resolve_doc_part_rel_path_rejects_traversal_and_non_docs() {
+    assert_eq!(
+        resolve_doc_part_rel_path("docs/notes/001-x.md").expect("ok"),
+        "docs/notes/001-x.md"
+    );
+    assert!(resolve_doc_part_rel_path("docs/../secret.md").is_err());
+    assert!(resolve_doc_part_rel_path("notes.md").is_err());
+    assert!(resolve_doc_part_rel_path("docs/notes/sub/001-x.md").is_err());
+    assert!(resolve_doc_part_rel_path("docs/notes/001-x.txt").is_err());
+    assert!(resolve_doc_part_rel_path("docs/notes/.md").is_err());
+}
+
+/// 分册端到端：创建 → 索引行追加 → 序号递增 → 分册读取 → 清单 → validate 阈值告警。
+#[tokio::test]
+async fn doc_part_create_list_and_index_end_to_end() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("WMS-041-big-notes");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: WMS-041-big-notes\ntitle: 大需求\nstatus: 开发中\nproject: WMS\ncategory: 需求\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    std::fs::write(
+        req_dir.join("notes.md"),
+        "# WMS-041 执行笔记\n\n- 早期记录\n",
+    )
+    .expect("write notes.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+
+    // 1) 创建第一个分册：写文件 + 主文档追加索引行
+    let first = api_requirement_doc_part_post(
+        State(state.clone()),
+        FormOrJson(DocPartCreateForm {
+            req_id: "WMS-041-big-notes".into(),
+            doc_type: "notes".into(),
+            slug: "integration-debug".into(),
+            title: Some("联调排查".into()),
+            summary: Some("联调期问题与结论".into()),
+            content: "联调过程中的详细记录".into(),
+            dry_run: Some(false),
+        }),
+    )
+    .await
+    .expect("create part 1");
+    assert_eq!(first["part"]["filename"], json!("001-integration-debug.md"));
+    assert_eq!(
+        first["part"]["relPath"],
+        json!("docs/notes/001-integration-debug.md")
+    );
+    let notes = std::fs::read_to_string(req_dir.join("notes.md")).expect("read notes");
+    assert!(notes.contains("## 分册索引"));
+    assert!(notes.contains(
+        "- [001-integration-debug.md](docs/notes/001-integration-debug.md) — 联调期问题与结论"
+    ));
+    assert!(notes.contains("- 早期记录"));
+
+    // 2) 第二个分册序号递增
+    let second = api_requirement_doc_part_post(
+        State(state.clone()),
+        FormOrJson(DocPartCreateForm {
+            req_id: "WMS-041-big-notes".into(),
+            doc_type: "notes".into(),
+            slug: "regression".into(),
+            title: None,
+            summary: None,
+            content: "回归测试记录".into(),
+            dry_run: Some(false),
+        }),
+    )
+    .await
+    .expect("create part 2");
+    assert_eq!(second["part"]["filename"], json!("002-regression.md"));
+
+    // 3) 分册路径读取：GET doc 支持 docs/ 相对路径
+    let part_doc = api_requirement_doc_get(
+        State(state.clone()),
+        Query(IdQuery {
+            id: Some("WMS-041-big-notes".into()),
+            file: Some("docs/notes/001-integration-debug.md".into()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("read part doc");
+    assert_eq!(part_doc.0["exists"], json!(true));
+    let content = part_doc.0["content"].as_str().expect("content");
+    assert!(content.contains("# 联调排查"));
+    assert!(content.contains("联调过程中的详细记录"));
+
+    // 4) 分册清单：count=2 且 indexLinked=true
+    let list = api_requirement_doc_parts_get(
+        State(state.clone()),
+        Query(IdQuery {
+            id: Some("WMS-041-big-notes".into()),
+            file: Some("notes".into()),
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("list parts");
+    assert_eq!(list.0["count"], json!(2));
+    let parts = list.0["parts"].as_array().expect("parts");
+    assert!(parts.iter().all(|p| p["indexLinked"] == json!(true)));
+
+    // 5) validate：主文档超 40KB → 拆分阈值告警
+    std::fs::write(
+        req_dir.join("notes.md"),
+        format!("# notes\n{}", "x".repeat(41 * 1024)),
+    )
+    .expect("write big notes");
+    // 重建索引行，避免未索引告警干扰断言
+    let _ = api_requirement_doc_part_post(
+        State(state.clone()),
+        FormOrJson(DocPartCreateForm {
+            req_id: "WMS-041-big-notes".into(),
+            doc_type: "notes".into(),
+            slug: "reindex".into(),
+            title: None,
+            summary: None,
+            content: "占位".into(),
+            dry_run: Some(false),
+        }),
+    )
+    .await
+    .expect("recreate index");
+    let req = get_real_requirement(&state, "WMS-041-big-notes")
+        .await
+        .expect("req");
+    let validation = validate_requirement(&state, &req).await.expect("validate");
+    let warnings = validation["warnings"].as_array().expect("warnings");
+    assert!(warnings.iter().any(|w| {
+        w.as_str()
+            .map(|s| s.contains("超过拆分阈值") && s.contains("notes.md"))
+            .unwrap_or(false)
+    }));
+}

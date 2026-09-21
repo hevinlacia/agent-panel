@@ -54,6 +54,31 @@ export interface GroupMemberRef {
   nested?: boolean
 }
 
+/** 需求文档分册（docs/<doc-base>/<NNN>-<slug>.md）。 */
+export interface DocPartInfo {
+  docBase: string
+  filename: string
+  /** 相对需求目录路径：docs/notes/001-slug.md */
+  relPath: string
+  title?: string
+  bytes: number
+  updatedAt: number
+  /** 主文档索引段是否包含该分册链接（false = 未索引/失效）。 */
+  indexLinked?: boolean
+}
+
+/** GET /api/requirement/doc-parts 响应。 */
+export interface DocPartsPayload {
+  ok: boolean
+  reqId: string
+  docType?: string
+  partsDir: string
+  splitWarnBytes: number
+  count: number
+  parts: DocPartInfo[]
+  mainDoc?: { file: string; bytes: number; overSplitThreshold: boolean }
+}
+
 /** 子需求引用（父需求视角）；title/status/found 由扫描回填。 */
 export interface SubReqRef {
   reqId: string

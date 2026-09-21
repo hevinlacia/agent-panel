@@ -30,13 +30,48 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
         "branch.md",
         "config-changes.md",
     ];
+    let mut oversized_docs = Vec::<(String, u64)>::new();
     for file in required_files.into_iter().chain(optional_files.into_iter()) {
-        let exists = dir.join(file).is_file();
+        let path = dir.join(file);
+        let exists = path.is_file();
         files.insert(file.to_string(), exists);
+        if exists && file.ends_with(".md") {
+            if let Ok(meta) = fs::metadata(&path).await {
+                if meta.len() > DOC_SPLIT_WARN_BYTES {
+                    oversized_docs.push((file.to_string(), meta.len()));
+                }
+            }
+        }
         if file == "meta.md" && !exists {
             problems.push("missing meta.md".into());
         } else if required_files.contains(&file) && !exists {
             warnings.push(format!("missing core file {file}"));
+        }
+    }
+    // 文档分册阈值告警：主文档超阈值提示索引化拆分；分册自身超阈值提示继续细拆。
+    for (file, bytes) in &oversized_docs {
+        warnings.push(format!(
+            "{file} {}KB 超过拆分阈值 {}KB：主文件应索引化，明细用 POST /api/requirement/doc-part 拆到 docs/<doc>/ 分册（单分册建议 ≤300 行）",
+            bytes / 1024,
+            DOC_SPLIT_WARN_BYTES / 1024
+        ));
+    }
+    if let Ok(parts) = scan_doc_parts(&dir, None).await {
+        for part in parts {
+            if part.bytes > DOC_SPLIT_WARN_BYTES {
+                warnings.push(format!(
+                    "分册 {} {}KB 超过拆分阈值 {}KB：建议按主题继续细拆分册",
+                    part.rel_path,
+                    part.bytes / 1024,
+                    DOC_SPLIT_WARN_BYTES / 1024
+                ));
+            }
+            if !part.index_linked {
+                warnings.push(format!(
+                    "分册 {} 未被主文档索引引用（主文档 {} 缺少指向它的索引行）",
+                    part.rel_path, part.doc_base
+                ));
+            }
         }
     }
     let meta_path = dir.join("meta.md");

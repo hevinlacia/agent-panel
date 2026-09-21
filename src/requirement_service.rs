@@ -103,6 +103,27 @@ pub(crate) struct SubRequirementCreateForm {
     pub(crate) dry_run: Option<bool>,
 }
 
+/// 创建文档分册入参：明细写入 `docs/<doc-base>/<NNN>-<slug>.md`，
+/// 主文档末尾自动追加索引行（主文档索引化，避免单文件无限膨胀）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DocPartCreateForm {
+    pub(crate) req_id: String,
+    /// 基础文档 docType（notes / technical-plan / background / test 等，见 requirement_doc_file）。
+    pub(crate) doc_type: String,
+    /// 分册 slug（ASCII 路径安全），文件名为 `<NNN>-<slug>.md`。
+    pub(crate) slug: String,
+    /// 分册标题（缺 H1 时用作标题行；缺省写入索引行的摘要兜底）。
+    #[serde(default)]
+    pub(crate) title: Option<String>,
+    /// 一句话摘要（写入主文档索引行，agent ctx 借此感知分册内容）。
+    #[serde(default)]
+    pub(crate) summary: Option<String>,
+    pub(crate) content: String,
+    #[serde(default)]
+    pub(crate) dry_run: Option<bool>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RequirementCreateForm {
@@ -329,6 +350,7 @@ pub(crate) struct RequirementEventTestCase {
 
 mod create;
 mod doc;
+mod doc_parts;
 mod events;
 mod id_pool;
 mod paths;
@@ -341,6 +363,7 @@ mod validate;
 
 pub(crate) use create::*;
 pub(crate) use doc::*;
+pub(crate) use doc_parts::*;
 pub(crate) use events::*;
 pub(crate) use id_pool::*;
 pub(crate) use paths::*;
