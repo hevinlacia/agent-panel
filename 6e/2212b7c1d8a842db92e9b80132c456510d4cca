@@ -1,0 +1,63 @@
+web/src/pages/projects.tsx
+  86fab4fbd5a45c84 8,24,46-53,75-76,96,108,130,133
+src/requirement_sub.rs
+  86fab4fbd5a45c84 1-152,154-358
+web/src/styles.css
+  86fab4fbd5a45c84 537-548
+src/requirement_service.rs
+  86fab4fbd5a45c84 85-105
+web/src/features/requirements/sub-req-panels.tsx
+  86fab4fbd5a45c84 1-72
+src/requirement_service/id_pool.rs
+  86fab4fbd5a45c84 234-235,237-317
+web/src/pages/requirement.tsx
+  86fab4fbd5a45c84 7,11,807-809,908,910,916-917,920,924-930
+src/requirement_index.rs
+  86fab4fbd5a45c84 68-73,120-149,571-576,677-679,716,808-849,919-921
+src/requirement_service/state.rs
+  86fab4fbd5a45c84 26-30,32-73
+src/requirement_service/templates.rs
+  86fab4fbd5a45c84 20,36,79,87-90,105-107,109,119,123-130
+src/main.rs
+  86fab4fbd5a45c84 36,58,136-141,204-206,385-400,519-520
+web/src/lib/preferences.ts
+  86fab4fbd5a45c84 36-45
+src/git_workflow/sub_branch.rs
+  86fab4fbd5a45c84 1-450
+src/requirement_service/create.rs
+  86fab4fbd5a45c84 121,170-215,217-336,416-426,510-515
+web/src/lib/requirements.ts
+  86fab4fbd5a45c84 5-6,28-30
+src/requirement_api.rs
+  86fab4fbd5a45c84 19-27,48-55,194-199,212-217,249-285,704-707,821-826
+src/util.rs
+  86fab4fbd5a45c84 151
+src/requirement_context/schema.rs
+  86fab4fbd5a45c84 5,8,27,44-51
+src/git_workflow.rs
+  86fab4fbd5a45c84 125,135
+src/tests.rs
+  86fab4fbd5a45c84 2586-2600,2602-2604
+web/src/types.ts
+  86fab4fbd5a45c84 8,57-90,143-148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "6e2212b7c1d8a842db92e9b80132c456510d4cca",
+  "prompts": {
+    "86fab4fbd5a45c84": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c1ae-47cc-7743-908a-88ab3c1d7fc5",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 1589,
+      "total_deletions": 75,
+      "accepted_lines": 1560,
+      "overriden_lines": 5
+    }
+  }
+}
