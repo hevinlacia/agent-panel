@@ -36,6 +36,10 @@ pub(crate) async fn ensure_selftest_checklist_allows_testing(req: &Requirement) 
 
 /// 收集自测清单当前问题；空列表 = 通过。供门禁拦截与状态流转卡片只读评估复用。
 pub(crate) async fn selftest_checklist_problems(req: &Requirement) -> Vec<String> {
+    // 抢修模式：关联了线上问题的需求默认放行自测门禁（速度优先；用户明确要求自测时再按常规维护）。
+    if req.is_hotfix() {
+        return Vec::new();
+    }
     let Some(dir) = req.req_dir.as_deref() else {
         return Vec::new();
     };

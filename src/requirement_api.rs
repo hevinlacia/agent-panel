@@ -676,7 +676,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
             .unwrap_or(Value::Null),
         "selftest-checklist" => {
             let problems = selftest_checklist_problems(&req).await;
-            json!({ "problems": problems })
+            json!({ "problems": problems, "hotfix": req.is_hotfix() })
         }
         "test-scenario" => {
             let body = match req.req_dir.as_deref() {
