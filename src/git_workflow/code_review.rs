@@ -62,6 +62,14 @@ pub(crate) async fn run_code_review_scan(
         "previousReviewedSnapshot": previous_snapshot,
         "repos": repos,
     });
+    // 同步导出多行 patch 伴随文件；JSON 里的 diff 字段是单行转义串，reviewer 读 JSON 会被单行截断。
+    let patch_written = export_diff_patch_file(req_dir, CODE_REVIEW_PATCH_FILE, &review).await?;
+    let mut review = review;
+    if patch_written {
+        if let Some(obj) = review.as_object_mut() {
+            obj.insert("diffPatchFile".to_string(), json!(CODE_REVIEW_PATCH_FILE));
+        }
+    }
     atomic_write_json(&req_dir.join(CODE_REVIEW_FILE), &review).await?;
     Ok(review)
 }
@@ -112,6 +120,17 @@ pub(crate) async fn run_code_review_incremental_scan(
         "inventoryRisk": inventory_risk,
         "repos": repos,
     });
+    let patch_written =
+        export_diff_patch_file(req_dir, CODE_REVIEW_INCREMENTAL_PATCH_FILE, &review).await?;
+    let mut review = review;
+    if patch_written {
+        if let Some(obj) = review.as_object_mut() {
+            obj.insert(
+                "diffPatchFile".to_string(),
+                json!(CODE_REVIEW_INCREMENTAL_PATCH_FILE),
+            );
+        }
+    }
     atomic_write_json(&req_dir.join(CODE_REVIEW_INCREMENTAL_FILE), &review).await?;
     Ok(review)
 }
@@ -225,6 +244,17 @@ pub(crate) async fn prepare_review_materials(
         CODE_REVIEW_FILE
     };
     let material_path = req_dir.join(material_file);
+    let patch_file = if is_incremental {
+        CODE_REVIEW_INCREMENTAL_PATCH_FILE
+    } else {
+        CODE_REVIEW_PATCH_FILE
+    };
+    let patch_path = req_dir.join(patch_file);
+    // 存量材料没有 patch 伴随文件时即时补导出（新快照在生成时已写过，此处幂等自愈）。
+    if !tokio::fs::try_exists(&patch_path).await.unwrap_or(false) {
+        let _ = export_diff_patch_file(req_dir, patch_file, &review_doc).await?;
+    }
+    let patch_available = tokio::fs::try_exists(&patch_path).await.unwrap_or(false);
     let repos_summary = review_doc
         .get("repos")
         .and_then(Value::as_array)
@@ -275,10 +305,23 @@ pub(crate) async fn prepare_review_materials(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let mut handoff_hints = vec![format!(
-        "reviewer 直接 read {}：diff 字段已含 --unified=80 全文及 files/commits/riskTags 元数据，无需再执行 git 命令",
-        material_path.display()
-    )];
+    let mut handoff_hints = Vec::new();
+    if patch_available {
+        handoff_hints.push(format!(
+            "diff 全文用 read 读多行 patch 文件 {}（按真实换行落盘，超过 2000 行用 offset 续读）；不要直接 read {} 的 diff 字段——JSON 里 diff 是单行转义串，超出 read 单行限制会被截断",
+            patch_path.display(),
+            material_path.display()
+        ));
+        handoff_hints.push(format!(
+            "files/commits/riskTags 等元数据在 {}（read 时跳过其单行 diff 字段即可）",
+            material_path.display()
+        ));
+    } else {
+        handoff_hints.push(format!(
+            "reviewer 直接 read {}：diff 字段已含 --unified=80 全文及 files/commits/riskTags 元数据，无需再执行 git 命令",
+            material_path.display()
+        ));
+    }
     if is_incremental {
         handoff_hints.push(
             "只审查覆盖范围内的新增 diff（fromCommit → toCommit）；审完在 review.md 注明覆盖范围并重写 Review Gate 结论，门禁按结论文件 mtime + commit 指纹判定覆盖".to_string(),
@@ -319,6 +362,7 @@ pub(crate) async fn prepare_review_materials(
         "materialKind": material_kind,
         "materialFile": material_file,
         "materialPath": material_path.to_string_lossy(),
+        "diffPatchFile": if patch_available { json!(patch_file) } else { Value::Null },
         "riskTags": risk_tags,
         "inventoryRisk": inventory_risk,
         "repos": repos_summary,
@@ -527,6 +571,40 @@ pub(crate) async fn run_master_diff_scan(
         "sourceFallback": scope.fallback,
         "repos": repos,
     }))
+}
+
+/// 把快照里各仓库的 diff 字段拼成多行 patch 伴随文件（read 友好）。
+/// JSON 里的 diff 是单行转义串，reviewer 用 read 读 JSON 会被单行截断；
+/// patch 文件按真实换行落盘，read 可分页读取。返回是否写出了非空文件；
+/// 所有仓库 diff 均为空时清掉旧 patch 文件并返回 false，避免材料与内容不一致。
+pub(crate) async fn export_diff_patch_file(
+    req_dir: &Path,
+    patch_file: &str,
+    review: &Value,
+) -> Result<bool> {
+    let mut out = String::new();
+    let repos = review.get("repos").and_then(Value::as_array);
+    if let Some(repos) = repos {
+        for r in repos {
+            let diff = value_string(r, "diff").unwrap_or_default();
+            if diff.trim().is_empty() {
+                continue;
+            }
+            let repo_name = value_string(r, "repoName").unwrap_or_else(|| "?".to_string());
+            let branch = value_string(r, "branch").unwrap_or_default();
+            out.push_str(&format!(
+                "# ==== repo: {repo_name} (branch: {branch}) ====\n"
+            ));
+            out.push_str(diff.trim_end());
+            out.push_str("\n\n");
+        }
+    }
+    if out.is_empty() {
+        let _ = tokio::fs::remove_file(req_dir.join(patch_file)).await;
+        return Ok(false);
+    }
+    atomic_write_text(&req_dir.join(patch_file), &out).await?;
+    Ok(true)
 }
 
 /// Save a freshly generated master-diff snapshot onto the requirement's
