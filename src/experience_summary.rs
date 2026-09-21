@@ -388,6 +388,7 @@ pub(crate) fn experience_summary_prompt(
              - {dir}/incident.md 与 {dir}/root-cause.md（如存在）
 
              价值判定基线：线上问题经验默认有价值——除非与经验库已有条目重复（相同现象/根因/触发词已覆盖），或确认为误报/环境问题/纯一次性操作，否则都应落一条 experiences 条目。
+             防重复执行：复用清单/改进点里可能有一部分已经在排查或修复过程中落地了（证据：root-cause.md 修复决策、events 进展事件、需求分支 git log、对应 skill/配置文件的现状）。逐项核对，已落地的在 experience-summary.md 标「已落地（<证据线索>）」，不要重复实施、不要再登记为待办；只对未落地的做沉淀或登记。
              查重：POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
 
              必须产出：
@@ -409,6 +410,17 @@ pub(crate) fn experience_summary_prompt(
 
          目标：按当前经验总结阶段规则，读取 Agent Panel 候选上下文，回顾本需求文档和结构化事件，沉淀可复用业务知识、经验/踩坑和 skill 改进机会。
          必须先读取：GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200
+
+         防重复执行（重要）：需求/问题过程中用户可能已经让 agent 把部分改进点做掉了，但改进点仍登记在文档或事件里。对每个候选改进点先判定是否已落地，证据来源：
+         - experience-summary-context 的 recentEvents（已完成/已实施/已修复/决策类事件）
+         - notes.md、technical-plan.md（实现状态、待确认问题区的完成标记）
+         - 需求分支 git log（改进对应的 commit）
+         - 改进指向的 skill/配置/文档文件现状（内容是否已包含该改进）
+         已落地的：写入 experience-summary.md「已落地」区（每项附证据线索），不要重复实施、不要再登记为待办；落知识条目时在 summary 标注「已在 {req_id} 落地」。
+         未落地的：按价值判断写入「待落地」候选。
+
+         知识查重：候选经验与经验库可能已有条目重复（相同现象/根因/触发词已覆盖）。先 POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/模块/关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
+
          必须写入：experience-summary.md（路径：{report}），区分已落地和待落地。
          可安全落地的知识/经验请通过 Agent Panel API 写入 business-knowledge / experiences；不要把未验证猜测写成稳定事实。
          完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"自动经验总结完成\"}}。
