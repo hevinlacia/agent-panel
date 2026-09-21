@@ -2895,3 +2895,38 @@ async fn doc_part_create_list_and_index_end_to_end() {
             .unwrap_or(false)
     }));
 }
+
+#[tokio::test]
+async fn diff_patch_export_writes_multiline_companion() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let req_dir = tmp.path().to_path_buf();
+    let review = json!({
+        "repos": [
+            {"repoName": "repo-a", "branch": "feat/x", "diff": "diff --git a/f b/f\n@@ -1,2 +1,3 @@\n context\n-old\n+new\n"},
+            {"repoName": "repo-b", "branch": "", "diff": ""},
+        ]
+    });
+    let written =
+        crate::git_workflow::export_diff_patch_file(&req_dir, CODE_REVIEW_PATCH_FILE, &review)
+            .await
+            .expect("export");
+    assert!(written);
+    let text = std::fs::read_to_string(req_dir.join(CODE_REVIEW_PATCH_FILE)).expect("read patch");
+    assert!(text.starts_with("# ==== repo: repo-a (branch: feat/x) ====\n"));
+    // patch 文件里的换行必须是真实换行（多行文本），而非 JSON 里的 \n 字面量单行。
+    assert!(text.contains("\n-old\n+new\n"), "patch 应按真实换行落盘");
+    assert!(!text.contains("repo-b"), "空 diff 仓库不产生段落");
+
+    // 空快照：返回 false 并清掉旧 patch，避免材料引用与内容不一致。
+    let empty = json!({"repos": [{"repoName": "repo-c", "branch": "", "diff": ""}]});
+    std::fs::write(req_dir.join(CODE_REVIEW_PATCH_FILE), "stale").expect("write stale");
+    let written =
+        crate::git_workflow::export_diff_patch_file(&req_dir, CODE_REVIEW_PATCH_FILE, &empty)
+            .await
+            .expect("export empty");
+    assert!(!written);
+    assert!(
+        !req_dir.join(CODE_REVIEW_PATCH_FILE).exists(),
+        "空快照应清掉旧 patch 文件"
+    );
+}

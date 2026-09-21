@@ -75,6 +75,9 @@ const INJECTION_CTX_SUBDIR: &str = "ctx";
 const BRANCH_SCOPE_FILE: &str = "branches.json";
 const CODE_REVIEW_FILE: &str = "code-review.json";
 const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
+/// 快照 JSON 里 diff 是单行转义串（read 会被单行截断），同时导出多行 patch 伴随文件供 reviewer read。
+const CODE_REVIEW_PATCH_FILE: &str = "code-review-diff.patch";
+const CODE_REVIEW_INCREMENTAL_PATCH_FILE: &str = "code-review-incremental-diff.patch";
 const CODE_ANNOTATIONS_FILE: &str = "code-annotations.json";
 const CODE_DIFF_SNAPSHOTS_FILE: &str = "code-diff-snapshots.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
