@@ -66,9 +66,11 @@ export function projectsOf(req: Requirement): string {
   return (req.projects?.length ? req.projects : [req.project]).filter(Boolean).join(" / ") || "-"
 }
 
-export function onesBadge(ones?: string) {
+export function onesBadge(ones?: string, opts?: { onMissingClick?: () => void }) {
   const ref = parseOnesRef(ones)
-  if (!ref) return <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联 ONES</span>
+  if (!ref) return opts?.onMissingClick
+    ? <button type="button" className="react-ones-badge react-ones-missing" onClick={opts.onMissingClick} title="未关联 ONES 任务，点击登记">⚠ 未关联 ONES</button>
+    : <span className="react-ones-badge react-ones-missing" title="未关联 ONES 任务">⚠ 未关联 ONES</span>
   if (ref.url) return <a className="react-ones-badge react-ones-linked" href={ref.url} target="_blank" rel="noopener noreferrer" title={ref.raw}>🔗 ONES</a>
   return <span className="react-ones-badge react-ones-id" title={ref.label}>ONES</span>
 }
