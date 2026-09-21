@@ -1,0 +1,23 @@
+src/requirement_api.rs
+  86fab4fbd5a45c84 816-818,822-840
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "00257ca7439e113c73dcc05f3089763e3c133039",
+  "prompts": {
+    "86fab4fbd5a45c84": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0c1ae-47cc-7743-908a-88ab3c1d7fc5",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 21,
+      "accepted_lines": 22,
+      "overriden_lines": 1
+    }
+  }
+}
