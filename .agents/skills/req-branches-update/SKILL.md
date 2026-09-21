@@ -94,7 +94,8 @@ python3 ~/.agents/scripts/req-branches-scan.py <req-id> --req-dir <req-dir>
 - **废弃分支**：脚本列出所有含需求 ID 的本地分支，可能含早期废弃分支。对照 `branch.md` 确认每个分支是否属于本次需求，多余的用 `edit` 从 `branches` 数组删除。
 - **校正 `role`**：脚本按规则推断基础角色（`后端`/`前端`/`后端-BFF`/`PDA`/`后端-组件库`）。如需细分（如"后端-ES数据源"），用 `edit` 修正。
 - **未 push 分支**：脚本会提示未 push 的分支。已 push 才能被 Agent Panel 做远端 diff，未 push 的先 `git push` 再登记。
-- **未扫到的已有仓库**：脚本列出"本次未扫到分支的已有仓库"（可能分支已合并清理），确认是否仍需保留。
+- **未扫到的已有仓库**：脚本列出“本次未扫到分支的已有仓库”（可能分支已合并清理），确认是否仍需保留。
+- **基线分支校验（WMS-106 实证）**：`branches` 只能登记以需求基线（后端 `origin/master` / 前端 `origin/production`）创建的分支。脚本按“分支名含需求 ID”扫描，可能把基于环境分支（`test`/`uat`）创建的 fix 分支也列出来——登记前对每个候选分支核对 `git merge-base <branch> origin/<基线>` 确认基于基线；基于环境分支的修复分支**不登记**（其内容已在环境分支上，上生产走独立 MR）。误登记后果：①Agent Panel 代码差异视图把该分支相对环境分支基线的全部集成差异算进需求差异（出现他人提交）；②`merge-branch` 合并进 UAT 时搭车带入大量无关文件（实证：112 文件 +8250/-4178，含他人 kernel-mq 移除）。
 
 ### 3b. 修复轮次登记（--round ≥2）
 
@@ -141,6 +142,7 @@ git rev-parse <branch> origin/<branch>  # 两者相等 = 已 push
 - `branches.json`（轮次 1）与 `branches-round-<n>.json`（修复轮次）均适用本清单；修复轮次分支额外校验：不与旧轮次同名、必须带 `/fix/` 或 `/hotfix/`
 - `branches.json` 与 `branch.md` 互补：前者给机器做 diff，后者给人看合并轨迹，两者都保留
 - `baseRef` 通常无需填写：前端仓库（role=`前端` 或 path 含 `frontend/`）自动用 `origin/production`，后端自动用 `origin/master`；仅当自动判断不准（如非 WMS 项目或特殊基线）时才显式写入
+- 每个 `branches` 条目必须基于需求基线（`git merge-base` 对 `origin/master`/`origin/production` 谱系成立）；基于 `test`/`uat` 等环境分支的 fix 分支不登记，其上生产走独立 MR（WMS-106 搭车 112 文件实证）
 
 ## Final Response
 

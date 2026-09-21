@@ -1,0 +1,17 @@
+id: exp-agent-panel-requirement-events-api-types
+title: "requirement events API：evidence 等 Vec 字段必须传 JSON 数组，字符串会 400；dryRun 可安全验证"
+kind: experience
+type: experience
+category: pitfall
+domain: agent-panel
+project: agent-panel
+scope: project
+status: active
+confidence: high
+created_at: 2026-09-17T05:48:14Z
+updated_at: 2026-09-17T05:48:14Z
+source_path: ../items/exp-agent-panel-requirement-events-api-types.md
+summary: "POST /api/requirement/events 的 evidence/relatedFiles/triggerTerms 等 Vec 字段必须传字符串数组；字符串值 400。dryRun:true 校验不落盘；DELETE 事件 405。"
+tags: [agent-panel, api, events, schema]
+trigger_terms: ["requirement events", "evidence 字段", "Failed to deserialize", dryRun, 事件删除, 405, recordEvent]
+related_repos: [agent-panel]

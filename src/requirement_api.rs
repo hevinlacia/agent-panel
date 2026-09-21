@@ -1203,7 +1203,8 @@ pub(crate) async fn api_requirement_new_session(
     let session_id = Uuid::new_v4().to_string();
     associate_session(&state, &body.req_id, &session_id).await?;
     let ctx_path = write_injection_context(&state, &req, &session_id).await?;
-    let title = shell_quote(&req.title);
+    // session 命名以需求编号开头，终端 /resume 列表一眼识别所属需求。
+    let title = shell_quote(&format!("{}-{}", req.id, req.title));
     let ctx = shell_quote(ctx_path.to_string_lossy().as_ref());
     let core_command = format!(
         "{} --session-id {} --name {} --append-system-prompt @{}",
