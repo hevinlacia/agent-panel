@@ -1,0 +1,41 @@
+web/src/features/requirements/req-files-panels.tsx
+  4d11e2c2a44cc045 60-63
+prompts/phase-experience-summary.md
+  4d11e2c2a44cc045 10
+web/src/styles.css
+  4d11e2c2a44cc045 411,674-675
+.agents/skills/agent-panel-requirement-api/SKILL.md
+  4d11e2c2a44cc045 152
+prompts/phase-deploy.md
+  4d11e2c2a44cc045 9
+prompts/phase-done.md
+  4d11e2c2a44cc045 7
+src/requirement_api.rs
+  4d11e2c2a44cc045 2221-2222
+web/src/pages/dashboard.tsx
+  4d11e2c2a44cc045 2,4,6
+prompts/phase-clarify.md
+  4d11e2c2a44cc045 23-27,30,37,48
+web/src/features/requirements/code-review-panel.tsx
+  4d11e2c2a44cc045 3,9-11,14,24,70-71,73,80-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "58358473f0b087fd9698d0bf8ec7aa8ab78fdcc3",
+  "prompts": {
+    "4d11e2c2a44cc045": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0cd37-44e3-760d-80e0-cb6ac5d86a56",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 32,
+      "total_deletions": 57,
+      "accepted_lines": 32,
+      "overriden_lines": 0
+    }
+  }
+}
