@@ -533,6 +533,7 @@ export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: 
 /** 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次文件 branches-round-<n>.json */
 export interface BranchRoundInfo { round: number; file: string; updatedAt: number; repoCount: number; branchCount: number; sealed: boolean }
 export interface BranchRoundsPayload { ok: boolean; reqId: string; rounds: BranchRoundInfo[]; latest: number }
+export interface BranchRegistrationPayload { ok: boolean; reqId: string; round: number; file: string; scope?: BranchScope | null }
 
 export interface ReviewMaterialsRepo { repoName: string; branch: string; fromCommit: string; toCommit: string; additions?: number; deletions?: number; riskTags?: string[]; diffTruncated?: boolean; linearHistory?: boolean | null }
 export interface ReviewMaterials {
