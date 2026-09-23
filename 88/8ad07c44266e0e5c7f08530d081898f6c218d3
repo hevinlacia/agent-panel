@@ -1,0 +1,31 @@
+src/tests.rs
+  73b12406c1fe4694 16
+src/cainiao_mock.rs
+  73b12406c1fe4694 1-5,9-10,12-14,19-21,30,32,53,58-59,63-75,77-78,83-118,130-178
+scripts/gen_cainiao_mock_cert.sh
+  73b12406c1fe4694 1-58
+Cargo.toml
+  73b12406c1fe4694 23-25
+src/tests/cainiao_mock.rs
+  73b12406c1fe4694 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "888ad07c44266e0e5c7f08530d081898f6c218d3",
+  "prompts": {
+    "73b12406c1fe4694": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0ce46-1dc2-71c4-81b1-76b5dcb40c77",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 207,
+      "total_deletions": 7,
+      "accepted_lines": 205,
+      "overriden_lines": 0
+    }
+  }
+}
