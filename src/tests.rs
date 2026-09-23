@@ -13,6 +13,7 @@ mod branch_registration;
 mod sessions;
 mod sub_requirement;
 mod misc;
+mod cainiao_mock;
 
 fn chrono_like_unique_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
