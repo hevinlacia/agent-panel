@@ -1,0 +1,25 @@
+src/requirement_index.rs
+  af540edc89fb3d1e 805-818
+src/tests.rs
+  af540edc89fb3d1e 1987-1990,2205-2206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f44990d1453964d8819dcd461879acf7a100bd01",
+  "prompts": {
+    "af540edc89fb3d1e": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0cbfc-a7f4-7474-a0c5-9b7d7ab21b80",
+        "model": "low-model-auto"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
