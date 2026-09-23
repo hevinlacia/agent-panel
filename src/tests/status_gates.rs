@@ -1,5 +1,11 @@
 use super::*;
 
+/// 三分类齐全的 test.md 自测清单夹具（主流程全过 + 边界带分析清单 + 并发不适用）。
+fn selftest_test_md_body() -> String {
+    "# T-001 Test\n\n## 自测清单\n\n### 主流程测试\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 回退接口 | 通过 | - |\n| 2 | 消费链路 | 无法测试 | test 环境 OMS 未订阅 topic，无法联调 |\n\n### 边界场景测试\n\n#### 风险场景分析\n- 已取消单重复回退\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 已取消单回退 | 通过 | - |\n\n### 高并发/大流量场景测试\n\n不适用：单仓低频接口，无并发路径\n"
+        .to_string()
+}
+
 #[test]
 fn skipped_statuses_reports_forward_phase_gaps() {
     assert_eq!(
@@ -173,12 +179,9 @@ async fn status_transition_gates_config_driven_and_ui_skipped() {
         .await
         .expect("unconfigured reverse transition passes");
 
-    // 4) 补齐自测清单后，agent 推进自测中→测试中放行。
-    std::fs::write(
-        req_dir.join("test.md"),
-        "# T-001 Test\n\n## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 回退接口 | 通过 | - |\n| 2 | 消费链路 | 无法测试 | test 环境 OMS 未订阅 topic，无法联调 |\n",
-    )
-    .expect("write test.md");
+    // 4) 补齐三分类自测清单后，agent 推进自测中→测试中放行。
+    std::fs::write(req_dir.join("test.md"), selftest_test_md_body())
+        .expect("write test.md");
     let _ = api_requirement_status(State(state.clone()), form("测试中", None))
         .await
         .expect("filled checklist passes agent transition");
@@ -284,12 +287,9 @@ async fn status_flow_reports_gate_states_with_unverified() {
     let v = flow().await;
     assert_eq!(junction_gate(&v)["state"], json!("failed"));
 
-    // 4) 补齐自测清单后 agent 推进（无 via，门禁校验通过）→ 标 passed。
-    std::fs::write(
-        req_dir.join("test.md"),
-        "# T-001 Test\n\n## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 回退接口 | 通过 | - |\n",
-    )
-    .expect("write test.md");
+    // 4) 补齐三分类自测清单后 agent 推进（无 via，门禁校验通过）→ 标 passed。
+    std::fs::write(req_dir.join("test.md"), selftest_test_md_body())
+        .expect("write test.md");
     let _ = api_requirement_status(
         State(state.clone()),
         FormOrJson(StatusForm {
@@ -362,25 +362,117 @@ fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
 
 #[test]
 fn selftest_checklist_missing_section_fails() {
-    let problems = validate_selftest_checklist("# Test\n\n## 自测记录\n- ⬜ 待执行\n");
+    let problems = validate_selftest_checklist("# Test\n\n## 自测记录\n- ⬜ 待执行\n").problems;
     assert!(problems.iter().any(|p| p.contains("未找到")));
 }
 
+/// 三分类齐全的最小可用自测清单（边界/并发用不适用占位）。
+fn selftest_body_with_categories(main_rows: &str, boundary: &str, concurrency: &str) -> String {
+    format!(
+        "## 自测清单\n\n### 主流程测试\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n{main_rows}\n\n### 边界场景测试\n\n{boundary}\n\n### 高并发/大流量场景测试\n\n{concurrency}\n"
+    )
+}
+
+#[test]
+fn selftest_checklist_requires_category_sections() {
+    // 旧版平铺格式：三个分类小节都缺 + 条目问题同时报出
+    let problems = validate_selftest_checklist(
+        "## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 场景A | 通过 | - |\n",
+    )
+    .problems;
+    for cat in ["主流程测试", "边界场景测试", "高并发/大流量场景测试"] {
+        assert!(problems.iter().any(|p| p.contains(cat) && p.contains("分类小节")), "{}: {:?}", cat, problems);
+    }
+}
 
 #[test]
 fn selftest_checklist_requires_result_and_reason() {
-    let body = "## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 场景A | 通过 | - |\n| 2 | 场景B | 待测试 | - |\n| 3 | 场景C | 失败 | - |\n";
-    let problems = validate_selftest_checklist(body);
-    assert_eq!(problems.len(), 2);
+    let body = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |\n| 2 | 场景B | 待测试 | - |\n| 3 | 场景C | 失败 | - |",
+        "不适用：无边界输入，纯状态查询",
+        "不适用：单仓低频接口，无并发路径",
+    );
+    let problems = validate_selftest_checklist(&body).problems;
+    assert_eq!(problems.len(), 2, "{problems:?}");
     assert!(problems[0].contains("场景B") && problems[0].contains("缺少测试结果"));
     assert!(problems[1].contains("场景C") && problems[1].contains("原因"));
 }
 
 
 #[test]
-fn selftest_checklist_passes_with_block_reasons() {
-    let body = "## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 场景A | 通过 | - |\n| 2 | 场景B | 无法测试 | test 环境 OMS 未订阅 wms-shipment-update-topic，无法联调 |\n| 3 | 场景C | ❌ | 消费端未部署，等待 UAT 验证 |\n| 4 | 场景D | 失败：test 环境服务未部署 | - |\n";
-    assert!(validate_selftest_checklist(body).is_empty());
+fn selftest_checklist_fail_blocks_and_cannot_test_warns() {
+    // 失败项（即使写了原因）→ 问题，门禁不放行；无法测试项（有原因）→ 警示，放行但结果未知
+    let body = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |\n| 2 | 场景B | 失败 | 回退接口返回 500，等待修复 |\n| 3 | 场景C | 无法测试 | test 环境 OMS 未订阅 wms-shipment-update-topic，无法联调 |",
+        "#### 风险场景分析\n- boxCode 传 null/空串时查询落空\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | boxCode=null 查询 | 通过 | - |",
+        "#### 风险场景分析\n- MQ 重复消费时库存重复释放\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 同一单 MQ 重复投递 | 通过 | - |",
+    );
+    let eval = validate_selftest_checklist(&body);
+    assert!(eval.problems.iter().any(|p| p.contains("场景B") && p.contains("不放行")), "{:?}", eval);
+    assert!(eval.warnings.iter().any(|w| w.contains("场景C") && w.contains("结果未知")), "{:?}", eval);
+
+    // 全部通过 → 无问题无警示
+    let all_pass = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "#### 风险场景分析\n- boxCode 传 null/空串时查询落空\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | boxCode=null 查询 | 通过 | - |",
+        "#### 风险场景分析\n- MQ 重复消费时库存重复释放\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 同一单 MQ 重复投递 | 通过 | - |",
+    );
+    let eval = validate_selftest_checklist(&all_pass);
+    assert!(eval.problems.is_empty(), "{:?}", eval);
+    assert!(eval.warnings.is_empty(), "{:?}", eval);
+}
+
+#[test]
+fn selftest_checklist_boundary_requires_analysis_then_table() {
+    // 1) 边界类没有风险场景分析 → 拦截
+    let no_analysis = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | boxCode=null | 通过 | - |",
+        "不适用：无并发路径",
+    );
+    let problems = validate_selftest_checklist(&no_analysis).problems;
+    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("风险场景分析")), "{problems:?}");
+
+    // 2) 有分析但没有测试清单表 → 拦截
+    let no_table = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "#### 风险场景分析\n- boxCode 传 null 时查询落空\n- 状态已取消时重复回调",
+        "不适用：无并发路径",
+    );
+    let problems = validate_selftest_checklist(&no_table).problems;
+    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("没有测试清单表")), "{problems:?}");
+}
+
+#[test]
+fn selftest_checklist_na_and_no_risk_conclusions_pass() {
+    // 1) 整类不适用但没写原因 → 拦截
+    let na_no_reason = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "不适用",
+        "不适用：无并发路径",
+    );
+    let problems = validate_selftest_checklist(&na_no_reason).problems;
+    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("不适用但没写明原因")), "{problems:?}");
+
+    // 2) 分析结论为无风险（带依据）→ 无需测试清单表，直接放行
+    let no_risk = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "#### 风险场景分析\n- 无风险场景：纯文案调整，无新增输入与状态变更",
+        "#### 风险场景分析\n- 无并发风险：单仓低频页面接口，无 MQ/Job 路径",
+    );
+    assert!(validate_selftest_checklist(&no_risk).problems.is_empty());
+
+    // 3) 只写「无风险」没依据 → 仍拦截
+    let no_risk_no_reason = selftest_body_with_categories(
+        "| 1 | 场景A | 通过 | - |",
+        "#### 风险场景分析\n- 无风险",
+        "不适用：无并发路径",
+    );
+    let problems = validate_selftest_checklist(&no_risk_no_reason).problems;
+    assert!(
+        problems.iter().any(|p| p.contains("边界场景测试") && (p.contains("没有测试清单表") || p.contains("风险场景分析为空"))),
+        "{problems:?}"
+    );
 }
 
 
@@ -388,11 +480,13 @@ fn selftest_checklist_passes_with_block_reasons() {
 fn selftest_checklist_requires_result_column_and_items() {
     let no_result_col = validate_selftest_checklist(
         "## 自测清单\n\n| 项目 | 状态 |\n| --- | --- |\n| 场景A | 通过 |\n",
-    );
+    )
+    .problems;
     assert!(no_result_col.iter().any(|p| p.contains("结果")));
     let empty = validate_selftest_checklist(
         "## 自测清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n",
-    );
+    )
+    .problems;
     assert!(empty.iter().any(|p| p.contains("没有")));
 }
 

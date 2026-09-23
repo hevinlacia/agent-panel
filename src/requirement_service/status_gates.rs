@@ -44,46 +44,82 @@ async fn dispatch_status_gate(gate: &str, req: &Requirement) -> ApiResult<()> {
 pub(crate) struct StatusGateEval {
     pub(crate) passed: bool,
     pub(crate) reason: String,
+    /// 放行但需用户注意的警示（如 P1 严重问题、无法测试项），前端渲染 ⚠。
+    pub(crate) warnings: Vec<String>,
 }
 
 /// 只读评估单个门禁的当前通过情况（不抛错），供状态流转卡片展示。
 pub(crate) async fn evaluate_status_gate(gate: &str, req: &Requirement) -> StatusGateEval {
-    let outcome: ApiResult<()> = match gate {
-        "review" => review_gate_outcome(req).await,
-        "selftest-checklist" => {
-            let problems = selftest_checklist_problems(req).await;
-            if problems.is_empty() {
-                Ok(())
-            } else {
-                Err(ApiError::bad_request(problems.join("；")))
+    match gate {
+        "review" => {
+            let decision = review_gate_decision(req).await;
+            match decision {
+                Ok(d) if d.allows_testing => StatusGateEval {
+                    passed: true,
+                    reason: "当前满足通过条件".into(),
+                    warnings: d.warnings,
+                },
+                Ok(d) => StatusGateEval {
+                    passed: false,
+                    reason: format!("{}：{}", d.label, d.reason),
+                    warnings: Vec::new(),
+                },
+                Err(e) => StatusGateEval {
+                    passed: false,
+                    reason: e.message,
+                    warnings: Vec::new(),
+                },
             }
         }
-        "test-scenario" => ensure_test_scenario_allows_testing(req).await,
-        "issue-root-cause" => ensure_issue_root_cause_allows_transition(req).await,
-        "issue-troubleshooting" => ensure_issue_troubleshooting_allows_transition(req).await,
-        _ => Ok(()),
-    };
-    match outcome {
-        Ok(()) => StatusGateEval {
+        "selftest-checklist" => {
+            let eval = selftest_checklist_eval(req).await;
+            if eval.problems.is_empty() {
+                StatusGateEval {
+                    passed: true,
+                    reason: "当前满足通过条件".into(),
+                    warnings: eval.warnings,
+                }
+            } else {
+                StatusGateEval {
+                    passed: false,
+                    reason: eval.problems.join("；"),
+                    warnings: Vec::new(),
+                }
+            }
+        }
+        "test-scenario" => {
+            let outcome = ensure_test_scenario_allows_testing(req).await;
+            gate_eval_from_outcome(outcome)
+        }
+        "issue-root-cause" => {
+            let outcome = ensure_issue_root_cause_allows_transition(req).await;
+            gate_eval_from_outcome(outcome)
+        }
+        "issue-troubleshooting" => {
+            let outcome = ensure_issue_troubleshooting_allows_transition(req).await;
+            gate_eval_from_outcome(outcome)
+        }
+        _ => StatusGateEval {
             passed: true,
             reason: "当前满足通过条件".into(),
-        },
-        Err(e) => StatusGateEval {
-            passed: false,
-            reason: e.message,
+            warnings: Vec::new(),
         },
     }
 }
 
-async fn review_gate_outcome(req: &Requirement) -> ApiResult<()> {
-    let gate = review_gate_decision(req).await?;
-    if gate.allows_testing {
-        return Ok(());
+fn gate_eval_from_outcome(outcome: ApiResult<()>) -> StatusGateEval {
+    match outcome {
+        Ok(()) => StatusGateEval {
+            passed: true,
+            reason: "当前满足通过条件".into(),
+            warnings: Vec::new(),
+        },
+        Err(e) => StatusGateEval {
+            passed: false,
+            reason: e.message,
+            warnings: Vec::new(),
+        },
     }
-    Err(ApiError::bad_request(format!(
-        "{}：{}",
-        gate.label, gate.reason
-    )))
 }
 
 /// 门禁展示名；未知 id 原样返回。

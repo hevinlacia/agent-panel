@@ -408,7 +408,7 @@ button, input, select, textarea { font: inherit; }
 .react-kpi-active .react-kpi-value { color: var(--react-cyan); }
 .react-kpi-avg .react-kpi-value { color: var(--react-amber); font-size: 1.95rem; }
 
-.react-content-grid { display: grid; grid-template-columns: minmax(360px, 0.88fr) minmax(0, 1.35fr); gap: 18px; align-items: start; }
+.react-content-grid { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
 .react-panel { padding: 20px; border-radius: 25px; }
 .react-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
 .react-panel-head span { color: var(--react-cyan); font: 800 0.68rem var(--react-mono); letter-spacing: 0.18em; text-transform: uppercase; }
@@ -426,18 +426,8 @@ button, input, select, textarea { font: inherit; }
 .react-forecast-panel { grid-column: 1 / -1; }
 
 .react-table-wrap { overflow: auto; border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 18px; background: rgba(0, 0, 0, 0.13); }
-.react-duration-table { width: 100%; min-width: 790px; border-collapse: separate; border-spacing: 0; }
-.react-duration-table th { position: sticky; top: 0; z-index: 1; padding: 12px; background: rgba(15, 20, 28, 0.97); border-bottom: 1px solid rgba(148, 163, 184, 0.16); color: var(--react-muted); font: 800 0.68rem var(--react-mono); letter-spacing: 0.1em; text-align: left; text-transform: uppercase; }
-.react-duration-table td { padding: 12px; border-bottom: 1px solid rgba(148, 163, 184, 0.09); vertical-align: middle; }
-.react-duration-table tbody tr:hover { background: rgba(34, 211, 238, 0.055); }
-.react-duration-table a { color: #f8fbff; font-weight: 760; }
-.react-duration-table a:hover { color: var(--react-cyan); }
-.react-duration-id { margin-top: 3px; color: var(--react-faint); font: 0.68rem var(--react-mono); }
 .react-muted { color: var(--react-muted); font-size: 0.83rem; }
 .react-status-pill { display: inline-flex; padding: 3px 9px; border: 1px solid; border-radius: 999px; font: 800 0.7rem var(--react-mono); white-space: nowrap; }
-.react-duration-cell { position: relative; min-width: 160px; overflow: hidden; }
-.react-duration-fill { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, rgba(34, 211, 238, 0.16), rgba(168, 85, 247, 0.14)); border-right: 2px solid rgba(34, 211, 238, 0.45); }
-.react-duration-cell span { position: relative; color: #f8fbff; font: 850 0.82rem var(--react-mono); }
 .react-loading,
 .react-error,
 .react-empty { margin-top: 18px; padding: 18px; border-radius: 18px; color: var(--react-muted); }
@@ -681,6 +671,8 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-att-item-actions .react-copy-link-btn { padding: 3px 7px; }
 .react-att-main { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 12px 14px; border: 1px solid var(--react-border); border-radius: 14px; background: rgba(4,8,14,.55); overflow: hidden; }
 .react-att-main-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.react-att-main-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.react-att-main-actions .react-copy-link-btn { padding: 4px 10px; }
 .react-att-main-head strong { font: 700 .85rem var(--react-mono); color: #fff; word-break: break-all; }
 .react-att-main pre { flex: 1; min-height: 0; margin: 0; overflow: auto; background: rgba(6,10,18,.9); border: 1px solid var(--react-border); border-radius: 10px; padding: 12px 14px; font-family: var(--react-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--react-text); }
 .react-attachment-badge { color: var(--react-cyan); font-size: 12px; font-weight: 700; }
@@ -826,6 +818,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-statusflow-gate.is-passed { color: #5eead4; border: 1px solid rgba(94,234,212,.35); background: rgba(94,234,212,.07); }
 .react-statusflow-gate.is-failed { color: #fca5a5; border: 1px solid rgba(248,113,113,.45); background: rgba(248,113,113,.08); }
 .react-statusflow-gate.is-unverified { color: #94a3b8; border: 1px dashed rgba(148,163,184,.5); background: transparent; }
+.react-statusflow-gate.is-warning { color: #fbbf24; border: 1px solid rgba(251,191,36,.5); background: rgba(251,191,36,.08); }
 .react-statusflow-mark { font-weight: 800; }
 /* 门禁验证详情页 */
 .react-gate-detail-state { display: inline-flex; gap: 12px; padding: 10px 16px; border-radius: 12px; font: 700 .92rem var(--react-mono); margin: 6px 0 12px; }

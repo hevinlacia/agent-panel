@@ -675,8 +675,12 @@ pub(crate) async fn api_requirement_status_gate_detail(
             .cloned()
             .unwrap_or(Value::Null),
         "selftest-checklist" => {
-            let problems = selftest_checklist_problems(&req).await;
-            json!({ "problems": problems, "hotfix": req.is_hotfix() })
+            let eval = selftest_checklist_eval(&req).await;
+            json!({
+                "problems": eval.problems,
+                "warnings": eval.warnings,
+                "hotfix": req.is_hotfix(),
+            })
         }
         "test-scenario" => {
             let body = match req.req_dir.as_deref() {
@@ -817,10 +821,10 @@ pub(crate) async fn api_requirement_status_flow(
             // 流转时通过 → 保留通过记录；人工/系统跳过或未记录 → 实时评估门禁材料，
             // 材料当前满足即视为通过（注明为实时评估），不满足才标未校验并给出缺失原因。
             let historical = gate_checks.get(to).map(|s| s.as_str());
+            let eval = evaluate_status_gate(&gate_id, &req).await;
             let (gate_state, reason) = match (crossed, historical) {
                 (true, Some("passed")) => ("passed", "流转时已通过门禁校验".to_string()),
                 (true, historical) => {
-                    let eval = evaluate_status_gate(&gate_id, &req).await;
                     let entry_note = match historical {
                         Some("skipped") => "人工在面板上修改状态，跳过门禁校验",
                         Some("none") => "系统自动流转，未经过门禁校验",
@@ -840,11 +844,10 @@ pub(crate) async fn api_requirement_status_flow(
                 }
                 // 未走过的流转预览：agent 现在推进会被拦还是放行。
                 (false, _) => {
-                    let eval = evaluate_status_gate(&gate_id, &req).await;
                     if eval.passed {
-                        ("passed", eval.reason)
+                        ("passed", eval.reason.clone())
                     } else {
-                        ("failed", eval.reason)
+                        ("failed", eval.reason.clone())
                     }
                 }
             };
@@ -853,6 +856,7 @@ pub(crate) async fn api_requirement_status_flow(
                 "label": status_gate_label(&gate_id),
                 "state": gate_state,
                 "reason": reason,
+                "warnings": eval.warnings,
             }));
         }
         transitions.push(json!({ "from": from, "to": to, "gates": gates }));
@@ -1353,7 +1357,8 @@ pub(crate) async fn api_requirement_review_materials_post(
     State(state): State<AppState>,
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
-    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
         ApiError::bad_request(
             "requirement has no directory; cannot prepare review materials".to_string(),
@@ -1364,10 +1369,13 @@ pub(crate) async fn api_requirement_review_materials_post(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
         ))
     })?;
-    let materials = prepare_review_materials(&req_dir, &req.id, &branch_scope).await?;
+    let materials =
+        prepare_review_materials(&req_dir, &req.id, &branch_scope, body.mode.as_deref(), &req.status)
+            .await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
+        "status": req.status,
         "materials": materials,
     })))
 }
@@ -2210,18 +2218,25 @@ pub(crate) async fn api_requirement_prod_mrs(
             "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
         ));
     }
-    ensure_review_gate_allows_testing(&req).await?;
+    // 合并 MR 不再校验门禁状态：MR 生成只是创建合并请求，不会自动合入；
+    // 门禁（代码审查/自测）由状态流转和用户人工把关。
     let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
-    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
-        ))
-    })?;
+    // 按轮次读分支登记：轮次 1 = branches.json，>=2 = branches-round-<n>.json（与代码差异卡片联动）。
+    let round = form.0.round.unwrap_or(1).max(1);
+    let scope_file = branch_scope_file_for_round(round);
+    let branch_scope = read_branch_scope_round(&req_dir, round)
+        .await?
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "missing {scope_file}; register the round's branches first"
+            ))
+        })?;
     let results = generate_prod_mrs(&req, &branch_scope).await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
         "generatedAt": now_ms(),
+        "round": round,
         "branchScope": branch_scope,
         "results": results,
     })))

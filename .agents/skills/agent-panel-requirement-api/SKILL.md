@@ -62,7 +62,8 @@ allowed-tools: ["bash", "read", "write", "edit", "get_session_info"]
 | 获取合并分支选项 | GET | `/api/requirement/merge-options?id=<reqId>` | 返回前端/后端可选环境分支和按需求状态计算的默认选中值 |
 | 合并需求分支 | POST | `/api/requirement/merge-branch` | JSON/form body: `reqId`, `repoKind=frontend|backend`, `targetBranch=<branch>`；可选 `target=test|uat` |
 | 查询合并/冲突状态 | GET | `/api/requirement/merge-status?id=<reqId>&target=test|uat` | 返回未完成 merge worktree、冲突文件和状态 |
-| 查询代码审查门禁 | GET | `/api/requirement/review-gate?id=<reqId>` | 返回 `PASS/BLOCKED/WAIVED/missing/pending`；推进到测试中前必须通过或豁免 |
+| 查询代码审查门禁 | GET | `/api/requirement/review-gate?id=<reqId>` | 返回 `PASS/BLOCKED/WAIVED/missing/pending/stale/skill-required/checklist-*`；推进到测试中前必须通过或豁免 |
+| 一键备审查材料 | POST | `/api/requirement/review-materials` | JSON body: `reqId`；可选 `mode=full|incremental|auto`（缺省按需求状态：发布就绪前全量、发布就绪起增量）；返回 `materialPath` + `diffPatchFile` + `handoffHints`，reviewer 直接 read，不要自己跑 git |
 | 列需求 | GET | `/api/requirements` | 返回 `{ requirements: [...] }`，客户端自行按 `status` 过滤 |
 | 更新状态 | POST | `/api/requirement/status` | form body: `reqId`, `status`, 可选 `note`, `redirect` |
 | 更新类别 | POST | `/api/requirement/category` | form body: `reqId`, `category` |
@@ -148,7 +149,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 标准 intent：`overview` / `clarification` / `status` / `progress` / `branch` / `self-test` / `release-check` / `experience-summary` / `design` / `config` / `review`。
 
-代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。结论行必须字面独立成行，**不能用 markdown 加粗**（如 `Review Gate: **PASS**` 解析不出结论，review-gate 判 pending 拦截 MR 生成，WMS-107 实测）。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
+代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。**审查必须加载 `agent-panel-code-review` skill 执行**（备料 → 四轮深度审查 → 结论落盘 → 门禁自检；门禁强制结论文档带 `Source: agent-panel-code-review skill` 标记，缺标记判 skill-required 拦截）。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。问题分级 P0 阻断/P1 严重/P2 一般/P3 优化：**P0 小节非空门禁不放行；P1 非空放行但门禁展示 ⚠ 警示**（均按文档实际内容校验）。门禁同时强制：**代码问题备注**（`code-annotations.json` files 非空 + `reviewedCommit` 指纹与最新材料一致）、**自测清单交叉评估**（test.md 有自测清单时 review 必含非空「自测清单交叉评估」小节）、**详细审查文档**（code-review-ai.md）与审查清单（review-checklist.json）。结论行必须字面独立成行，**不能用 markdown 加粗**（如 `Review Gate: **PASS**` 解析不出结论，review-gate 判 pending 拦截状态推进，WMS-107 实测；门禁只拦状态推进，**不拦生产 MR 生成**）。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
 
 **审查后又有 commit（stale 拦截）**：审查后分支又有 commit（如 review 修正）时，状态推进会被 Code Review Gate 以 stale 拒绝（`reviewedTargetCommit != currentTargetCommit`）。在 review.md 追加「覆盖至 <hash>」文字**无效**（门禁不解析文本）；正确路径：`POST /api/requirement/code-review` `{"reqId":...}` 刷新 code-review.json 快照（保留 previousReviewedSnapshot 供增量对比）后重推状态。review-gate GET 返回的 `staleRepos` 给出 reviewed vs current commit，可据此定位增量审查范围。（WMS-110 实测：状态 400 拒绝两次后按此流程通过）
 

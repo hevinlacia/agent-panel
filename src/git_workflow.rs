@@ -24,6 +24,10 @@ pub(crate) struct CodeReviewForm {
     /// branches-round-<n>.json。省略时按 1 处理，旧行为完全不变。
     #[serde(default)]
     pub(crate) round: Option<u32>,
+    /// 审查材料模式：full=全量 / incremental=增量 / auto 或缺省=按需求状态默认
+    /// （发布就绪之前默认全量审查，发布就绪及之后默认增量审查；用户显式指定时覆盖默认）。
+    #[serde(default)]
+    pub(crate) mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +40,10 @@ pub(crate) struct SyncBaseForm {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProdMrForm {
     pub(crate) req_id: String,
+    /// 分支登记轮次：1 = 原始 branches.json（默认），>=2 = 修复轮次 branches-round-<n>.json。
+    /// 与代码差异卡片选中的轮次联动，缺省按 1 处理。
+    #[serde(default)]
+    pub(crate) round: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -135,24 +135,61 @@ pub(crate) async fn run_code_review_incremental_scan(
     Ok(review)
 }
 
+/// 需求状态是否默认增量审查：发布就绪及之后（发布就绪/经验总结/已完成）= true；
+/// 发布就绪之前（含线上问题等非需求流状态）= false，默认全量审查。
+/// 对应策略：发版就绪前全量审查，发版就绪起只增量审查新增提交。
+pub(crate) fn status_prefers_incremental(status: &str) -> bool {
+    let release_ready_rank = REQ_FLOW_STATUSES
+        .iter()
+        .position(|s| *s == "发布就绪")
+        .unwrap_or(4);
+    requirement_flow_status_rank(status)
+        .map(|rank| rank >= release_ready_rank)
+        .unwrap_or(false)
+}
+
 /// 一键准备代码审查材料（决策树编排）：
-/// 1. code-review.json 不存在 -> 全量首扫（mode=full-initial）
-/// 2. 存在但 reviewed targetCommit 与 HEAD 漂移：
-///    - 全部线性历史 -> 生成增量包（mode=incremental）
-///    - 任一非线性历史（force-push/rebase）-> 全量重扫（mode=full-regenerate）
-/// 3. 存在且无漂移：
+/// 模式优先级：显式 mode（full/incremental）> 需求状态默认（发布就绪前全量、发布就绪起增量）。
+/// 1. code-review.json 不存在 -> 全量首扫（mode=full-initial；没有已审基线，增量无从谈起）
+/// 2. 存在且无漂移（全量快照已覆盖当前 HEAD）：
 ///    - 增量包比 review 结论新（上次增量还没审完）-> 复用现有增量包（mode=incremental-pending）
 ///    - 否则 -> 全量快照仍有效（mode=full-ready）
+/// 3. 存在且有漂移：
+///    - 偏好增量（发布就绪起默认或显式 incremental）且全部线性历史 -> 生成增量包（mode=incremental）
+///    - 偏好全量（发布就绪前默认或显式 full）-> 全量重扫（mode=full-regenerate）
+///    - 任一非线性历史（force-push/rebase）-> 全量重扫（mode=full-regenerate，增量 diff 不可靠）
 /// 返回材料路径 + 模式 + handoff 提示，调用方把 materialPath 直接写进 reviewer handoff。
 pub(crate) async fn prepare_review_materials(
     req_dir: &Path,
     req_id: &str,
     scope: &BranchScope,
+    mode: Option<&str>,
+    status: &str,
 ) -> Result<Value> {
+    let explicit_mode = mode
+        .map(str::trim)
+        .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("auto"))
+        .map(|m| m.to_ascii_lowercase());
+    if let Some(m) = &explicit_mode {
+        if m != "full" && m != "incremental" {
+            return Err(anyhow!(
+                "mode 只支持 full / incremental / auto（缺省），收到：{m}"
+            ));
+        }
+    }
+    let prefer_incremental = explicit_mode
+        .as_deref()
+        .map(|m| m == "incremental")
+        .unwrap_or_else(|| status_prefers_incremental(status));
     let existing_full = read_json_if_exists(&req_dir.join(CODE_REVIEW_FILE)).await;
     let mut warnings = Vec::<String>::new();
     let (mode, reason, material_kind, review_doc) = match existing_full {
         None => {
+            if explicit_mode.as_deref() == Some("incremental") {
+                return Err(anyhow!(
+                    "显式要求增量审查，但需求目录还没有 code-review.json（没有已审查基线），无法增量；请先执行全量审查（mode=full 或省略 mode）"
+                ));
+            }
             let review = run_code_review_scan(req_dir, req_id, scope).await?;
             (
                 "full-initial",
@@ -164,8 +201,10 @@ pub(crate) async fn prepare_review_materials(
         Some(existing) => {
             let drifts = review_snapshot_drifts(req_dir).await;
             if drifts.is_empty() {
-                if review_artifact_newer_than_review_docs(req_dir, CODE_REVIEW_INCREMENTAL_FILE)
-                    .await
+                // 无漂移：现有全量快照已覆盖当前 HEAD，本身就是全量材料。
+                if explicit_mode.as_deref() != Some("full")
+                    && review_artifact_newer_than_review_docs(req_dir, CODE_REVIEW_INCREMENTAL_FILE)
+                        .await
                 {
                     if let Some(inc) =
                         read_json_if_exists(&req_dir.join(CODE_REVIEW_INCREMENTAL_FILE)).await
@@ -201,7 +240,7 @@ pub(crate) async fn prepare_review_materials(
                         existing,
                     )
                 }
-            } else {
+            } else if prefer_incremental {
                 let mut all_linear = true;
                 for drift in &drifts {
                     if !drift_is_linear(drift).await {
@@ -211,16 +250,26 @@ pub(crate) async fn prepare_review_materials(
                 }
                 if all_linear {
                     let inc = run_code_review_incremental_scan(req_dir, req_id).await?;
+                    let mode_reason = if explicit_mode.as_deref() == Some("incremental") {
+                        "显式要求增量审查".to_string()
+                    } else {
+                        format!("需求状态「{status}」已到发布就绪及之后，默认增量审查")
+                    };
                     (
                         "incremental",
                         format!(
-                            "检测到 {} 个仓库的需求分支 HEAD 已推进（{}），已生成增量审查包，只覆盖 reviewed commit → HEAD 的新增 diff",
+                            "检测到 {} 个仓库的需求分支 HEAD 已推进（{}）；{}，已生成增量审查包，只覆盖 reviewed commit → HEAD 的新增 diff",
                             drifts.len(),
-                            drifts.iter().map(|d| d.repo_name.as_str()).collect::<Vec<_>>().join("、")
+                            drifts.iter().map(|d| d.repo_name.as_str()).collect::<Vec<_>>().join("、"),
+                            mode_reason
                         ),
                         "incremental",
                         inc,
                     )
+                } else if explicit_mode.as_deref() == Some("incremental") {
+                    return Err(anyhow!(
+                        "显式要求增量审查，但检测到非线性历史（reviewed commit 不是当前 HEAD 祖先，可能 rebase/force-push），增量 diff 不可靠；请改用 mode=full 全量重扫"
+                    ));
                 } else {
                     warnings.push(
                         "检测到非线性历史（reviewed commit 不是当前 HEAD 的祖先，可能 rebase/force-push），增量 diff 不可靠，已回退全量重扫".to_string(),
@@ -233,6 +282,24 @@ pub(crate) async fn prepare_review_materials(
                         review,
                     )
                 }
+            } else {
+                let mode_reason = if explicit_mode.as_deref() == Some("full") {
+                    "显式要求全量审查".to_string()
+                } else {
+                    format!("需求状态「{status}」在发布就绪之前，默认全量审查")
+                };
+                let review = run_code_review_scan(req_dir, req_id, scope).await?;
+                (
+                    "full-regenerate",
+                    format!(
+                        "检测到 {} 个仓库的需求分支 HEAD 已推进（{}）；{}，已重新生成全量审查快照",
+                        drifts.len(),
+                        drifts.iter().map(|d| d.repo_name.as_str()).collect::<Vec<_>>().join("、"),
+                        mode_reason
+                    ),
+                    "full",
+                    review,
+                )
             }
         }
     };
@@ -306,6 +373,9 @@ pub(crate) async fn prepare_review_materials(
         .unwrap_or(false);
 
     let mut handoff_hints = Vec::new();
+    handoff_hints.push(
+        "审查必须按 agent-panel-code-review skill 执行：加载该 skill 后按其流程审查（材料已备好：四轮审查法见 skill 的 references/review-methodology.md）；结论文件 code-review-ai.md 顶部必须带 `Source: agent-panel-code-review skill` 标记，否则门禁判 skill-required 不放行".to_string(),
+    );
     if patch_available {
         handoff_hints.push(format!(
             "diff 全文用 read 读多行 patch 文件 {}（按真实换行落盘，超过 2000 行用 offset 续读）；不要直接 read {} 的 diff 字段——JSON 里 diff 是单行转义串，超出 read 单行限制会被截断",
@@ -328,16 +398,25 @@ pub(crate) async fn prepare_review_materials(
         );
     } else {
         handoff_hints.push(
-            "审查覆盖 baseCommit → toCommit 的全部 diff；审完在 review.md 重写 Review Gate 结论（PASS / BLOCKED / WAIVED）".to_string(),
+            "全量审查不只看 diff：每个改动文件的完整实现、直接调用方/被调方、相关 Mapper XML/枚举/配置都在扩大阅读范围内（必要上下文代码都要读），扩大阅读清单写进审查概览；审完在 review.md 重写 Review Gate 结论（PASS / BLOCKED / WAIVED）".to_string(),
         );
     }
+    handoff_hints.push(
+        "问题分级 P0 阻断/P1 严重/P2 一般/P3 优化：逐条核查、先验证再上报、不输出冗余告警；P0/P1 非空必须 `Review Gate: BLOCKED`，每条 finding 标注 文件:行 + 等级 + 描述 + 修复建议，并同步产出 annotations hunk note".to_string(),
+    );
+    handoff_hints.push(
+        "审查必须与 test.md 自测清单三分类交叉核对（重点边界场景测试、高并发/大流量场景测试的风险场景分析与测试结果），结论写进 code-review-ai.md 的「## 自测清单交叉评估」小节；diff 风险未被自测覆盖、或自测声称通过但代码无真实保护（无幂等/锁/判空）都要在评估里指出（后者 P1）".to_string(),
+    );
     if inventory_risk {
         handoff_hints.push(
             "本次改动命中库存高危风险：审查必须包含库存账本专项评估（单据活跃/死亡、DB 库存、redis 可用量、重复释放、遗漏占用、幂等、验证证据），否则 PASS 不通过门禁".to_string(),
         );
     }
     handoff_hints.push(
-        "审查产出需同时维护人类审查辅助说明（code-annotations.json）：为本次 diff 的关键文件（建议 ≤10 个，优先 riskTags 命中/核心链路文件）逐个产出 `repoName/path` + `summary`（改动目的与设计思路）+ `variables`（关键变量/字段：名 | 含义 | 为何重要）+ `flow`（数据/状态流转，可用 mermaid flowchart）+ `notes`（关键 hunk 备注，含 hunkHeader 定位）".to_string(),
+        "代码问题备注（code-annotations.json）是门禁硬要求：为本次 diff 的关键文件（建议 ≤10 个，优先 riskTags 命中/核心链路文件）逐个产出 `repo/path` + `summary`（改动目的与设计思路）+ `variables`（关键变量/字段：名 | 含义 | 为何重要）+ `flow`（数据/状态流转，可用 mermaid flowchart）+ `notes`；每条 finding（严重/建议）都必须对应一条 hunk note（anchor.hunkHeader 从 patch 的 @@ 行复制），让人在差异页看代码时能直接看到问题说明".to_string(),
+    );
+    handoff_hints.push(
+        "annotations 顶层必须带 reviewedCommit 指纹（repo → 本材料各仓的 targetCommit，增量包取 coverageToCommit）：门禁与差异页用它与当前快照比对判定备注是否锚定旧 diff；缺失或不一致会被门禁判 annotations-required/annotations-stale 拦截".to_string(),
     );
     handoff_hints.push(
         "reviewer 无写权限：annotations 内容先随审查结论一起输出，由主 agent 复核后调 `PUT /api/requirement/annotations` 落盘（全量覆盖旧版）；写入时机与审查快照同批，说明锚定当前审查 diff，避免说明栏与代码漂移".to_string(),

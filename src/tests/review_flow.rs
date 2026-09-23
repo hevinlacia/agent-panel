@@ -252,12 +252,23 @@ async fn review_gate_requires_completed_checklist() {
     req.status = "自测中".to_string();
     req.req_dir = Some(req_dir.to_string_lossy().to_string());
 
-    // 1) 无清单 → checklist-missing（即使写了 PASS 也不放行）
+    // 1) PASS 但无 skill 标记 → skill-required（门禁强制审查走 agent-panel-code-review skill，
+    //    标记校验优先于清单校验：未经 skill 的浅层 PASS 直接拦下）
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "skill-required", "{}", decision.reason);
+    assert!(!decision.allows_testing);
+
+    // 2) 补上 skill 标记但仍无清单 → checklist-missing
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-901 审查\n\nReview Gate: PASS\nSource: agent-panel-code-review skill\n",
+    )
+    .expect("rewrite review.md with skill marker");
     let decision = review_gate_decision(&req).await.expect("decision");
     assert_eq!(decision.status, "checklist-missing");
     assert!(!decision.allows_testing);
 
-    // 2) 清单有 fail 项 → blocked
+    // 3) 清单有 fail 项 → blocked
     std::fs::write(
         req_dir.join(REVIEW_CHECKLIST_FILE),
         json!({
@@ -274,7 +285,7 @@ async fn review_gate_requires_completed_checklist() {
     assert_eq!(decision.status, "blocked", "{}", decision.reason);
     assert!(decision.reason.contains("C2"), "{}", decision.reason);
 
-    // 3) 全部 pass/na + PASS 标记 → passed
+    // 4) 全部 pass/na + PASS 标记 + skill 标记，但无代码问题备注 → annotations-required
     std::fs::write(
         req_dir.join(REVIEW_CHECKLIST_FILE),
         json!({
@@ -288,13 +299,235 @@ async fn review_gate_requires_completed_checklist() {
     )
     .expect("write checklist v2");
     let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "annotations-required", "{}", decision.reason);
+    assert!(!decision.allows_testing);
+
+    // 5) 落盘代码问题备注（无材料快照场景：只要求 files 非空）→ passed
+    std::fs::write(
+        req_dir.join(CODE_ANNOTATIONS_FILE),
+        json!({
+            "version": 1, "reqId": "T-901",
+            "files": [
+                { "repo": "repo-a", "path": "src/A.java", "summary": "改动目的", "notes": [] }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write annotations");
+    let decision = review_gate_decision(&req).await.expect("decision");
     assert_eq!(decision.status, "passed", "{}", decision.reason);
     assert!(decision.allows_testing);
 
-    // 4) 清单 JSON 损坏 → checklist-error
+    // 6) 材料快照存在但备注缺 reviewedCommit 指纹 → annotations-stale
+    std::fs::write(
+        req_dir.join(CODE_REVIEW_FILE),
+        json!({
+            "version": 1, "reqId": "T-901",
+            "repos": [
+                { "repoName": "repo-a", "branch": "feature/x", "targetCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write material snapshot");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "annotations-stale", "{}", decision.reason);
+    assert!(!decision.allows_testing);
+
+    // 7) 补上与材料一致的 reviewedCommit 指纹 → passed
+    std::fs::write(
+        req_dir.join(CODE_ANNOTATIONS_FILE),
+        json!({
+            "version": 1, "reqId": "T-901",
+            "reviewedCommit": { "repo-a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            "files": [
+                { "repo": "repo-a", "path": "src/A.java", "summary": "改动目的", "notes": [] }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("rewrite annotations with fingerprint");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "passed", "{}", decision.reason);
+    assert!(decision.allows_testing);
+
+    // 8) 清单 JSON 损坏 → checklist-error
     std::fs::write(req_dir.join(REVIEW_CHECKLIST_FILE), "{oops").expect("corrupt");
     let decision = review_gate_decision(&req).await.expect("decision");
     assert_eq!(decision.status, "checklist-error");
     assert!(!decision.allows_testing);
+}
+
+#[tokio::test]
+async fn review_gate_blocks_on_p0_findings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-904");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-904\ntitle: P0 拦截\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let mut req = default_requirement(Vec::new());
+    req.id = "T-904".to_string();
+    req.status = "自测中".to_string();
+    req.req_dir = Some(req_dir.to_string_lossy().to_string());
+
+    // 文档写 PASS 但 P0 小节有实质内容 → 门禁按实际内容拦截
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-904 审查\n\nReview Gate: PASS\nSource: agent-panel-code-review skill\n\n## P0 阻断\n\n- [P0][逻辑] InventoryService.java:88：并发下库存重复释放，会导致数据错乱\n",
+    )
+    .expect("write review.md");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "blocked", "{}", decision.reason);
+    assert!(!decision.allows_testing);
+}
+
+#[tokio::test]
+async fn review_gate_passes_with_p1_warnings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-906");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-906\ntitle: P1 警示放行\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let mut req = default_requirement(Vec::new());
+    req.id = "T-906".to_string();
+    req.status = "自测中".to_string();
+    req.req_dir = Some(req_dir.to_string_lossy().to_string());
+
+    // P1 严重问题非空：放行（allows_testing=true）但带警示
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-906 审查\n\nReview Gate: PASS\nSource: agent-panel-code-review skill\n\n## P0 阻断\n\n无\n\n## P1 严重\n\n- [P1][性能] OrderMapper.xml:42：新增查询未走索引，大单量仓会拖慢接口\n",
+    )
+    .expect("write review.md");
+    std::fs::write(
+        req_dir.join(REVIEW_CHECKLIST_FILE),
+        json!({ "version": 1, "reqId": "T-906", "items": [
+            { "id": "C1", "title": "性能红线", "conclusion": "pass" }
+        ] })
+        .to_string(),
+    )
+    .expect("write checklist");
+    std::fs::write(
+        req_dir.join(CODE_ANNOTATIONS_FILE),
+        json!({ "version": 1, "reqId": "T-906", "files": [
+            { "repo": "repo-a", "path": "src/A.java", "summary": "改动目的", "notes": [] }
+        ] })
+        .to_string(),
+    )
+    .expect("write annotations");
+
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "passed", "{}", decision.reason);
+    assert!(decision.allows_testing);
+    assert!(decision.warnings.iter().any(|w| w.contains("P1") && w.contains("待修复")), "{:?}", decision.warnings);
+}
+
+#[tokio::test]
+async fn review_gate_requires_selftest_crosscheck() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-905");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-905\ntitle: 交叉评估校验\nstatus: 自测中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    // test.md 已有自测清单（三分类）→ review 必须含自测清单交叉评估
+    std::fs::write(
+        req_dir.join("test.md"),
+        "# T-905 Test\n\n## 自测清单\n\n### 主流程测试\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 主流程 | 通过 | - |\n\n### 边界场景测试\n\n不适用：无边界输入\n\n### 高并发/大流量场景测试\n\n不适用：无并发路径\n",
+    )
+    .expect("write test.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let mut req = default_requirement(Vec::new());
+    req.id = "T-905".to_string();
+    req.status = "自测中".to_string();
+    req.req_dir = Some(req_dir.to_string_lossy().to_string());
+
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-905 审查\n\nReview Gate: PASS\nSource: agent-panel-code-review skill\n",
+    )
+    .expect("write review.md");
+    std::fs::write(
+        req_dir.join(REVIEW_CHECKLIST_FILE),
+        json!({ "version": 1, "reqId": "T-905", "items": [
+            { "id": "C1", "title": "幂等", "conclusion": "pass" }
+        ] })
+        .to_string(),
+    )
+    .expect("write checklist");
+    std::fs::write(
+        req_dir.join(CODE_ANNOTATIONS_FILE),
+        json!({ "version": 1, "reqId": "T-905", "files": [
+            { "repo": "repo-a", "path": "src/A.java", "summary": "改动目的", "notes": [] }
+        ] })
+        .to_string(),
+    )
+    .expect("write annotations");
+
+    // 1) 缺自测清单交叉评估 → crosscheck-missing
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "crosscheck-missing", "{}", decision.reason);
+    assert!(!decision.allows_testing);
+
+    // 2) 补上交叉评估小节 → passed
+    std::fs::write(
+        req_dir.join("review.md"),
+        "# T-905 审查\n\nReview Gate: PASS\nSource: agent-panel-code-review skill\n\n## 自测清单交叉评估\n\n- 边界/并发流量：自测已标不适用，扩大阅读未发现新增边界与并发风险\n- P0/P1：无\n",
+    )
+    .expect("rewrite review.md with crosscheck");
+    let decision = review_gate_decision(&req).await.expect("decision");
+    assert_eq!(decision.status, "passed", "{}", decision.reason);
+    assert!(decision.allows_testing);
+}
+
+#[test]
+fn status_prefers_incremental_only_from_release_ready() {
+    // 发布就绪之前（含更早需求流状态）默认全量审查
+    assert!(!status_prefers_incremental("需求澄清"));
+    assert!(!status_prefers_incremental("开发中"));
+    assert!(!status_prefers_incremental("自测中"));
+    assert!(!status_prefers_incremental("测试中"));
+    // 发布就绪及之后默认增量审查
+    assert!(status_prefers_incremental("发布就绪"));
+    assert!(status_prefers_incremental("经验总结"));
+    assert!(status_prefers_incremental("已完成"));
+    // 线上问题等非需求流状态：保守全量
+    assert!(!status_prefers_incremental("排查中"));
+    assert!(!status_prefers_incremental("未知状态"));
+}
+
+#[tokio::test]
+async fn prepare_review_materials_rejects_unknown_mode() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let req_dir = tmp.path().to_path_buf();
+    let scope = BranchScope::default();
+    let err = prepare_review_materials(&req_dir, "T-902", &scope, Some("xyz"), "自测中")
+        .await
+        .expect_err("unknown mode must be rejected");
+    assert!(err.to_string().contains("mode 只支持"), "{}", err);
+    // auto 显式传值等价缺省，不报错（空 scope 也不应该在 mode 校验层失败）
+    let _ = prepare_review_materials(&req_dir, "T-902", &scope, Some("auto"), "自测中").await;
 }
 

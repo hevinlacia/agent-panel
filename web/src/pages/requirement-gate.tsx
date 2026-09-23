@@ -16,6 +16,11 @@ function GateStateBanner({ state, label, reason, checkedAt }: { state: string; l
   </div>
 }
 
+function GateWarnings({ warnings }: { warnings?: string[] | null }) {
+  if (!warnings?.length) return null
+  return <div className="react-drive-blockers react-gate-warning"><strong>⚠ 放行但有警示</strong><ul>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>
+}
+
 function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayload["detail"]> }) {
   const staleRepos = detail.staleRepos || []
   return <>
@@ -35,7 +40,14 @@ function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayl
         const mark = (v?: string) => v === "pass" ? "✅ pass" : v === "fail" ? "❌ fail" : "➖ na"
         return <div className="react-drive-blockers"><strong>审查清单（{c.total} 项{c.failed ? `，${c.failed} 项 fail` : "，全部有结论"}）</strong><ul>{(c.items || []).map((item) => <li key={item.id}><code>{item.id}</code> {item.title} —— <strong>{mark(item.conclusion)}</strong>{item.note ? <span className="react-muted">（{item.note}）</span> : null}{item.evidence ? <span className="react-muted"> 证据：{item.evidence}</span> : null}</li>)}</ul></div>
       })() : null}
-      {staleRepos.length ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong><ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul><p>优先生成增量审查包，只审上次已审 commit 到当前 HEAD 的新增 diff；非线性历史再回退全量审查。</p></div> : null}
+      {detail.annotations ? (() => {
+        const a = detail.annotations
+        if (!a.present) return <div className="react-drive-blockers"><strong>代码问题备注缺失</strong><p>code-annotations.json 缺失或 files 为空：门禁要求审查产出必须包含代码问题备注（每条 finding 对应一条 hunk 备注），让人在差异页看代码时能直接看到问题说明。按 agent-panel-code-review skill 产出后 PUT /api/requirement/annotations 落盘。</p></div>
+        if (a.stale) return <div className="react-drive-blockers"><strong>代码问题备注过期</strong><p>{a.reason || "备注提交指纹与最新审查材料不一致"}：备注锚定的是旧 diff，需按最新材料复核后重新 PUT /api/requirement/annotations（刷新 reviewedCommit 指纹）。</p></div>
+        return <div className="react-save-hint">✓ 代码问题备注已就绪：差异页右侧说明栏展示文件摘要与问题 hunk 备注，提交指纹与当前审查材料一致。</div>
+      })() : null}
+      {staleRepos.length ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong><ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul><p>点击「准备审查材料」重新备料复审（发布就绪起默认增量，只审上次已审 commit → 当前 HEAD 的新增 diff；非线性历史自动回退全量）。</p></div> : null}
+      <GateWarnings warnings={detail.warnings} />
       {detail.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{detail.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
       <p className="react-muted">生成/刷新差异与审查材料请到需求详情页「代码差异」卡片操作。</p>
     </section>
@@ -45,13 +57,36 @@ function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayl
 function SelftestGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayload["detail"]> }) {
   const problems = detail.problems || []
   return <section className="react-panel"><PanelHead kicker="Selftest Checklist" title="自测清单校验详情" />
-    <p className="react-muted">校验目标：test.md「## 自测清单」表格——列出测试项目且每项有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因。</p>
+    <p className="react-muted">校验目标：test.md「## 自测清单」分三类小节（主流程测试 / 边界场景测试 / 高并发·大流量场景测试）——每项都有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因；边界与并发流量类必须先写「风险场景分析」再列测试清单，确认无风险写 {'无风险场景：<依据>'}，整类不适用写 {'不适用：<原因>'}。</p>
     {detail.hotfix ? <p className="react-save-hint">抢修模式（已关联线上问题）：自测门禁默认放行，速度优先；用户明确要求自测时再补 test.md 自测清单。</p> : null}
-    {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ 自测清单校验通过：每项都有测试结果，未通过项均附具体原因。</p>}
-    <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`| # | 自测项 | 结果 | 失败/无法测试原因 |
+    {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ 自测清单校验通过：每项都有测试结果；存在「无法测试」项时放行但下方警示结果未知。</p>}
+    <GateWarnings warnings={detail.warnings} />
+    <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`## 自测清单（三类小节，每项都要有结果）
+
+### 主流程测试
+| # | 自测项 | 结果 | 失败/无法测试原因 |
 | --- | --- | --- | --- |
-| 1 | 场景名 | 通过 | - |
-| 2 | 场景名 | 无法测试 | test 环境 OMS 未订阅 topic，无法联调 |`}</pre></details>
+| 1 | 下单主流程 | 通过 | - |
+
+### 边界场景测试
+#### 风险场景分析
+- boxCode 传 null/空串时查询落空
+#### 测试清单
+| # | 自测项 | 结果 | 失败/无法测试原因 |
+| --- | --- | --- | --- |
+| 1 | boxCode=null 查询 | 通过 | - |
+
+### 高并发/大流量场景测试
+#### 风险场景分析
+- MQ 重复消费时库存重复释放
+#### 测试清单
+| # | 自测项 | 结果 | 失败/无法测试原因 |
+| --- | --- | --- | --- |
+| 1 | 同一单 MQ 重复投递 | 通过 | - |
+
+# 边界/并发流量类：先分析风险 → 再列清单 → 再完成测试
+# 确认无风险写：无风险场景：<依据>
+# 整类不适用写：不适用：<原因>`}</pre></details>
   </section>
 }
 
