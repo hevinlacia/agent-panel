@@ -122,7 +122,7 @@ Agent Panel 目前做的是**只读能力接入**：
 - `GET|PUT|POST /api/requirement/doc` — GET 读取受控文档；PUT/POST 写入受控文档，`docType/file=background|memory|branch|config-changes|release-manifest|impact|test|notes|review|release-check|experience-summary|alignment|prd`，`mode=replace|append`
 - `POST /api/requirement/validate` — 校验 `meta.md`、`state.json`、标准文件和 `branches.json` 基本结构
 - `POST /api/requirement/code-review/incremental` — 在已有审查快照过期时生成 `code-review-incremental.json`：按 reviewed `targetCommit` → current HEAD 生成新增提交/文件/diff，用于测试中追加代码后的快速复审，避免重审全量分支
-- `GET /api/requirement/review-gate?id=<req>` — 读取代码审查门禁状态；自测中推进到测试中时，后端会强制要求 PASS 或 WAIVED。响应 `gate` 含 `riskTags` / `inventoryRisk`：命中库存风险时，即使 review 写 PASS，若未包含库存账本专项评估，门禁仍为 `inventory-pending`（不允许推进）
+- `GET /api/requirement/review-gate?id=<req>` — 读取代码审查门禁状态；自测中推进到测试中时，后端会强制要求 PASS 或 WAIVED。响应 `gate` 含 `riskTags` / `inventoryRisk` / `warnings`：P1 严重问题非空时放行但 `warnings` 非空（前端 ⚠ 警示）；命中库存风险时，即使 review 写 PASS，若未包含库存账本专项评估，门禁仍为 `inventory-pending`（不允许推进）
 - `POST /api/requirement/master-diff` — 按 `branches.json` 对比需求分支和指定基准分支
 - `GET|PUT /api/requirement/annotations` — 读写需求目录 `code-annotations.json`：按文件讲解 diff（改动摘要 / 关键变量 / mermaid 流转图 / hunk 级备注），供差异页右侧说明栏展示；agent 经 `req-diff-annotate` skill 生成，面板可手工编辑
 - `GET /api/requirement/merge-options?id=<req>` — 返回前端/后端可选环境分支和按需求状态计算的默认选中值
@@ -271,7 +271,7 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 - **跳状态处理**：允许从任意状态跳到目标状态；进入新状态后执行 `phaseRuntime.entryChecks`，`phaseRuntime.phaseGaps.missingRequiredEntryChecks` 作为风险/待办记录，除代码审查等安全门禁外不阻塞当前任务。
 - **需求澄清**：使用 `intent=clarification`，先查业务知识库/经验库，再初步调查代码，产出 `alignment.md`、`background.md`、`impact.md` 和 `memory.md`。
 - **上线清单**：`release-manifest.md` 是贯穿全流程维护的发布资产总览，需求详情页常驻展示；开发、自测、发布前都要同步更新。
-- **代码审查门禁**：不新增主状态；作为 `自测中 → 测试中` 的 gate。`review.md` 或 `code-review-ai.md` 需要明确写 `Review Gate: PASS` / `BLOCKED` / `WAIVED`，否则后端拒绝推进到 `测试中`。
+- **代码审查门禁**：不新增主状态；作为 `自测中 → 测试中` 的 gate。审查必须经 `agent-panel-code-review` skill 执行（备料 → 深度审查 → 结论落盘），`review.md` 或 `code-review-ai.md` 需要明确写 `Review Gate: PASS` / `BLOCKED` / `WAIVED`，且结论文档需带 `Source: agent-panel-code-review skill` 标记（缺标记判 skill-required 不放行），否则后端拒绝推进到 `测试中`。问题分级 **P0 阻断 / P1 严重 / P2 一般 / P3 优化**：P0 小节非空门禁按实际内容拦截不放行（写 PASS 也拦）；P1 非空放行但门禁展示 ⚠ 警示。门禁同时强制四份产物：**代码问题备注**（`code-annotations.json`，files 非空 + `reviewedCommit` 指纹与最新材料一致）、**自测清单交叉评估**（test.md 有自测清单时 review 必含非空「自测清单交叉评估」小节，交叉核对边界/并发流量风险与测试结果）、**详细审查文档**（code-review-ai.md 含审查概览/交叉评估/P0-P3 分级/横切清单/库存账本）、审查清单（review-checklist.json）。审查材料模式：发布就绪前默认全量（不只看 diff，扩大阅读必要上下文代码），发布就绪及之后默认增量（`POST /api/requirement/review-materials` 可用 `mode: full/incremental` 覆盖）。
 - **增量复审**：如果需求已经在 `测试中` 且又追加代码，门禁仍要求覆盖最新 HEAD，但不必重审全量 diff；优先调用 `POST /api/requirement/code-review/incremental` 生成 `code-review-incremental.json`，只审上次已审 `targetCommit` → 当前 HEAD 的新增提交。若增量包提示 `linearHistory=false`（rebase/force-push/非祖先关系），再回退全量 `code-review.json`。
 - **风险感知门禁**：`code-review.json` 扫描时为每个文件打风险标签（测试/API/Service/DB/MQ/配置/大改动/**库存**），并按仓库、需求聚合出 `riskTags` 与 `inventoryRisk`。命中 `库存` 风险（InventoryCacheService、ShipmentHeaderService、ShipmentDetailService、location_inventory、shipment_alloc_request、onHandQty/allocatedQty 等）时，review 必须补 `库存账本评估`（活跃/死亡单、DB 库存、redis 可用量、重复释放、遗漏占用、幂等、验证证据），否则即使 PASS 门禁也判定为 `inventory-pending` 并阻断推进。
 - **经验总结**：使用 `intent=experience-summary`，把本次需求暴露的业务知识、经验和 skill 改进写入 `experience-summary.md`，并尽量落地到知识库/经验库/skill。

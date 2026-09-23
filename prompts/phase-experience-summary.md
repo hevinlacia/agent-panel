@@ -7,6 +7,7 @@
 - Agent Panel 业务知识库和经验库当前记录；相关 skill 的 SKILL.md 按需读取
 
 ## 必做
+- 修复轮次（round ≥ 2，branches-round-<n>.json）的代码默认不写单元测试：生产后修复速度优先、改动面小，不新增/补写单测，也不因缺单测阻塞合入；仅当用户明确要求、或改动命中核心链路/库存等高危逻辑且值得固化时再补（覆盖默认前先与用户确认）
 - 先处理 `experience-summary-context` 中的 knowledgeReferences：这些是已参考过的知识/经验，不要重复创建
 - 对每个 learningCandidate / skillImprovementCandidate 先按 triggerTerms、relatedKnowledgeIds、dedupeKey 查询知识库/经验库/skill，判断是新增、更新已有、重复跳过还是待确认
 - 回顾本次需求全过程，识别新增或修正的业务事实、规则、接口、表、状态流转和跨系统链路

@@ -195,16 +195,17 @@ pub(crate) fn api_error_help(message: &str) -> Option<Value> {
     }
     if lower.contains("code review gate") || lower.contains("review gate") {
         return Some(json!({
-            "skillName": "req-tracker",
-            "skillPath": agent_panel_skill_path("req-tracker"),
-            "why": "测试前代码审查门禁未通过或未明确豁免",
+            "skillName": "agent-panel-code-review",
+            "skillPath": agent_panel_skill_path("agent-panel-code-review"),
+            "why": "代码审查门禁未通过：审查必须按该 skill 流程执行（备料 → 深度审查 → 结论落盘 → 门禁自检）",
             "correctExamples": [
                 "GET /api/requirement/review-gate?id=<reqId>",
-                "POST /api/requirement/code-review {\"reqId\":\"<reqId>\"}"
+                "POST /api/requirement/review-materials {\"reqId\":\"<reqId>\"}（mode 可选 full/incremental，缺省按需求状态：发布就绪前全量、发布就绪起增量）",
+                "PUT /api/requirement/annotations {\"reqId\":\"<reqId>\",\"annotations\":{\"reviewedCommit\":{\"<repo>\":\"<targetCommit>\"},\"files\":[...]}}"
             ],
             "relatedDocs": [
                 "review.md",
-                "code-review-ai.md"
+                "code-review-ai.md（顶部需含 `Source: agent-panel-code-review skill` 标记）"
             ]
         }));
     }

@@ -13,11 +13,14 @@ function StatusFlowJunction({ reqId, transition }: { reqId: string; transition: 
   return <div className="react-statusflow-link">
     <span className="react-statusflow-line" />
     {gates.length ? <div className="react-statusflow-gates">
-      {gates.map((g) => <a key={g.id} className={`react-statusflow-gate is-${g.state}`} title={g.reason} href={`/requirement-gate?id=${encodeURIComponent(reqId)}&gate=${encodeURIComponent(g.id)}`}>
-        <span className="react-statusflow-mark">{g.state === "passed" ? "✓" : g.state === "failed" ? "✗" : "○"}</span>
-        <span className="react-statusflow-gate-label">{g.label}</span>
-        <em>{g.state === "passed" ? "已通过" : g.state === "failed" ? "未通过" : "未校验"}</em>
-      </a>)}</div> : null}
+      {gates.map((g) => {
+        const warned = Boolean(g.warnings?.length)
+        return <a key={g.id} className={`react-statusflow-gate is-${g.state}${warned ? " is-warning" : ""}`} title={warned ? `${g.reason}\n⚠ ${g.warnings!.join("\n⚠ ")}` : g.reason} href={`/requirement-gate?id=${encodeURIComponent(reqId)}&gate=${encodeURIComponent(g.id)}`}>
+          <span className="react-statusflow-mark">{g.state === "passed" ? (warned ? "⚠" : "✓") : g.state === "failed" ? "✗" : "○"}</span>
+          <span className="react-statusflow-gate-label">{g.label}</span>
+          <em>{g.state === "passed" ? (warned ? "已通过 · 有警示" : "已通过") : g.state === "failed" ? "未通过" : "未校验"}</em>
+        </a>
+      })}</div> : null}
   </div>
 }
 

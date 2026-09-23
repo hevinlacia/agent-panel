@@ -282,6 +282,8 @@ export interface StatusFlowGate {
   label: string
   state: StatusFlowGateState
   reason: string
+  /** 放行但需用户注意的警示（如 P1 严重问题、无法测试项），前端渲染 ⚠。 */
+  warnings?: string[]
 }
 
 export interface StatusFlowTransition {
@@ -323,6 +325,9 @@ export interface StatusGateDetail {
     failedItems?: { id?: string; title?: string }[]
     items?: { id?: string; title?: string; conclusion?: string; note?: string; evidence?: string }[]
   } | null
+  annotations?: { present?: boolean; stale?: boolean; reason?: string } | null
+  /** 放行但需用户注意的警示（如 P1 严重问题、无法测试项）。 */
+  warnings?: string[] | null
   actions?: string[]
   problems?: string[]
   hotfix?: boolean
@@ -526,7 +531,7 @@ export interface CodeReviewRepoSnapshot {
 export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; repos: CodeReviewRepoSnapshot[] }
 export interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null; incrementalReview?: CodeReviewSnapshot | null }
 export interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
-export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[] } }
+export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[]; warnings?: string[]; annotations?: { present?: boolean; stale?: boolean; reason?: string } | null } }
 export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number; round?: number }
 export interface DiffSnapshotsPayload { ok: boolean; round?: number; snapshots: CodeDiffSnapshot[] }
 export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; snapshots: CodeDiffSnapshot[] }

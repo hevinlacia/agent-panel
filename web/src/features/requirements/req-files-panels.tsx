@@ -57,7 +57,10 @@ export function RequirementAttachmentsPanel({ req }: { req: Requirement }) {
         </span>
       </div>)}</div>
       <div className="react-att-main">{active ? <>
-        <div className="react-att-main-head"><strong>{active.filename}</strong><span className="react-attachment-badge">{activeBadge}</span><span className="react-attachment-size">{attachmentHumanBytes(active.size)} · {attachmentFormatTime(active.mtime)}</span></div>
+        <div className="react-att-main-head"><strong>{active.filename}</strong><span className="react-attachment-badge">{activeBadge}</span><span className="react-attachment-size">{attachmentHumanBytes(active.size)} · {attachmentFormatTime(active.mtime)}</span><span className="react-att-main-actions">
+          {activePreviewable ? <button type="button" className="react-copy-link-btn" title="复制附件全文内容" onClick={() => copyText(`main-content:${active.filename}`, active.sample)}>{copiedKey === `main-content:${active.filename}` ? "✓ 已复制" : "复制内容"}</button> : null}
+          <button type="button" className="react-copy-link-btn" title="复制附件在需求目录下的完整路径" onClick={() => copyText(`main-path:${active.filename}`, active.path)}>{copiedKey === `main-path:${active.filename}` ? "✓ 已复制" : "复制路径"}</button>
+        </span></div>
         <code className="react-attachment-path">{active.path}</code>
         {activePreviewable ? <pre>{active.sample}</pre> : <p className="react-muted">该文件为二进制或不可预览内容，请按路径打开核对。</p>}
       </> : <p className="react-muted">在左侧选择一个附件查看全文。</p>}</div>
