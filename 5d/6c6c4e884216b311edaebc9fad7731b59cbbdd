@@ -1,0 +1,23 @@
+.agents/skills/req-branches-update/SKILL.md
+  49016b2838fd07fc 70,78,82,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5d6c6c4e884216b311edaebc9fad7731b59cbbdd",
+  "prompts": {
+    "49016b2838fd07fc": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0cc98-7cf7-72d0-9519-94388092f91a",
+        "model": "low-model-auto"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
