@@ -1984,6 +1984,10 @@ async fn group_status_aggregation_takes_min_member_status() {
     assert_eq!(group.group_status.as_deref(), Some("开发中"));
     assert_eq!(group.group_bottleneck.as_deref(), Some("G-MEMBER-B"));
     assert_eq!(group.group_policy.as_deref(), Some("together"));
+    // 对外主状态同步为派生聚合值（不再停留在创建时的静态状态）。
+    assert_eq!(group.status, "开发中");
+    // description 摘要里的静态 Status 行也同步为聚合状态。
+    assert!(group.description.contains("- Status: 开发中"), "{}", group.description);
     // 成员反向引用所属组。
     let member = reqs
         .iter()
@@ -2198,6 +2202,8 @@ async fn group_status_is_locked_against_manual_status_writes() {
     let reqs = list_requirements(&state).await.expect("list");
     let group = reqs.iter().find(|r| r.id == "WMS-GRP-010").expect("group");
     assert_eq!(group.group_status.as_deref(), Some("自测中"));
+    // 对外主状态随成员推进同步为派生值。
+    assert_eq!(group.status, "自测中");
 }
 
 /// 分支登记轮次：round 文件命名、目录扫描（sealed 标志）、创建（结构拷贝 + 清空分支）。

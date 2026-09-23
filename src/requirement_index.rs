@@ -802,7 +802,20 @@ pub(crate) fn resolve_group_links(reqs: &mut [Requirement]) {
         }
         if let Some((rank, bottleneck)) = best {
             req.group_bottleneck = Some(bottleneck);
-            req.group_status = REQ_FLOW_STATUSES.get(rank).map(|s| s.to_string());
+            let derived = REQ_FLOW_STATUSES.get(rank).map(|s| s.to_string());
+            if let Some(derived) = &derived {
+                // 组状态是派生值：对外主状态同步为聚合状态。组的 state.json
+                // 不会随成员推进更新（setStatus 被锁），不同步会让 API status、
+                // 状态流转卡当前位置、description 摘要长期停留在创建时的静态值。
+                if req.status != *derived {
+                    req.description = req.description.replace(
+                        &format!("- Status: {}", req.status),
+                        &format!("- Status: {derived}"),
+                    );
+                    req.status = derived.clone();
+                }
+            }
+            req.group_status = derived;
         }
     }
     for req in reqs.iter_mut() {
