@@ -148,7 +148,11 @@ async fn tls_accept_loop(acceptor: TlsAcceptor, listener: TcpListener) -> Result
 async fn bind_tls(port: u16, cert: &Path, key: &Path) -> Result<(TlsAcceptor, TcpListener)> {
     let certs = load_certs(cert)?;
     let key_der = load_key(key)?;
-    let config = ServerConfig::builder()
+    // 依赖树里 aws-lc-rs 与 ring 可能同时启用，必须显式指定 provider，否则运行时 panic。
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .context("cainiao mock tls: protocol versions")?
         .with_no_client_auth()
         .with_single_cert(certs, key_der)
         .context("cainiao mock tls: invalid cert/key")?;
