@@ -325,3 +325,94 @@ fn extract_ticket_prefix_handles_pool_prefixes() {
     assert_eq!(extract_ticket_prefix("no-numeric-segment"), None);
 }
 
+
+// ── 问题类别推导（用户约定：未强调测试环境的问题默认线上问题） ────────────────
+
+use crate::requirement_service::{create_requirement, derive_category_from_id_template};
+
+#[test]
+fn derive_category_from_id_template_prefixes() {
+    assert_eq!(derive_category_from_id_template("WMS-INC-{seq}"), Some("线上问题"));
+    assert_eq!(derive_category_from_id_template("WMS-INC-126-review-no-auto-picking"), Some("线上问题"));
+    assert_eq!(derive_category_from_id_template("WMS-TST-{seq}"), Some("测试问题"));
+    assert_eq!(derive_category_from_id_template("WMS-TST-003-cn-uat-x"), Some("测试问题"));
+    assert_eq!(derive_category_from_id_template("WMS-{seq}"), None);
+    assert_eq!(derive_category_from_id_template(""), None);
+    // 非问题前缀（如 WMS-INCX）不误判
+    assert_eq!(derive_category_from_id_template("WMS-INCX-{seq}"), None);
+}
+
+fn issue_test_state(tmp: &tempfile::TempDir) -> AppState {
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    std::fs::create_dir_all(&proj).expect("create proj dir");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    temp_app_state(
+        &data,
+        &tmp.path().join("pi-sessions"),
+        &tmp.path().join("dsh-sessions"),
+    )
+}
+
+fn issue_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
+    RequirementCreateForm {
+        req_id: req_id.to_string(),
+        title: title.to_string(),
+        project: None,
+        projects: None,
+        group_path: None,
+        parent_req_id: None,
+        root: None,
+        status: None,
+        category: None,
+        source: None,
+        owner: None,
+        start_date: None,
+        plan_release: None,
+        ones: None,
+        issues: None,
+        members: None,
+        release_policy: None,
+        summary: None,
+        background: None,
+        notes: None,
+        dry_run: None,
+    }
+}
+
+#[tokio::test]
+async fn create_issue_defaults_category_from_id_prefix() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = issue_test_state(&tmp);
+    // INC 模板 + 不传 category → 自动线上问题，状态默认排查中
+    let res = create_requirement(&state, issue_test_form("WMS-INC-{seq}", "线上问题默认分类"))
+        .await
+        .expect("create inc issue");
+    assert_eq!(res["category"], json!("线上问题"));
+    assert_eq!(res["status"], json!("排查中"));
+    assert!(res["reqId"].as_str().unwrap().starts_with("WMS-INC-"));
+    // TST 模板 + 不传 category → 测试问题
+    let res = create_requirement(&state, issue_test_form("WMS-TST-{seq}", "测试问题默认分类"))
+        .await
+        .expect("create tst issue");
+    assert_eq!(res["category"], json!("测试问题"));
+    assert_eq!(res["status"], json!("排查中"));
+    // 显式 category=线上问题 + INC 模板：一致，正常创建
+    let mut form = issue_test_form("WMS-INC-{seq}", "显式一致");
+    form.category = Some("线上问题".to_string());
+    create_requirement(&state, form).await.expect("create explicit inc");
+}
+
+#[tokio::test]
+async fn create_issue_rejects_category_prefix_mismatch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = issue_test_state(&tmp);
+    let mut form = issue_test_form("WMS-INC-{seq}", "类别冲突");
+    form.category = Some("需求".to_string());
+    let err = create_requirement(&state, form)
+        .await
+        .expect_err("category/prefix mismatch must fail");
+    assert!(err.message.contains("线上问题"), "{:?}", err);
+}
