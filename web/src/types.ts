@@ -751,7 +751,7 @@ export interface OnesRecommendation {
   displayIdBoost: boolean
 }
 
-/** GET /api/ones/tasks 响应：reqId 缺省时 recommendations 为空数组。 */
+/** GET /api/ones/tasks 响应：reqId 缺省时 recommendations 为空数组；默认走服务端缓存，refresh=true 回源。 */
 export interface OnesTasksResponse {
   generatedAt: number
   team: string
@@ -760,4 +760,6 @@ export interface OnesTasksResponse {
   recommendations: OnesRecommendation[]
   requirementTitle: string
   warnings: string[]
+  cacheHit: boolean
+  cachedAt: number
 }

@@ -48,5 +48,6 @@ fn temp_app_state(data: &Path, pi_root: &Path, dsh_root: &Path) -> AppState {
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
+        ones_cache: Arc::new(Mutex::new(None)),
     }
 }
