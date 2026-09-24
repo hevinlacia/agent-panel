@@ -1,0 +1,17 @@
+id: exp-wms-kibana-bsearch-da-chuang-kou-cha-xun-chao-shi-fan-hui-partial-0
+title: "Kibana bsearch 大窗口查询超时返回 partial 0 造成假阴性；输出 @timestamp 为 UTC 需换算北京时间"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:52Z
+updated_at: 2026-09-21T16:07:52Z
+source_path: ../items/exp-wms-kibana-bsearch-da-chuang-kou-cha-xun-chao-shi-fan-hui-partial-0.md
+source: auto-experience-summary
+summary: "kibana-log-query 用 bsearch 查大时间窗口（全天/多日）易超时，返回 0 命中且 WARNING 提示易被 grep 管道吞掉，形成「该时段无日志」的假阴性结论；输出 @timestamp 为 UTC，对照北京时间要 +0800 换算，构造查询体也要把北京时间转 UTC。全天窗口必须分段小时级复核。"
+tags: []
+trigger_terms: [bsearch, "kibana 超时", partial, "0 命中", 假阴性, UTC, 时区, "+0800", 全天窗口, 分段查询, kibana-log-query]

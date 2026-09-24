@@ -1,0 +1,17 @@
+id: exp-wms-hui-tui-qing-kong-deprintdataid-carrierservice-zhao-hui-luo-di-f
+title: "回退清空的printDataId/carrierService找回落地方案：DTS消息old全行镜像是唯一可行数据源（195单实战）"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:33Z
+updated_at: 2026-09-21T16:07:33Z
+source_path: ../items/exp-wms-hui-tui-qing-kong-deprintdataid-carrierservice-zhao-hui-luo-di-f.md
+source: auto-experience-summary
+summary: "shipment_header被清空的printDataId/carrierService找回：DB现值、print_data.body（PDD加密面单密文无法反查）、WaybillBackup MQ备份（只有运单号+取号状态）三条路全被堵死；唯一可行路径是log-api WmsDtsSyncListener打印的[DTS消息完整内容]日志——shipment_header每条UPDATE的old镜像（150+列全行）带清空前的原始值。按完整运单号+清空时刻时间窗逐单检索，195/195命中；核对结论真正丢失的只有printDataId+carrierService两字段。注意：PDD平台单取号值由OMS推送写入，outbound-api取号日志路线实测0 hits不可用。"
+tags: []
+trigger_terms: ["DTS old镜像", printDataId找回, carrierService找回, 清空字段找回, 补数据SQL, WmsDtsSyncListener, DTS消息完整内容, print_data加密, 运单号检索DTS, 幂等补数]

@@ -1,0 +1,17 @@
+id: exp-wms-hui-dao-dai-qu-haocancel-xiao-fei-shi-bai-hui-fu-zhi-bu-yun-dan
+title: "回到待取号cancel消费失败恢复只补运单号不补打印字段，平台云打印组件退化为NORMAL不调用（INC-122）"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:33Z
+updated_at: 2026-09-21T16:07:33Z
+source_path: ../items/exp-wms-hui-dao-dai-qu-haocancel-xiao-fei-shi-bai-hui-fu-zhi-bu-yun-dan.md
+source: auto-experience-summary
+summary: "「回到待取号」回退时clearWaybillInfo清空printDataId/carrierService；两条cancel MQ并发消费（用户10秒内重复操作，validateForRollback不拒绝ROLLBACK单）后者对同一单validateCancel命中IN_POOL返回MSG_SHIP_0033，走WMS-072恢复分支只恢复processType/primaryWaybillCode/waybillGetStatus三字段；打印侧WaybillPrintLogServiceImpl用carrierService+_CLOUD拼printType，carrierService为空→printType=NORMAL→不调PDD等平台云打印组件。设计教训：清空面(WMS-018,7字段)与恢复面(WMS-072,3字段)不成对，'补一半'制造有单号无打印数据的中间态。"
+tags: []
+trigger_terms: [回到待取号, ROLLBACK, PDD组件, 打印组件不调用, printDataId为空, carrierService为空, PDD_CLOUD, MSG_SHIP_0033, 两次回退, 并发消费, WMS-072, WMS-018, clearWaybillInfo, 运单号补回, 恢复面小于清空面, 订单回退]

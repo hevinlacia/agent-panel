@@ -413,7 +413,7 @@ pub(crate) async fn prepare_review_materials(
         );
     }
     handoff_hints.push(
-        "代码问题备注（code-annotations.json）是门禁硬要求：为本次 diff 的关键文件（建议 ≤10 个，优先 riskTags 命中/核心链路文件）逐个产出 `repo/path` + `summary`（改动目的与设计思路）+ `variables`（关键变量/字段：名 | 含义 | 为何重要）+ `flow`（数据/状态流转，可用 mermaid flowchart）+ `notes`；每条 finding（严重/建议）都必须对应一条 hunk note（anchor.hunkHeader 从 patch 的 @@ 行复制），让人在差异页看代码时能直接看到问题说明".to_string(),
+        "代码问题备注（code-annotations.json）是门禁硬要求：PUT /api/requirement/annotations 请求体必须用包裹结构 {\"reqId\":…,\"annotations\":{…}}（顶层平铺 reviewedCommit/files/notes 会被静默丢弃）。annotations 内：`reviewedCommit`（repo→targetCommit 全量哈希）+ `files`（≤10 个，优先 riskTags 命中文件）：`repo/path` + `summary`（改动目的与设计思路）+ `variables`（必须是对象数组 [{\"name\":…,\"meaning\":…,\"why\":…}]，不能写成管道符拼接字符串）+ `flow`（数据/状态流转，可用 mermaid flowchart）；每条 finding（严重/建议）都必须对应一条 hunk note（notes 数组项：{repo,path,anchor:{hunkHeader 从 patch 的 @@ 行原样复制},title,note}），让人在差异页看代码时能直接看到问题说明".to_string(),
     );
     handoff_hints.push(
         "annotations 顶层必须带 reviewedCommit 指纹（repo → 本材料各仓的 targetCommit，增量包取 coverageToCommit）：门禁与差异页用它与当前快照比对判定备注是否锚定旧 diff；缺失或不一致会被门禁判 annotations-required/annotations-stale 拦截".to_string(),

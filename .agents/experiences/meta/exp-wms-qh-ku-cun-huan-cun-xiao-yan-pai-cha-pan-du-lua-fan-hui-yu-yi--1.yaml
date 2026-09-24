@@ -1,0 +1,17 @@
+id: exp-wms-qh-ku-cun-huan-cun-xiao-yan-pai-cha-pan-du-lua-fan-hui-yu-yi--1
+title: "qh 库存缓存校验排查判读：Lua 返回语义、[-1,0] 签名不可区分 field=0 与缺失、succeed 标记与 setItemRedis flag=0/1 开关"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:52Z
+updated_at: 2026-09-21T16:07:52Z
+source_path: ../items/exp-wms-qh-ku-cun-huan-cun-xiao-yan-pai-cha-pan-du-lua-fan-hui-yu-yi--1.md
+source: auto-experience-summary
+summary: "排查 MSG_INTF_0207 缓存误报的四个机制判读点：Lua field 不存在返回 -qty 而 hGet null 转成 0，报错 [-1,0] 无法区分 field 缺失与 field=0，须拉重建 dump 判定；trace 无「缓存成功-----」日志=isCacheSucceed 未被调用（校验整体跳过）；老系统 updateRedisInventory 先删后建窗口内 succeed 缺失会跳过校验照常建单；单独 deleteCache 的触发方就是 setItemRedis flag=0（关闭开关只删不建），查 requestLog 即定案。"
+tags: []
+trigger_terms: [qh缓存, MSG_INTF_0207, 缓存成功-----, isCacheSucceed, updateRedisInventory, deleteCache, 先删后建, setItemRedis, flag=0, 跳过校验, 缺货判断-库存不足, "hGet null", "Lua -qty", 缓存误报排查]

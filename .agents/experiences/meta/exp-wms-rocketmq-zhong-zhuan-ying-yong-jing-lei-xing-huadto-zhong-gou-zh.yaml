@@ -1,0 +1,20 @@
+id: exp-wms-rocketmq-zhong-zhuan-ying-yong-jing-lei-xing-huadto-zhong-gou-zh
+title: "RocketMQ中转应用经类型化DTO重构转发会剥离新增字段：消息链路影响面必须覆盖中转跳（WMS-133 test复现实证）"
+kind: experience
+type: experience
+category: pitfall
+domain: wms
+project: 
+scope: project
+status: active
+confidence: high
+created_at: 2026-09-23T01:07:14Z
+updated_at: 2026-09-23T01:07:14Z
+source_path: ../items/exp-wms-rocketmq-zhong-zhuan-ying-yong-jing-lei-xing-huadto-zhong-gou-zh.md
+source: auto-experience-summary
+summary: "WMS-133恢复面7字段修复部署后test复跑，消费端收到的WaybillBackup仍只有3字段：丢失点在shipment-admin中转跳（outbound发wms-cancel-shipment-topic → shipment-admin RocketConsumer.onCancelShipmentMessage重构消息转发wms-trigger-cancel-topic → wms-api消费）。中转方shipment-core自带WMS-072版3字段ShipmentCancelDTO.WaybillBackup，代码triggerCancelMsgDTO.setWaybillBackups(dto.getWaybillBackups())注释写'透传不丢备份'，但类型化透传实际是反序列化进中转方DTO+重序列化，超出中转方DTO定义的4个新字段被静默剥离。修复=中转方DTO内部类补4字段（commit ec8ff343，已在WMS-133落地，TriggerCancelMsgDTO.waybillBackups复用同一类一处改动两端生效）；fastjson默认省略null字段+消费端null跳过分支，旧消息不受影响。教训：①消息链路影响面分析必须端到端覆盖所有中转跳，不能只审发送方和最终消费方两仓；②'透传'要以中转方DTO字段定义验证，注释不可信；③验证消息体字段要在消费端入口日志断言（消费开始日志打备份结构），不能只验发送端。与exp-wms-bff-typed-vo-drops-fields（Feign BFF中转VO/DTO剥字段，请求/响应双向）同模式，本条是MQ链路实例。"
+tags: [RocketMQ, 中转应用, DTO, 字段剥离, 影响面, WMS-133, INC-122]
+trigger_terms: [中转跳剥字段, 透传丢字段, wms-cancel-shipment-topic, shipment-admin, RocketConsumer, onCancelShipmentMessage, ShipmentCancelDTO, WaybillBackup, 消息链路影响面, 类型化透传, 备份字段丢失, restore-print-fields, yl-cwhsea-wms-shipment-api]
+related_skills: [log-code-debug, code-map-query, wms-git-workflow]
+related_repos: [yl-cwhsea-wms-shipment-api, yl-cwhsea-wms-outbound-api, yl-cwhsea-wms-api]
+related_tables: [shipment_header]

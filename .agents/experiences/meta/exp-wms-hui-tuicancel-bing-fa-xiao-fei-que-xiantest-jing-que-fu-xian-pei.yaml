@@ -1,0 +1,17 @@
+id: exp-wms-hui-tuicancel-bing-fa-xiao-fei-que-xiantest-jing-que-fu-xian-pei
+title: "回退cancel并发消费缺陷test精确复现配方（两批500+400位置排布，命中率20.6%）与订单池状态短路坑"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:33Z
+updated_at: 2026-09-21T16:07:33Z
+source_path: ../items/exp-wms-hui-tuicancel-bing-fa-xiao-fei-que-xiantest-jing-que-fu-xian-pei.md
+source: auto-experience-summary
+summary: "复现'回退cancel失败恢复只补运单号'异常态：第一批500单（目标单约第100位）+第二批400单（目标单第1位）间隔0.5s两次回到待取号——第二批先cancel目标单回池，第一批消息到达时validateCancel命中IN_POOL(100)→MSG_SHIP_0033→WMS-072恢复分支补回运单号+打印字段NULL（与线上一致）。四技巧：位置排布/备份方向性/时序窗口/独占波次。大坑：订单池状态(leadingSts=100)的单回退走'仅清空运单号不发MQ'短路分支，复现必须用leadingSts=300且有打印字段的单。"
+tags: []
+trigger_terms: [回退复现, MSG_SHIP_0033复现, 回退复现配方, 订单池状态出库单仅清空运单号, wms-trigger-cancel-topic, 恢复分支复现, duplicate-check.enabled, restore-print-fields.enabled, 运单号补回复现]

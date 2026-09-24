@@ -1,0 +1,17 @@
+id: exp-wms-cn-pro-kibana-zhong-wen-zhang-ju-guan-jian-ci-quan0-hits-ying-we
+title: "CN PRO Kibana中文长句关键词全0 hits：英文/中英混合token才可靠，--app过滤不可信"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:33Z
+updated_at: 2026-09-21T16:07:33Z
+source_path: ../items/exp-wms-cn-pro-kibana-zhong-wen-zhang-ju-guan-jian-ci-quan0-hits-ying-we.md
+source: auto-experience-summary
+summary: "CN PRO 日志检索实测：中文短语关键词（发送取消MQ/回到待取号/订单回退/回退cancel/业务失败/RocketMQ客户端）几乎全部0 hits（分词问题）；可靠token是英文（role=producer）和中英混合（恢复processType）；--app过滤因appName与实际写入值不一致也常0 hits。中文长句搜索0命中≠没有日志，先换token再下结论。"
+tags: []
+trigger_terms: ["kibana cn-pro", 中文关键词0hits, 恢复processType, role=producer, 发送取消MQ搜不到, app过滤0hits, 分词搜索, appName不一致, 日志关键字速查]

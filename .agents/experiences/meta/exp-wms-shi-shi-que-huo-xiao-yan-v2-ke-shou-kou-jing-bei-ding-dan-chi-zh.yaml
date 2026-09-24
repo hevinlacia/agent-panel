@@ -1,0 +1,17 @@
+id: exp-wms-shi-shi-que-huo-xiao-yan-v2-ke-shou-kou-jing-bei-ding-dan-chi-zh
+title: "实时缺货校验 V2 可售口径被订单池占用压成 0/负值导致 MSG_INTF_0207 误报缺货（页面有货却拒单）"
+kind: experience
+type: experience
+category: experience
+domain: wms
+project: 
+scope: project
+status: active
+confidence: medium
+created_at: 2026-09-21T16:07:23Z
+updated_at: 2026-09-21T16:07:23Z
+source_path: ../items/exp-wms-shi-shi-que-huo-xiao-yan-v2-ke-shou-kou-jing-bei-ding-dan-chi-zh.md
+source: auto-experience-summary
+summary: "出库单创建报 MSG_INTF_0207 缺货但库存明细页显示有货：根因是 qh 缓存按 V2 口径（onHand-frozen-未拣货池占用）计算，长期 PENDING 卡单占满可用量后重建缓存把 field 写成 0/-1，校验拒单；页面可用量按 location_inventory 行内算术不扣订单池，故两口径并存。与 INC-119 的 field 缺失型同签名不同根因。"
+tags: []
+trigger_terms: [MSG_INTF_0207, 库存不足但有库存, 缺货误报, V2可售, 订单池占用, PENDING卡单, qh缓存, "trailingSts 300", 口径分裂, 页面有货下单被拒, SO26070500373614, 420310784030733163, GX-NN-01, setItemRedis, 实时缺货判断]
