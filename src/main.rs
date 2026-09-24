@@ -94,7 +94,8 @@ const EXPERIENCE_AUTO_COMPLETE_INTERVAL_SECS: u64 = 600;
 /// 自动经验总结派发扫描周期（每 1 分钟）。
 const EXPERIENCE_AUTO_SUMMARY_INTERVAL_SECS: u64 = 60;
 /// 自动总结 agent 超过该时长仍未回写则标记为 failed，避免长期占用并发槽位（12 小时）。
-const EXPERIENCE_SUMMARY_JOB_STALE_MS: i64 = 12 * 60 * 60 * 1000;
+const EXPERIENCE_SUMMARY_JOB_STALE_MS: i64 = 2 * 60 * 60 * 1000;
+const EXPERIENCE_SUMMARY_MAX_ATTEMPTS: i64 = 2;
 /// 自动推进时写入的备注/事件说明。
 const EXPERIENCE_AUTO_COMPLETE_NOTE: &str =
     "自动推进：经验总结状态停留超过 48 小时，自动标记为已完成";
