@@ -4,7 +4,7 @@ import type { AnnotationsPayload, BranchRoundsPayload, CodeAnnotations, CodeDiff
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { compactPath, diffDomId, diffLineDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
 import { formatDateTime } from "../lib/format"
-import { annotationStaleRepos, buildAnnotationIndex, hunkOwners, matchHunkNotes } from "../lib/annotations"
+import { annotationStaleRepos, buildAnnotationIndex, hunkOwners, matchHunkNotes, normalizeCodeAnnotations } from "../lib/annotations"
 import { AnnotationPanel } from "../features/requirements/annotation-panel"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome } from "../components/ui"
 import { RequirementsData } from "./projects"
@@ -65,6 +65,8 @@ export function RequirementDiffPage() {
     if (body && bar && bar.scrollLeft !== body.scrollLeft) bar.scrollLeft = body.scrollLeft
   }
   const annotations = useFetch<AnnotationsPayload>(reqId ? `/api/requirement/annotations?reqId=${encodeURIComponent(reqId)}` : null, [reqId])
+  // 归一化后再进匹配与面板：防历史坏数据（如 variables 是拼接字符串）在渲染期崩掉整页。
+  const annotationsDoc = useMemo(() => normalizeCodeAnnotations(annotations.data?.annotations), [annotations.data])
   // 进入页面只加载当前轮次已保存的快照栈，不自动生成；生成由「刷新代码差异」显式触发。
   useEffect(() => {
     if (!reqId) return
@@ -97,8 +99,8 @@ export function RequirementDiffPage() {
   }, [files, activeKey])
   const activeIndex = Math.max(0, files.findIndex((item) => `${item.repo.repoName}:${item.file.path}` === activeKey))
   const activeView = files.find((item) => `${item.repo.repoName}:${item.file.path}` === activeKey) || null
-  const annotationIndex = useMemo(() => buildAnnotationIndex(files, annotations.data?.annotations), [files, annotations.data])
-  const staleRepos = useMemo(() => annotationStaleRepos(annotations.data?.annotations, files), [annotations.data, files])
+  const annotationIndex = useMemo(() => buildAnnotationIndex(files, annotationsDoc), [files, annotationsDoc])
+  const staleRepos = useMemo(() => annotationStaleRepos(annotationsDoc, files), [annotationsDoc, files])
   const activeAnnotation = annotationIndex.get(activeKey) || null
   const activeHunkOwners = useMemo(() => hunkOwners(activeView?.lines || []), [activeView])
   const hunkNotes = useMemo(() => matchHunkNotes(activeView?.lines || [], activeAnnotation?.notes), [activeView, activeAnnotation])
@@ -127,7 +129,7 @@ export function RequirementDiffPage() {
     if (!reqId) return
     setSavingAnnotation(true)
     try {
-      const current: CodeAnnotations = { ...(annotations.data?.annotations || {}) }
+      const current: CodeAnnotations = { ...(annotationsDoc || {}) }
       const list = [...(current.files || [])]
       const idx = list.findIndex((f) => f.repo === next.repo && f.path === next.path)
       if (idx >= 0) list[idx] = next

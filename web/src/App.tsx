@@ -89,6 +89,7 @@ import { formatDate, formatDateTime, formatDuration, joinList, parseOnesRef, rel
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_STATUSES, statusMeta } from "./lib/requirements"
 import { experienceSummaryPill, experienceSummaryStageLabel, onesBadge, projectsOf, statusPill } from "./features/requirements/badges"
 import { cardVariants, EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "./components/ui"
+import { ErrorBoundary } from "./components/error-boundary"
 import { PROJECT_FILTER_KEY, readProjectFilter, readSidebarCollapsed, persistSidebarCollapsed } from "./lib/preferences"
 import { HarnessSwitcher } from "./features/harness/harness-switcher"
 import { RequirementsData } from "./pages/projects"
@@ -232,5 +233,5 @@ export function App({ apiPath }: AppProps) {
     : path === "/env-vars" ? <RemovedPage title="Env Vars 已移除" detail="Rust 版暂未恢复浏览器环境变量编辑。" />
     : <NotFoundPage />
 
-  return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}>{page}</motion.div></AnimatePresence></AppShell>
+  return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
 }

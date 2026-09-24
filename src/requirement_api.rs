@@ -1495,6 +1495,48 @@ pub(crate) async fn api_requirement_annotations_get(
     Ok(Json(json!({ "ok": true, "annotations": annotations })))
 }
 
+/// code-annotations 写入结构校验提示；与 review-checklist 同风格，agent 写坏时当场知道怎么改。
+fn annotations_schema_hint() -> String {
+    "期望格式：{\"annotations\":{\"files\":[{\"repo\":\"<repo>\",\"path\":\"<path>\",\"summary\":\"...\",\"variables\":[{\"name\":\"<变量名>\",\"meaning\":\"...\",\"why\":\"...\"}],\"flow\":\"...\",\"notes\":[{\"anchor\":{\"hunkHeader\":\"@@ ...\"},\"note\":\"...\"}]}]}}；variables/notes 必须是对象数组，不能写成管道符拼接字符串，variables 每项必须有字符串 name，notes 每项必须有字符串 note".to_string()
+}
+
+/// 校验 code-annotations 文档结构：只拦会导致前端渲染崩溃的形状（files 数组、variables 对象数组、notes 对象数组），
+/// 其余字段由前端归一化兑底，避免过度校验挡住合法的手工编辑。
+fn validate_annotations_doc(annotations: &Value) -> Result<(), String> {
+    let Some(files) = annotations.get("files") else {
+        return Ok(());
+    };
+    let Some(files) = files.as_array() else {
+        return Err("annotations.files 必须是数组".to_string());
+    };
+    for (i, file) in files.iter().enumerate() {
+        let Some(file) = file.as_object() else {
+            return Err(format!("annotations.files[{}] 必须是对象", i));
+        };
+        for (key, required_field) in [("variables", "name"), ("notes", "note")] {
+            let Some(value) = file.get(key) else { continue };
+            let Some(items) = value.as_array() else {
+                return Err(format!(
+                    "annotations.files[{}].{} 必须是对象数组，不能是字符串",
+                    i, key
+                ));
+            };
+            for (j, item) in items.iter().enumerate() {
+                let Some(item) = item.as_object() else {
+                    return Err(format!("annotations.files[{}].{}[{}] 必须是对象", i, key, j));
+                };
+                if !item.get(required_field).is_some_and(|v| v.is_string()) {
+                    return Err(format!(
+                        "annotations.files[{}].{}[{}].{} 必须是字符串",
+                        i, key, j, required_field
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Save the whole code-annotations.json snapshot for a requirement.
 /// Accepts { reqId, annotations } where annotations is the full document;
 /// updatedAt is stamped here so callers never forge it.
@@ -1513,6 +1555,13 @@ pub(crate) async fn api_requirement_annotations_put(
         return Err(ApiError::bad_request(
             "annotations must be a JSON object".to_string(),
         ));
+    }
+    if let Err(problem) = validate_annotations_doc(&annotations) {
+        return Err(ApiError::bad_request(format!(
+            "code-annotations 结构不合法：{}；{}",
+            problem,
+            annotations_schema_hint()
+        )));
     }
     if let Some(obj) = annotations.as_object_mut() {
         obj.insert("updatedAt".to_string(), json!(now_ms()));
