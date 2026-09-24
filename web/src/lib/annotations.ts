@@ -11,6 +11,57 @@ import type { DiffFileView, DiffLine } from "./diff"
 
 export type FileKey = string
 
+/**
+ * Defensive normalizer for code-annotations.json content. The backend rejects
+ * malformed writes with a schema hint, but older/drifted documents may still
+ * contain e.g. `variables` as a pipe-formatted string; rendering such data
+ * crashes the whole React tree ("variables.map is not a function"). Normalize
+ * shapes here so the diff page degrades gracefully instead of white-screening.
+ */
+export function normalizeCodeAnnotations(raw: unknown): CodeAnnotations | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const doc = raw as CodeAnnotations & Record<string, unknown>
+  const files = Array.isArray(doc.files)
+    ? doc.files.map(normalizeFileAnnotation).filter((a): a is CodeFileAnnotation => a != null)
+    : []
+  return { ...doc, files }
+}
+
+function normalizeFileAnnotation(raw: unknown): CodeFileAnnotation | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+  const a = raw as CodeFileAnnotation & Record<string, unknown>
+  const out: CodeFileAnnotation = {
+    repo: typeof a.repo === "string" ? a.repo : "",
+    path: typeof a.path === "string" ? a.path : "",
+  }
+  for (const key of ["summary", "flow", "flowTitle", "flowType"] as const) {
+    if (typeof a[key] === "string") out[key] = a[key]
+  }
+  if (Array.isArray(a.variables)) {
+    out.variables = (a.variables as unknown[])
+      .filter((v): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v))
+      .map((v) => ({
+        name: typeof v.name === "string" ? v.name : String(v.name ?? ""),
+        ...(typeof v.kind === "string" ? { kind: v.kind } : {}),
+        ...(typeof v.meaning === "string" ? { meaning: v.meaning } : {}),
+        ...(typeof v.why === "string" ? { why: v.why } : {}),
+      }))
+  }
+  if (Array.isArray(a.notes)) {
+    out.notes = (a.notes as unknown[])
+      .filter((n): n is Record<string, unknown> => Boolean(n) && typeof n === "object" && !Array.isArray(n))
+      .map((n) => ({
+        ...(n.anchor && typeof n.anchor === "object" && !Array.isArray(n.anchor)
+          ? { anchor: n.anchor as AnnotationNote["anchor"] }
+          : {}),
+        ...(typeof n.title === "string" ? { title: n.title } : {}),
+        note: typeof n.note === "string" ? n.note : String(n.note ?? ""),
+      }))
+      .filter((n) => n.note.trim().length > 0)
+  }
+  return out
+}
+
 export function fileKeyOf(view: DiffFileView): FileKey {
   return `${view.repo.repoName}:${view.file.path}`
 }
