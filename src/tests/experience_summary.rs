@@ -152,3 +152,21 @@ fn should_auto_complete_only_for_real_experience_summary_status() {
     ));
 }
 
+
+#[test]
+fn expire_stale_job_gate_blocks_failed_and_incomplete() {
+    // 总结失败：无论自动总结开关，绝不自动推进，需求停留在经验总结等用户处理。
+    assert!(!expire_stale_job_allows_complete("failed", true));
+    assert!(!expire_stale_job_allows_complete("failed", false));
+    // 自动总结开启：未完成（pending/running/无 job）不推进，避免总结没做完就被关闭。
+    assert!(!expire_stale_job_allows_complete("pending", true));
+    assert!(!expire_stale_job_allows_complete("running", true));
+    assert!(!expire_stale_job_allows_complete("", true));
+    // 自动总结开启：已完成/跳过的总结可以兜底推进。
+    assert!(expire_stale_job_allows_complete("completed", true));
+    assert!(expire_stale_job_allows_complete("skipped", true));
+    // 自动总结关闭（纯手动模式）：非失败状态超期可推进。
+    assert!(expire_stale_job_allows_complete("", false));
+    assert!(expire_stale_job_allows_complete("pending", false));
+    assert!(expire_stale_job_allows_complete("completed", false));
+}

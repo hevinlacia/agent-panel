@@ -802,6 +802,16 @@ pub(crate) fn experience_summary_overdue(entered_at: i64, now: i64, grace_ms: i6
     entered_at > 0 && now - entered_at >= grace_ms
 }
 
+/// 48h 兜底推进的 job 状态门禁。
+/// 总结失败（failed）一票否决：除非用户手动调整状态，需求一直停留在经验总结，绝不自动推进为已完成。
+/// 自动总结开启时，非 completed/skipped 的 job（pending/running）也不推进，避免总结没做完就被关闭。
+pub(crate) fn expire_stale_job_allows_complete(job_status: &str, auto_enabled: bool) -> bool {
+    if job_status == "failed" {
+        return false;
+    }
+    !(auto_enabled && !matches!(job_status, "completed" | "skipped"))
+}
+
 /// 判定：该需求当前是否应被自动推进为已完成。
 /// 要求 state.json 真实状态为「经验总结」且进入该状态超过 grace_ms；
 /// 「待上线」等历史遗留状态不参与自动推进。
@@ -850,9 +860,7 @@ pub(crate) async fn expire_stale_experience_summary(state: &AppState) -> Result<
         let job = read_experience_summary_job(&dir).await?;
         let job_status = job.as_ref().map(|j| j.status.as_str()).unwrap_or("");
         let cfg = read_config(state).await.unwrap_or_default();
-        if cfg.auto_experience_summary && !matches!(job_status, "completed" | "skipped") {
-            // 自动总结开启时，48h 自动完成只作为“agent 已完成但状态未推进”的兜底；
-            // pending/running/failed 不直接吞掉为已完成，避免总结还没做完就被关闭。
+        if !expire_stale_job_allows_complete(job_status, cfg.auto_experience_summary) {
             continue;
         }
         let st = write_requirement_status(
