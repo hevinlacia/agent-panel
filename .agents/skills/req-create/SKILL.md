@@ -42,6 +42,8 @@ API 契约详情见 `agent-panel-requirement-api` skill，本 skill 只列与创
 | 用途 | 方法 | 端点 | 关键参数 |
 |---|---|---|---|
 | 创建需求 | POST | `/api/requirements` | `reqId`, `title`；可选 `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `members`, `releasePolicy`, `dryRun` |
+
+> **问题类别默认约定**：登记问题时（线上问题/测试问题）未强调测试环境的，一律默认 `category=线上问题`（WMS-INC- 池）；仅 UAT/test 测试环境反馈的轻量问题才用 `category=测试问题`（WMS-TST- 池）。`reqId` 带 `WMS-INC-`/`WMS-TST-` 前缀时面板会按前缀自动推导/校验 category，无需手动传。
 | 更新受控字段 | PATCH | `/api/requirement` | `reqId`；可选 `title`, `project`, `projects`, `status`, `category`, `owner`, `startDate`, `planRelease`, `ones`, `note`, `dryRun`（不便发 PATCH 时用 `POST /api/requirement/update`） |
 | 追加 notes | POST | `/api/requirement/notes` | `reqId`, `text`；可选 `title`, `sessionId`, `dryRun` |
 | 写受控文档 | PUT/POST | `/api/requirement/doc` | `reqId`, `docType`, `content`；可选 `mode=replace\|append`, `dryRun` |
