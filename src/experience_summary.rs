@@ -276,7 +276,10 @@ pub(crate) async fn dispatch_experience_summary_jobs(
         {
             job.status = "failed".to_string();
             job.finished_at = Some(now);
-            job.error = Some("自动经验总结 agent 超过 12 小时未回写完成状态".to_string());
+            job.error = Some(format!(
+                "自动经验总结 agent 超过 {} 小时未回写完成状态（进程可能被服务重启中断）",
+                EXPERIENCE_SUMMARY_JOB_STALE_MS / 3_600_000
+            ));
             job.updated_at = now;
             write_experience_summary_job(&dir, &job).await?;
         }
@@ -290,9 +293,16 @@ pub(crate) async fn dispatch_experience_summary_jobs(
                 continue;
             }
             "failed" => {
-                report.failed += 1;
-                if only_req_id.is_none() {
-                    continue;
+                // 未达重试上限时自动重试（被服务重启/进程异常中断可自愈），到顶才是终态失败。
+                if job.attempts < EXPERIENCE_SUMMARY_MAX_ATTEMPTS {
+                    job.status = "pending".to_string();
+                    job.updated_at = now;
+                    write_experience_summary_job(&dir, &job).await?;
+                } else {
+                    report.failed += 1;
+                    if only_req_id.is_none() {
+                        continue;
+                    }
                 }
             }
             "pending" | "" => {}
@@ -340,7 +350,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
             Err(err) => {
                 job.status = "failed".to_string();
                 job.finished_at = Some(now_ms());
-                job.error = Some(err.to_string());
+                job.error = Some(format!("{err:#}"));
                 job.updated_at = now_ms();
                 write_experience_summary_job(&dir, &job).await?;
                 report.failed += 1;
@@ -391,6 +401,8 @@ pub(crate) fn experience_summary_prompt(
              防重复执行：复用清单/改进点里可能有一部分已经在排查或修复过程中落地了（证据：root-cause.md 修复决策、events 进展事件、需求分支 git log、对应 skill/配置文件的现状）。逐项核对，已落地的在 experience-summary.md 标「已落地（<证据线索>）」，不要重复实施、不要再登记为待办；只对未落地的做沉淀或登记。
              查重：POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
 
+             价值判定兜底：若确认全部重复/误报/无沉淀价值，仍然必须写 experience-summary.md 记录判定原因，并照常调用下方 complete 接口（note 注明「无新增价值，跳过落库」）。无论是否有产出，都必须回写完成状态，不允许不调用 complete 就结束。
+
              必须产出：
              - 有价值的：POST http://127.0.0.1:7331/api/knowledge 写入 experiences 条目，JSON 字段 {{\"kind\":\"experience\",\"title\":…,\"summary\":…,\"details\":…,\"triggerTerms\":[…],\"domain\":\"wms\",\"scope\":\"project\",\"source\":\"auto-experience-summary\"}}；triggerTerms 写下次排查可能提到的关键词（现象、错误码、模块、仓库/单号）
              - 回填 {dir}/troubleshooting.md「复用清单」：已落地条目 id/链接；重复或无价值的写明原因
@@ -420,6 +432,8 @@ pub(crate) fn experience_summary_prompt(
          未落地的：按价值判断写入「待落地」候选。
 
          知识查重：候选经验与经验库可能已有条目重复（相同现象/根因/触发词已覆盖）。先 POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/模块/关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
+
+         价值判定兜底：若确认没有可沉淀的新知识/经验/改进点（全部重复或无复用价值），仍然必须把结论写入 experience-summary.md（写明判定依据），然后照常调用下方 complete 接口，note 注明「无新增价值，跳过落库」。无论是否有产出，都必须回写完成状态，不允许不调用 complete 就结束。
 
          必须写入：experience-summary.md（路径：{report}），区分已落地和待落地。
          可安全落地的知识/经验请通过 Agent Panel API 写入 business-knowledge / experiences；不要把未验证猜测写成稳定事实。
