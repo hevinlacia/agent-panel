@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { Activity, AlertTriangle, CheckCircle2, Lightbulb, Library, RefreshCw } from "lucide-react"
+import { Activity, AlertTriangle, CheckCircle2, Lightbulb, Library, RefreshCw, Search } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import type { ExperienceSummaryDispatchPayload, ExperienceSummaryJobsPayload, KnowledgeDraft, KnowledgeItem, KnowledgeKind, KnowledgeListPayload, KnowledgeSavePayload, Requirement } from "../types"
 import { fetchJson, postJson, useFetch } from "../lib/api"
@@ -132,10 +132,32 @@ export function ExperiencesPage() {
 
 function ExperienceSummaryJobsPage() {
   const [stage, setStage] = useState("all")
+  const [keyword, setKeyword] = useState("")
   const [refreshing, setRefreshing] = useState(false)
-  const jobs = useFetch<ExperienceSummaryJobsPayload>(`/api/experience-summary/jobs${stage === "all" ? "" : `?status=${encodeURIComponent(stage)}`}`, [stage])
-  const items = jobs.data?.items || []
+  // 固定拉全量队列：正在总结面板、阶段计数与关键字过滤都在前端做，切筛选不丢上下文。
+  const jobs = useFetch<ExperienceSummaryJobsPayload>("/api/experience-summary/jobs", [])
+  // 总结是长时运行过程：15s 轮询保持“正在总结”面板与队列近实时。
+  useEffect(() => {
+    const timer = setInterval(() => jobs.refresh(), 15000)
+    return () => clearInterval(timer)
+  }, [])
+  const items = useMemo(() => jobs.data?.items || [], [jobs.data])
   const stats = jobs.data?.stats
+  const config = jobs.data?.config
+  const running = useMemo(() => items.filter((item) => item.stage === "running"), [items])
+  const stageCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: items.length }
+    for (const item of items) counts[item.stage] = (counts[item.stage] || 0) + 1
+    return counts
+  }, [items])
+  const kw = keyword.trim().toLowerCase()
+  const filtered = useMemo(() => items.filter((item) => {
+    if (stage !== "all" && item.stage !== stage) return false
+    if (!kw) return true
+    const req = item.req
+    return [req.id, req.title, req.description, projectsOf(req)].some((value) => (value || "").toLowerCase().includes(kw))
+  }), [items, stage, kw])
+  const initialLoading = jobs.loading && !jobs.data
   const dispatchNow = async () => {
     setRefreshing(true)
     try {
@@ -148,13 +170,22 @@ function ExperienceSummaryJobsPage() {
   return <>
     <section className="react-kpi-grid">
       <KpiCard icon={<Lightbulb size={20} />} label="可总结" value={stats?.available ?? "-"} sub="需求已进入经验总结" tone="avg" />
-      <KpiCard icon={<Activity size={20} />} label="总结中" value={stats?.running ?? "-"} sub={`并发 ${jobs.data?.config?.maxAgents ?? 3}`} tone="active" />
+      <KpiCard icon={<Activity size={20} />} label="总结中" value={stats?.running ?? "-"} sub={`并发 ${config?.maxAgents ?? 3}`} tone="active" />
       <KpiCard icon={<CheckCircle2 size={20} />} label="已完成" value={stats?.completed ?? "-"} sub="可查看报告" tone="done" />
       <KpiCard icon={<AlertTriangle size={20} />} label="失败" value={stats?.failed ?? "-"} sub="可重试" tone="total" />
     </section>
-    <section className="react-panel react-filter-panel"><PanelHead kicker="Auto Summary" title="自动经验总结队列" chip={jobs.data?.config?.enabled ? "ON" : "OFF"} /><p className="react-muted">当需求状态进入“经验总结”后，Agent Panel 会按设置中的模型和并发数自动派发 pi agent，总结完成后写入 experience-summary.md 并标记完成。</p><div className="react-tab-row"><button className={stage === "all" ? "active" : ""} onClick={() => setStage("all")}>全部</button>{["available", "running", "completed", "failed", "skipped"].map((s) => <button key={s} className={stage === s ? "active" : ""} onClick={() => setStage(s)}>{experienceSummaryStageLabel(s)}</button>)}<button onClick={dispatchNow} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />立即派发</button><a href="/settings">配置</a></div></section>
-    {jobs.error ? <ErrorCard error={jobs.error} /> : jobs.loading ? <LoadingCard /> : <div className="react-card-list">{items.length === 0 ? <EmptyCard>暂无可展示的需求总结任务。</EmptyCard> : items.map((item, index) => <ExperienceSummaryJobCard key={item.req.id} req={item.req} stage={item.stage} index={index} onChanged={jobs.refresh} />)}</div>}
+    <section className="react-panel react-exp-running-panel">
+      <PanelHead kicker="Live" title="正在总结" chip={running.length ? `${running.length} 个进行中` : "空闲"} />
+      {initialLoading ? <LoadingCard /> : running.length === 0 ? <p className="react-muted">当前没有正在总结的需求任务；自动总结{config?.enabled ? "已启用" : "已停用"}，需求进入「经验总结」状态后按并发自动派发，本面板每 15 秒自动刷新。</p> : <div className="react-card-list">{running.map((item, index) => <RunningSummaryCard key={item.req.id} req={item.req} index={index} />)}</div>}
+    </section>
+    <section className="react-panel react-filter-panel"><PanelHead kicker="Auto Summary" title="自动经验总结队列" chip={config?.enabled ? "ON" : "OFF"} /><p className="react-muted">当需求状态进入“经验总结”后，Agent Panel 会按设置中的模型和并发数自动派发 pi agent，总结完成后写入 experience-summary.md 并标记完成。</p><div className="react-tab-row"><button className={stage === "all" ? "active" : ""} onClick={() => setStage("all")}>全部 {stageCounts.all || 0}</button>{["available", "running", "completed", "failed", "skipped"].map((s) => <button key={s} className={stage === s ? "active" : ""} onClick={() => setStage(s)}>{experienceSummaryStageLabel(s)} {stageCounts[s] || 0}</button>)}<button onClick={dispatchNow} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "react-spin" : ""} />立即派发</button><a href="/settings">配置</a></div><label className="react-diff-search"><Search size={14} /><input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索需求 ID / 标题 / 描述 / 项目" /></label></section>
+    {jobs.error ? <ErrorCard error={jobs.error} /> : initialLoading ? <LoadingCard /> : <div className="react-card-list">{filtered.length === 0 ? <EmptyCard>{kw || stage !== "all" ? "没有匹配的总结任务，换个关键词或阶段试试。" : "暂无可展示的需求总结任务。"}</EmptyCard> : filtered.map((item, index) => <ExperienceSummaryJobCard key={item.req.id} req={item.req} stage={item.stage} index={index} onChanged={jobs.refresh} />)}</div>}
   </>
+}
+
+function RunningSummaryCard({ req, index }: { req: Requirement; index: number }) {
+  const job = req.experienceSummaryJob
+  return <motion.article className="react-list-card react-exp-job-card react-exp-job-running" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 8) * 0.03 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{req.id}</span><h3><a href={`/requirement?id=${encodeURIComponent(req.id)}`}>{req.title}</a></h3><p>{req.description || "正在总结该需求的经验…"}</p><div className="react-card-meta"><span>{projectsOf(req)}</span>{job?.startedAt ? <span>开始 {relAge(job.startedAt)}</span> : job?.updatedAt ? <span>更新 {relAge(job.updatedAt)}</span> : null}{job?.attempts ? <span>attempts {job.attempts}</span> : null}</div>{job?.model ? <code className="react-command">{job.model}</code> : null}</div><div className="react-card-side">{experienceSummaryPill(req) || <span className="react-status-pill react-exp-summary-pill">总结中</span>}{job?.sessionId ? <a href={`/session?id=${encodeURIComponent(job.sessionId)}`}>总结 Agent</a> : null}<a href={`/requirement-doc?id=${encodeURIComponent(req.id)}&doc=experience-summary&title=${encodeURIComponent("经验总结报告")}`}>报告</a></div></motion.article>
 }
 
 function ExperienceSummaryJobCard({ req, stage, index, onChanged }: { req: Requirement; stage: string; index: number; onChanged: () => void }) {
