@@ -1,0 +1,27 @@
+src/requirement_service/create.rs
+  f5431b4b83934ae4 8-24
+src/requirement_service/id_pool.rs
+  f5431b4b83934ae4 26-38
+web/src/pages/issues.tsx
+  f5431b4b83934ae4 108,113,119,141,146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5ca7a0baf658e411af5e4655835109157dc534e5",
+  "prompts": {
+    "f5431b4b83934ae4": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d24f-806a-7047-9263-da022377116b",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 37,
+      "total_deletions": 13,
+      "accepted_lines": 35,
+      "overriden_lines": 2
+    }
+  }
+}
