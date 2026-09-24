@@ -170,3 +170,47 @@ fn expire_stale_job_gate_blocks_failed_and_incomplete() {
     assert!(expire_stale_job_allows_complete("pending", false));
     assert!(expire_stale_job_allows_complete("completed", false));
 }
+
+// ── dispatch 限额与状态分类（纯函数语义锁定） ─────────────────────────────────
+
+use crate::experience_summary::{
+    classify_experience_job, experience_dispatch_can_spawn, experience_job_is_stale,
+    ExperienceJobClass,
+};
+
+#[test]
+fn dispatch_gate_serializes_with_max_agents_one() {
+    // maxAgents=1：无占用可派发；占用 1 即排队（同时只能跑一个经验总结任务）
+    assert!(experience_dispatch_can_spawn(0, 1));
+    assert!(!experience_dispatch_can_spawn(1, 1));
+    assert!(!experience_dispatch_can_spawn(5, 1));
+    // 更大额度：active < max 才派发，达到即排队
+    assert!(experience_dispatch_can_spawn(2, 3));
+    assert!(!experience_dispatch_can_spawn(3, 3));
+    // clamp 下限 1：0 不是合法配置语义（防呆）
+    assert!(!experience_dispatch_can_spawn(0, 0));
+}
+
+#[test]
+fn classify_job_status_covers_dispatch_paths() {
+    assert!(matches!(classify_experience_job("completed", 1, 2), ExperienceJobClass::Completed));
+    assert!(matches!(classify_experience_job("running", 1, 2), ExperienceJobClass::Running));
+    // attempts < 上限 → 重试转 pending；到顶 → 终态失败
+    assert!(matches!(classify_experience_job("failed", 1, 2), ExperienceJobClass::Retryable));
+    assert!(matches!(classify_experience_job("failed", 2, 2), ExperienceJobClass::FailedFinal));
+    assert!(matches!(classify_experience_job("pending", 0, 2), ExperienceJobClass::Pending));
+    assert!(matches!(classify_experience_job("", 0, 2), ExperienceJobClass::Pending));
+    assert!(matches!(classify_experience_job("paused", 0, 2), ExperienceJobClass::Unknown));
+}
+
+#[test]
+fn stale_transition_only_applies_to_running_jobs() {
+    let now = 10_000_000_i64;
+    let stale = 2 * 60 * 60 * 1000;
+    assert!(experience_job_is_stale("running", Some(now - stale - 1), now, stale));
+    // 恰好到点不算超（严格大于）
+    assert!(!experience_job_is_stale("running", Some(now - stale), now, stale));
+    assert!(!experience_job_is_stale("running", Some(now - 1000), now, stale));
+    assert!(!experience_job_is_stale("running", None, now, stale));
+    assert!(!experience_job_is_stale("pending", Some(now - stale - 1), now, stale));
+}
