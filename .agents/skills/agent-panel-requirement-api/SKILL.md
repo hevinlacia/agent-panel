@@ -149,7 +149,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 标准 intent：`overview` / `clarification` / `status` / `progress` / `branch` / `self-test` / `release-check` / `experience-summary` / `design` / `config` / `review`。
 
-代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。**审查必须加载 `agent-panel-code-review` skill 执行**（备料 → 四轮深度审查 → 结论落盘 → 门禁自检；门禁强制结论文档带 `Source: agent-panel-code-review skill` 标记，缺标记判 skill-required 拦截）。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。问题分级 P0 阻断/P1 严重/P2 一般/P3 优化：**P0 小节非空门禁不放行；P1 非空放行但门禁展示 ⚠ 警示**（均按文档实际内容校验）。门禁同时强制：**代码问题备注**（`code-annotations.json` files 非空 + `reviewedCommit` 指纹与最新材料一致）、**自测清单交叉评估**（test.md 有自测清单时 review 必含非空「自测清单交叉评估」小节）、**详细审查文档**（code-review-ai.md）与审查清单（review-checklist.json）。结论行必须字面独立成行，**不能用 markdown 加粗**（如 `Review Gate: **PASS**` 解析不出结论，review-gate 判 pending 拦截状态推进，WMS-107 实测；门禁只拦状态推进，**不拦生产 MR 生成**）。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
+代码审查门禁：不新增主状态；作为 `自测中 → 测试中` 的强 gate。**审查必须加载 `agent-panel-code-review` skill 执行**（备料 → 四轮深度审查 → 结论落盘 → 门禁自检；门禁强制结论文档带 `Source: agent-panel-code-review skill` 标记，缺标记判 skill-required 拦截）。`review.md` 或 `code-review-ai.md` 必须明确写 `Review Gate: PASS`、`Review Gate: BLOCKED` 或 `Review Gate: WAIVED`，否则 `/api/requirement/status` 会拒绝推进到 `测试中`。问题分级 P0 阻断/P1 严重/P2 一般/P3 优化：**P0 小节非空门禁不放行；P1 非空放行但门禁展示 ⚠ 警示**（均按文档实际内容校验）。门禁同时强制：**代码问题备注**（`code-annotations.json` files 非空 + `reviewedCommit` 指纹与最新材料一致；写入用 `PUT /api/requirement/annotations`，body 的 `annotations` 字段**必须是对象** `{"files":[...],"reviewedCommit":...,"mode":...}`，传数组报 `annotations must be a JSON object`，WMS-098 实测）、**自测清单交叉评估**（test.md 有自测清单时 review 必含非空「自测清单交叉评估」小节）、**详细审查文档**（code-review-ai.md）与审查清单（review-checklist.json）。结论行必须字面独立成行，**不能用 markdown 加粗**（如 `Review Gate: **PASS**` 解析不出结论，review-gate 判 pending 拦截状态推进，WMS-107 实测；门禁只拦状态推进，**不拦生产 MR 生成**）。另有两个状态接口硬门禁：开发推动需求的 test-scenario 门禁（见上）和线上问题已复盘的 troubleshooting 门禁（见上）。
 
 **审查后又有 commit（stale 拦截）**：审查后分支又有 commit（如 review 修正）时，状态推进会被 Code Review Gate 以 stale 拒绝（`reviewedTargetCommit != currentTargetCommit`）。在 review.md 追加「覆盖至 <hash>」文字**无效**（门禁不解析文本）；正确路径：`POST /api/requirement/code-review` `{"reqId":...}` 刷新 code-review.json 快照（保留 previousReviewedSnapshot 供增量对比）后重推状态。review-gate GET 返回的 `staleRepos` 给出 reviewed vs current commit，可据此定位增量审查范围。（WMS-110 实测：状态 400 拒绝两次后按此流程通过）
 
@@ -160,7 +160,7 @@ curl -sS -H 'Content-Type: application/json' \
 1. 每轮开始或状态切换后，先调 `/api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000` 获取 agent 专用摘要；以返回的 `phaseRuntime.currentPhasePrompt` 作为当前阶段导航，**不要沿用 session 创建时注入的启动 prompt**。跳状态时 `phaseRuntime.phaseGaps` 暴露的缺失 entry checks 作为风险记录，不自动回退状态。不要默认直接读 `notes.md` 或 `code-review.json`。
 2. 需要明确读/写 token 时，再调 `/api/requirement/edit-plan?id=<reqId>&intent=<intent>`。
 3. 事实、证据、测试结果、决策、TODO 用 `/api/requirement/events` 记录结构化事件；默认同时追加 `notes.md`。
-4. 目标文档更新用 `/api/requirement/sections/{section}` 或 `/api/requirement/edit` 的 `upsertSection`，避免整篇覆盖。
+4. 目标文档更新用 `/api/requirement/sections/{section}` 或 `/api/requirement/edit` 的 `upsertSection`，避免整篇覆盖。**契约注意（WMS-098 实测）**：`upsertSection` 是按 heading 追加/更新单个 section，**不是全文替换**——把整篇 markdown 传给 upsertSection 会被当作一个新 section 追加到文件尾造成内容重复（需手工重写修复）；全量替换用 `writeDoc` 或直接 write 文件后再 validate。
 5. 写完调 `/api/requirement/validate`。
 
 结构化编辑示例：
@@ -458,6 +458,8 @@ curl -sS -H 'Content-Type: application/json' \
 结果处理：
 
 - `status=merged` / `upToDate`：合并已完成或目标已包含需求分支。
+- **核对每个 repo 结果的 `targetBranch` 实际值**：传 `targetBranch=uat` 时面板按仓解析（branches.json 的 `uat_target_branch` 显式覆盖优先，其次统一 `uat`）——若该仓 branches.json 遗留 legacy `UAT-*` 覆盖，会被重定向合到 `UAT-*` 而非 `uat`（WMS-098 实测 log-api 曾被合到 UAT-2608，需 revert 清理后手动合 uat）。响应 `targetBranch` 与预期不符时立即停止后续操作并向用户确认。
+- 后端 UAT 分支已统一为小写 `uat`（WMS-098 起标准）；`UAT-*` 仅作 legacy 回退。
 - `status=skipped`：对应 repo 类型或分支不适用；检查 `repoKind` / `targetBranch` / `branches.json`。
 - `status=failed`：读取 `message` 和 `commands`，不要改用手写 git 绕过；先判断是分支不存在、push 失败还是 worktree 清理失败。
 - `status=conflict`：必须使用接口返回的 `worktreePath` 和 `conflictFiles` 作为冲突处理入口。
