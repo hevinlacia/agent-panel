@@ -25,6 +25,7 @@ Current architecture:
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
 - `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
 - `src/browser_auth.rs` — Chrome 登录态复用（Browser Auth）：CDP cookie 读取、站点白名单、代发请求、审计日志。
+- `src/ones.rs` — ONES 任务候选与推荐：browser_auth 代理聚合消息通知+工时报表信号源，`GET /api/ones/tasks?reqId=` 按需求标题匹配度推荐可关联任务。
 - `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
 - `web/src/App.tsx` — React SPA router and remaining legacy page modules; still large, but first low-coupling helpers, DTOs, domain constants, shared UI chrome, requirement badges, and Sessions pages have been extracted.
 - `web/src/pages/sessions.tsx` — Sessions list/detail pages and read-only session log viewer.
