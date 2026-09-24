@@ -201,6 +201,50 @@ pub(crate) fn experience_summary_stats_from_items(items: &[Value]) -> Value {
     })
 }
 
+/// 单任务状态分类（纯函数）：决定本次扫描对该 job 的处置路径。
+/// 语义与 dispatch 主循环一致，供单测锁定（maxAgents 串行 / 重试 / 终态失败）。
+pub(crate) enum ExperienceJobClass {
+    /// 已完成，仅计数。
+    Completed,
+    /// 运行中，占用一个并发额度。
+    Running,
+    /// 失败但未达重试上限：先转 pending，再参与并发额度排队。
+    Retryable,
+    /// 失败且已达重试上限：终态失败（手动触发时仍允许再 spawn）。
+    FailedFinal,
+    /// pending 或无 job 记录：可参与派发。
+    Pending,
+    /// 未知状态：跳过并记录原因。
+    Unknown,
+}
+
+pub(crate) fn classify_experience_job(status: &str, attempts: i64, max_attempts: i64) -> ExperienceJobClass {
+    match status {
+        "completed" => ExperienceJobClass::Completed,
+        "running" => ExperienceJobClass::Running,
+        "failed" => {
+            if attempts < max_attempts {
+                ExperienceJobClass::Retryable
+            } else {
+                ExperienceJobClass::FailedFinal
+            }
+        }
+        "pending" | "" => ExperienceJobClass::Pending,
+        _ => ExperienceJobClass::Unknown,
+    }
+}
+
+/// 运行超时判定（纯函数）：running 且 started_at 超过 stale 窗口（服务重启误杀场景）。
+pub(crate) fn experience_job_is_stale(status: &str, started_at: Option<i64>, now: i64, stale_ms: i64) -> bool {
+    status == "running" && started_at.map(|started| now - started > stale_ms).unwrap_or(false)
+}
+
+/// 并发额度决策（纯函数）：active 未达上限才允许 spawn，否则排队。
+/// maxAgents=1 时即“同时只能跑一个经验总结任务”的语义锁定点。
+pub(crate) fn experience_dispatch_can_spawn(active: usize, max_agents: usize) -> bool {
+    active < max_agents
+}
+
 pub(crate) async fn dispatch_experience_summary_jobs(
     state: &AppState,
     only_req_id: Option<&str>,
@@ -268,12 +312,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
                     .to_string(),
             );
         }
-        if job.status == "running"
-            && job
-                .started_at
-                .map(|started| now - started > EXPERIENCE_SUMMARY_JOB_STALE_MS)
-                .unwrap_or(false)
-        {
+        if experience_job_is_stale(&job.status, job.started_at, now, EXPERIENCE_SUMMARY_JOB_STALE_MS) {
             job.status = "failed".to_string();
             job.finished_at = Some(now);
             job.error = Some(format!(
@@ -283,31 +322,30 @@ pub(crate) async fn dispatch_experience_summary_jobs(
             job.updated_at = now;
             write_experience_summary_job(&dir, &job).await?;
         }
-        match job.status.as_str() {
-            "completed" => {
+        match classify_experience_job(&job.status, job.attempts, EXPERIENCE_SUMMARY_MAX_ATTEMPTS) {
+            ExperienceJobClass::Completed => {
                 report.completed += 1;
                 continue;
             }
-            "running" => {
+            ExperienceJobClass::Running => {
                 report.active += 1;
                 continue;
             }
-            "failed" => {
+            ExperienceJobClass::Retryable => {
                 // 未达重试上限时自动重试（被服务重启/进程异常中断可自愈），到顶才是终态失败。
-                if job.attempts < EXPERIENCE_SUMMARY_MAX_ATTEMPTS {
-                    job.status = "pending".to_string();
-                    job.updated_at = now;
-                    write_experience_summary_job(&dir, &job).await?;
-                } else {
-                    report.failed += 1;
-                    if only_req_id.is_none() {
-                        continue;
-                    }
+                job.status = "pending".to_string();
+                job.updated_at = now;
+                write_experience_summary_job(&dir, &job).await?;
+            }
+            ExperienceJobClass::FailedFinal => {
+                report.failed += 1;
+                if only_req_id.is_none() {
+                    continue;
                 }
             }
-            "pending" | "" => {}
-            other => {
-                report.skipped.push(json!({ "reqId": req.id, "reason": format!("unsupported job status: {other}") }));
+            ExperienceJobClass::Pending => {}
+            ExperienceJobClass::Unknown => {
+                report.skipped.push(json!({ "reqId": req.id, "reason": format!("unsupported job status: {}", job.status) }));
                 continue;
             }
         }
@@ -317,7 +355,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
                 .push(json!({ "reqId": req.id, "reason": "auto experience summary disabled" }));
             continue;
         }
-        if report.active >= max_agents {
+        if !experience_dispatch_can_spawn(report.active, max_agents) {
             job.status = "pending".to_string();
             job.updated_at = now;
             write_experience_summary_job(&dir, &job).await?;
