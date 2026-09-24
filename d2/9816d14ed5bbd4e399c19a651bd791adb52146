@@ -1,0 +1,33 @@
+src/browser_auth.rs
+  f5431b4b83934ae4 407,609,800-807
+AGENTS.md
+  f5431b4b83934ae4 28
+src/ones.rs
+  f5431b4b83934ae4 1-595
+src/main.rs
+  f5431b4b83934ae4 30,53,460
+web/src/features/requirements/req-meta-panels.tsx
+  f5431b4b83934ae4 1-3,61-73,90
+web/src/styles.css
+  f5431b4b83934ae4 608-613
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "d29816d14ed5bbd4e399c19a651bd791adb52146",
+  "prompts": {
+    "f5431b4b83934ae4": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0d24f-806a-7047-9263-da022377116b",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia",
+      "messages": [],
+      "total_additions": 632,
+      "total_deletions": 14,
+      "accepted_lines": 632,
+      "overriden_lines": 0
+    }
+  }
+}
