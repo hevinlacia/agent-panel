@@ -404,7 +404,7 @@ fn effective_cookie_allowlist(auth: &BrowserAuthConfig) -> Vec<String> {
 /// 读取 Chrome 登录 cookie：优先直读 cookie 数据库（无 CDP、无弹窗），
 /// 失败时回退到 CDP（可能触发 Chrome “允许远程调试”确认）。
 /// 只返回白名单域名内的 cookie。返回 (读取方式, cookies)。
-async fn load_chrome_cookies(auth: &BrowserAuthConfig) -> Result<(String, Vec<ChromeCookie>)> {
+pub(crate) async fn load_chrome_cookies(auth: &BrowserAuthConfig) -> Result<(String, Vec<ChromeCookie>)> {
     let allowlist = effective_cookie_allowlist(auth);
     match load_chrome_cookies_db(&allowlist).await {
         Ok(cookies) => Ok(("db".into(), cookies)),
@@ -606,7 +606,7 @@ fn parse_cookies(result: Value) -> Result<Vec<ChromeCookie>> {
     Ok(serde_json::from_value(raw)?)
 }
 
-async fn send_site_request(
+pub(crate) async fn send_site_request(
     site: &BrowserAuthSiteConfig,
     method: &str,
     path: &str,
@@ -797,14 +797,14 @@ fn safe_url_for_log(url: &Url) -> String {
     clone.to_string()
 }
 
-struct AuthProxyResponse {
-    status: u16,
-    url: String,
-    content_type: Option<String>,
-    headers: HashMap<String, String>,
-    body_text: String,
-    body_json: Option<Value>,
-    truncated: bool,
+pub(crate) struct AuthProxyResponse {
+    pub(crate) status: u16,
+    pub(crate) url: String,
+    pub(crate) content_type: Option<String>,
+    pub(crate) headers: HashMap<String, String>,
+    pub(crate) body_text: String,
+    pub(crate) body_json: Option<Value>,
+    pub(crate) truncated: bool,
 }
 
 impl AuthProxyResponse {

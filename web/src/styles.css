@@ -605,6 +605,12 @@ button.react-ones-badge { cursor: pointer; }
 button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.26); }
 .react-modal-form { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px 18px; overflow-y: auto; }
 .react-ones-recognized code { color: var(--react-cyan); font-weight: 800; }
+.react-ones-recs { display: flex; flex-direction: column; gap: 6px; }
+.react-ones-rec { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; background: rgba(148,163,184,.06); color: inherit; cursor: pointer; font: inherit; }
+.react-ones-rec:hover { background: rgba(148,163,184,.16); border-color: rgba(56,189,248,.5); }
+.react-ones-rec code { flex: none; font-family: var(--react-mono); font-weight: 800; color: var(--react-cyan); }
+.react-ones-rec-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; }
+.react-ones-rec-meta { flex: none; color: var(--react-muted); font-style: normal; font: .7rem var(--react-mono); }
 .react-save-feedback { display: flex; align-items: center; gap: 9px; margin-top: 12px; padding: 10px 12px; border: 1px solid; border-radius: 14px; font: 800 .76rem var(--react-mono); }
 .react-save-feedback-success { color: #86efac; border-color: rgba(34,197,94,.36); background: rgba(34,197,94,.12); }
 .react-save-feedback-error { color: #fca5a5; border-color: rgba(239,68,68,.36); background: rgba(239,68,68,.12); }

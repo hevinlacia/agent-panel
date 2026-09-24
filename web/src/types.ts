@@ -726,3 +726,38 @@ export interface BrowserAuthRequestResult {
   truncated?: boolean
   secretsReturned?: boolean
 }
+
+/** ONES 候选任务：notices + 工时报表聚合去重后的一条工作项（GET /api/ones/tasks）。 */
+export interface OnesTaskCandidate {
+  displayId: string
+  name: string
+  project: string
+  taskUuid: string
+  sources: string[]
+  lastActivityAt: number
+  url: string
+  refText: string
+}
+
+/** ONES 推荐项：按需求标题匹配度排序，refText 可直接写入 ones 字段。 */
+export interface OnesRecommendation {
+  displayId: string
+  name: string
+  project: string
+  url: string
+  refText: string
+  sources: string[]
+  score: number
+  displayIdBoost: boolean
+}
+
+/** GET /api/ones/tasks 响应：reqId 缺省时 recommendations 为空数组。 */
+export interface OnesTasksResponse {
+  generatedAt: number
+  team: string
+  count: number
+  candidates: OnesTaskCandidate[]
+  recommendations: OnesRecommendation[]
+  requirementTitle: string
+  warnings: string[]
+}

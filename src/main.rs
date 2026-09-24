@@ -27,6 +27,7 @@ mod harness;
 mod http;
 mod knowledge;
 mod markdown;
+mod ones;
 mod paths;
 mod pi_config;
 mod requirement_api;
@@ -49,6 +50,7 @@ pub(crate) use git_workflow::*;
 use harness::*;
 use http::*;
 use knowledge::*;
+use ones::*;
 use markdown::*;
 use pi_config::*;
 use requirement_api::*;
@@ -455,6 +457,7 @@ async fn main() -> Result<()> {
         )
         .route("/api/config", get(api_config).post(api_config_post))
         .route("/api/auth-sites", get(api_auth_sites))
+        .route("/api/ones/tasks", get(api_ones_tasks))
         .route(
             "/api/auth-sites/:site/check",
             get(api_auth_site_check).post(api_auth_site_check),
