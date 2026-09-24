@@ -23,6 +23,19 @@ fn issue_id_prefix(category: &str) -> Option<&'static str> {
     }
 }
 
+/// 从 reqId 模板前缀推导问题类别（纯函数）：WMS-INC- → 线上问题，WMS-TST- → 测试问题。
+/// 用户约定：登记问题时未强调测试环境的默认线上问题。
+pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str> {
+    let v = raw.trim();
+    if v.starts_with(&format!("{ISSUE_ID_PREFIX}-")) {
+        Some("线上问题")
+    } else if v.starts_with(&format!("{TEST_ISSUE_ID_PREFIX}-")) {
+        Some("测试问题")
+    } else {
+        None
+    }
+}
+
 /// 创建时按类别/形态规范化 reqId 模板：
 /// - 需求组（members 非空）强制使用 `WMS-GRP-{seq}` 独立编号池，规则与 issue 家族一致；
 /// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`，测试问题 `WMS-TST-{seq}`）；

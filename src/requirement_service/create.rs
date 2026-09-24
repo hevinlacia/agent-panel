@@ -5,12 +5,23 @@ pub(crate) async fn create_requirement(
     form: RequirementCreateForm,
 ) -> ApiResult<Value> {
     let title = clean_required(&form.title, "title")?;
-    let category = form
-        .category
-        .as_deref()
-        .unwrap_or("需求")
-        .trim()
-        .to_string();
+    // 类别推导：reqId 模板带问题编号池前缀（WMS-INC-/WMS-TST-）时按前缀推导类别。
+    // 用户约定：登记问题未强调测试环境的默认线上问题；显式 category 与前缀冲突时拒绝。
+    let id_template_raw = form.req_id.trim();
+    let derived_category = derive_category_from_id_template(id_template_raw);
+    let category = match form.category.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(explicit) => {
+            if let Some(derived) = derived_category {
+                if explicit != derived {
+                    return Err(ApiError::bad_request(format!(
+                        "reqId 使用问题编号池前缀（{derived} 对应 WMS-INC-/WMS-TST-），category 应为「{derived}」（未强调测试环境的问题默认线上问题），当前为「{explicit}」"
+                    )));
+                }
+            }
+            explicit.to_string()
+        }
+        None => derived_category.unwrap_or("需求").to_string(),
+    };
     ensure_category(&category)?;
     let source = form
         .source

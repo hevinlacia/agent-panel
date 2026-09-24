@@ -34,7 +34,9 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const urlParams = new URLSearchParams(window.location.search)
   const [keyword, setKeyword] = useState(urlParams.get("q") || "")
   const [project, setProject] = useState("")
-  const [closedOpen, setClosedOpen] = useState(false)
+  // 可折叠分组（已关闭 / 常规流程中）各自独立记忆展开状态，默认折叠。
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ "已关闭": true, "常规流程中": true })
+  const toggleCollapsed = (status: string) => setCollapsed((prev) => ({ ...prev, [status]: !prev[status] }))
   const urlType = urlParams.get("type")
   const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" ? urlType : "")
   const reqs = data?.requirements || []
@@ -103,18 +105,18 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const groups = useMemo<IssueGroup[]>(() => {
     const byStatus = new Map<string, Requirement[]>()
     for (const r of filtered) {
-      const key = ISSUE_ORDER.includes(r.status) ? r.status : "其他"
+      const key = ISSUE_ORDER.includes(r.status) ? r.status : "常规流程中"
       const list = byStatus.get(key) || []
       list.push(r)
       byStatus.set(key, list)
     }
-    const order = [...ISSUE_ORDER, "其他"]
+    const order = [...ISSUE_ORDER, "常规流程中"]
     return order
       .filter((status) => byStatus.has(status))
       .map((status) => ({
         status,
         reqs: byStatus.get(status)!.sort((a, b) => b.updatedAt - a.updatedAt),
-        collapsible: status === "已关闭",
+        collapsible: status === "已关闭" || status === "常规流程中",
       }))
   }, [filtered])
 
@@ -136,12 +138,12 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
         <label className="react-filter-grow">查找问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / WMS-TST-3 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
       </div>
-      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题）；「已关闭」分组默认折叠，点击展开；排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
+      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题，未强调测试环境的问题默认线上问题）；「已关闭」「常规流程中」分组默认折叠，点击展开。「常规流程中」不是新的问题类型：问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态。排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : "没有问题记录。创建时选择类别「线上问题」或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && !closedOpen && !keyword.trim()
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && collapsed[group.status] && !keyword.trim()
       ? <section key={group.status} className="react-panel">
-        <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => setClosedOpen(true)} aria-expanded={false}>
-          <span>已关闭</span>
+        <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => toggleCollapsed(group.status)} aria-expanded={false} title={group.status === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}>
+          <span>{group.status}</span>
           <em className="react-collapse-summary">{group.reqs.length} 条 · 点击展开</em>
           <ChevronDown size={14} className="react-collapse-chevron" />
         </button>
