@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { OnesRecommendation, OnesTasksResponse, Requirement } from "../../types"
 import { fetchJson, postForm, postJson } from "../../lib/api"
+import { relAge } from "../../lib/format"
 import { statusPill } from "./badges"
 import { REQ_CATEGORIES, REQ_SOURCES } from "../../lib/requirements"
 import { PanelHead } from "../../components/ui"
@@ -61,15 +62,36 @@ export function OnesBindModal({ req, onClose, onSaved }: { req: Requirement; onC
   const [recs, setRecs] = useState<OnesRecommendation[]>([])
   const [recsState, setRecsState] = useState<"loading" | "ready" | "error">("loading")
   const [recsError, setRecsError] = useState<string | null>(null)
-  // 打开弹窗时拉取推荐：后端聚合 ONES 通知+工时候选，按需求标题匹配度排序。
+  const [cacheHit, setCacheHit] = useState(false)
+  const [cachedAt, setCachedAt] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const aliveRef = useRef(true)
   useEffect(() => {
-    let alive = true
-    setRecsState("loading")
-    fetchJson<OnesTasksResponse>(`/api/ones/tasks?reqId=${encodeURIComponent(req.id)}`)
-      .then((d) => { if (!alive) return; setRecs(d.recommendations || []); setRecsState("ready") })
-      .catch((err) => { if (!alive) return; setRecsError(err instanceof Error ? err.message : String(err)); setRecsState("error") })
-    return () => { alive = false }
+    aliveRef.current = true
+    return () => { aliveRef.current = false }
   }, [req.id])
+  // 打开弹窗默认走后端 ONES 缓存；点“刷新”才回源 ONES 拉最新候选。
+  const load = useCallback((refresh: boolean) => {
+    if (refresh) setRefreshing(true)
+    else { setRecsState("loading"); setRecsError(null) }
+    fetchJson<OnesTasksResponse>(`/api/ones/tasks?reqId=${encodeURIComponent(req.id)}${refresh ? "&refresh=true" : ""}`)
+      .then((d) => {
+        if (!aliveRef.current) return
+        setRecs(d.recommendations || [])
+        setCacheHit(d.cacheHit)
+        setCachedAt(d.cachedAt)
+        setRecsState("ready")
+        setRefreshing(false)
+      })
+      .catch((err) => {
+        if (!aliveRef.current) return
+        setRecsError(err instanceof Error ? err.message : String(err))
+        setRecsState("error")
+        setRefreshing(false)
+      })
+  }, [req.id])
+  useEffect(() => { load(false) }, [load])
+  const cacheLabel = cacheHit && cachedAt ? `（缓存于 ${relAge(cachedAt)}）` : ""
   const applyRec = (r: OnesRecommendation) => { setOnes(r.refText); setFeedback(null) }
   const changed = ones.trim() !== (req.ones ?? "").trim()
   const submit = async () => {
@@ -87,7 +109,7 @@ export function OnesBindModal({ req, onClose, onSaved }: { req: Requirement; onC
       setSaving(false)
     }
   }
-  return <div className="react-modal-backdrop" onClick={onClose}><div className="react-modal react-ones-modal" onClick={(e) => e.stopPropagation()}><div className="react-modal-head"><div><span>ONES</span><h3>登记 ONES 任务关联</h3></div><button type="button" className="react-modal-close" onClick={onClose} title="关闭">✕</button></div><div className="react-modal-form"><p className="react-muted"><code>{req.id}</code> {req.title}</p><p className="react-muted">粘贴 ONES 网址、编号，或直接从 ONES 复制的整段文本（编号 + 标题 + 链接），会自动识别为可点击引用；留空保存可清除关联。</p>{recsState === "loading" ? <p className="react-muted">正在从 ONES 获取候选任务（Chrome 登录态）…</p> : recsState === "error" ? <p className="react-effort-error">推荐获取失败：{recsError}（可直接粘贴编号或链接）</p> : recs.length ? <div className="react-ones-recs"><p className="react-muted">可能关联的任务（按匹配度，点击填入）：</p>{recs.map((r) => <button key={r.displayId} type="button" className="react-ones-rec" onClick={() => applyRec(r)} title={r.refText}><code>{r.displayId}</code><span className="react-ones-rec-name">{r.name}</span><em className="react-ones-rec-meta">{r.sources.join("/")} · {Math.round(r.score * 100)}%{r.displayIdBoost ? " · 编号已引用" : ""}</em></button>)}</div> : <p className="react-muted">未找到匹配的 ONES 候选任务，可直接粘贴编号或链接。</p>}<div className="react-inline-form"><input autoFocus value={ones} onChange={(e) => { setOnes(e.target.value); setFeedback(null) }} placeholder="ONES 网址 / 编号 / 带链接的复制文本" onKeyDown={(e) => { if (e.key === "Enter") submit() }} /><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button>{req.ones ? <button type="button" onClick={() => { setOnes(""); }} disabled={saving}>清空输入</button> : null}</div>{feedback ? <p className={feedback.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</div></div></div>
+  return <div className="react-modal-backdrop" onClick={onClose}><div className="react-modal react-ones-modal" onClick={(e) => e.stopPropagation()}><div className="react-modal-head"><div><span>ONES</span><h3>登记 ONES 任务关联</h3></div><button type="button" className="react-modal-close" onClick={onClose} title="关闭">✕</button></div><div className="react-modal-form"><p className="react-muted"><code>{req.id}</code> {req.title}</p><p className="react-muted">粘贴 ONES 网址、编号，或直接从 ONES 复制的整段文本（编号 + 标题 + 链接），会自动识别为可点击引用；留空保存可清除关联。</p><div className="react-ones-recs-block"><div className="react-ones-recs-head">{recsState === "loading" ? <p className="react-muted">正在从 ONES 获取候选任务（Chrome 登录态）…</p> : recsState === "error" ? <p className="react-effort-error">推荐获取失败：{recsError}（可直接粘贴编号或链接）</p> : recs.length ? <p className="react-muted">可能关联的任务（按匹配度，点击填入）{cacheLabel}</p> : <p className="react-muted">未找到匹配的 ONES 候选任务，可直接粘贴编号或链接。</p>}<button type="button" className="react-ones-rec-refresh" onClick={() => load(true)} disabled={refreshing || recsState === "loading"} title="重新从 ONES 拉取最新任务列表">{refreshing ? "刷新中…" : "↻ 刷新 ONES 缓存"}</button></div>{recsState === "ready" && recs.length ? <div className="react-ones-recs">{recs.map((r) => <button key={r.displayId} type="button" className="react-ones-rec" onClick={() => applyRec(r)} title={r.refText}><code>{r.displayId}</code><span className="react-ones-rec-name">{r.name}</span><em className="react-ones-rec-meta">{r.sources.join("/")} · {Math.round(r.score * 100)}%{r.displayIdBoost ? " · 编号已引用" : ""}</em></button>)}</div> : null}</div><div className="react-inline-form"><input autoFocus value={ones} onChange={(e) => { setOnes(e.target.value); setFeedback(null) }} placeholder="ONES 网址 / 编号 / 带链接的复制文本" onKeyDown={(e) => { if (e.key === "Enter") submit() }} /><button onClick={submit} disabled={saving || !changed}>{saving ? "保存中…" : "保存"}</button>{req.ones ? <button type="button" onClick={() => { setOnes(""); }} disabled={saving}>清空输入</button> : null}</div>{feedback ? <p className={feedback.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</div></div></div>
 }
 
 /** 需求信息卡字段编辑弹窗：类别 / 推动方 / 预计发版。 */

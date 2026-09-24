@@ -76,11 +76,23 @@ impl OnesTaskCandidate {
     }
 }
 
+/// ONES 候选任务内存缓存：默认请求直接复用，refresh=true 或 team 变化时才回源 ONES。
+/// 仅进程内存，重启即清；推荐打分在每次请求时基于缓存候选现算（按需求不同）。
+#[derive(Debug, Clone)]
+pub(crate) struct OnesCache {
+    pub(crate) team: String,
+    pub(crate) fetched_at: i64,
+    pub(crate) candidates: Vec<OnesTaskCandidate>,
+    pub(crate) warnings: Vec<String>,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct OnesTasksQuery {
     #[serde(rename = "reqId")]
     pub(crate) req_id: Option<String>,
     pub(crate) team: Option<String>,
+    /// true = 无视缓存强制回源 ONES（页面“刷新”按钮）。
+    pub(crate) refresh: Option<bool>,
 }
 
 /// GET /api/ones/tasks?reqId=<id>&team=<teamId>
@@ -109,13 +121,30 @@ pub(crate) async fn api_ones_tasks(
         .team
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_ONES_TEAM.to_string());
-    let cookies = load_chrome_cookies(&auth)
-        .await
-        .map_err(|e| ApiError::from(anyhow!("Chrome 登录态读取失败: {e:#}")))?
-        .1;
-
-    let (mut candidates, warnings) = fetch_ones_candidates(site, &cookies, &team).await;
-    candidates.sort_by(sort_candidates);
+    let refresh = q.refresh.unwrap_or(false);
+    // 先取快照再判断，避免持锁跨 await；缓存仅内存，重启即清。
+    let cached = state.ones_cache.lock().await.clone();
+    let cache_valid = !refresh && cached.as_ref().is_some_and(|c| c.team == team);
+    let (candidates, warnings, cached_at, cache_hit) = if cache_valid {
+        let c = cached.expect("cache_valid checked");
+        (c.candidates, c.warnings, c.fetched_at, true)
+    } else {
+        let cookies = load_chrome_cookies(&auth)
+            .await
+            .map_err(|e| ApiError::from(anyhow!("Chrome 登录态读取失败: {e:#}")))?
+            .1;
+        let (cands, warns) = fetch_ones_candidates(site, &cookies, &team).await;
+        let mut cands = cands;
+        cands.sort_by(sort_candidates);
+        let fetched_at = now_ms();
+        *state.ones_cache.lock().await = Some(OnesCache {
+            team: team.clone(),
+            fetched_at,
+            candidates: cands.clone(),
+            warnings: warns.clone(),
+        });
+        (cands, warns, fetched_at, false)
+    };
 
     let mut recommendations: Vec<Value> = Vec::new();
     let mut requirement_title = String::new();
@@ -140,6 +169,8 @@ pub(crate) async fn api_ones_tasks(
         "recommendations": recommendations,
         "requirementTitle": requirement_title,
         "warnings": warnings,
+        "cacheHit": cache_hit,
+        "cachedAt": cached_at,
     })))
 }
 

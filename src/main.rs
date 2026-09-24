@@ -176,6 +176,8 @@ struct AppState {
     /// scan -> reserve dir -> write meta.md must be atomic per process or two parallel
     /// creates observe the same max seq and both succeed with duplicate numbers.
     requirement_create_lock: Arc<Mutex<()>>,
+    /// ONES 候选任务内存缓存（GET /api/ones/tasks 默认命中，refresh=true 回源）。
+    ones_cache: Arc<Mutex<Option<OnesCache>>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -235,6 +237,7 @@ async fn main() -> Result<()> {
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
+        ones_cache: Arc::new(Mutex::new(None)),
     };
 
     // Start the cainiao print mock server on boot if enabled in config.
