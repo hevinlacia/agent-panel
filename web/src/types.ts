@@ -262,6 +262,14 @@ export interface SessionLogEntry { line: number; type: string; timestamp?: numbe
 export interface SessionLogPayload { ok: boolean; sessionId: string; path: string; cursor: number; total: number; hasMore: boolean; updatedAt: number; entries: SessionLogEntry[] }
 export interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 
+/** 发版冻结：部署脚本 ylops_deploy.py 直读 config.json 的 deployFreeze 字段拦 UAT 构建/部署。 */
+export interface DeployFreeze {
+  enabled?: boolean
+  reason?: string
+  /** 最近一次开启时间（RFC3339）；关闭时保留供展示。 */
+  since?: string
+}
+
 export interface StatusGateRule {
   from: ReqStatus | string
   to: ReqStatus | string
@@ -366,6 +374,8 @@ export interface ConfigPayload {
   experienceSummaryMaxAgents?: number
   cainiaoMockEnabled?: boolean
   cainiaoMockPort?: number
+  /** 发版冻结：开启后 ylops_deploy.py 拒绝在 UAT（uat-sg/uat-cn）触发构建/部署。 */
+  deployFreeze?: DeployFreeze
   mergeExcludedRepos?: string[]
   /** 未配置（undefined）时后端使用内置默认门禁；显式空数组 = 关闭所有门禁。 */
   statusGates?: StatusGateRule[] | null

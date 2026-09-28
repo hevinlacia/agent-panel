@@ -1079,3 +1079,35 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
   color: var(--react-muted);
 }
 .react-page-crash-actions { display: flex; gap: 8px; }
+
+/* --- deploy freeze（发版状态 / UAT 部署冻结） --- */
+.react-freeze-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.08);
+  color: var(--react-text);
+  font: 800 0.78rem var(--react-mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+.react-freeze-toggle:hover { transform: translateY(-1px); border-color: rgba(34, 211, 238, 0.55); }
+.react-freeze-toggle.on {
+  border-color: rgba(244, 63, 94, 0.55);
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.9), rgba(251, 113, 133, 0.85));
+  color: #fff;
+  animation: react-freeze-pulse 2.4s ease-in-out infinite;
+}
+@keyframes react-freeze-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.35); }
+  50% { box-shadow: 0 0 0 7px rgba(244, 63, 94, 0); }
+}
+.react-hero-actions .react-freeze-badge {
+  border-color: rgba(244, 63, 94, 0.55);
+  background: rgba(244, 63, 94, 0.16);
+  color: #fda4af;
+}
