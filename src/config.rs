@@ -63,12 +63,45 @@ pub(crate) struct AppConfig {
     pub(crate) cainiao_mock_enabled: bool,
     #[serde(default = "default_cainiao_mock_port")]
     pub(crate) cainiao_mock_port: u16,
+    /// 发版冻结开关：ylops_deploy.py 直读 config.json 的 deployFreeze 字段拦截 UAT 构建/部署。
+    #[serde(default)]
+    pub(crate) deploy_freeze: DeployFreeze,
     #[serde(default)]
     pub(crate) browser_auth: BrowserAuthConfig,
     /// 状态流转门禁规则：from → to 流转上要依次通过的门禁；None（配置文件未写）时使用内置默认规则。
     /// Agent 通过 API 推进状态时强校验，人在 Panel UI 上修改状态直接跳过。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) status_gates: Option<Vec<StatusGateRule>>,
+}
+
+/// 发版冻结状态：开启后部署脚本（ylops_deploy.py）在触发 UAT（uat-sg/uat-cn）构建/部署前
+/// 会直接读本字段并拒绝执行；面板 UI 是唯一开关入口。
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeployFreeze {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    /// 冻结原因（如需求号 / 发版窗口说明），展示用。
+    #[serde(default)]
+    pub(crate) reason: String,
+    /// 最近一次开启时间（RFC3339）；关闭时保留供展示。
+    #[serde(default)]
+    pub(crate) since: String,
+}
+
+fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// 归一化发版冻结：trim 原因；开启且缺时间戳时补当前时间（关闭时保留 reason/since 供展示）。
+pub(crate) fn normalize_deploy_freeze(mut freeze: DeployFreeze) -> DeployFreeze {
+    freeze.reason = freeze.reason.trim().to_string();
+    if freeze.enabled && freeze.since.trim().is_empty() {
+        freeze.since = now_rfc3339();
+    } else {
+        freeze.since = freeze.since.trim().to_string();
+    }
+    freeze
 }
 
 /// 单条状态门禁规则：同一 (from, to) 只保留一条，gates 有序，全部通过才允许流转。
@@ -277,6 +310,7 @@ impl Default for AppConfig {
             merge_excluded_repos: Vec::new(),
             cainiao_mock_enabled: false,
             cainiao_mock_port: DEFAULT_CAINIAO_MOCK_PORT,
+            deploy_freeze: DeployFreeze::default(),
             browser_auth: BrowserAuthConfig::default(),
             status_gates: None,
         }
@@ -308,6 +342,7 @@ pub(crate) struct ConfigPatch {
     pub(crate) experience_summary_max_agents: Option<usize>,
     pub(crate) cainiao_mock_enabled: Option<bool>,
     pub(crate) cainiao_mock_port: Option<u16>,
+    pub(crate) deploy_freeze: Option<DeployFreeze>,
     pub(crate) merge_excluded_repos: Option<Vec<String>>,
     pub(crate) browser_auth: Option<BrowserAuthConfig>,
     pub(crate) status_gates: Option<Vec<StatusGateRule>>,
@@ -408,6 +443,9 @@ pub(crate) async fn api_config_post(
     if let Some(v) = patch.cainiao_mock_port {
         cfg.cainiao_mock_port = v;
     }
+    if let Some(v) = patch.deploy_freeze {
+        cfg.deploy_freeze = normalize_deploy_freeze(v);
+    }
     if let Some(v) = patch.merge_excluded_repos {
         cfg.merge_excluded_repos = normalize_repo_name_list(v);
     }
@@ -438,6 +476,7 @@ pub(crate) async fn read_config(state: &AppState) -> Result<AppConfig> {
     let mut cfg: AppConfig = serde_json::from_str(&raw).unwrap_or_default();
     cfg.requirement_scan_roots = normalize_scan_roots(cfg.requirement_scan_roots);
     cfg.merge_excluded_repos = normalize_repo_name_list(cfg.merge_excluded_repos);
+    cfg.deploy_freeze = normalize_deploy_freeze(cfg.deploy_freeze);
     cfg.experience_summary_max_agents =
         clamp_experience_summary_max_agents(cfg.experience_summary_max_agents);
     cfg.status_gates = cfg

@@ -5,10 +5,10 @@
  * Read-this-with: web/src/pages/projects.tsx for card/filter patterns and src/requirement_index.rs for the DTO source.
  */
 import { motion } from "framer-motion"
-import { CalendarClock, CheckCircle2, ChevronDown, ListChecks, Rocket } from "lucide-react"
+import { CalendarClock, CheckCircle2, ChevronDown, ListChecks, Rocket, Snowflake } from "lucide-react"
 import { useMemo, useState } from "react"
-import type { Requirement } from "../types"
-import { useFetch } from "../lib/api"
+import type { ConfigPayload, Requirement } from "../types"
+import { postJson, useFetch } from "../lib/api"
 import { relAge } from "../lib/format"
 
 import { onesBadge, projectsOf, statusPill } from "../features/requirements/badges"
@@ -60,6 +60,14 @@ interface ReleaseGroup {
 
 export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
   const { data, error, loading } = useFetch<{ requirements: Requirement[] }>("/api/requirements")
+  const freezeCfg = useFetch<ConfigPayload>("/api/config")
+  const freeze = freezeCfg.data?.deployFreeze
+  /** 发版状态快捷开关：开启后 ylops_deploy.py 拒绝 UAT 构建/部署（原因与详情在设置页维护）。 */
+  const toggleFreeze = async () => {
+    const enabled = !freeze?.enabled
+    await postJson("/api/config", { deployFreeze: { enabled, reason: freeze?.reason || "", since: freeze?.since || "" } })
+    freezeCfg.refresh()
+  }
   const [selected, setSelected] = useState(() => ymd(new Date()))
   const [project, setProject] = useState("")
   const [unknownOpen, setUnknownOpen] = useState(false)
@@ -166,7 +174,7 @@ export function ReleasePlanPage({ globalProject }: { globalProject?: string }) {
   const readyCount = filtered.length
   const projects = useMemo(() => [...new Set(reqs.flatMap((r) => r.projects?.length ? r.projects : [r.project]).filter(Boolean))].sort(), [reqs])
 
-  return <PageChrome icon={<Rocket size={15} />} eyebrow="Release Plan" title="发布计划" description="统计所有「发布就绪」状态的需求（人工已检查代码、随时可发布），按 plan-release 登记日期分组，发版当天快速确认；agent 已完成但未经人工检查的需求不在此列。">
+  return <PageChrome icon={<Rocket size={15} />} eyebrow="Release Plan" title="发布计划" description="统计所有「发布就绪」状态的需求（人工已检查代码、随时可发布），按 plan-release 登记日期分组，发版当天快速确认；agent 已完成但未经人工检查的需求不在此列。" actions={<button type="button" className={freeze?.enabled ? "react-freeze-toggle on" : "react-freeze-toggle"} onClick={toggleFreeze} title={freeze?.enabled ? `点击解除发版状态，恢复 UAT 构建与部署${freeze?.reason ? `（原因：${freeze.reason}）` : ""}` : "发版窗口开启：ylops_deploy.py 将拒绝 UAT（uat-sg/uat-cn）构建与部署；test/PRO 不受影响"}><Snowflake size={13} /> {freeze?.enabled ? "发版中 · UAT 已冻结" : "进入发版状态"}</button>}>
     {releaseDay !== null ? <section className="react-kpi-grid">
       <KpiCard icon={<CheckCircle2 size={20} />} label={`距现第${releaseDay + 1}发版日`} value={readyCount} sub={`${releaseDays[releaseDay]} ${weekdayOf(releaseDays[releaseDay])} 正式发版`} tone="done" />
     </section> : <section className="react-kpi-grid-5">
