@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
 use super::*;
+use std::collections::BTreeMap;
 
 #[test]
 fn normalize_capability_maps_legacy_wms_fields_to_common_schema() {
@@ -41,13 +41,27 @@ fn normalize_capability_maps_legacy_wms_fields_to_common_schema() {
         "scripts/wms_create_outbound.py"
     );
     assert_eq!(normalized["runner"]["cwd"], "/tmp/wms-testdata");
-    assert_eq!(normalized["safety"]["agentPanelExecutes"], false);
+    assert_eq!(normalized["safety"]["agentPanelExecutes"], true);
+    assert_eq!(
+        normalized["safety"]["executionEndpoint"],
+        "/api/testdata/run"
+    );
     assert_eq!(normalized["verification"]["targets"][0]["name"], "shipped");
     assert_eq!(
         normalized["relatedArtifacts"]["recipe"],
         "recipes/outbound/create-any-status-shipment.yaml"
     );
     assert_eq!(normalized["legacy"]["domain"], "outbound");
+}
+
+#[test]
+fn testdata_run_env_allowlist_accepts_known_and_rejects_unknown() {
+    assert_eq!(ensure_testdata_env("test").unwrap(), "test");
+    assert_eq!(ensure_testdata_env(" uat-cn ").unwrap(), "uat-cn");
+    assert_eq!(ensure_testdata_env("uat-sea").unwrap(), "uat-sea");
+    assert!(ensure_testdata_env("prod").is_err());
+    assert!(ensure_testdata_env("TEST").is_err());
+    assert!(ensure_testdata_env("").is_err());
 }
 
 #[test]
@@ -127,8 +141,14 @@ fn dashboard_stats_release_schedule_and_next_release() {
 #[test]
 fn normalize_skill_path_overrides_trims_expands_home_and_drops_empty() {
     let map = BTreeMap::from([
-        ("  req-tracker  ".to_string(), "  /tmp/skills/  ".to_string()),
-        ("/agent-panel-code-review/".to_string(), "~/.agents/skills-x".to_string()),
+        (
+            "  req-tracker  ".to_string(),
+            "  /tmp/skills/  ".to_string(),
+        ),
+        (
+            "/agent-panel-code-review/".to_string(),
+            "~/.agents/skills-x".to_string(),
+        ),
         ("wms-test-data-creation".to_string(), "   ".to_string()),
         ("".to_string(), "/tmp/orphan".to_string()),
     ]);
@@ -166,7 +186,10 @@ fn resolve_skill_path_prefers_override_and_supports_three_shapes() {
             "agent-panel-code-review".to_string(),
             file_skill.to_string_lossy().to_string(),
         ),
-        ("req-tracker".to_string(), root.to_string_lossy().to_string()),
+        (
+            "req-tracker".to_string(),
+            root.to_string_lossy().to_string(),
+        ),
         (
             "wms-test-data-creation".to_string(),
             dir.to_string_lossy().to_string(),

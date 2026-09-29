@@ -27,7 +27,7 @@ pub(crate) async fn api_capability_sources(
         "rules": [
             "Agent Panel indexes project-owned capability packs and normalizes legacy adapters into a common schema.",
             "Project business data stays in the project root; Agent Panel does not store business assets in its own repo.",
-            "Current APIs are read-only; run execution is intentionally out of scope for this phase."
+            "Capability/API listing APIs are read-only; script execution is dispatched via POST /api/testdata/run (dry-run by default; real run needs execute=true and dryRun=false)."
         ]
     })))
 }
@@ -102,8 +102,8 @@ pub(crate) async fn api_testdata_capabilities(
         "help": {
             "skillName": "wms-test-data-creation",
             "skillPath": agent_panel_skill_path("wms-test-data-creation"),
-            "phase": "read-only-index",
-            "note": "第一阶段只读索引；如需执行，按 detail.runnerHint 中的命令到 sourcePath 项目运行。"
+            "phase": "index-and-dispatch",
+            "note": "能力/接口检索只读；造数脚本执行走 POST /api/testdata/run（默认 dry-run 预览，execute=true 且 dryRun=false 才真实执行）。"
         }
     })))
 }
@@ -162,8 +162,8 @@ pub(crate) async fn api_testdata_capability(
         "help": {
             "skillName": "wms-test-data-creation",
             "skillPath": agent_panel_skill_path("wms-test-data-creation"),
-            "phase": "read-only-index",
-            "note": "第一阶段只读索引；Agent Panel 不执行造数脚本。"
+            "phase": "index-and-dispatch",
+            "note": "能力/接口检索只读；造数脚本执行走 POST /api/testdata/run（默认 dry-run 预览）。"
         }
     })))
 }
@@ -182,6 +182,20 @@ pub(crate) struct TestdataRunForm {
     dry_run: Option<bool>,
     #[serde(default)]
     execute: Option<bool>,
+}
+
+/// POST /api/testdata/run 允许的环境枚举。与 `/api/apitest/trigger` 的环境枚举保持一致；
+/// 更细的执行约束（UAT 仅 API 驱动造数、DB 只写 test）由 capability 脚本自身保证。
+pub(crate) fn ensure_testdata_env(env: &str) -> Result<String, String> {
+    const ALLOWED: [&str; 3] = ["test", "uat-cn", "uat-sea"];
+    let trimmed = env.trim();
+    if ALLOWED.contains(&trimmed) {
+        Ok(trimmed.to_string())
+    } else {
+        Err(format!(
+            "unsupported env `{trimmed}` for testdata run (allowed: test, uat-cn, uat-sea)"
+        ))
+    }
 }
 
 pub(crate) async fn api_testdata_run(
@@ -287,9 +301,17 @@ pub(crate) async fn api_testdata_run(
             }
         }
     }
-    if let Some(env) = body.env.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    let run_env = body
+        .env
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ensure_testdata_env)
+        .transpose()
+        .map_err(ApiError::bad_request)?;
+    if let Some(env) = run_env.clone() {
         args.push("--env".into());
-        args.push(env.to_string());
+        args.push(env);
     }
     let command_preview = format!("uv {}", args.join(" "));
     let execute_flag = body.execute.unwrap_or(false);
@@ -308,8 +330,8 @@ pub(crate) async fn api_testdata_run(
             "args": args,
             "safety": {
                 "agentPanelExecutes": false,
-                "env": "test",
-                "note": "dry-run preview. Pass execute=true (and dryRun=false) to create real test data in the WMS test environment."
+                "env": run_env,
+                "note": "dry-run preview. Pass execute=true (and dryRun=false) to execute for real; env allowlist: test, uat-cn, uat-sea."
             }
         })));
     }
@@ -338,7 +360,10 @@ pub(crate) async fn api_testdata_run(
                 "safety": {
                     "agentPanelExecutes": true,
                     "env": body.env.clone().unwrap_or_else(|| "test".to_string()),
-                    "note": "Real test data was created in the WMS test environment."
+                    "note": format!(
+                        "Real run executed via env `{}`; data writes follow the capability script policy.",
+                        body.env.clone().unwrap_or_else(|| "test".to_string())
+                    )
                 }
             })))
         }
@@ -383,7 +408,7 @@ pub(crate) fn capability_pack_schema() -> Value {
                 "inputs": "parameter schema map",
                 "outputs": "declared output schema map",
                 "environments": "supported environments and policy",
-                "runner": "how to run: command/script/recipe/api/dry-run; read-only APIs do not execute it",
+                "runner": "how to run: command/script/recipe/api; script execution is dispatched via POST /api/testdata/run",
                 "safety": "side effects, DB write policy, env allowlist",
                 "verification": "how to verify outputs or side effects",
                 "relatedArtifacts": "recipes, schemas, state graphs, pitfalls, API templates, docs",
@@ -424,10 +449,11 @@ pub(crate) fn capability_sources(_state: &AppState) -> Vec<Value> {
         "status": if pack.is_dir() { "ok" } else { "missing" },
         "exists": pack.is_dir(),
         "projectExists": paths::wms_root().is_dir(),
-        "readOnly": true,
+        "readOnly": false,
+        "executionEndpoint": "/api/testdata/run",
         "notes": [
             "WMS-owned test-data assets live under the WMS project root.",
-            "These APIs are read-only; Agent Panel does not execute runners."
+            "Listing/detail APIs are read-only; script execution is dispatched via POST /api/testdata/run (dry-run by default)."
         ]
     })]
 }
@@ -673,13 +699,13 @@ pub(crate) fn normalize_capability(source_path: &Path, cap: &Value) -> Value {
             "script": cap.get("script").cloned().unwrap_or(Value::Null),
             "command": cap.get("invocation").cloned().unwrap_or(Value::Null),
             "cwd": source_path.to_string_lossy(),
-            "readOnlyInAgentPanel": true
+            "executionEndpoint": "/api/testdata/run"
         },
         "safety": {
-            "agentPanelExecutes": false,
-            "writesDatabase": false,
+            "agentPanelExecutes": true,
+            "executionEndpoint": "/api/testdata/run",
             "uatDbWritesAllowed": false,
-            "policy": "Capability pack may define executable runners, but Agent Panel phase 3 only indexes and normalizes them."
+            "policy": "Script execution is dispatched via POST /api/testdata/run (dry-run by default; real run needs execute=true and dryRun=false). Env allowlist: test, uat-cn, uat-sea. UAT DB writes stay forbidden; finer run policies are enforced by the capability scripts themselves."
         },
         "verification": {
             "targets": cap.get("targets").cloned().unwrap_or_else(|| json!([])),
@@ -702,9 +728,9 @@ pub(crate) fn capability_run_hint(source_path: &Path, cap: &Value) -> Value {
         "execute": cap.get("invocation").and_then(Value::as_str).unwrap_or_default(),
         "normalizedRunner": normalize_capability(source_path, cap).get("runner").cloned().unwrap_or(Value::Null),
         "notes": [
-            "Phase 3 keeps Agent Panel read-only.",
+            "Listing APIs stay read-only; script execution is dispatched via POST /api/testdata/run (dry-run by default).",
             "Use normalized.runner for generic capability-pack consumers.",
-            "To execute manually, run the command from sourcePath in the project owner repo or legacy fallback path."
+            "To execute manually, run the command from sourcePath in the project owner repo."
         ]
     })
 }

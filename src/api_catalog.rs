@@ -17,10 +17,10 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use axum::{extract::Query, Json};
-use tokio::time::timeout;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tokio::time::timeout;
 
 use crate::*;
 
@@ -232,7 +232,10 @@ fn build_x_params(session: &LoginSession, spec: &XParamsSpec, warehouse: &str) -
     obj.insert("warehouse".into(), Value::String(warehouse.to_string()));
     obj.insert(
         "orgCode".into(),
-        spec.org_code.clone().map(Value::String).unwrap_or(Value::Null),
+        spec.org_code
+            .clone()
+            .map(Value::String)
+            .unwrap_or(Value::Null),
     );
     if spec.include_user && !session.user.is_empty() {
         obj.insert("user".into(), Value::String(session.user.clone()));
@@ -417,7 +420,10 @@ fn canonical_placeholders<'a>(
         let (canonical, env) = if let Some(env) = raw.strip_prefix("process.env.") {
             (env.trim().to_string(), env.trim().to_string())
         } else {
-            let env = vars_map.get(raw).cloned().unwrap_or_else(|| heuristic_env_name(raw));
+            let env = vars_map
+                .get(raw)
+                .cloned()
+                .unwrap_or_else(|| heuristic_env_name(raw));
             (raw.to_string(), env)
         };
         if canonical.is_empty() || seen.iter().any(|(c, _)| *c == canonical) {
@@ -458,8 +464,8 @@ pub(crate) fn derive_api_kind(api: &CatalogApi) -> &'static str {
     let hay = format!("{} {} {}", api.id, api.name, api.purpose).to_lowercase();
     const TEST_WORDS: &[&str] = &["query", "list", "page", "detail", "search", "get-", "check"];
     const CREATE_WORDS: &[&str] = &[
-        "create", "close", "cancel", "claim", "confirm", "adjust", "release", "putaway",
-        "add", "bind", "freeze", "unfreeze", "review", "delivery", "ship", "receipt",
+        "create", "close", "cancel", "claim", "confirm", "adjust", "release", "putaway", "add",
+        "bind", "freeze", "unfreeze", "review", "delivery", "ship", "receipt",
     ];
     if TEST_WORDS.iter().any(|w| hay.contains(w)) {
         "test"
@@ -498,7 +504,11 @@ fn load_bru(root: &Path, api: &CatalogApi) -> ApiResult<BruTemplate> {
     let mut t = parse_bru_template(&text);
     // Bruno 机制：变量→process.env 映射统一在 environments/local.bru（请求模板自身
     // 无 vars 块），与运行时行为一致，此处合并（模板内 vars 块优先）。
-    let env_path = root.join("api").join("bruno").join("environments").join("local.bru");
+    let env_path = root
+        .join("api")
+        .join("bruno")
+        .join("environments")
+        .join("local.bru");
     if let Ok(env_text) = std::fs::read_to_string(&env_path) {
         let global = parse_bru_template(&env_text);
         for (k, v) in global.vars_map {
@@ -511,6 +521,19 @@ fn load_bru(root: &Path, api: &CatalogApi) -> ApiResult<BruTemplate> {
 // ---------------------------------------------------------------------------
 // API handlers
 // ---------------------------------------------------------------------------
+
+/// apitest 目录当前只挂载 WMS testdata pack；显式传其它 project 时明确拒绝，
+/// 避免参数被静默忽略造成契约误导（与 capability 端点同风格）。
+fn ensure_apitest_project(project: Option<&str>) -> ApiResult<()> {
+    if let Some(p) = project.map(str::trim).filter(|v| !v.is_empty()) {
+        if !p.eq_ignore_ascii_case("WMS") {
+            return Err(ApiError::bad_request(format!(
+                "unknown project for apitest catalog: {p} (only `WMS` pack is mounted)"
+            )));
+        }
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -529,9 +552,8 @@ pub(crate) struct ApitestListQuery {
 }
 
 /// GET /api/apitest/apis — 接口目录（catalog + 模板校验 + 造数/测试标记）。
-pub(crate) async fn api_apitest_apis(
-    Query(q): Query<ApitestListQuery>,
-) -> ApiResult<Json<Value>> {
+pub(crate) async fn api_apitest_apis(Query(q): Query<ApitestListQuery>) -> ApiResult<Json<Value>> {
+    ensure_apitest_project(q.project.as_deref())?;
     let root = testdata_root();
     let mut apis = load_catalog(&root)?;
     if let Some(d) = q.domain.as_deref().filter(|s| !s.is_empty()) {
@@ -543,9 +565,16 @@ pub(crate) async fn api_apitest_apis(
     if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         let kw = kw.to_lowercase();
         apis.retain(|a| {
-            format!("{} {} {} {} {}", a.id, a.name, a.purpose, a.url, a.tags.join(" "))
-                .to_lowercase()
-                .contains(&kw)
+            format!(
+                "{} {} {} {} {}",
+                a.id,
+                a.name,
+                a.purpose,
+                a.url,
+                a.tags.join(" ")
+            )
+            .to_lowercase()
+            .contains(&kw)
         });
     }
     let kind_filter = q.kind.as_deref().unwrap_or("all");
@@ -559,7 +588,15 @@ pub(crate) async fn api_apitest_apis(
         let placeholder_count = bru
             .as_ref()
             .map(|t| {
-                let mut text = format!("{} {}", t.url, t.headers.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" "));
+                let mut text = format!(
+                    "{} {}",
+                    t.url,
+                    t.headers
+                        .iter()
+                        .map(|(_, v)| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
                 if let Some(b) = &t.body {
                     text.push(' ');
                     text.push_str(b);
@@ -604,6 +641,7 @@ pub(crate) struct ApitestDetailQuery {
 
 /// GET /api/apitest/api?id=<api-id> — 接口详情：模板、占位符、schema、tests。
 pub(crate) async fn api_apitest_api(Query(q): Query<ApitestDetailQuery>) -> ApiResult<Json<Value>> {
+    ensure_apitest_project(q.project.as_deref())?;
     let id = q.id.or(q.api_id).unwrap_or_default();
     let root = testdata_root();
     let api = load_catalog(&root)?
@@ -614,7 +652,11 @@ pub(crate) async fn api_apitest_api(Query(q): Query<ApitestDetailQuery>) -> ApiR
     let mut text = format!(
         "{} {}",
         bru.url,
-        bru.headers.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" ")
+        bru.headers
+            .iter()
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     if let Some(b) = &bru.body {
         text.push(' ');
@@ -731,14 +773,13 @@ async fn fetch_login_session(env: &str) -> ApiResult<LoginSession> {
         .map_err(|_| ApiError::from(anyhow!("login.mjs 超时（{LOGIN_TIMEOUT_SECS}s）")))?;
     let result = result.map_err(|e| ApiError::from(anyhow!("login.mjs 启动失败: {e}")))?;
     let stdout = String::from_utf8_lossy(&result.stdout);
-    let parsed: LoginResult = serde_json::from_str(stdout.trim())
-        .map_err(|e| {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            ApiError::from(anyhow!(
-                "login.mjs 输出解析失败: {e}；stderr: {}",
-                stderr.chars().take(300).collect::<String>()
-            ))
-        })?;
+    let parsed: LoginResult = serde_json::from_str(stdout.trim()).map_err(|e| {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        ApiError::from(anyhow!(
+            "login.mjs 输出解析失败: {e}；stderr: {}",
+            stderr.chars().take(300).collect::<String>()
+        ))
+    })?;
     if let Some(s) = parsed.session {
         if !s.token.is_empty() {
             return Ok(s);
@@ -770,7 +811,11 @@ fn resolve_placeholder(
     warehouse: &str,
 ) -> Option<String> {
     let clean = |v: &String| v.trim().to_string();
-    if let Some(v) = user_vars.get(canonical).map(clean).filter(|v| !v.is_empty()) {
+    if let Some(v) = user_vars
+        .get(canonical)
+        .map(clean)
+        .filter(|v| !v.is_empty())
+    {
         return Some(v);
     }
     if let Some(v) = user_vars.get(env_name).map(clean).filter(|v| !v.is_empty()) {
@@ -794,11 +839,7 @@ fn resolve_placeholder(
 }
 
 /// 求值运行时环境：契约/静态 spec + 会话 + 仓库值 → 网关 + 基础头。
-fn resolve_env(
-    spec: &ProfileSpec,
-    session: &LoginSession,
-    warehouse: &str,
-) -> ResolvedEnv {
+fn resolve_env(spec: &ProfileSpec, session: &LoginSession, warehouse: &str) -> ResolvedEnv {
     let x_params_value = build_x_params(session, &spec.x_params, warehouse);
     let x_params = x_params_value.clone();
     let mut base_headers: Vec<(String, String)> = vec![
@@ -869,7 +910,11 @@ pub(crate) async fn api_apitest_trigger(
     let mut text = format!(
         "{} {}",
         bru.url,
-        bru.headers.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" ")
+        bru.headers
+            .iter()
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     );
     let effective_body = body.body_override.clone().or_else(|| bru.body.clone());
     if let Some(b) = &effective_body {
@@ -888,7 +933,11 @@ pub(crate) async fn api_apitest_trigger(
             &body.vars,
             &session,
             &spec,
-            &env.base_headers.iter().find(|(n, _)| n == "x-params").map(|(_, v)| v.clone()).unwrap_or_default(),
+            &env.base_headers
+                .iter()
+                .find(|(n, _)| n == "x-params")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default(),
             &warehouse,
         ) {
             Some(v) => {
@@ -960,7 +1009,9 @@ pub(crate) async fn api_apitest_trigger(
         .map_err(|e| ApiError::from(anyhow!("HTTP client 构建失败: {e}")))?;
     let method = reqwest::Method::from_bytes(bru.method.as_bytes())
         .map_err(|e| ApiError::from(anyhow!("method 非法: {e}")))?;
-    let mut req = client.request(method, &url).timeout(Duration::from_secs(TRIGGER_TIMEOUT_SECS));
+    let mut req = client
+        .request(method, &url)
+        .timeout(Duration::from_secs(TRIGGER_TIMEOUT_SECS));
     for (name, value) in &headers {
         if let Ok(hn) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) {
             if let Ok(hv) = reqwest::header::HeaderValue::from_str(value) {
@@ -1056,10 +1107,17 @@ tests {
         let t = parse_bru_template(SAMPLE_BRU);
         assert_eq!(t.method, "POST");
         assert_eq!(t.url, "{{baseUrl}}/wms-web/inbound/receipt/close");
-        assert_eq!(t.vars_map.get("xToken").map(String::as_str), Some("WMS_X_TOKEN"));
+        assert_eq!(
+            t.vars_map.get("xToken").map(String::as_str),
+            Some("WMS_X_TOKEN")
+        );
         assert_eq!(t.headers.len(), 3);
         assert_eq!(t.headers[1].0, "X-Token");
-        assert!(t.body.as_deref().unwrap_or("").contains("\"referCode\": \"{{referCode}}\""));
+        assert!(t
+            .body
+            .as_deref()
+            .unwrap_or("")
+            .contains("\"referCode\": \"{{referCode}}\""));
         // 字符串内花括号不破坏配平
         assert!(t.body.as_deref().unwrap_or("").contains("str}"));
         assert_eq!(t.tests.len(), 2);
@@ -1076,7 +1134,15 @@ tests {
     #[test]
     fn placeholders_canonicalize_with_vars_map() {
         let t = parse_bru_template(SAMPLE_BRU);
-        let mut text = format!("{} {}", t.url, t.headers.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(" "));
+        let mut text = format!(
+            "{} {}",
+            t.url,
+            t.headers
+                .iter()
+                .map(|(_, v)| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         text.push(' ');
         text.push_str(t.body.as_deref().unwrap_or(""));
         let ph = canonical_placeholders(&text, &t.vars_map);
@@ -1087,7 +1153,10 @@ tests {
         assert!(names.contains(&"referCode"));
         assert!(names.contains(&"warehouseCode"));
         // 无重复
-        assert_eq!(names.len(), names.iter().collect::<std::collections::HashSet<_>>().len());
+        assert_eq!(
+            names.len(),
+            names.iter().collect::<std::collections::HashSet<_>>().len()
+        );
     }
 
     fn api(id: &str, purpose: &str) -> CatalogApi {
@@ -1111,9 +1180,21 @@ tests {
 
     #[test]
     fn derive_kind_heuristic() {
-        assert_eq!(derive_api_kind(&api("inbound/close-receipt", "Close an inbound receipt")), "create");
-        assert_eq!(derive_api_kind(&api("pda/replenish-stock-query-get-location-item-qty", "查询库位库存")), "test");
-        assert_eq!(derive_api_kind(&api("pda/cycle-count-task-claim", "盘点任务领取")), "create");
+        assert_eq!(
+            derive_api_kind(&api("inbound/close-receipt", "Close an inbound receipt")),
+            "create"
+        );
+        assert_eq!(
+            derive_api_kind(&api(
+                "pda/replenish-stock-query-get-location-item-qty",
+                "查询库位库存"
+            )),
+            "test"
+        );
+        assert_eq!(
+            derive_api_kind(&api("pda/cycle-count-task-claim", "盘点任务领取")),
+            "create"
+        );
         let mut explicit = api("x/whatever", "anything");
         explicit.kind = Some("test".into());
         assert_eq!(derive_api_kind(&explicit), "test");
@@ -1136,7 +1217,10 @@ tests {
         assert_eq!(v["user"], "01668709");
         assert!(v.get("orgCode").unwrap().is_null());
         // fallback 内置 spec 的必需头含 X-User（401 根因修复）。
-        assert!(spec.required_headers.iter().any(|(n, v)| n == "X-User" && v == "${session.user}"));
+        assert!(spec
+            .required_headers
+            .iter()
+            .any(|(n, v)| n == "X-User" && v == "${session.user}"));
     }
 
     #[test]
@@ -1150,10 +1234,16 @@ tests {
         };
         let spec = fallback_profile_spec("uat-sea").unwrap();
         let env = resolve_env(&spec, &session, "SH.001");
-        assert_eq!(resolve_base_url(&env, "/wms-web/pda/x"), spec.pda_gateway.as_deref().unwrap());
+        assert_eq!(
+            resolve_base_url(&env, "/wms-web/pda/x"),
+            spec.pda_gateway.as_deref().unwrap()
+        );
         assert_eq!(resolve_base_url(&env, "/rest/cbt/x"), spec.gateway);
         // 求值后的基础头包含 X-User 且凭证头就位。
-        assert!(env.base_headers.iter().any(|(n, v)| n == "X-User" && v == "u"));
+        assert!(env
+            .base_headers
+            .iter()
+            .any(|(n, v)| n == "X-User" && v == "u"));
         assert!(env.base_headers.iter().any(|(n, _)| n == "X-Token"));
         let test = resolve_env(&fallback_profile_spec("test").unwrap(), &session, "SH.001");
         assert_eq!(resolve_base_url(&test, "/wms-web/x"), test.gateway);
@@ -1167,7 +1257,10 @@ tests {
         assert!(fallback_profile_spec("prod").is_err());
         // uat-cn 特有：X-Authentication-Switch + 无 x-env。
         let cn = fallback_profile_spec("uat-cn").unwrap();
-        assert!(cn.required_headers.iter().any(|(n, v)| n == "X-Authentication-Switch" && v == "true"));
+        assert!(cn
+            .required_headers
+            .iter()
+            .any(|(n, v)| n == "X-Authentication-Switch" && v == "true"));
         assert!(cn.x_env.is_none());
     }
 
@@ -1193,14 +1286,21 @@ environments:
         assert!(doc.environments.contains_key("test"));
         let e = &doc.environments["test"];
         assert_eq!(e.gateway, "https://gw.example.com");
-        assert_eq!(e.required_headers.get("X-User").map(String::as_str), Some("${session.user}"));
+        assert_eq!(
+            e.required_headers.get("X-User").map(String::as_str),
+            Some("${session.user}")
+        );
         let spec = ProfileSpec {
             gateway: e.gateway.clone(),
             pda_gateway: e.pda_gateway.clone(),
             origin: e.origin.clone(),
             referer: e.referer.clone(),
             x_env: e.x_env.clone(),
-            required_headers: e.required_headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            required_headers: e
+                .required_headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             x_params: e.x_params.clone().unwrap_or_else(default_x_params_spec),
         };
         let session = LoginSession {
@@ -1211,7 +1311,13 @@ environments:
             params: json!({"level": 5}),
         };
         let env = resolve_env(&spec, &session, "WH.1");
-        let get = |n: &str| env.base_headers.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone()).unwrap_or_default();
+        let get = |n: &str| {
+            env.base_headers
+                .iter()
+                .find(|(k, _)| k == n)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default()
+        };
         assert_eq!(get("X-User"), "U1");
         assert_eq!(get("x-area"), "hnzy");
         let xp: Value = serde_json::from_str(&get("x-params")).unwrap();
