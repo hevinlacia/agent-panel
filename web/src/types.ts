@@ -79,10 +79,14 @@ export interface ApitestDetailPayload {
 /** POST /api/apitest/trigger 响应。 */
 export interface ApitestTriggerPayload {
   ok: boolean
+  dryRun?: boolean
   status?: number
   durationMs?: number
   contentType?: string | null
   url?: string
+  method?: string
+  headers?: [string, string][]
+  body?: string | null
   bodyText?: string
   bodyJson?: unknown
   truncated?: boolean
@@ -747,6 +751,8 @@ export interface TestdataCliField {
   required?: boolean
   choices?: string[]
   default?: string | number
+  /** 参数说明（capabilities.yaml description，脚本 argparse help 同步）。 */
+  description?: string
 }
 
 export interface TestdataCapabilityItem {
@@ -756,8 +762,20 @@ export interface TestdataCapabilityItem {
   execution: string
   purpose: string
   script: string
+  /** 验证环境与日期（capabilities.yaml 透传，snake_case）。 */
+  verified_env?: string
+  verified_date?: string
+  /** 脚本 stdout 是否为结构化 JSON。 */
+  stdout_json?: boolean
+  /** 完整调用示例。 */
+  invocation?: string
   cli?: Record<string, TestdataCliField>
   targets?: TestdataTarget[]
+  /** 关联知识资产（相对 pack 根路径）。 */
+  recipe?: string
+  state_graph?: string
+  pitfalls?: string[]
+  notes?: unknown[]
 }
 
 export interface TestdataCapabilitiesPayload {
@@ -768,7 +786,7 @@ export interface TestdataCapabilitiesPayload {
 
 export interface TestdataCapabilityPayload {
   ok: boolean
-  capability: TestdataCapabilityItem & { pitfalls?: string[]; notes?: unknown[] }
+  capability: TestdataCapabilityItem
 }
 
 export interface TestdataRunPayload {

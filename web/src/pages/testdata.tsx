@@ -108,7 +108,7 @@ function ApiCatalogSection() {
     if (!detail?.placeholders.find((p) => p.name === name)?.derived) writeVarMemory(name, value)
   }
 
-  const trigger = async () => {
+  const run = async (dryRun: boolean) => {
     if (triggering || !selectedId) return
     setTriggering(true)
     setTriggerError(null)
@@ -120,6 +120,7 @@ function ApiCatalogSection() {
         env,
         vars: filled,
         bodyOverride: bodyText.trim() === (detail?.template?.body || "").trim() ? undefined : bodyText,
+        dryRun,
       })
       setResult(res)
       if (!res.ok && res.missing?.length) setTriggerError(`缺少入参：${res.missing.join("、")}`)
@@ -179,15 +180,18 @@ function ApiCatalogSection() {
       {detail.requestSchema ? <details className="react-review-commits"><summary>请求 schema（{detail.requestSchemaPath}）</summary><pre>{detail.requestSchema}</pre></details> : null}
       {detail.tests.length ? <details className="react-review-commits"><summary>出参断言（.bru tests，{detail.tests.length}）</summary><pre>{detail.tests.join("\n")}</pre></details> : null}
       <div className="react-actions">
-        <button type="button" onClick={trigger} disabled={triggering}><Send size={13} />{triggering ? "触发中…" : `触发接口（${ENV_TABS.find((t) => t.value === env)?.label}）`}</button>
+        <button type="button" onClick={() => run(true)} disabled={triggering}><RefreshCw size={13} className={triggering ? "react-spin" : ""} />{triggering ? "构造中…" : "预览请求 (dry-run)"}</button>
+        <button type="button" onClick={() => run(false)} disabled={triggering}><Send size={13} />{triggering ? "触发中…" : `触发接口（${ENV_TABS.find((t) => t.value === env)?.label}）`}</button>
       </div>
       <p className="react-muted">登录态自动获取（Chrome 登录态优先 → 缓存 → 账密刷新）；入参值仅本机记忆，不写回接口模板。</p>
       {triggerError ? <p className="react-effort-error">{triggerError}</p> : null}
       {result ? <div className="react-apitest-result">
-        <PanelHead kicker="Response" title="触发结果" chip={result.status != null ? `HTTP ${result.status} · ${result.durationMs}ms` : "未发送"} />
+        <PanelHead kicker="Response" title={result.dryRun ? "请求构造预览（dry-run）" : "触发结果"} chip={result.dryRun ? "未发送" : result.status != null ? `HTTP ${result.status} · ${result.durationMs}ms` : "未发送"} />
         {result.missing?.length ? <p className="react-effort-error">缺少入参：{result.missing.join("、")}</p> : null}
-        {result.url ? <code className="react-command">{result.env} → {result.url}</code> : null}
-        {result.bodyJson && result.bodyJson !== null ? <pre className="react-apitest-json">{JSON.stringify(result.bodyJson, null, 2)}</pre> : result.bodyText ? <pre className="react-apitest-json">{result.bodyText}</pre> : null}
+        {result.url ? <code className="react-command">{result.env} → {result.method ?? "POST"} {result.url}</code> : null}
+        {result.dryRun && result.headers?.length ? <details className="react-review-commits" open><summary>请求头（凭证已脱敏）</summary><pre>{result.headers.map(([n, v]) => `${n}: ${v}`).join("\n")}</pre></details> : null}
+        {result.dryRun && result.body ? <details className="react-review-commits" open><summary>请求体</summary><pre>{result.body}</pre></details> : null}
+        {!result.dryRun && (result.bodyJson != null || result.bodyText) ? <pre className="react-apitest-json">{result.bodyJson != null ? JSON.stringify(result.bodyJson, null, 2) : result.bodyText}</pre> : null}
         {result.note ? <p className="react-muted">{result.note}</p> : null}
       </div> : null}
     </div> : null}
@@ -264,13 +268,16 @@ function CapabilityScriptSection() {
     {caps.error ? <ErrorCard error={caps.error} /> : caps.loading ? <LoadingCard /> : <div className="react-card-list">{(caps.data?.capabilities || []).map((c) => <article key={c.id} className={`react-list-card ${selectedId === c.id ? "react-cap-active" : ""}`} onClick={() => setSelectedId(c.id)} style={{ cursor: "pointer" }}><div><span className="react-card-id">{c.domain}</span><h3>{c.purpose}</h3><p className="react-muted">{c.id} · {c.execution}</p></div><div className="react-card-side"><span className="react-effort-badge">{c.script ? "script" : "recipe"}</span></div></article>)}</div>}
     {selectedId ? <div className="react-apitest-detail"><PanelHead kicker="Configure" title="造数配置" chip={detailLoading ? "loading" : currentCap?.id} />
       {detailLoading ? <LoadingCard /> : detail?.capability ? <>
-        <div className="react-meta-grid"><span>能力 {detail.capability.purpose}</span><span>目标对象 {detail.capability.object}</span><span>验证环境 test</span></div>
-        <div className="react-tab-row">
+        <div className="react-meta-grid"><span>能力 {detail.capability.purpose}</span><span>目标对象 {detail.capability.object}</span><span>验证环境 {detail.capability.verified_env || "-"}{detail.capability.verified_date ? `（${detail.capability.verified_date}）` : ""}</span><span>脚本 <code>{detail.capability.script || "-"}</code></span></div>
+      {detail.capability.invocation ? <code className="react-command">{detail.capability.invocation}</code> : null}
+      {detail.capability.recipe || detail.capability.state_graph ? <p className="react-muted">关联资产：{detail.capability.recipe ? <code>{detail.capability.recipe}</code> : null}{detail.capability.state_graph ? <> · <code>{detail.capability.state_graph}</code></> : null}</p> : null}
+      {detail.capability.pitfalls?.length ? <details className="react-review-commits"><summary>相关踩坑笔记（{detail.capability.pitfalls.length}）</summary><div className="react-card-meta">{detail.capability.pitfalls.map((p) => <span key={p} className="react-linked-issue-chip"><code>{p}</code></span>)}</div></details> : null}
+      <div className="react-tab-row">
           <button className={env === "test" ? "active" : ""} onClick={() => setEnv("test")}>test 环境</button>
           <button className={env === "uat-cn" ? "active" : ""} onClick={() => setEnv("uat-cn")}>UAT-CN 环境</button>
         </div>
         <label className="react-editor-label">目标状态 (target)<select value={target} onChange={(e) => setTarget(e.target.value)}>{(detail.capability.targets || []).map((t) => <option key={t.name} value={t.name}>{t.name} ({t.label}{t.verified ? "" : "·待验证"})</option>)}</select></label>
-        <div className="react-settings-grid">{Object.entries(cliFields).filter(([k]) => k !== "target" && k !== "env").map(([key, spec]) => <label key={key}>{key}{spec.choices ? <select value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })}>{spec.choices.map((c) => <option key={c} value={c}>{c}</option>)}</select> : <input value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })} placeholder={spec.default !== undefined ? String(spec.default) : ""} />}</label>)}</div>
+        <div className="react-settings-grid">{Object.entries(cliFields).filter(([k]) => k !== "target" && k !== "env").map(([key, spec]) => <label key={key} title={spec.description || undefined}>{key}{spec.description ? <em className="react-muted" style={{ textTransform: "none", letterSpacing: 0 }}>{spec.description}</em> : null}{spec.choices ? <select value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })}>{spec.choices.map((c) => <option key={c} value={c}>{c}</option>)}</select> : <input value={params[key] || ""} onChange={(e) => setParams({ ...params, [key]: e.target.value })} placeholder={spec.default !== undefined ? String(spec.default) : spec.description || ""} />}</label>)}</div>
         <div className="react-actions">
           <button onClick={() => run(false)} disabled={running || !target}>预览命令 (dry-run)</button>
           <button onClick={() => run(true)} disabled={running || !target} className="react-fix-note-btn"><Play size={13} />{running ? "执行中…" : "执行造数"}</button>
@@ -280,11 +287,36 @@ function CapabilityScriptSection() {
       {runError ? <ErrorCard error={runError} /> : runResult ? <div className="react-apitest-result"><PanelHead kicker="Result" title={runResult.executed ? "执行结果" : "命令预览"} chip={runResult.executed ? `exit ${runResult.exitCode ?? "-"}` : "dry-run"} />
         <code className="react-command">{runResult.command}</code>
         <p className="react-muted">cwd: {runResult.cwd}</p>
-        {runResult.executed && runResult.stdout ? <details className="react-review-commits" open><summary>stdout</summary><pre>{runResult.stdout}</pre></details> : null}
+        {runResult.executed && runResult.stdout && parseRunSummary(runResult.stdout) ? (() => {
+          const s = parseRunSummary(runResult.stdout)!
+          return <details className="react-review-commits" open><summary>造数结果：{s.success}/{s.total} 成功 · 目标 {s.target}</summary>
+            <table className="react-manhour-table"><thead><tr><th>#</th><th>单号</th><th>最终状态</th><th>结果</th><th>备注</th></tr></thead><tbody>
+              {(s.results || []).map((r, idx) => <tr key={idx}><td>{r.index ?? idx + 1}</td><td><code>{r.code ?? "-"}</code></td><td>{r.final_status ?? "-"}</td><td>{r.success ? "✅" : "❌"}</td><td>{r.error || r.steps || ""}</td></tr>)}
+            </tbody></table>
+          </details>
+        })() : null}
+        {runResult.executed && runResult.stdout ? <details className="react-review-commits" {...(parseRunSummary(runResult.stdout) ? {} : { open: true })}><summary>stdout 原文</summary><pre>{runResult.stdout}</pre></details> : null}
         {runResult.executed && runResult.stderr ? <details className="react-review-commits"><summary>stderr</summary><pre>{runResult.stderr}</pre></details> : null}
       </div> : null}
     </div> : null}
   </section>
+}
+
+/** 解析造数脚本 stdout JSON 摘要（stdout_json: true 的能力输出 {target,total,success,results[]}）。 */
+interface RunSummary {
+  target?: string
+  total?: number
+  success?: number
+  results?: { index?: number; code?: string; final_status?: number | string; success?: boolean; error?: string; steps?: string[] }[]
+}
+
+function parseRunSummary(stdout: string): RunSummary | null {
+  try {
+    const start = stdout.indexOf("{")
+    const v = JSON.parse(stdout.slice(start)) as RunSummary
+    if (v && Array.isArray(v.results)) return v
+  } catch { /* 非 JSON 输出走原文展示 */ }
+  return null
 }
 
 export function TestdataPage() {

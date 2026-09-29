@@ -12,7 +12,7 @@ Current architecture:
 - `src/util.rs` — Cross-module utility helpers for time, string cleanup, status/category normalization, JSON/text atomic writes, path/list conversion, ONES parsing, and shell quoting.
 - `src/markdown.rs` — Markdown/frontmatter parsing and HTML rendering helpers.
 - `src/capability.rs` — Capability/testdata pack read-only APIs (造数脚本能力索引/详情/dry-run 与执行 dispatch)。
-- `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取、造数/测试标记启发式），`GET /api/apitest/apis|api` 目录与详情、`POST /api/apitest/trigger` 直接触发（login.mjs 会话注入 + 网关域名路由 + SEA UAT 双域名选择，token 不回显不落盘）。
+- `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取，vars 映射缺失时 camelCase→WMS_UPPER_SNAKE 启发式；kind 造数/测试标记，catalog 显式 kind 字段优先）+ 消费 `api/profiles.yaml` 环境契约（网关域名/必需头/x_params 构造，缺失时内置 fallback）；`GET /api/apitest/apis|api`、`POST /api/apitest/trigger`（dry_run=true 返回脱敏构造预览；登录态 login.mjs 自动获取；三环境实测：test/uat-cn/uat-sea，SEA UAT 按路径前缀双域名，X-PDA-Version 派生，token 不回显不落盘）。
 - `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器）。
