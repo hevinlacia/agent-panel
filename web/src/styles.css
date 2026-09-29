@@ -832,6 +832,12 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-statusflow-gate.is-unverified { color: #94a3b8; border: 1px dashed rgba(148,163,184,.5); background: transparent; }
 .react-statusflow-gate.is-warning { color: #fbbf24; border: 1px solid rgba(251,191,36,.5); background: rgba(251,191,36,.08); }
 .react-statusflow-mark { font-weight: 800; }
+.react-statusflow-rework { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding: 7px 10px; border: 1px dashed rgba(251,191,36,.45); border-radius: 10px; background: rgba(251,191,36,.05); font: .74rem var(--react-mono); color: var(--react-muted); }
+.react-statusflow-rework-loop { color: #fbbf24; font-weight: 800; }
+.react-statusflow-rework em { font-style: normal; font-weight: 700; }
+.react-statusflow-rework-count { color: #fbbf24; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(251,191,36,.5); }
+.react-statusflow-rework-count.is-high { color: #fca5a5; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.08); }
+.react-statusflow-rework-hint { flex-basis: 100%; font-size: .68rem; }
 /* 门禁验证详情页 */
 .react-gate-detail-state { display: inline-flex; gap: 12px; padding: 10px 16px; border-radius: 12px; font: 700 .92rem var(--react-mono); margin: 6px 0 12px; }
 .react-gate-detail-state strong { font-size: .95rem; }

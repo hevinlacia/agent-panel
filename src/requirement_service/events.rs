@@ -87,10 +87,29 @@ pub(crate) async fn record_status_transition_event(
         .and_then(|v| v.get("at"))
         .and_then(Value::as_i64)
         .unwrap_or_else(now_ms);
+    // 打回返工流转（人工核查/测试中 → 开发中）：事件带返工语境，引导 agent 拉返工变体 prompt。
+    let rework_round = if status_state
+        .get("lastTransition")
+        .and_then(|v| v.get("rework"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        status_state
+            .get("lastTransition")
+            .and_then(|v| v.get("reworkRound"))
+            .and_then(Value::as_u64)
+    } else {
+        None
+    };
     let mut details = vec![
         format!("状态从 `{from}` 切换到 `{to}`。"),
         "Agent 后续应刷新 `/api/requirement/context?for=agent`，同时遵循 `phaseRuntime.fixedPhasePrompt` 和 `phaseRuntime.statePhasePrompt`，不要继续沿用 session 创建时的阶段提示词。".to_string(),
     ];
+    if let Some(round) = rework_round {
+        details.push(format!(
+            "本次为打回返工（第 {round} 轮）：需求已通过首轮开发/自测/审查，请加载 phaseRuntime.currentPhasePrompt（返工变体），先从打回意见归纳本轮修复清单，只修相关问题，修复后在 test.md 追加「返工轮次 {round} 回归」，重新推进前用增量审查刷新快照。"
+        ));
+    }
     if !skipped.is_empty() {
         details.push(format!(
             "本次跳过阶段：{}。这些阶段的 entry checks 会作为风险提示进入 phaseRuntime.phaseGaps。",
@@ -127,12 +146,18 @@ pub(crate) async fn record_status_transition_event(
             target: None,
             test_cases: Vec::new(),
             status: Some(to.to_string()),
-            risk_level: if skipped.is_empty() {
+            risk_level: if skipped.is_empty() && rework_round.is_none() {
                 None
             } else {
                 Some("medium".to_string())
             },
-            tags: vec!["phase".to_string(), "status-transition".to_string()],
+            tags: {
+                let mut tags = vec!["phase".to_string(), "status-transition".to_string()];
+                if rework_round.is_some() {
+                    tags.push("rework".to_string());
+                }
+                tags
+            },
             session_id: None,
             idempotency_key: Some(format!("{}-status-{}", req.id, at)),
             append_note: Some(true),

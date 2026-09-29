@@ -306,6 +306,8 @@ export interface Requirement {
   createdAt: number
   updatedAt: number
   completedAt?: number
+  /** 打回返工轮次：人工核查/测试中 → 开发中 的回退次数（rework loop）。 */
+  reworkRounds?: number
   sessionIds: string[]
   reqDir?: string
   metaPath?: string
@@ -483,6 +485,13 @@ export interface StatusFlowTransition {
   gates: StatusFlowGate[]
 }
 
+/** 返工回路（rework loop）：从人工核查/测试中打回开发中重新迭代。 */
+export interface StatusFlowRework {
+  to: string
+  fromStatuses: string[]
+  rounds: number
+}
+
 export interface StatusFlowPayload {
   ok: boolean
   reqId: string
@@ -492,6 +501,7 @@ export interface StatusFlowPayload {
   statuses: string[]
   currentIndex: number | null
   transitions: StatusFlowTransition[]
+  rework?: StatusFlowRework | null
 }
 
 /** 门禁验证详情页：实时校验状态 + 按门禁类型的详细内容（字段按 gate 类型可选） */

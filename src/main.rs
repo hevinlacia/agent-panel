@@ -93,6 +93,9 @@ const CODE_DIFF_SNAPSHOTS_FILE: &str = "code-diff-snapshots.json";
 const REQUIREMENT_EVENTS_FILE: &str = "events.jsonl";
 const EXPERIENCE_SUMMARY_JOB_FILE: &str = "experience-summary-job.json";
 const PHASE_COMMON_PROMPT_FILE: &str = "prompts/phase-common.md";
+/// 开发中返工轮次变体 prompt：需求被打回（人工核查/测试中 → 开发中）后加载，
+/// 语境是「小修小补 + 增量验证」，不是首轮全新开发。
+const PHASE_DEV_REWORK_PROMPT_FILE: &str = "prompts/phase-dev-rework.md";
 const DEFAULT_GITLAB_API_URL: &str = "http://code.jms.com/api/v4";
 const DEFAULT_CAINIAO_MOCK_PORT: u16 = 13528;
 /// 经验总结状态停留超过该时长后自动推进为已完成（48 小时）。

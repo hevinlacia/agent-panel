@@ -12,6 +12,7 @@ mod id_seq;
 mod merge_options;
 mod misc;
 mod release_branch;
+mod rework;
 mod review_flow;
 mod sessions;
 mod status_gates;
