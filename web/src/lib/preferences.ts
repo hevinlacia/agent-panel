@@ -46,7 +46,8 @@ export function persistDiffInspectorCollapsed(collapsed: boolean) {
 }
 
 export function readShowSubReqs(): boolean {
-  try { return localStorage.getItem(PROJECT_SHOW_SUB_REQS_KEY) === "1" } catch { return false }
+  // 默认显示子需求（树形挂在父需求下方）；仅当用户显式关闭过（存 "0"）才隐藏。
+  try { return localStorage.getItem(PROJECT_SHOW_SUB_REQS_KEY) !== "0" } catch { return true }
 }
 
 export function persistShowSubReqs(show: boolean) {
