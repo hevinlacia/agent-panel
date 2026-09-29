@@ -16,7 +16,7 @@
 
 ## 审查材料
 1. 增量二次审查：若存在 `code-review-incremental.json`，优先读取它；它只包含上次已审 `targetCommit` 到当前 HEAD 的新增提交与 diff，用于"测试中状态又改代码"的快速复审。
-2. 全量首次审查：若不存在增量包，读取需求目录下的 `code-review.json`（repos[].diff 是每个仓库相对生产基线的逐文件 unified diff）与核心需求上下文文件（meta.md、background.md、technical-plan.md、test.md、release-manifest.md、notes.md）。
+2. 全量首次审查：若不存在增量包，读取需求目录下的 `code-review.json`（repos[].diff 是每个仓库相对生产基线的逐文件 unified diff）与核心需求上下文文件（meta.md、background.md、technical-plan.md、test.md、attachments/ 上线附件、notes.md）。
 3. 增量包约束：若任一 repo 的 `linearHistory=false`，说明分支可能 rebase/force-push，不能只靠增量审查，应回退到全量。
 
 ## 评估角度

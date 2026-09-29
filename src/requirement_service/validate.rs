@@ -16,7 +16,6 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
     let optional_files = [
         BRANCH_SCOPE_FILE,
         "test.md",
-        "release-manifest.md",
         "review.md",
         "code-review-ai.md",
         CODE_REVIEW_FILE,
@@ -29,6 +28,7 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
         "memory.md",
         "branch.md",
         "config-changes.md",
+        "release-manifest.md",
     ];
     let mut oversized_docs = Vec::<(String, u64)>::new();
     for file in required_files.into_iter().chain(optional_files.into_iter()) {

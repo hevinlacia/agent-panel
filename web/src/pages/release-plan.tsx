@@ -234,7 +234,7 @@ function ReleaseCard({ req, selected, index }: { req: Requirement; selected: str
       </div>
     </div>
     <div className="react-card-side">
-      {req.releaseManifestPath ? <a className="react-effort-badge" href={`/requirement?id=${encodeURIComponent(req.id)}#release-manifest`}>上线清单</a> : null}
+      <a className="react-effort-badge" href={`/requirement?id=${encodeURIComponent(req.id)}#attachments`}>上线附件</a>
       {req.category === "线上问题" ? <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span> : null}
       {statusPill(req.status)}
       {onesBadge(req.ones)}

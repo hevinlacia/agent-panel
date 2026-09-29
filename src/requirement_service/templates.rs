@@ -161,14 +161,6 @@ pub(crate) fn template_branch(req_id: &str) -> String {
     format!("# {req_id} Branches\n\n| Item | Value |\n| --- | --- |\n| Source branch | unknown |\n| Target branch | unknown |\n| Project path | unknown |\n| Merge status | 开发中 |\n\n## Commit / Diff Notes\n- 待补充\n")
 }
 
-pub(crate) fn template_config_changes(req_id: &str) -> String {
-    format!("# {req_id} Config Changes\n\n> 低层配置明细；上线总览请同步维护 release-manifest.md。\n\n## DB 变更\n- 暂无\n\n## Apollo / Nacos 变更\n- 暂无\n\n## RocketMQ / Console 变更\n- 暂无\n")
-}
-
-pub(crate) fn template_release_manifest(req_id: &str) -> String {
-    format!("# {req_id} 上线清单\n\n> 贯穿需求全流程维护；用于上线前快速确认本次改了哪些配置、表、Topic、Group、Job、接口和人工动作，避免发布遗漏。\n\n## Summary\n- 结论：暂无上线资产变更 / 待补充\n- 最后更新：待补充\n- 负责人：待补充\n\n## DB / 表变更\n| 类型 | 表/库 | 变更内容 | 环境 | 是否需上线执行 | 回滚/备注 |\n| --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | 否 | - |\n\n## 配置变更\n| 类型 | Namespace/配置源 | Key/名称 | 变更内容 | 环境 | 是否已发布 | 备注 |\n| --- | --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | - | 否 | - |\n\n## MQ / Topic / Group\n| 类型 | Topic | Group/Tag | 生产者 | 消费者 | 控制台动作 | 备注 |\n| --- | --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | - | 否 | - |\n\n## Job / 定时任务 / 开关\n| 类型 | 名称 | 动作 | 环境 | 是否需人工处理 | 备注 |\n| --- | --- | --- | --- | --- | --- |\n| 无 | - | - | - | 否 | - |\n\n## API / 外部依赖\n| 类型 | 接口/系统 | 变更 | 是否需通知 | 备注 |\n| --- | --- | --- | --- | --- |\n| 无 | - | - | 否 | - |\n\n## 上线人工动作\n- [ ] 暂无\n\n## 风险与回滚提醒\n- 待补充\n")
-}
-
 pub(crate) fn template_technical_plan(req_id: &str) -> String {
     format!("# {req_id} 技术方案\n\n> Agent 在执行需求过程中持续维护；用于人工在看代码差异前快速判断实现方向、影响范围、风险控制和验证路径。\n\n## 方案摘要\n- 当前结论：待补充\n- 最后更新：待补充\n- 实现状态：待设计 / 开发中 / 已实现 / 待验证\n\n## 实现目标与非目标\n- 目标：待补充\n- 非目标：待补充\n\n## 总体实现方案\n- 方案路径：待补充\n- 选择原因：待补充\n- 替代方案与取舍：待补充\n\n## 影响范围\n| 应用/模块 | 关键文件/类 | 改动类型 | 说明 |\n| --- | --- | --- | --- |\n| 待补充 | 待补充 | 新增/修改/删除 | - |\n\n## 核心流程变化\n- 改造前：待补充\n- 改造后：待补充\n- 关键状态/数据流：待补充\n\n## 数据、配置与兼容性\n- DB/表字段：暂无 / 待补充\n- 配置/Apollo/Nacos：暂无 / 待补充\n- MQ/Job/外部接口：暂无 / 待补充\n- 兼容性：待补充\n\n## 风险、灰度与回滚\n- 核心链路风险：待评估\n- 性能/并发/幂等风险：待评估\n- 灰度/开关：待补充\n- 回滚方案：待补充\n\n## 验证计划\n- 单测：待补充\n- 接口/链路自测：待补充\n- 回归范围：待补充\n- 观测日志/DB 证据：待补充\n\n## 人工审查关注点\n- 待补充\n\n## 待确认问题\n- 待补充\n")
 }
@@ -232,8 +224,6 @@ pub(crate) fn requirement_doc_template(req: &Requirement, doc_file: &str) -> Str
         "background.md" => template_background(&req.id),
         "memory.md" => template_memory(&req.id, &req.title),
         "branch.md" => template_branch(&req.id),
-        "config-changes.md" => template_config_changes(&req.id),
-        "release-manifest.md" => template_release_manifest(&req.id),
         "technical-plan.md" => template_technical_plan(&req.id),
         "impact.md" => template_impact(&req.id),
         "test.md" => template_test(&req.id),
@@ -252,10 +242,6 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         "background" | "background.md" => Ok("background.md"),
         "memory" | "memory.md" => Ok("memory.md"),
         "branch" | "branch.md" => Ok("branch.md"),
-        "config" | "config-changes" | "config-changes.md" => Ok("config-changes.md"),
-        "release-manifest" | "releasemanifest" | "manifest" | "release-manifest.md" => {
-            Ok("release-manifest.md")
-        }
         "technical-plan"
         | "technicalplan"
         | "implementation-plan"

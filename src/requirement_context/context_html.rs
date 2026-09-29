@@ -146,7 +146,7 @@ pub(crate) fn token_display_label(token: &str) -> String {
         "req.branchScope" => "分支范围 Branch Scope".to_string(),
         "req.configChanges" => "配置变更明细 Config Changes".to_string(),
         "req.releaseManifest" => "上线清单 Release Manifest".to_string(),
-        "req.attachments" => "非代码附件 Attachments".to_string(),
+        "req.attachments" => "上线资产附件 Attachments".to_string(),
         "req.technicalPlan" => "技术方案 Technical Plan".to_string(),
         "req.impact" => "影响范围 Impact".to_string(),
         "req.test" => "自测 Test".to_string(),

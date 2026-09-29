@@ -254,8 +254,7 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 | `req.memory` | `memory.md` | 面向 agent 的短上下文摘要 | `writeDoc` / `upsertSection` |
 | `req.branch` | `branch.md` | 人类可读分支说明 | `writeDoc` / `upsertSection` |
 | `req.branchScope` | `branches.json` | 机器可读 repo/branch 范围 | 由分支扫描工具维护 |
-| `req.configChanges` | `config-changes.md` | DB/Apollo/Nacos/RocketMQ 等配置明细 | `writeDoc` / `upsertSection` |
-| `req.releaseManifest` | `release-manifest.md` | 上线清单：表、配置、Topic/Group、Job、接口、人工动作总览 | `writeDoc` / `upsertSection` |
+| `req.attachments` | `attachments/` | 上线资产事实源：SQL（文件头注释块：用途/目标环境/上线是否需执行/回滚方式）+ release-config.md（配置变更与人工动作，追加式） | 直接写文件（SQL 存 .sql；配置/人工动作写 release-config.md） |
 | `req.impact` | `impact.md` | 影响面、核心链路风险、回滚方案 | `writeDoc` / `upsertSection` |
 | `req.test` | `test.md` | 测试场景、自测/UAT 证据 | `writeDoc` / `upsertSection` |
 | `req.notes` | `notes.md` | 追加型进展、决策和踩坑 | `appendNote` 优先 |
@@ -264,13 +263,15 @@ Agent Panel 给需求文件提供稳定 token，agent 不需要记住真实文�
 | `req.experienceSummary` | `experience-summary.md` | 经验总结、知识/经验/skill 改进闭环 | `writeDoc` / `upsertSection` |
 | `req.alignment` | `alignment.md` | 需求澄清、PRD 解读、范围、验收口径、待确认问题 | `writeDoc` / `upsertSection` |
 | `req.codeReview` | `code-review.json` | 大体积生成结果，默认只读 | 显式 review intent 才读 |
+| `req.configChanges` | `config-changes.md` | legacy：已由 `req.attachments` 取代，仅存量需求只读 | 不再写入 |
+| `req.releaseManifest` | `release-manifest.md` | legacy：已由 `req.attachments` 取代，仅存量需求只读 | 不再写入 |
 
 推荐 agent 流程：
 
 - **每轮刷新阶段上下文**：先调用 `GET /api/requirement/context?id=<req>&for=agent&intent=<intent>&budget=2000`；同一 session 从澄清推进到开发/测试时，同时遵循 `phaseRuntime.fixedPhasePrompt` 和 `phaseRuntime.statePhasePrompt`，不沿用 session 启动 prompt。若 Pi 已加载 `agent-panel-context.ts` 扩展，这一步会在每轮开始前自动注入，agent 仍可手动调用接口获取完整 JSON。
 - **跳状态处理**：允许从任意状态跳到目标状态；进入新状态后执行 `phaseRuntime.entryChecks`，`phaseRuntime.phaseGaps.missingRequiredEntryChecks` 作为风险/待办记录，除代码审查等安全门禁外不阻塞当前任务。
 - **需求澄清**：使用 `intent=clarification`，先查业务知识库/经验库，再初步调查代码，产出 `alignment.md`、`background.md`、`impact.md` 和 `memory.md`。
-- **上线清单**：`release-manifest.md` 是贯穿全流程维护的发布资产总览，需求详情页常驻展示；开发、自测、发布前都要同步更新。
+- **上线资产（附件制）**：`attachments/` 是上线资产单一事实源；开发/自测/测试中把用到的 SQL（含测试造数/验证 SQL）和配置变更实时落成附件，发布前通读附件目录即可确认要执行哪些 SQL 和配置动作；`release-manifest.md` / `config-changes.md` 已退役，仅存量需求只读兼容。
 - **代码审查门禁**：不新增主状态；作为 `自测中 → 测试中` 的 gate。审查必须经 `agent-panel-code-review` skill 执行（备料 → 深度审查 → 结论落盘），`review.md` 或 `code-review-ai.md` 需要明确写 `Review Gate: PASS` / `BLOCKED` / `WAIVED`，且结论文档需带 `Source: agent-panel-code-review skill` 标记（缺标记判 skill-required 不放行），否则后端拒绝推进到 `测试中`。问题分级 **P0 阻断 / P1 严重 / P2 一般 / P3 优化**：P0 小节非空门禁按实际内容拦截不放行（写 PASS 也拦）；P1 非空放行但门禁展示 ⚠ 警示。门禁同时强制四份产物：**代码问题备注**（`code-annotations.json`，files 非空 + `reviewedCommit` 指纹与最新材料一致）、**自测清单交叉评估**（test.md 有自测清单时 review 必含非空「自测清单交叉评估」小节，交叉核对边界/并发流量风险与测试结果）、**详细审查文档**（code-review-ai.md 含审查概览/交叉评估/P0-P3 分级/横切清单/库存账本）、审查清单（review-checklist.json）。审查材料模式：发布就绪前默认全量（不只看 diff，扩大阅读必要上下文代码），发布就绪及之后默认增量（`POST /api/requirement/review-materials` 可用 `mode: full/incremental` 覆盖）。
 - **增量复审**：如果需求已经在 `测试中` 且又追加代码，门禁仍要求覆盖最新 HEAD，但不必重审全量 diff；优先调用 `POST /api/requirement/code-review/incremental` 生成 `code-review-incremental.json`，只审上次已审 `targetCommit` → 当前 HEAD 的新增提交。若增量包提示 `linearHistory=false`（rebase/force-push/非祖先关系），再回退全量 `code-review.json`。
 - **风险感知门禁**：`code-review.json` 扫描时为每个文件打风险标签（测试/API/Service/DB/MQ/配置/大改动/**库存**），并按仓库、需求聚合出 `riskTags` 与 `inventoryRisk`。命中 `库存` 风险（InventoryCacheService、ShipmentHeaderService、ShipmentDetailService、location_inventory、shipment_alloc_request、onHandQty/allocatedQty 等）时，review 必须补 `库存账本评估`（活跃/死亡单、DB 库存、redis 可用量、重复释放、遗漏占用、幂等、验证证据），否则即使 PASS 门禁也判定为 `inventory-pending` 并阻断推进。
