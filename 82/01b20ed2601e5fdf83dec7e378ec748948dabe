@@ -1,0 +1,27 @@
+src/http.rs
+  750d22f417a507da 1,4,113-155,174-240
+src/main.rs
+  750d22f417a507da 511
+src/config.rs
+  750d22f417a507da 1-2,76-80,334,375,485-487,513-514,519-547
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "8201b20ed2601e5fdf83dec7e378ec748948dabe",
+  "prompts": {
+    "750d22f417a507da": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0ec53-adde-703a-85c1-19f2f76c4243",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 161,
+      "total_deletions": 7,
+      "accepted_lines": 158,
+      "overriden_lines": 0
+    }
+  }
+}
