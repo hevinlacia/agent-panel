@@ -34,14 +34,20 @@ fn sub_status_transition_enforces_flow() {
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "已合入").is_ok());
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "已取消").is_ok());
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("需求创建"), "已取消").is_ok());
+    // 整合发布模型流转：独立发布进度（可跳级）+ 已合入 → 已发布
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "自测中").is_ok());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("自测中"), "测试中").is_ok());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("测试中"), "发布就绪").is_ok());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("发布就绪"), "已发布").is_ok());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("已合入"), "已发布").is_ok());
     // 跳过流转拒绝
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("需求创建"), "已合入").is_err());
     // 终态拒绝
-    assert!(ensure_sub_req_status_transition(&sub_req_for_test("已合入"), "开发中").is_err());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("已发布"), "开发中").is_err());
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("已取消"), "开发中").is_err());
-    assert!(ensure_sub_req_status_transition(&sub_req_for_test("已合入"), "已取消").is_err());
-    // 子状态集之外拒绝
-    assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "测试中").is_err());
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("已合入"), "开发中").is_err());
+    // 子状态集之外拒绝（经验总结/已完成属于父需求，子需求不用）
+    assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "经验总结").is_err());
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "已完成").is_err());
     // 同状态 no-op 放行
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "开发中").is_ok());
@@ -246,7 +252,7 @@ async fn sub_requirement_create_flow_end_to_end() {
     let terminal = api_requirement_status(State(state.clone()), status_form("开发中", None))
         .await
         .expect_err("terminal status must not transition");
-    assert!(format!("{:?}", terminal).contains("终态"));
+    assert!(format!("{:?}", terminal).contains("不允许"));
 
     // 5) 普通需求不能用子需求专属状态；子需求不能绑 ONES / 切类别。
     let normal_blocked = api_requirement_status(

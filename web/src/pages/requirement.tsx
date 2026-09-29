@@ -12,6 +12,7 @@ import { GroupMembersPanel, LinkedIssuesPanel, OnesBindModal, ReqFieldEditModal,
 import { RequirementAttachmentsPanel, RequirementFilesPanel } from "../features/requirements/req-files-panels"
 import { StatusFlowCard } from "../features/requirements/status-flow-card"
 import { SubBranchPanel, SubRequirementsPanel } from "../features/requirements/sub-req-panels"
+import { ReleaseBranchesPanel } from "../features/requirements/release-branch-panel"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
 import { SessionListModal } from "./sessions"
@@ -151,6 +152,7 @@ export function RequirementPage() {
       {!isIssueFamily && !isSub ? <LinkedIssuesPanel req={req} issues={data?.requirements || []} onSaved={refresh} /> : null}
       {!isSub ? <GroupMembersPanel req={req} /> : null}
       {!isSub ? <SubRequirementsPanel req={req} onSaved={refresh} /> : null}
+      {!isSub && !req.groupStatus ? <ReleaseBranchesPanel req={req} onSaved={refresh} /> : null}
       <RequirementFilesPanel req={req} />
       {onesModal && req ? <OnesBindModal req={req} onClose={() => setOnesModal(false)} onSaved={refresh} /> : null}
       {editField && req ? <ReqFieldEditModal req={req} field={editField} onClose={() => setEditField(null)} onSaved={refresh} /> : null}

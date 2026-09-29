@@ -33,6 +33,7 @@ mod pi_config;
 mod requirement_api;
 mod requirement_context;
 mod requirement_index;
+mod requirement_release;
 mod requirement_service;
 mod requirement_sub;
 mod sessions;
@@ -56,6 +57,7 @@ use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
 use requirement_index::*;
+use requirement_release::*;
 use requirement_service::*;
 use requirement_sub::*;
 use sessions::*;
@@ -75,6 +77,8 @@ const KNOWLEDGE_DEFAULT_STATUS: &str = "active";
 const KNOWLEDGE_DEFAULT_CONFIDENCE: &str = "medium";
 const INJECTION_CTX_SUBDIR: &str = "ctx";
 const BRANCH_SCOPE_FILE: &str = "branches.json";
+/// 整合需求发布分支登记文件：父需求（整合需求）目录下的 release-branches.json。
+const RELEASE_BRANCHES_FILE: &str = "release-branches.json";
 const CODE_REVIEW_FILE: &str = "code-review.json";
 const CODE_REVIEW_INCREMENTAL_FILE: &str = "code-review-incremental.json";
 /// 快照 JSON 里 diff 是单行转义串（read 会被单行截断），同时导出多行 patch 伴随文件供 reviewer read。
@@ -146,12 +150,15 @@ static REQ_FLOW_STATUSES: &[&str] = &[
     "已完成",
 ];
 static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "已复盘", "已关闭"];
-/// 子需求（sub-requirement）独立轻量状态机：从大需求拆出的并行执行单元。
-/// 流转：需求创建 → 开发中 → 已合入；需求创建/开发中可直接已取消（终态，不可重开）。
-/// 子需求不涉及环境集成（test/uat 合并、发布、经验总结都在父需求做），无门禁。
-static SUB_REQ_STATUSES: &[&str] = &["需求创建", "开发中", "已合入", "已取消"];
-/// 仅子需求可用的状态（“开发中”与需求流共用）；普通需求/issue 设置这些状态会被拒。
-static SUB_ONLY_STATUSES: &[&str] = &["需求创建", "已合入", "已取消"];
+/// 子需求独立状态机：从大需求拆出的并行执行单元。
+/// 两种路径：① 父集成模型（legacy）：需求创建 → 开发中 → 已合入，环境集成/发布在父需求做；
+/// ② 整合发布模型：需求创建 → 开发中 →（自测中/测试中/发布就绪可跳级）→ 已合入（合入整合发布分支）
+/// → 已发布（随发布分支生产 MR 合入封版）；发布进度由子需求独立跟踪。
+static SUB_REQ_STATUSES: &[&str] = &[
+    "需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消",
+];
+/// 仅子需求可用的状态（“开发中/自测中/测试中/发布就绪”与需求流共用）；普通需求/issue 设置这些状态会被拒。
+static SUB_ONLY_STATUSES: &[&str] = &["需求创建", "已合入", "已发布", "已取消"];
 static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("需求对齐", "需求澄清"),
     ("方案设计", "需求澄清"),
@@ -437,6 +444,30 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/sub/merge-to-parent",
             post(api_requirement_sub_merge_to_parent),
+        )
+        .route(
+            "/api/requirement/release-branch/create",
+            post(api_release_branch_create),
+        )
+        .route(
+            "/api/requirement/release-branch/list",
+            get(api_release_branch_list),
+        )
+        .route(
+            "/api/requirement/release-branch/merge-sub",
+            post(api_release_branch_merge_sub),
+        )
+        .route(
+            "/api/requirement/release-branch/sync-prod",
+            post(api_release_branch_sync_prod),
+        )
+        .route(
+            "/api/requirement/release-branch/prod-mr",
+            post(api_release_branch_prod_mr),
+        )
+        .route(
+            "/api/requirement/release-branch/mark-released",
+            post(api_release_branch_mark_released),
         )
         .route("/api/sessions", get(api_sessions))
         .route("/api/session", get(api_session))

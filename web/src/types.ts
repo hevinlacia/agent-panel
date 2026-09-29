@@ -5,7 +5,7 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已取消"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已发布" | "已取消"
 export type ReqCategory = "需求" | "线上问题" | "测试问题"
 
 export interface EffortEstimate {
@@ -110,6 +110,58 @@ export interface SubBranchOpResult {
   reqId: string
   parentReqId?: string
   repos?: SubRepoOpResult[]
+  statusState?: unknown
+}
+
+/** 整合需求发布分支登记（release-branches.json 的单条分支 + 运行时状态）。 */
+export interface ReleaseBranchRepo {
+  repoName: string
+  role?: string
+  baseBranch?: string
+  baseCommit?: string
+  diffFiles?: number
+  diffAdditions?: number
+  diffDeletions?: number
+}
+
+export interface ReleaseMergedSub {
+  reqId: string
+  title?: string
+  status?: string
+  found?: boolean
+  mergedAt?: number
+  repos?: string[]
+  note?: string
+}
+
+export interface ReleaseBranchEntry {
+  id: string
+  name: string
+  createdAt?: number
+  status: "active" | "released" | string
+  releasedAt?: number | null
+  note?: string | null
+  repos?: ReleaseBranchRepo[]
+  mergedSubs?: ReleaseMergedSub[]
+}
+
+export interface ReleaseBranchListResult {
+  ok: boolean
+  reqId: string
+  branches?: ReleaseBranchEntry[]
+}
+
+/** 发布分支操作（create / merge-sub / sync-prod / prod-mr / mark-released）聚合响应。 */
+export interface ReleaseBranchOpResult {
+  ok: boolean
+  reqId: string
+  branch?: string | null
+  branchId?: string | null
+  repos?: SubRepoOpResult[]
+  skipped?: SubRepoOpResult[]
+  results?: unknown[]
+  advancedSubs?: string[]
+  message?: string
   statusState?: unknown
 }
 

@@ -118,6 +118,40 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
     if branches_path.is_file() && read_branch_scope(&dir).await?.is_none() {
         warnings.push("branches.json exists but has no valid repos".into());
     }
+    // 整合需求发布分支登记校验：文件存在但解析失败报 problem；分支名为空/重复 id 也报 problem。
+    if dir.join(RELEASE_BRANCHES_FILE).is_file() {
+        let raw = fs::read_to_string(dir.join(RELEASE_BRANCHES_FILE)).await.unwrap_or_default();
+        match serde_json::from_str::<ReleaseBranchesFile>(&raw) {
+            Ok(file) => {
+                let mut seen_ids = std::collections::HashSet::new();
+                let mut seen_names = std::collections::HashSet::new();
+                for b in &file.branches {
+                    if b.id.trim().is_empty() || b.name.trim().is_empty() {
+                        problems.push(format!(
+                            "release-branches.json: branch entry has empty id/name (id={})",
+                            b.id
+                        ));
+                    }
+                    if !seen_ids.insert(b.id.clone()) {
+                        problems.push(format!("release-branches.json: duplicate branch id {}", b.id));
+                    }
+                    if !seen_names.insert(b.name.clone()) {
+                        problems.push(format!(
+                            "release-branches.json: duplicate branch name {}",
+                            b.name
+                        ));
+                    }
+                    if b.repos.is_empty() {
+                        warnings.push(format!(
+                            "release-branches.json: branch {} has no repos",
+                            b.id
+                        ));
+                    }
+                }
+            }
+            Err(err) => problems.push(format!("release-branches.json 解析失败：{err}")),
+        }
+    }
     // 引用式需求组校验：group.json 结构、发布策略、成员存在性与嵌套限制。
     let group_path = dir.join(GROUP_FILE);
     if group_path.is_file() {

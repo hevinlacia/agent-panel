@@ -193,6 +193,18 @@ pub(crate) async fn merge_branch_pair(
     target_branch: &str,
     target_label: &str,
 ) -> Value {
+    merge_branch_pair_ex(repo, source_branch, target_branch, target_label, false).await
+}
+
+/// `source_remote_first=true` 时源分支用远端优先解析（适合生产分支等环境分支作源，
+/// 本地分支常滞后）；默认 false 本地优先（需求/子需求分支以本地开发进度为准）。
+pub(crate) async fn merge_branch_pair_ex(
+    repo: &BranchRepo,
+    source_branch: &str,
+    target_branch: &str,
+    target_label: &str,
+    source_remote_first: bool,
+) -> Value {
     let source_branch = source_branch.trim();
     let target_branch = target_branch.trim();
     let failed = |status: &str, message: String| {
@@ -298,8 +310,16 @@ pub(crate) async fn merge_branch_pair(
     else {
         return failed("failed", format!("无法解析目标分支 {target_branch}"));
     };
-    let Some(source_ref) = resolve_branch_ref_local_first(&project_path, source_branch).await
-    else {
+    let source_ref = if source_remote_first {
+        resolve_branch_ref(&project_path, source_branch)
+            .await
+            .ok_or(())
+    } else {
+        resolve_branch_ref_local_first(&project_path, source_branch)
+            .await
+            .ok_or(())
+    };
+    let Ok(source_ref) = source_ref else {
         return failed("failed", format!("无法解析源分支 {source_branch}"));
     };
     if let Err(err) = fs::create_dir_all(worktree_path.parent().unwrap_or(&project_path)).await {

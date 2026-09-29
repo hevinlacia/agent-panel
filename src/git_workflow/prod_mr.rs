@@ -1,16 +1,16 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-struct ProdDiffStat {
-    files: i64,
-    additions: i64,
-    deletions: i64,
+pub(crate) struct ProdDiffStat {
+    pub(crate) files: i64,
+    pub(crate) additions: i64,
+    pub(crate) deletions: i64,
     no_diff: bool,
 }
 
 /// 计算需求分支相较于生产分支(target)的差异统计。
 /// fetch 远端 target 后用三点 diff 比对;返回 None 表示无法判断(分支缺失/命令失败)。
-async fn compute_prod_diff_stat(
+pub(crate) async fn compute_prod_diff_stat(
     project_path: &Path,
     target_branch: &str,
     source_branch: &str,

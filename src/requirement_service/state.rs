@@ -23,16 +23,20 @@ pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
     matches!(new_status, "经验总结" | "发布就绪" | "已完成")
 }
 
-/// 子需求轻量状态机流转合法性：需求创建 → 开发中 → 已合入；前两态可直接已取消；
-/// 已合入/已取消为终态不可重开（后续增量拆新子需求）。无门禁（合入主需求不校验 Review Gate，
-/// 代码审查在父需求内统一走）。
+/// 子需求状态机流转合法性（两种路径，见 SUB_REQ_STATUSES）：
+/// ① 父集成模型（legacy）：需求创建 → 开发中 → 已合入；
+/// ② 整合发布模型：需求创建 → 开发中 → 自测中/测试中/发布就绪（可跳级，独立发布进度）
+///    → 已合入（合入整合需求发布分支）→ 已发布（发布分支生产 MR 合入后封版时自动推进）。
+/// 前两态可直接已取消；已发布/已取消为终态不可重开。
+/// 合入发布分支不校验 Review Gate；agent 走 API 推进 自测中→测试中 时仍命中状态流转门禁
+/// （review/selftest-checklist，与普通需求一致）。
 pub(crate) fn ensure_sub_req_status_transition(
     req: &Requirement,
     new_status: &str,
 ) -> ApiResult<()> {
     if !SUB_REQ_STATUSES.contains(&new_status) {
         return Err(ApiError::bad_request(format!(
-            "子需求状态只能是 {} 之一，不能设置为 {new_status}（环境集成/发布/经验总结都在父需求流转）",
+            "子需求状态只能是 {} 之一，不能设置为 {new_status}（经验总结/已完成在父需求流转；子需求独立发布进度用 已合入/已发布 表达）",
             SUB_REQ_STATUSES.join("/")
         )));
     }
@@ -42,8 +46,12 @@ pub(crate) fn ensure_sub_req_status_transition(
     }
     let allowed: &[&str] = match from {
         "需求创建" => &["开发中", "已取消"],
-        "开发中" => &["已合入", "已取消"],
-        "已合入" | "已取消" => &[],
+        "开发中" => &["自测中", "测试中", "发布就绪", "已合入", "已取消"],
+        "自测中" => &["测试中", "发布就绪", "已合入", "已取消"],
+        "测试中" => &["发布就绪", "已合入", "已取消"],
+        "发布就绪" => &["已发布", "已合入", "已取消"],
+        "已合入" => &["已发布", "已取消"],
+        "已发布" | "已取消" => &[],
         // 兼容历史：子需求状态缺失/异常时允许进入任意子状态重新规整。
         _ => SUB_REQ_STATUSES,
     };
