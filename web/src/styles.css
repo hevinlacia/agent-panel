@@ -1156,3 +1156,9 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-skill-dot.missing { color: #ef4444; }
 .react-skill-path { font-size: 12px; opacity: .8; word-break: break-all; }
 .react-error-card { border: 1px solid rgba(239,68,68,.45); background: rgba(239,68,68,.08); border-radius: 14px; padding: 10px 14px; margin: 10px 0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+
+/* 子需求树形嵌套：子需求卡片缩进挂在父需求/整合需求下方，竖线 + 横线连接（子需求可独立发布）。 */
+.react-sub-tree { display: flex; flex-direction: column; gap: 10px; margin: -2px 0 6px 34px; padding-left: 26px; border-left: 2px solid var(--react-border-strong); }
+.react-sub-tree-item { position: relative; }
+.react-sub-tree-item::before { content: ""; position: absolute; left: -26px; top: 30px; width: 24px; height: 2px; background: var(--react-border-strong); }
+.react-sub-tree-item .react-list-card { background: linear-gradient(180deg, rgba(19, 24, 32, 0.68), rgba(10, 14, 21, 0.8)); }
