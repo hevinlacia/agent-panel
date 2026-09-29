@@ -182,6 +182,13 @@ pub(crate) struct TestdataRunForm {
     dry_run: Option<bool>,
     #[serde(default)]
     execute: Option<bool>,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+/// POST /api/testdata/run 执行超时秒数：默认 180s，可传 timeoutSecs 调大，硬上限 600s。
+pub(crate) fn testdata_run_timeout_secs(raw: Option<u64>) -> u64 {
+    raw.unwrap_or(180).clamp(30, 600)
 }
 
 /// POST /api/testdata/run 允许的环境枚举。与 `/api/apitest/trigger` 的环境枚举保持一致；
@@ -314,6 +321,7 @@ pub(crate) async fn api_testdata_run(
         args.push(env);
     }
     let command_preview = format!("uv {}", args.join(" "));
+    let timeout_secs = testdata_run_timeout_secs(body.timeout_secs);
     let execute_flag = body.execute.unwrap_or(false);
     let dry_run = body.dry_run.unwrap_or(true);
     if !execute_flag || dry_run {
@@ -328,6 +336,7 @@ pub(crate) async fn api_testdata_run(
             "cwd": source_path.to_string_lossy(),
             "command": command_preview,
             "args": args,
+            "timeoutSecs": timeout_secs,
             "safety": {
                 "agentPanelExecutes": false,
                 "env": run_env,
@@ -339,7 +348,7 @@ pub(crate) async fn api_testdata_run(
         .args(&args)
         .current_dir(&source_path)
         .output();
-    let result = timeout(Duration::from_secs(180), runner).await;
+    let result = timeout(Duration::from_secs(timeout_secs), runner).await;
     match result {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -372,7 +381,7 @@ pub(crate) async fn api_testdata_run(
             body.capability_id
         ))),
         Err(_) => Err(ApiError::bad_request(format!(
-            "runner timed out after 180s for capability {}",
+            "runner timed out after {timeout_secs}s for capability {}; for bulk creation (--count) run the script directly from the pack root instead of via Agent Panel",
             body.capability_id
         ))),
     }
