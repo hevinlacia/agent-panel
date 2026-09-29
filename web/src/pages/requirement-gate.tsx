@@ -1,11 +1,51 @@
 import { ArrowLeft, RefreshCw, ShieldCheck } from "lucide-react"
-import type { StatusGateDetailPayload } from "../types"
+import type { SelftestChecklistItem, SelftestChecklistPayload, StatusGateDetailPayload } from "../types"
 import { useFetch } from "../lib/api"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { formatDateTime } from "../lib/format"
 
 const STATE_TEXT: Record<string, string> = { passed: "已通过", failed: "未通过", unverified: "未校验" }
 const STATE_MARK: Record<string, string> = { passed: "✓", failed: "✗", unverified: "○" }
+
+const SELFTEST_RESULT_BADGE: Record<string, { mark: string; label: string }> = {
+  pass: { mark: "✅", label: "通过" },
+  fail: { mark: "❌", label: "失败" },
+  cannot: { mark: "⚠", label: "无法测试" },
+  missing: { mark: "⬜", label: "未填结果" },
+}
+
+function SelftestChecklistItems({ items }: { items: SelftestChecklistItem[] }) {
+  if (!items.length) return <p className="react-muted">该分类没有表格测试项（确认无风险时可只写风险场景分析）。</p>
+  return <ul className="react-gate-items">
+    {items.map((it) => {
+      const badge = SELFTEST_RESULT_BADGE[it.result] || SELFTEST_RESULT_BADGE.missing
+      return <li key={it.no} className="react-gate-item">
+        <span className="react-gate-item-no">{it.no}</span>
+        <span className="react-gate-item-name">{it.item}</span>
+        <span className="react-gate-item-result">{badge.mark} {it.resultText || badge.label}</span>
+        {it.reason ? <span className="react-muted">原因：{it.reason}</span> : null}
+      </li>
+    })}
+  </ul>
+}
+
+function SelftestChecklistView({ checklist }: { checklist: SelftestChecklistPayload }) {
+  if (!checklist.found) {
+    return <div className="react-drive-blockers"><strong>未找到自测清单</strong><p>test.md 里没有「## 自测清单」小节：推进自测门禁前需按三类分类小节填写自测项目与结果。</p></div>
+  }
+  const all = checklist.sections.flatMap((s) => s.items)
+  const count = (r: string) => all.filter((it) => it.result === r).length
+  return <div className="react-drive-blockers react-gate-checklist">
+    <strong>自测项目（{all.length} 项：通过 {count("pass")} / 失败 {count("fail")} / 无法测试 {count("cannot")} / 未填 {count("missing")}）</strong>
+    {checklist.sections.map((sec) => (
+      <details key={sec.category} className="react-review-repo react-gate-section" open>
+        <summary><span><strong>{sec.category}</strong>{sec.items.length ? `（${sec.items.length} 项）` : ""}{sec.notApplicableReason ? <em className="react-muted">　不适用：{sec.notApplicableReason}</em> : null}</span></summary>
+        {sec.riskAnalysis.length ? <div className="react-gate-risk"><strong>风险场景分析</strong><ul>{sec.riskAnalysis.map((line, i) => <li key={i}>{line}</li>)}</ul></div> : null}
+        <SelftestChecklistItems items={sec.items} />
+      </details>
+    ))}
+  </div>
+}
 
 function GateStateBanner({ state, label, reason, checkedAt }: { state: string; label: string; reason: string; checkedAt: number }) {
   return <div className={`react-statusflow-gate is-${state} react-gate-detail-state`}>
@@ -60,6 +100,7 @@ function SelftestGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPa
     <p className="react-muted">校验目标：test.md「## 自测清单」分三类小节（主流程测试 / 边界场景测试 / 高并发·大流量场景测试）——每项都有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因；边界与并发流量类必须先写「风险场景分析」再列测试清单，确认无风险写 {'无风险场景：<依据>'}，整类不适用写 {'不适用：<原因>'}。</p>
     {detail.hotfix ? <p className="react-save-hint">抢修模式（已关联线上问题）：自测门禁默认放行，速度优先；用户明确要求自测时再补 test.md 自测清单。</p> : null}
     {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ 自测清单校验通过：每项都有测试结果；存在「无法测试」项时放行但下方警示结果未知。</p>}
+    <SelftestChecklistView checklist={detail.selftestChecklist ?? { found: false, sections: [] }} />
     <GateWarnings warnings={detail.warnings} />
     <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`## 自测清单（三类小节，每项都要有结果）
 

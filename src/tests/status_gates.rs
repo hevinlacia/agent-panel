@@ -592,3 +592,36 @@ async fn selftest_gate_waived_for_hotfix_requirements() {
     assert!(!normal.is_hotfix());
     assert!(selftest_checklist_problems(&normal).await.is_empty() == false);
 }
+
+#[test]
+fn selftest_checklist_sections_parses_items_results_and_reasons() {
+    let body = selftest_test_md_body();
+    let sections = selftest_checklist_sections(&body).expect("section should be found");
+    assert_eq!(sections.len(), 3);
+    let main = sections.iter().find(|s| s.category == "主流程测试").unwrap();
+    assert_eq!(main.items.len(), 2);
+    assert_eq!(main.items[0].no, 1);
+    assert_eq!(main.items[0].item, "回退接口");
+    assert_eq!(main.items[0].result, "pass");
+    assert_eq!(main.items[1].item, "消费链路");
+    assert_eq!(main.items[1].result, "cannot");
+    assert_eq!(
+        main.items[1].reason.as_deref(),
+        Some("test 环境 OMS 未订阅 topic，无法联调")
+    );
+    let boundary = sections.iter().find(|s| s.category == "边界场景测试").unwrap();
+    assert_eq!(boundary.risk_analysis, vec!["已取消单重复回退".to_string()]);
+    assert_eq!(boundary.items.len(), 1);
+    assert_eq!(boundary.items[0].result, "pass");
+    let concurrency = sections.iter().find(|s| s.category == "高并发/大流量场景测试").unwrap();
+    assert_eq!(concurrency.items.len(), 0);
+    assert_eq!(
+        concurrency.not_applicable_reason.as_deref(),
+        Some("单仓低频接口，无并发路径")
+    );
+}
+
+#[test]
+fn selftest_checklist_sections_returns_none_without_section() {
+    assert!(selftest_checklist_sections("# T-001\n\n没有自测清单\n").is_none());
+}

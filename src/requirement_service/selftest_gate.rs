@@ -86,6 +86,156 @@ pub(crate) async fn selftest_checklist_eval(req: &Requirement) -> SelftestCheckl
     validate_selftest_checklist(&body)
 }
 
+/// 自测清单条目详情：门禁详情页逐项展示用。
+#[derive(Debug, Serialize)]
+pub(crate) struct SelftestItemDetail {
+    pub(crate) no: usize,
+    pub(crate) item: String,
+    /// pass / fail / cannot / missing
+    pub(crate) result: &'static str,
+    /// 原始结果单元格文本
+    pub(crate) result_text: String,
+    /// 失败/无法测试原因（结果列之后首个有实质内容的单元格，或结果列内联原因）
+    pub(crate) reason: Option<String>,
+}
+
+/// 自测清单分类小节详情。
+#[derive(Debug, Serialize)]
+pub(crate) struct SelftestSectionDetail {
+    pub(crate) category: String,
+    /// 边界/并发类标注「不适用：<原因>」时为 Some(原因)
+    pub(crate) not_applicable_reason: Option<String>,
+    /// 风险场景分析逐行内容（边界/并发类）
+    pub(crate) risk_analysis: Vec<String>,
+    pub(crate) items: Vec<SelftestItemDetail>,
+}
+
+/// 解析 test.md「自测清单」为结构化分类小节；无该小节时返回 None。
+/// 供门禁详情 API 展示完整自测项目与每项结果，复用门禁校验的同一套解析原语。
+pub(crate) fn selftest_checklist_sections(body: &str) -> Option<Vec<SelftestSectionDetail>> {
+    let section = extract_selftest_section(body)?;
+    let (blocks, orphan) = split_category_blocks(&section);
+    let mut out: Vec<SelftestSectionDetail> = Vec::new();
+    for (cat, block) in &blocks {
+        out.push(SelftestSectionDetail {
+            category: (*cat).to_string(),
+            not_applicable_reason: category_na_reason(block),
+            risk_analysis: risk_analysis_lines(block),
+            items: table_item_details(block),
+        });
+    }
+    let orphan_items = table_item_details(&orphan);
+    if !orphan_items.is_empty() {
+        out.push(SelftestSectionDetail {
+            category: "未归类表格".to_string(),
+            not_applicable_reason: None,
+            risk_analysis: Vec::new(),
+            items: orphan_items,
+        });
+    }
+    Some(out)
+}
+
+/// 门禁详情：读取 test.md 并返回结构化自测清单（found=false 表示无文件/无小节）。
+pub(crate) async fn selftest_checklist_detail(req: &Requirement) -> Value {
+    let missing = json!({"found": false, "sections": []});
+    if req.is_hotfix() {
+        return missing;
+    }
+    let Some(dir) = req.req_dir.as_deref() else {
+        return missing;
+    };
+    let path = PathBuf::from(dir).join("test.md");
+    if !path.is_file() {
+        return missing;
+    }
+    let body = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+    match selftest_checklist_sections(&body) {
+        Some(sections) => json!({"found": true, "sections": sections}),
+        None => missing,
+    }
+}
+
+/// 把分类块内表格行转成条目详情列表。
+fn table_item_details(block: &str) -> Vec<SelftestItemDetail> {
+    let rows = parse_table_rows(block);
+    let Some(header) = rows.first() else {
+        return Vec::new();
+    };
+    let Some(result_col) = find_result_column(header) else {
+        return Vec::new();
+    };
+    let mut items = Vec::new();
+    let mut no = 0usize;
+    for row in rows.iter().skip(1) {
+        if is_header_row(row) || row.iter().all(|c| c.is_empty()) {
+            continue;
+        }
+        no += 1;
+        let result_text = row.get(result_col).cloned().unwrap_or_default();
+        let result = match classify_result_cell(&result_text) {
+            SelftestResult::Pass => "pass",
+            SelftestResult::Fail => "fail",
+            SelftestResult::CannotTest => "cannot",
+            SelftestResult::Missing => "missing",
+        };
+        let reason = row
+            .get(result_col + 1..)
+            .and_then(|cells| cells.iter().find_map(|c| meaningful_reason(c)))
+            .or_else(|| {
+                if has_inline_reason(&result_text) {
+                    Some(String::new())
+                } else {
+                    None
+                }
+            });
+        items.push(SelftestItemDetail {
+            no,
+            item: row_item_label(row, result_col, no),
+            result,
+            result_text: result_text.trim().to_string(),
+            reason,
+        });
+    }
+    items
+}
+
+/// 边界/并发分类块「不适用：<原因>」的原因文本（无标注返回 None）。
+fn category_na_reason(body: &str) -> Option<String> {
+    let line = body.lines().find(|l| {
+        let t = l.trim();
+        !t.starts_with('|') && !t.starts_with('#') && t.contains("不适用")
+    })?;
+    let reason = line
+        .trim()
+        .trim_start_matches(['-', '*', ' '])
+        .replacen("不适用", "", 1)
+        .trim()
+        .trim_start_matches([':', '：'])
+        .trim()
+        .to_string();
+    Some(reason)
+}
+
+/// 分类块「风险场景分析」逐行内容（去掉列表标记后保留实质行）。
+fn risk_analysis_lines(body: &str) -> Vec<String> {
+    let Some(analysis) = extract_risk_analysis(body) else {
+        return Vec::new();
+    };
+    analysis
+        .lines()
+        .filter(|l| meaningful_line(l))
+        .map(|l| {
+            l.trim()
+                .trim_start_matches(['-', '*', '>'])
+                .trim()
+                .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '、')
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
 fn selftest_gate_error(problems: Vec<String>) -> ApiError {
     ApiError::bad_request(format!(
         "自测门禁未通过：自测中推进「测试中」前，test.md 的「## {SELFTEST_SECTION}」必须分三类小节（主流程测试 / 边界场景测试 / 高并发·大流量场景测试），每项都要有测试结果（通过/失败/无法测试）。全部通过直接放行；存在「无法测试/跳过」（写明原因）放行但门禁警示结果未知；存在「失败」不放行，失败项必须写明具体原因。当前问题：\n{}\n期望格式：\n### {CATEGORY_MAIN}\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 下单主流程 | 通过 | - |\n\n### {CATEGORY_BOUNDARY}\n#### {RISK_ANALYSIS_HEADING}\n- boxCode 传 null/空串时查询落空\n#### 测试清单\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | boxCode=null 查询 | 通过 | - |\n\n### {CATEGORY_CONCURRENCY}\n#### {RISK_ANALYSIS_HEADING}\n- MQ 重复消费时库存重复释放\n#### 测试清单\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 同一单 MQ 重复投递 | 通过 | - |",
