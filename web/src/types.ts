@@ -564,6 +564,26 @@ export interface ConfigPayload {
   statusGates?: StatusGateRule[] | null
   availableStatusGates?: StatusGateDef[]
   effectiveStatusGates?: StatusGateRule[]
+  /** skill 位置映射：skill 名 → skill 目录或 SKILL.md 路径（~/ 展开）。未配置走默认解析。 */
+  skillPathOverrides?: Record<string, string>
+}
+
+/** 单个 panel 依赖 skill 的解析与生效状态（GET /api/config/skills）。 */
+export interface SkillDependStatus {
+  name: string
+  label: string
+  usedBy: string
+  source: "override" | "default"
+  overridePath?: string | null
+  path: string
+  exists: boolean
+  bytes: number
+}
+
+export interface SkillDependsPayload {
+  ok: boolean
+  allOk: boolean
+  skills: SkillDependStatus[]
 }
 
 export interface HarnessCurrent {

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use super::*;
 
 #[test]
@@ -121,4 +122,80 @@ fn dashboard_stats_release_schedule_and_next_release() {
     // 全部未登记日期时无最近发版日。
     let stats_unknown = build_dashboard_stats(vec![mk("R-unknown", Some("unknown"))], now);
     assert!(stats_unknown.next_release.is_none());
+}
+
+#[test]
+fn normalize_skill_path_overrides_trims_expands_home_and_drops_empty() {
+    let map = BTreeMap::from([
+        ("  req-tracker  ".to_string(), "  /tmp/skills/  ".to_string()),
+        ("/agent-panel-code-review/".to_string(), "~/.agents/skills-x".to_string()),
+        ("wms-test-data-creation".to_string(), "   ".to_string()),
+        ("".to_string(), "/tmp/orphan".to_string()),
+    ]);
+    let normalized = normalize_skill_path_overrides(map);
+    assert_eq!(normalized.get("req-tracker").unwrap(), "/tmp/skills");
+    let home = util::home_dir().unwrap().to_string_lossy().to_string();
+    assert_eq!(
+        normalized.get("agent-panel-code-review").unwrap(),
+        &format!("{home}/.agents/skills-x")
+    );
+    // 空 value / 空 key 被剔除。
+    assert!(!normalized.contains_key("wms-test-data-creation"));
+    assert_eq!(normalized.len(), 2);
+}
+
+#[test]
+fn resolve_skill_path_prefers_override_and_supports_three_shapes() {
+    let tmp = tempfile::tempdir().unwrap();
+    // 姿势 1：override 直接指向 SKILL.md 文件。
+    let file_root = tmp.path().join("as-file");
+    std::fs::create_dir_all(&file_root).unwrap();
+    let file_skill = file_root.join("SKILL.md");
+    std::fs::write(&file_skill, "# file skill").unwrap();
+    // 姿势 2：override 指向 skills 根（下有同名子目录）。
+    let root = tmp.path().join("skills-root");
+    std::fs::create_dir_all(root.join("req-tracker")).unwrap();
+    std::fs::write(root.join("req-tracker").join("SKILL.md"), "# root skill").unwrap();
+    // 姿势 3：override 指向具体 skill 目录（目录内直接放 SKILL.md）。
+    let dir = tmp.path().join("skill-dir");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("SKILL.md"), "# dir skill").unwrap();
+
+    let overrides = BTreeMap::from([
+        (
+            "agent-panel-code-review".to_string(),
+            file_skill.to_string_lossy().to_string(),
+        ),
+        ("req-tracker".to_string(), root.to_string_lossy().to_string()),
+        (
+            "wms-test-data-creation".to_string(),
+            dir.to_string_lossy().to_string(),
+        ),
+        (
+            "missing-skill".to_string(),
+            tmp.path().join("nope").to_string_lossy().to_string(),
+        ),
+    ]);
+    // 三种配置姿势都解析出存在的 SKILL.md。
+    assert_eq!(
+        resolve_skill_path_with(&overrides, "agent-panel-code-review"),
+        file_skill.to_string_lossy()
+    );
+    assert_eq!(
+        resolve_skill_path_with(&overrides, "req-tracker"),
+        root.join("req-tracker").join("SKILL.md").to_string_lossy()
+    );
+    assert_eq!(
+        resolve_skill_path_with(&overrides, "wms-test-data-creation"),
+        dir.join("SKILL.md").to_string_lossy()
+    );
+    // override 命中后不回退默认链：目录不存在时按“skill 自身目录”解析，
+    // 不存在的路径原样返回，由检查 API 暴露。
+    assert_eq!(
+        resolve_skill_path_with(&overrides, "missing-skill"),
+        tmp.path().join("nope").join("SKILL.md").to_string_lossy()
+    );
+    // 未配置 override 的 skill 走默认链（cwd / WMS 工作区）。
+    let empty = BTreeMap::new();
+    assert!(resolve_skill_path_with(&empty, "req-tracker").ends_with("SKILL.md"));
 }

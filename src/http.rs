@@ -1,6 +1,7 @@
-use std::env;
+use std::{collections::BTreeMap, env, sync::{OnceLock, RwLock}};
 
 use axum::{
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -109,7 +110,49 @@ pub(crate) fn is_json(headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn agent_panel_skill_path(skill_name: &str) -> String {
+/// 全局 skill 位置映射快照：config 读取/保存时同步（IntoResponse / 无 state 的同步路径
+/// 也要能拿到 override，所以不走 AppState）。
+static SKILL_PATH_OVERRIDES: OnceLock<RwLock<BTreeMap<String, String>>> = OnceLock::new();
+
+fn skill_overrides_cell() -> &'static RwLock<BTreeMap<String, String>> {
+    SKILL_PATH_OVERRIDES.get_or_init(|| RwLock::new(BTreeMap::new()))
+}
+
+/// 同步 skill 位置映射到全局快照（内容不变时无写入开销）。
+pub(crate) fn set_skill_path_overrides(map: BTreeMap<String, String>) {
+    if let Ok(mut guard) = skill_overrides_cell().write() {
+        if *guard != map {
+            *guard = map;
+        }
+    }
+}
+
+fn skill_overrides_snapshot() -> BTreeMap<String, String> {
+    skill_overrides_cell().read().map(|g| g.clone()).unwrap_or_default()
+}
+
+/// 解析 skill 的 SKILL.md 路径：override（支持 skills 根目录 / 具体 skill 目录 / .md 文件三种写法）
+/// → panel cwd/.agents/skills → WMS 工作区 .agents/skills。override 命中后不再回退默认链，
+/// 路径是否存在由 /api/config/skills 检查暴露，避免 skill 搬家后功能静默失效。
+pub(crate) fn resolve_skill_path_with(
+    overrides: &BTreeMap<String, String>,
+    skill_name: &str,
+) -> String {
+    if let Some(value) = overrides.get(skill_name) {
+        let base = std::path::PathBuf::from(value);
+        let candidate = if base.is_file() {
+            base
+        } else if base.join(skill_name).is_dir() {
+            base.join(skill_name).join("SKILL.md")
+        } else {
+            base.join("SKILL.md")
+        };
+        return candidate.to_string_lossy().to_string();
+    }
+    default_skill_path(skill_name)
+}
+
+fn default_skill_path(skill_name: &str) -> String {
     let local = env::current_dir()
         .ok()
         .map(|root| {
@@ -126,6 +169,75 @@ pub(crate) fn agent_panel_skill_path(skill_name: &str) -> String {
         })
         .to_string_lossy()
         .to_string()
+}
+
+pub(crate) fn agent_panel_skill_path(skill_name: &str) -> String {
+    let snapshot = skill_overrides_snapshot();
+    resolve_skill_path_with(&snapshot, skill_name)
+}
+
+/// panel 依赖的 skill 注册表：设置页「Skill 路径映射」逐个展示解析结果与生效状态。
+pub(crate) struct SkillDependDef {
+    pub(crate) name: &'static str,
+    pub(crate) label: &'static str,
+    pub(crate) used_by: &'static str,
+}
+
+pub(crate) static SKILL_DEPENDS: &[SkillDependDef] = &[
+    SkillDependDef {
+        name: "req-tracker",
+        label: "需求跟踪与上下文 intent 指引",
+        used_by: "API 错误帮助（intent / status 类错误自动附 skill 指引）",
+    },
+    SkillDependDef {
+        name: "req-create",
+        label: "需求文档写入规范",
+        used_by: "API 错误帮助（token / docType / edit 类错误）",
+    },
+    SkillDependDef {
+        name: "req-branches-update",
+        label: "分支范围登记与刷新",
+        used_by: "API 错误帮助（branches.json 缺失类错误）",
+    },
+    SkillDependDef {
+        name: "agent-panel-code-review",
+        label: "代码审查门禁流程",
+        used_by: "API 错误帮助 + 状态门禁 review-gate 推进指引",
+    },
+    SkillDependDef {
+        name: "wms-test-data-creation",
+        label: "WMS 测试造数能力入口",
+        used_by: "能力索引 / 详情 API 的 help 指引",
+    },
+];
+
+/// GET /api/config/skills：逐个检查 panel 依赖的 skill 解析结果与生效状态。
+pub(crate) async fn api_config_skills(State(state): State<AppState>) -> ApiResult<Json<Value>> {
+    let cfg = read_config(&state).await?;
+    let skills: Vec<Value> = SKILL_DEPENDS
+        .iter()
+        .map(|d| {
+            let path = agent_panel_skill_path(d.name);
+            let meta = std::fs::metadata(&path).ok();
+            let exists = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+            let bytes = meta.map(|m| m.len()).unwrap_or(0);
+            let override_path = cfg.skill_path_overrides.get(d.name).cloned();
+            json!({
+                "name": d.name,
+                "label": d.label,
+                "usedBy": d.used_by,
+                "source": if override_path.is_some() { "override" } else { "default" },
+                "overridePath": override_path,
+                "path": path,
+                "exists": exists,
+                "bytes": bytes,
+            })
+        })
+        .collect();
+    let all_ok = skills
+        .iter()
+        .all(|s| s.get("exists").and_then(Value::as_bool).unwrap_or(false));
+    Ok(Json(json!({ "ok": true, "allOk": all_ok, "skills": skills })))
 }
 
 pub(crate) fn api_error_help(message: &str) -> Option<Value> {

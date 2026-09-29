@@ -1147,3 +1147,12 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-apitest-body { width: 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--react-border); border-radius: 12px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .78rem/1.55 var(--react-mono); resize: vertical; }
 .react-apitest-json { max-height: 420px; overflow: auto; margin: 10px 0 0; padding: 12px; border: 1px solid rgba(148,163,184,.14); border-radius: 12px; background: rgba(0,0,0,.28); color: #cbd5f5; font: .74rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
 .react-apitest-result { margin-top: 14px; }
+
+/* Settings — Skill 路径映射 */
+.react-skill-row { border: 1px solid var(--react-border); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.react-skill-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.react-skill-dot { font-size: 11px; }
+.react-skill-dot.ok { color: #22c55e; }
+.react-skill-dot.missing { color: #ef4444; }
+.react-skill-path { font-size: 12px; opacity: .8; word-break: break-all; }
+.react-error-card { border: 1px solid rgba(239,68,68,.45); background: rgba(239,68,68,.08); border-radius: 14px; padding: 10px 14px; margin: 10px 0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }

@@ -508,6 +508,7 @@ async fn main() -> Result<()> {
             get(api_testdata_capabilities),
         )
         .route("/api/config", get(api_config).post(api_config_post))
+        .route("/api/config/skills", get(api_config_skills))
         .route("/api/auth-sites", get(api_auth_sites))
         .route("/api/ones/tasks", get(api_ones_tasks))
         .route("/api/ones/manhour", get(api_ones_manhour))

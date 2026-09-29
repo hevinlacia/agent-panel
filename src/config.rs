@@ -1,4 +1,5 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use axum::{extract::State, Json};
@@ -72,6 +73,11 @@ pub(crate) struct AppConfig {
     /// Agent 通过 API 推进状态时强校验，人在 Panel UI 上修改状态直接跳过。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) status_gates: Option<Vec<StatusGateRule>>,
+    /// skill 位置映射：skill 名 → skill 目录（含 SKILL.md）或 SKILL.md 文件路径（支持 ~/）。
+    /// 设置页维护；未配置的 skill 走默认解析（panel cwd/.agents/skills → WMS 工作区 .agents/skills）。
+    /// skill 目录迁移后在这里改映射，避免依赖该 skill 的 panel 功能静默失效。
+    #[serde(default)]
+    pub(crate) skill_path_overrides: BTreeMap<String, String>,
 }
 
 /// 发版冻结状态：开启后部署脚本（ylops_deploy.py）在触发 UAT（uat-sg/uat-cn）构建/部署前
@@ -325,6 +331,7 @@ impl Default for AppConfig {
             auto_experience_summary: false,
             experience_summary_pi_model: String::new(),
             experience_summary_max_agents: default_experience_summary_max_agents(),
+            skill_path_overrides: BTreeMap::new(),
             env_vars: Vec::new(),
             merge_excluded_repos: Vec::new(),
             cainiao_mock_enabled: false,
@@ -365,6 +372,7 @@ pub(crate) struct ConfigPatch {
     pub(crate) merge_excluded_repos: Option<Vec<String>>,
     pub(crate) browser_auth: Option<BrowserAuthConfig>,
     pub(crate) status_gates: Option<Vec<StatusGateRule>>,
+    pub(crate) skill_path_overrides: Option<BTreeMap<String, String>>,
 }
 
 pub(crate) async fn api_config(State(state): State<AppState>) -> ApiResult<Json<Value>> {
@@ -474,6 +482,9 @@ pub(crate) async fn api_config_post(
     if let Some(v) = patch.status_gates {
         cfg.status_gates = Some(normalize_status_gate_rules_strict(v)?);
     }
+    if let Some(v) = patch.skill_path_overrides {
+        cfg.skill_path_overrides = normalize_skill_path_overrides(v);
+    }
     write_config(&state, &cfg).await?;
     sync_cainiao_mock(&state).await;
     Ok(Json(cfg))
@@ -499,11 +510,41 @@ pub(crate) async fn read_config(state: &AppState) -> Result<AppConfig> {
     cfg.experience_summary_max_agents =
         clamp_experience_summary_max_agents(cfg.experience_summary_max_agents);
     cfg.status_gates = cfg.status_gates.map(normalize_status_gate_rules_lenient);
+    cfg.skill_path_overrides = normalize_skill_path_overrides(cfg.skill_path_overrides);
+    crate::set_skill_path_overrides(cfg.skill_path_overrides.clone());
     Ok(cfg)
 }
 
 pub(crate) async fn write_config(state: &AppState, cfg: &AppConfig) -> Result<()> {
-    atomic_write_json(&config_path(state), cfg).await
+    atomic_write_json(&config_path(state), cfg).await?;
+    crate::set_skill_path_overrides(cfg.skill_path_overrides.clone());
+    Ok(())
+}
+
+/// 归一化 skill 位置映射：key trim 去首尾斜杠；value 展开 ~/ 前缀、trim、去尾斜杠，空 key/value 剔除。
+pub(crate) fn normalize_skill_path_overrides(
+    map: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    map.into_iter()
+        .filter_map(|(k, v)| {
+            let key = k.trim().trim_matches('/').to_string();
+            let trimmed = v.trim();
+            let value = if let Some(rest) = trimmed.strip_prefix("~/") {
+                match crate::util::home_dir() {
+                    Ok(home) => home.join(rest).to_string_lossy().to_string(),
+                    Err(_) => trimmed.to_string(),
+                }
+            } else {
+                trimmed.to_string()
+            };
+            let value = value.trim_end_matches('/').to_string();
+            if key.is_empty() || value.is_empty() {
+                None
+            } else {
+                Some((key, value))
+            }
+        })
+        .collect()
 }
 
 /// 归一化仓库名清单：去空白/首尾斜杠、去空项、去重，保序。
