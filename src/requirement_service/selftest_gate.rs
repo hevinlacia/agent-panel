@@ -88,6 +88,7 @@ pub(crate) async fn selftest_checklist_eval(req: &Requirement) -> SelftestCheckl
 
 /// 自测清单条目详情：门禁详情页逐项展示用。
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SelftestItemDetail {
     pub(crate) no: usize,
     pub(crate) item: String,
@@ -101,6 +102,7 @@ pub(crate) struct SelftestItemDetail {
 
 /// 自测清单分类小节详情。
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SelftestSectionDetail {
     pub(crate) category: String,
     /// 边界/并发类标注「不适用：<原因>」时为 Some(原因)
