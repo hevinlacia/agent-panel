@@ -65,6 +65,14 @@ fn testdata_run_env_allowlist_accepts_known_and_rejects_unknown() {
 }
 
 #[test]
+fn testdata_run_timeout_secs_defaults_and_clamps() {
+    assert_eq!(testdata_run_timeout_secs(None), 180);
+    assert_eq!(testdata_run_timeout_secs(Some(120)), 120);
+    assert_eq!(testdata_run_timeout_secs(Some(0)), 30);
+    assert_eq!(testdata_run_timeout_secs(Some(100_000)), 600);
+}
+
+#[test]
 fn source_normalizes_to_known_values_with_default() {
     assert_eq!(
         normalize_source(Some(&"开发推动".to_string())).unwrap(),
