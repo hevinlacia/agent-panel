@@ -1162,3 +1162,14 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-sub-tree-item { position: relative; }
 .react-sub-tree-item::before { content: ""; position: absolute; left: -26px; top: 30px; width: 24px; height: 2px; background: var(--react-border-strong); }
 .react-sub-tree-item .react-list-card { background: linear-gradient(180deg, rgba(19, 24, 32, 0.68), rgba(10, 14, 21, 0.8)); }
+
+/* 自测清单门禁详情：逐项结果展示 */
+.react-gate-checklist { margin-top: 10px; }
+.react-gate-section { margin-top: 8px; }
+.react-gate-items { list-style: none; margin: 6px 0 0; padding: 0; }
+.react-gate-item { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 6px 10px; border-top: 1px solid var(--react-border, #e2e8f0); }
+.react-gate-item:first-child { border-top: none; }
+.react-gate-item-no { color: var(--react-muted, #94a3b8); font-variant-numeric: tabular-nums; min-width: 22px; }
+.react-gate-item-name { flex: 1 1 240px; }
+.react-gate-item-result { white-space: nowrap; }
+.react-gate-risk ul { margin: 4px 0 8px; padding-left: 20px; }

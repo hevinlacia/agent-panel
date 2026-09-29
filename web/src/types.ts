@@ -527,6 +527,28 @@ export interface StatusGateDetail {
   rootCauseFilled?: boolean
   legacyPlanFilled?: boolean
   category?: string | null
+  /** 自测清单门禁：test.md 结构化自测清单（每项含结果与原因）。 */
+  selftestChecklist?: SelftestChecklistPayload | null
+}
+
+export interface SelftestChecklistItem {
+  no: number
+  item: string
+  result: "pass" | "fail" | "cannot" | "missing"
+  resultText: string
+  reason?: string | null
+}
+
+export interface SelftestChecklistSection {
+  category: string
+  notApplicableReason?: string | null
+  riskAnalysis: string[]
+  items: SelftestChecklistItem[]
+}
+
+export interface SelftestChecklistPayload {
+  found: boolean
+  sections: SelftestChecklistSection[]
 }
 
 export interface StatusGateDetailPayload {

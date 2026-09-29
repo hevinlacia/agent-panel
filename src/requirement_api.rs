@@ -676,10 +676,12 @@ pub(crate) async fn api_requirement_status_gate_detail(
             .unwrap_or(Value::Null),
         "selftest-checklist" => {
             let eval = selftest_checklist_eval(&req).await;
+            let checklist = selftest_checklist_detail(&req).await;
             json!({
                 "problems": eval.problems,
                 "warnings": eval.warnings,
                 "hotfix": req.is_hotfix(),
+                "selftestChecklist": checklist,
             })
         }
         "test-scenario" => {
