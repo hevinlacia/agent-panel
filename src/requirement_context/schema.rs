@@ -25,7 +25,7 @@ pub(crate) fn requirement_api_schema() -> Value {
         ],
         "operations": [
             {"operation": "setStatus", "writes": ["req.state"], "required": ["reqId", "status"], "optional": ["note", "dryRun"]},
-            {"operation": "createSub", "endpoint": "POST /api/requirement/create-sub", "writes": ["req.meta", "req.state", "req.docs"], "required": ["parentReqId", "title"], "optional": ["slug", "owner", "summary", "dryRun"], "description": "从父需求拆出子需求（并行执行单元）；仅建记录，分支用 /api/requirement/sub/init-branches 初始化"},
+            {"operation": "createSub", "endpoint": "POST /api/requirement/create-sub", "writes": ["req.meta", "req.state", "req.docs"], "required": ["parentReqId", "title"], "optional": ["slug", "owner", "summary", "dryRun"], "description": "从父需求拆出子需求（ID=<父票号>-S<n>[-slug]，继承父前缀）；仅建记录，整合需求(ROLLUP)子需求用 release-branch API 发布"},
             {"operation": "createDocPart", "endpoint": "POST /api/requirement/doc-part", "writes": ["docs/<doc>/<NNN>-<slug>.md", "req.docIndex"], "required": ["reqId", "docType", "slug", "content"], "optional": ["title", "summary", "dryRun"], "description": "创建文档分册并在主文档末尾追加索引行：大需求明细拆分册，主文件只留概览+分册清单；单分册建议 ≤300 行"},
             {"operation": "setCategory", "writes": ["req.state"], "required": ["reqId", "category"], "optional": ["dryRun"]},
             {"operation": "patchMeta", "writes": ["req.meta"], "required": ["reqId", "fields"], "allowedFields": ["title", "project", "owner", "startDate", "planRelease", "ones"]},

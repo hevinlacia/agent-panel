@@ -129,38 +129,54 @@ fn parse_ones_ref_empty_input_is_none() {
 
 #[test]
 fn normalize_create_id_template_splits_issue_pool() {
-    // 空模板：按类别给默认池
+    // 空模板：按类别给默认池（新式前缀不带项目字；类型即前缀）
     assert_eq!(
-        normalize_create_id_template("", "线上问题", false).unwrap(),
-        "WMS-INC-{seq}"
+        normalize_create_id_template("", "线上问题", false, false).unwrap(),
+        "INC-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("", "需求", false).unwrap(),
-        "WMS-{seq}"
-    );
-    // 模板：issue 强制 WMS-INC 前缀，保留 suffix
-    assert_eq!(
-        normalize_create_id_template("WMS-{seq}", "线上问题", false).unwrap(),
-        "WMS-INC-{seq}"
+        normalize_create_id_template("", "需求", false, false).unwrap(),
+        "REQ-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-{seq}-hotfix", "线上问题", false).unwrap(),
-        "WMS-INC-{seq}-hotfix"
+        normalize_create_id_template("", "需求", false, true).unwrap(),
+        "ROLLUP-{seq}"
+    );
+    // 模板：issue 强制新式 INC 前缀（旧 WMS-INC 模板也归一到 INC），保留 suffix
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}", "线上问题", false, false).unwrap(),
+        "INC-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-INC-{seq}", "线上问题", false).unwrap(),
-        "WMS-INC-{seq}"
+        normalize_create_id_template("WMS-{seq}-hotfix", "线上问题", false, false).unwrap(),
+        "INC-{seq}-hotfix"
     );
-    // 具体 id：需求透传；issue 必须 WMS-INC-<序号> 形态
     assert_eq!(
-        normalize_create_id_template("WMS-112-fix-x", "需求", false).unwrap(),
+        normalize_create_id_template("WMS-INC-{seq}", "线上问题", false, false).unwrap(),
+        "INC-{seq}"
+    );
+    assert_eq!(
+        normalize_create_id_template("INC-{seq}", "线上问题", false, false).unwrap(),
+        "INC-{seq}"
+    );
+    // 具体 id：需求透传（旧 WMS- 形态兼容）；issue 接受新旧两种形态
+    assert_eq!(
+        normalize_create_id_template("WMS-112-fix-x", "需求", false, false).unwrap(),
         "WMS-112-fix-x"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-INC-031-x", "线上问题", false).unwrap(),
+        normalize_create_id_template("REQ-113-fix-x", "需求", false, false).unwrap(),
+        "REQ-113-fix-x"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-INC-031-x", "线上问题", false, false).unwrap(),
         "WMS-INC-031-x"
     );
-    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题", false).is_err());
+    assert_eq!(
+        normalize_create_id_template("INC-032-x", "线上问题", false, false).unwrap(),
+        "INC-032-x"
+    );
+    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题", false, false).is_err());
     // 前缀分池：INC 序号独立于需求序号
     assert_eq!(
         compute_next_seq_from_ids(
@@ -178,54 +194,77 @@ fn normalize_create_id_template_splits_issue_pool() {
         ),
         112
     );
-    // 测试问题独立编号池：默认 WMS-TST-{seq}，强制 TST 前缀，与 INC/需求池互不干扰
+    // 测试问题独立编号池：默认 TST-{seq}，强制 TST 前缀，与 INC/需求池互不干扰
     assert_eq!(
-        normalize_create_id_template("", "测试问题", false).unwrap(),
-        "WMS-TST-{seq}"
+        normalize_create_id_template("", "测试问题", false, false).unwrap(),
+        "TST-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("TST-{seq}-uat-bug", "测试问题", false).unwrap(),
-        "WMS-TST-{seq}-uat-bug"
+        normalize_create_id_template("TST-{seq}-uat-bug", "测试问题", false, false).unwrap(),
+        "TST-{seq}-uat-bug"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题", false).unwrap(),
+        normalize_create_id_template("WMS-TST-{seq}-uat-bug", "测试问题", false, false).unwrap(),
+        "TST-{seq}-uat-bug"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题", false, false).unwrap(),
         "WMS-TST-005-uat-bug"
     );
-    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题", false).is_err());
-    assert!(normalize_create_id_template("WMS-005-x", "测试问题", false).is_err());
-    // 需求类别不受 TST 池影响：模板原样透传
+    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题", false, false).is_err());
+    assert!(normalize_create_id_template("WMS-005-x", "测试问题", false, false).is_err());
+    // 需求主池不得占用其他池前缀（含新式与旧式别名）
+    assert!(normalize_create_id_template("WMS-TST-005-x", "需求", false, false).is_err());
+    assert!(normalize_create_id_template("TST-005-x", "需求", false, false).is_err());
+    assert!(normalize_create_id_template("ROLLUP-{seq}-x", "需求", false, false).is_err());
+    assert!(normalize_create_id_template("ROLLUP-001-x", "需求", false, false).is_err());
+    // 整合需求池：consolidated=true 强制 ROLLUP 前缀
     assert_eq!(
-        normalize_create_id_template("WMS-TST-005-x", "需求", false).unwrap(),
-        "WMS-TST-005-x"
+        normalize_create_id_template("ROLLUP-{seq}-prod-log-fix", "需求", false, true).unwrap(),
+        "ROLLUP-{seq}-prod-log-fix"
     );
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}-x", "需求", false, true).unwrap(),
+        "ROLLUP-{seq}-x"
+    );
+    assert_eq!(
+        normalize_create_id_template("ROLLUP-002-x", "需求", false, true).unwrap(),
+        "ROLLUP-002-x"
+    );
+    assert!(normalize_create_id_template("REQ-113-x", "需求", false, true).is_err());
+    assert!(normalize_create_id_template("ROLLUP-002-x", "线上问题", false, true).is_err());
 }
 
 #[test]
 fn normalize_create_id_template_enforces_group_pool() {
-    // 空模板：需求组默认 WMS-GRP-{seq} 独立编号池
+    // 空模板：需求组默认 GRP-{seq} 独立编号池（新式前缀）
     assert_eq!(
-        normalize_create_id_template("", "需求", true).unwrap(),
-        "WMS-GRP-{seq}"
+        normalize_create_id_template("", "需求", true, false).unwrap(),
+        "GRP-{seq}"
     );
-    // {seq} 模板：改写前缀为 WMS-GRP，保留 suffix
+    // {seq} 模板：改写前缀为 GRP，保留 suffix
     assert_eq!(
-        normalize_create_id_template("WMS-{seq}", "需求", true).unwrap(),
-        "WMS-GRP-{seq}"
-    );
-    assert_eq!(
-        normalize_create_id_template("WMS-{seq}-combo-checkout", "需求", true).unwrap(),
-        "WMS-GRP-{seq}-combo-checkout"
+        normalize_create_id_template("WMS-{seq}", "需求", true, false).unwrap(),
+        "GRP-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-GRP-{seq}", "需求", true).unwrap(),
-        "WMS-GRP-{seq}"
+        normalize_create_id_template("WMS-{seq}-combo-checkout", "需求", true, false).unwrap(),
+        "GRP-{seq}-combo-checkout"
     );
-    // 具体 id：必须 WMS-GRP-<序号> 形态，否则拒绝（组不占用 WMS-<seq> 需求池）
     assert_eq!(
-        normalize_create_id_template("WMS-GRP-001-combo", "需求", true).unwrap(),
+        normalize_create_id_template("WMS-GRP-{seq}", "需求", true, false).unwrap(),
+        "GRP-{seq}"
+    );
+    // 具体 id：新旧两种 GRP 形态都接受，其他形态拒绝（组不占用主需求池）
+    assert_eq!(
+        normalize_create_id_template("WMS-GRP-001-combo", "需求", true, false).unwrap(),
         "WMS-GRP-001-combo"
     );
-    assert!(normalize_create_id_template("WMS-126-combo", "需求", true).is_err());
+    assert_eq!(
+        normalize_create_id_template("GRP-002-combo", "需求", true, false).unwrap(),
+        "GRP-002-combo"
+    );
+    assert!(normalize_create_id_template("WMS-126-combo", "需求", true, false).is_err());
     // 组编号池独立：GRP 序号独立于需求序号
     assert_eq!(
         compute_next_seq_from_ids(
@@ -363,6 +402,7 @@ fn issue_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         issues: None,
         members: None,
         release_policy: None,
+        consolidated: None,
         summary: None,
         background: None,
         notes: None,
@@ -380,7 +420,7 @@ async fn create_issue_defaults_category_from_id_prefix() {
         .expect("create inc issue");
     assert_eq!(res["category"], json!("线上问题"));
     assert_eq!(res["status"], json!("排查中"));
-    assert!(res["reqId"].as_str().unwrap().starts_with("WMS-INC-"));
+    assert!(res["reqId"].as_str().unwrap().starts_with("INC-"));
     // TST 模板 + 不传 category → 测试问题
     let res = create_requirement(&state, issue_test_form("WMS-TST-{seq}", "测试问题默认分类"))
         .await
@@ -405,4 +445,32 @@ async fn create_issue_rejects_category_prefix_mismatch() {
         .await
         .expect_err("category/prefix mismatch must fail");
     assert!(err.message.contains("线上问题"), "{:?}", err);
+}
+
+
+#[test]
+fn pool_lineage_continues_legacy_seq() {
+    // REQ 池延续 WMS 主池谱系：WMS-144 已存在 → REQ 下一个 145
+    let ids = vec!["WMS-143-a".to_string(), "WMS-144-b".to_string(), "WMS-INC-120-c".to_string()];
+    assert_eq!(compute_next_seq_from_ids_lineage(&ids, "REQ", None), 145);
+    // 反向：WMS 模板也延续 REQ 已分配的序号
+    let ids = vec!["REQ-145-a".to_string()];
+    assert_eq!(compute_next_seq_from_ids_lineage(&ids, "WMS", None), 146);
+    // INC 池谱系横跨新旧两种形态
+    let ids = vec!["WMS-INC-031-a".to_string(), "INC-005-b".to_string()];
+    assert_eq!(compute_next_seq_from_ids_lineage(&ids, "INC", None), 32);
+    // ROLLUP 池独立：不受 REQ/WMS 影响，从 001 起
+    let ids = vec!["REQ-145-a".to_string(), "WMS-144-b".to_string()];
+    assert_eq!(compute_next_seq_from_ids_lineage(&ids, "ROLLUP", None), 1);
+    let ids = vec!["ROLLUP-001-a".to_string()];
+    assert_eq!(compute_next_seq_from_ids_lineage(&ids, "ROLLUP", None), 2);
+}
+
+#[test]
+fn extract_ticket_prefix_supports_new_pools() {
+    assert_eq!(extract_ticket_prefix("ROLLUP-001-prod-log-fix").unwrap(), "ROLLUP-001");
+    assert_eq!(extract_ticket_prefix("REQ-145-fix-x").unwrap(), "REQ-145");
+    assert_eq!(extract_ticket_prefix("WMS-144-prod-log-fix-rollup").unwrap(), "WMS-144");
+    assert_eq!(extract_ticket_prefix("ROLLUP-001-S1-receipt").unwrap(), "ROLLUP-001");
+    assert!(extract_ticket_prefix("no-ticket-here").is_none());
 }

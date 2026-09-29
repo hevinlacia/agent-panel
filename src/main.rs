@@ -14,6 +14,7 @@ use tokio::{fs, sync::Mutex, task::JoinHandle};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 mod attachments;
+mod api_catalog;
 mod browser_auth;
 mod cainiao_mock;
 mod capability;
@@ -21,13 +22,13 @@ mod chrome_cookies;
 mod config;
 mod dsh_client;
 mod experience_summary;
-mod git_ai;
 mod git_workflow;
 mod harness;
 mod http;
 mod knowledge;
 mod markdown;
 mod ones;
+mod ones_manhour;
 mod paths;
 mod pi_config;
 mod requirement_api;
@@ -40,19 +41,20 @@ mod sessions;
 mod util;
 
 use attachments::*;
+use api_catalog::*;
 use browser_auth::*;
 use cainiao_mock::*;
 use capability::*;
 use chrome_cookies::*;
 use config::*;
 use experience_summary::*;
-use git_ai::*;
 pub(crate) use git_workflow::*;
 use harness::*;
 use http::*;
 use knowledge::*;
 use markdown::*;
 use ones::*;
+use ones_manhour::*;
 use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
@@ -498,6 +500,9 @@ async fn main() -> Result<()> {
         .route("/api/testdata/capabilities", get(api_testdata_capabilities))
         .route("/api/testdata/capability", get(api_testdata_capability))
         .route("/api/testdata/run", post(api_testdata_run))
+        .route("/api/apitest/apis", get(api_apitest_apis))
+        .route("/api/apitest/api", get(api_apitest_api))
+        .route("/api/apitest/trigger", post(api_apitest_trigger))
         .route(
             "/api/agent/capabilities/query",
             get(api_testdata_capabilities),
@@ -505,6 +510,9 @@ async fn main() -> Result<()> {
         .route("/api/config", get(api_config).post(api_config_post))
         .route("/api/auth-sites", get(api_auth_sites))
         .route("/api/ones/tasks", get(api_ones_tasks))
+        .route("/api/ones/manhour", get(api_ones_manhour))
+        .route("/api/ones/manhour/save", post(api_ones_manhour_save))
+        .route("/api/ones/manhour/log", post(api_ones_manhour_log))
         .route(
             "/api/auth-sites/:site/check",
             get(api_auth_site_check).post(api_auth_site_check),
@@ -528,19 +536,6 @@ async fn main() -> Result<()> {
         )
         .route("/api/notifications/dismiss", post(ok_json))
         .route("/api/notifications/mark-read", post(ok_json))
-        .route(
-            "/api/git-ai/suspects",
-            get(api_git_ai_suspects).post(ok_json),
-        )
-        .route(
-            "/api/git-ai/suspects/refresh",
-            post(api_git_ai_suspects_refresh),
-        )
-        .route(
-            "/api/git-ai/suspects/fix-note",
-            post(api_git_ai_suspect_fix_note),
-        )
-        .route("/api/git-ai/health", get(api_git_ai_health))
         .nest_service(
             "/assets",
             ServeDir::new(public_dir.join("dashboard-react/assets")),

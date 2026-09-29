@@ -986,6 +986,7 @@ pub(crate) async fn api_requirement_convert_issue(
             issues: Some(vec![issue.id.clone()]),
             members: None,
             release_policy: None,
+            consolidated: None,
             summary: Some(format!(
                 "由线上问题 {} 转出的代码修复需求；排查过程见原问题。",
                 issue.id
@@ -2344,21 +2345,48 @@ pub(crate) async fn api_recommendations(
     Ok(Json(json!({ "recommendations": recommendations })))
 }
 
+/// 预估工时表单：仅 req_id 为占位估算；带 estimated_hours 时由 agent/用户
+/// 显式提交评估结果（自动预估工时的维护入口，面板与 agent 会话均可调用）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EffortEstimateForm {
+    pub(crate) req_id: String,
+    pub(crate) estimated_hours: Option<f64>,
+    pub(crate) summary: Option<String>,
+    pub(crate) model: Option<String>,
+}
+
 pub(crate) async fn api_effort_estimate(
     State(state): State<AppState>,
-    form: FormOrJson<NewSessionForm>,
+    form: FormOrJson<EffortEstimateForm>,
 ) -> ApiResult<Json<Value>> {
     let req = get_real_requirement(&state, &form.0.req_id).await?;
-    let estimate = json!({
-        "version": 1,
-        "coefficient": 1.0,
-        "baseHours": 4,
-        "estimatedHours": 4,
-        "factors": [],
-        "summary": "Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.",
-        "model": "manual-placeholder",
-        "updatedAt": now_ms()
-    });
+    let explicit = form
+        .0
+        .estimated_hours
+        .filter(|h| h.is_finite() && *h > 0.0 && *h <= 1000.0);
+    let estimate = match explicit {
+        Some(hours) => json!({
+            "version": 1,
+            "coefficient": 1.0,
+            "baseHours": hours,
+            "estimatedHours": hours,
+            "factors": [],
+            "summary": form.0.summary.unwrap_or_default(),
+            "model": form.0.model.unwrap_or_else(|| "agent-manual".to_string()),
+            "updatedAt": now_ms()
+        }),
+        None => json!({
+            "version": 1,
+            "coefficient": 1.0,
+            "baseHours": 4,
+            "estimatedHours": 4,
+            "factors": [],
+            "summary": "Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.",
+            "model": "manual-placeholder",
+            "updatedAt": now_ms()
+        }),
+    };
     if let Some(dir) = req.req_dir {
         let path = PathBuf::from(dir).join("effort-estimate.json");
         atomic_write_json(&path, &estimate).await?;

@@ -390,7 +390,7 @@ pub(crate) async fn api_release_branch_create(
         .max()
         .unwrap_or(0)
         + 1;
-    let template = |n: u64| format!("{prefix}/release/{}{label_seg}-r{n}", parent.id);
+    let template = |n: u64| format!("{prefix}/{}{label_seg}-r{n}", parent.id);
     let (seq, branch_name) =
         allocate_release_branch(&pairs, template, next_seq).await;
     let mut repo_results = Vec::new();
@@ -490,8 +490,10 @@ pub(crate) async fn api_release_branch_list(
                 "baseBranch": repo.base_branch,
                 "baseCommit": repo.base_commit,
             });
-            if let Some(path) = repo.path.as_deref() {
-                let project_path = PathBuf::from(path);
+            // branches.json 风格路径可能含 ~ 前缀，统一走 resolve 展开；展开失败则跳过 diff 统计。
+            if let Some(project_path) =
+                resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+            {
                 if let Some((files, additions, deletions)) =
                     release_branch_diff_stat(&project_path, &repo.base_branch, &entry.name).await
                 {
@@ -617,6 +619,7 @@ pub(crate) async fn api_release_branch_merge_sub(
                     &entry.name,
                     "release-merge",
                     false,
+                    true,
                 )
                 .await;
                 let status = result
@@ -791,6 +794,7 @@ pub(crate) async fn api_release_branch_sync_prod(
             &repo.base_branch,
             &entry.name,
             "release-sync",
+            true,
             true,
         )
         .await;

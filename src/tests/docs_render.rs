@@ -29,6 +29,7 @@ fn build_meta_doc_writes_source_line() {
         &[],
         "s",
         None,
+        None,
     );
     assert!(meta.contains("source: 开发推动"));
     let default_meta = build_meta_doc(
@@ -45,6 +46,7 @@ fn build_meta_doc_writes_source_line() {
         "",
         &[],
         "s",
+        None,
         None,
     );
     assert!(default_meta.contains("source: 产品推动"));
@@ -67,6 +69,7 @@ fn build_meta_doc_writes_issues_frontmatter_when_bound() {
         &["WMS-099-issue".into()],
         "s",
         None,
+        None,
     );
     assert!(with.contains("issues: WMS-099-issue"));
     let without = build_meta_doc(
@@ -83,6 +86,7 @@ fn build_meta_doc_writes_issues_frontmatter_when_bound() {
         "",
         &[],
         "s",
+        None,
         None,
     );
     assert!(!without.contains("issues:"));
@@ -216,6 +220,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         None,
         None,
         None,
+        None,
     );
     let names: Vec<&str> = issue_files.iter().map(|(n, _)| *n).collect();
     assert!(names.contains(&"incident.md"));
@@ -241,6 +246,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         None,
         None,
         None,
+        None,
     );
     let test_names: Vec<&str> = test_issue_files.iter().map(|(n, _)| *n).collect();
     assert!(test_names.contains(&"incident.md"));
@@ -262,6 +268,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         "",
         &[],
         "s",
+        None,
         None,
         None,
         None,
@@ -366,12 +373,14 @@ fn context_page_contains_sections_and_raw_link() {
         alignment_path: None,
         prd_path: None,
         effort_estimate: None,
+        ones_manhour: None,
         group_members: None,
         group_policy: None,
         member_of: Vec::new(),
         group_status: None,
         group_bottleneck: None,
         parent_req_id: None,
+        req_kind: None,
         is_sub_req: false,
         sub_reqs: Vec::new(),
     };

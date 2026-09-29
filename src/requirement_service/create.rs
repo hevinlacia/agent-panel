@@ -58,6 +58,13 @@ pub(crate) async fn create_requirement(
             "需求组（members 非空）只能使用 category=需求；线上问题/测试问题不支持组",
         ));
     }
+    // 整合需求（consolidated=true）：ROLLUP 独立编号池，仅 category=需求，与需求组互斥。
+    let is_consolidated = form.consolidated.unwrap_or(false);
+    if is_consolidated && (is_group || is_issue_category(&category)) {
+        return Err(ApiError::bad_request(
+            "整合需求（consolidated=true）只能使用 category=需求 且不能与需求组（members）同时使用",
+        ));
+    }
     let dry_run = form.dry_run.unwrap_or(false);
     // 串行化创建临界区：{seq} 占号靠扫描已有需求，扫描 -> 预留目录 -> 写 meta.md 必须
     // 原子完成，否则两个并行创建会观察到同一个 max seq 且各自成功（目录名含 slug 不同，
@@ -68,7 +75,7 @@ pub(crate) async fn create_requirement(
         Some(state.requirement_create_lock.lock().await)
     };
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
-    let id_template = normalize_create_id_template(form.req_id.trim(), &category, is_group)?;
+    let id_template = normalize_create_id_template(form.req_id.trim(), &category, is_group, is_consolidated)?;
     let (req_id, target_dir) =
         resolve_req_id_and_target_dir(state, &base, &id_template, &form, dry_run).await?;
 
@@ -135,6 +142,7 @@ pub(crate) async fn create_requirement(
         background.as_deref(),
         notes.as_deref(),
         None,
+        if is_consolidated { Some("rollup") } else { None },
     );
     let mut planned: Vec<String> = files
         .iter()
@@ -170,6 +178,7 @@ pub(crate) async fn create_requirement(
         "source": source,
         "project": project,
         "projects": projects,
+        "reqKind": if is_consolidated { json!("rollup") } else { Value::Null },
         "reqDir": target_dir.to_string_lossy(),
         "files": planned,
         "group": group_file.map(|g| json!({
@@ -291,6 +300,7 @@ pub(crate) async fn create_sub_requirement(
         None,
         None,
         Some(parent.id.as_str()),
+        parent.req_kind.as_deref(),
     );
     // 父需求快照覆盖同名的 background/technical-plan 模板，impact/test 直接追加。
     for (name, body) in snapshot_files {

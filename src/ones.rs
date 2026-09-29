@@ -26,7 +26,7 @@ pub(crate) const ONES_SITE_ID: &str = "ones";
 pub(crate) const DEFAULT_ONES_TEAM: &str = "5BXYuw3B";
 const NOTICE_LIMIT: usize = 200;
 /// 工时报表回看窗口：足够覆盖近期活跃任务，又不至于拖慢响应。
-const MANHOUR_WINDOW_DAYS: i64 = 120;
+pub(crate) const MANHOUR_WINDOW_DAYS: i64 = 120;
 const MAX_RECOMMENDATIONS: usize = 8;
 /// 低于该分数的候选不进入推荐列表（纯噪声过滤）。
 const MIN_RECOMMEND_SCORE: f64 = 0.10;
@@ -46,6 +46,9 @@ pub(crate) struct OnesTaskCandidate {
     pub(crate) sources: Vec<String>,
     /// 最近活动时间（毫秒）；manhour 来源无时间则为 0。
     pub(crate) last_activity_at: i64,
+    /// 工时报表聚合的已登记工时原始值（÷100000 = 小时）；无登记为 0。
+    /// 统计窗口 = MANHOUR_WINDOW_DAYS 天，口径与工时报表一致。
+    pub(crate) actual_hours_raw: i64,
 }
 
 impl OnesTaskCandidate {
@@ -70,10 +73,76 @@ impl OnesTaskCandidate {
             "taskUuid": self.task_uuid,
             "sources": self.sources,
             "lastActivityAt": self.last_activity_at,
+            "actualHoursRaw": self.actual_hours_raw,
+            "actualHours": (self.actual_hours_raw as f64 / 100_000.0 * 100.0).round() / 100.0,
             "url": self.issue_url(team),
             "refText": self.ref_text(team),
         })
     }
+}
+
+/// 候选快照：候选列表 + 回源警告 + 缓存元信息，供任务推荐与工时联动共用。
+#[derive(Debug, Clone)]
+pub(crate) struct OnesCandidatesSnapshot {
+    pub(crate) candidates: Vec<OnesTaskCandidate>,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) fetched_at: i64,
+    pub(crate) cache_hit: bool,
+}
+
+/// 获取候选（带缓存）：默认命中进程内缓存，refresh=true 或 team 变化时回源 ONES。
+/// api_ones_tasks 与工时联动接口共用，保证同一份报表数据只拉一次。
+pub(crate) async fn ensure_ones_candidates(
+    state: &AppState,
+    team: &str,
+    refresh: bool,
+) -> ApiResult<OnesCandidatesSnapshot> {
+    let cfg = read_config(state).await?;
+    let auth = normalize_browser_auth_config(cfg.browser_auth);
+    let site = auth
+        .sites
+        .iter()
+        .find(|s| s.id == ONES_SITE_ID)
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "browserAuth.sites 未配置 id={ONES_SITE_ID} 的站点；请在配置中添加（baseUrl=https://ones.jtexpress.com.cn，cookieDomains/allowedHosts=ones.jtexpress.com.cn）"
+            ))
+        })?;
+    if !site.enabled {
+        return Err(ApiError::bad_request(format!(
+            "auth site disabled: {ONES_SITE_ID}"
+        )));
+    }
+    let cached = state.ones_cache.lock().await.clone();
+    let cache_valid = !refresh && cached.as_ref().is_some_and(|c| c.team == team);
+    if cache_valid {
+        let c = cached.expect("cache_valid checked");
+        return Ok(OnesCandidatesSnapshot {
+            candidates: c.candidates,
+            warnings: c.warnings,
+            fetched_at: c.fetched_at,
+            cache_hit: true,
+        });
+    }
+    let cookies = load_chrome_cookies(&auth)
+        .await
+        .map_err(|e| ApiError::from(anyhow!("Chrome 登录态读取失败: {e:#}")))?
+        .1;
+    let (mut cands, warns) = fetch_ones_candidates(site, &cookies, team).await;
+    cands.sort_by(sort_candidates);
+    let fetched_at = now_ms();
+    *state.ones_cache.lock().await = Some(OnesCache {
+        team: team.to_string(),
+        fetched_at,
+        candidates: cands.clone(),
+        warnings: warns.clone(),
+    });
+    Ok(OnesCandidatesSnapshot {
+        candidates: cands,
+        warnings: warns,
+        fetched_at,
+        cache_hit: false,
+    })
 }
 
 /// ONES 候选任务内存缓存：默认请求直接复用，refresh=true 或 team 变化时才回源 ONES。
@@ -101,50 +170,15 @@ pub(crate) async fn api_ones_tasks(
     State(state): State<AppState>,
     Query(q): Query<OnesTasksQuery>,
 ) -> ApiResult<Json<Value>> {
-    let cfg = read_config(&state).await?;
-    let auth = normalize_browser_auth_config(cfg.browser_auth);
-    let site = auth
-        .sites
-        .iter()
-        .find(|s| s.id == ONES_SITE_ID)
-        .ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "browserAuth.sites 未配置 id={ONES_SITE_ID} 的站点；请在配置中添加（baseUrl=https://ones.jtexpress.com.cn，cookieDomains/allowedHosts=ones.jtexpress.com.cn）"
-            ))
-        })?;
-    if !site.enabled {
-        return Err(ApiError::bad_request(format!(
-            "auth site disabled: {ONES_SITE_ID}"
-        )));
-    }
     let team = q
         .team
         .filter(|t| !t.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_ONES_TEAM.to_string());
-    let refresh = q.refresh.unwrap_or(false);
-    // 先取快照再判断，避免持锁跨 await；缓存仅内存，重启即清。
-    let cached = state.ones_cache.lock().await.clone();
-    let cache_valid = !refresh && cached.as_ref().is_some_and(|c| c.team == team);
-    let (candidates, warnings, cached_at, cache_hit) = if cache_valid {
-        let c = cached.expect("cache_valid checked");
-        (c.candidates, c.warnings, c.fetched_at, true)
-    } else {
-        let cookies = load_chrome_cookies(&auth)
-            .await
-            .map_err(|e| ApiError::from(anyhow!("Chrome 登录态读取失败: {e:#}")))?
-            .1;
-        let (cands, warns) = fetch_ones_candidates(site, &cookies, &team).await;
-        let mut cands = cands;
-        cands.sort_by(sort_candidates);
-        let fetched_at = now_ms();
-        *state.ones_cache.lock().await = Some(OnesCache {
-            team: team.clone(),
-            fetched_at,
-            candidates: cands.clone(),
-            warnings: warns.clone(),
-        });
-        (cands, warns, fetched_at, false)
-    };
+    let snap = ensure_ones_candidates(&state, &team, q.refresh.unwrap_or(false)).await?;
+    let candidates = snap.candidates;
+    let mut warnings = snap.warnings;
+    let cache_hit = snap.cache_hit;
+    let cached_at = snap.fetched_at;
 
     let mut recommendations: Vec<Value> = Vec::new();
     let mut requirement_title = String::new();
@@ -352,11 +386,12 @@ fn merge_notices(map: &mut HashMap<String, OnesTaskCandidate>, data: &Value) {
             .and_then(Value::as_i64)
             .map(|us| us / 1_000)
             .unwrap_or(0);
-        merge_candidate(map, display_id, &name, &project, task_uuid, "notice", ts_ms);
+        merge_candidate(map, display_id, &name, &project, task_uuid, "notice", ts_ms, 0);
     }
 }
 
-/// 工时报表 bucket：columnField 即任务对象（displayId/name/uuid/project.uuid）。
+/// 工时报表 bucket：columnField 即任务对象（displayId/name/uuid/project.uuid），
+/// actualHours 为该任务在窗口内的已登记工时原始值（÷100000 = 小时）。
 fn merge_buckets(map: &mut HashMap<String, OnesTaskCandidate>, data: &Value) {
     let Some(buckets) = data.pointer("/data/buckets").and_then(Value::as_array) else {
         return;
@@ -378,7 +413,17 @@ fn merge_buckets(map: &mut HashMap<String, OnesTaskCandidate>, data: &Value) {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        merge_candidate(map, display_id, &name, "", &task_uuid, "manhour", 0);
+        let actual_hours_raw = b.get("actualHours").and_then(Value::as_i64).unwrap_or(0);
+        merge_candidate(
+            map,
+            display_id,
+            &name,
+            "",
+            &task_uuid,
+            "manhour",
+            0,
+            actual_hours_raw,
+        );
     }
 }
 
@@ -390,6 +435,7 @@ fn merge_candidate(
     task_uuid: &str,
     source: &str,
     last_activity_at: i64,
+    actual_hours_raw: i64,
 ) {
     let key = display_id.trim().to_uppercase();
     if key.is_empty() {
@@ -402,6 +448,7 @@ fn merge_candidate(
         task_uuid: String::new(),
         sources: Vec::new(),
         last_activity_at: 0,
+        actual_hours_raw: 0,
     });
     if entry.name.is_empty() {
         entry.name = name.trim().to_string();
@@ -411,6 +458,9 @@ fn merge_candidate(
     }
     if entry.task_uuid.is_empty() {
         entry.task_uuid = task_uuid.trim().to_string();
+    }
+    if entry.actual_hours_raw < actual_hours_raw {
+        entry.actual_hours_raw = actual_hours_raw;
     }
     if !entry.sources.contains(&source.to_string()) {
         entry.sources.push(source.to_string());
@@ -547,6 +597,7 @@ mod tests {
             task_uuid: String::new(),
             sources: vec!["notice".into()],
             last_activity_at: 0,
+            actual_hours_raw: 0,
         }
     }
 
@@ -621,11 +672,13 @@ mod tests {
             &mut map,
             &json!({ "notices": [ { "task_uuid": "T1", "display_id": "JTYC-1", "message": { "object_name": "任务A", "ref_name": "项目P", "send_time": 1_000_000 } } ] }),
         );
-        let data = json!({ "data": { "buckets": [ { "columnField": { "displayId": "JTYC-1", "name": "任务A", "uuid": "T1", "project": { "uuid": "P1" } } } ] } });
+        let data = json!({ "data": { "buckets": [ { "columnField": { "displayId": "JTYC-1", "name": "任务A", "uuid": "T1", "project": { "uuid": "P1" } }, "actualHours": 800000 } ] } });
         merge_buckets(&mut map, &data);
         let c = map.values().next().unwrap();
         assert_eq!(c.sources, vec!["manhour", "notice"]);
         assert_eq!(c.project, "项目P");
+        assert_eq!(c.actual_hours_raw, 800_000);
+        assert_eq!(c.to_json("5BXYuw3B")["actualHours"], 8.0);
     }
 
     #[test]

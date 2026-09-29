@@ -16,6 +16,129 @@ export interface EffortEstimate {
   updatedAt?: number
 }
 
+/** 需求工时档案（ones-manhour.json，随需求索引返回）。 */
+export interface OnesManhourFileValue {
+  manualHours?: number
+  agentHours?: number
+  agentHoursNote?: string
+  logHistory?: OnesManhourLogEntry[]
+  updatedAt?: number
+}
+
+/** 一条通过面板发起的工时登记记录。 */
+export interface OnesManhourLogEntry {
+  date: string
+  hours: number
+  remark?: string
+  status: "prepared" | "logged" | "failed" | string
+  createdAt: number
+  taskUrl?: string
+  message?: string
+}
+
+/** GET /api/apitest/apis 单条接口目录项。 */
+export interface ApitestApiItem {
+  id: string
+  domain: string
+  purpose: string
+  method: string
+  url: string
+  status: string
+  kind: "create" | "test" | string
+  tags: string[]
+  envSupport: Record<string, string>
+  notes?: string
+  hasRequestSchema: boolean
+  placeholderCount: number
+  templateOk: boolean
+}
+
+export interface ApitestApisPayload {
+  ok: boolean
+  count: number
+  apis: ApitestApiItem[]
+  packRoot: string
+}
+
+/** GET /api/apitest/api 响应：模板 + 占位符 + schema + tests。 */
+export interface ApitestDetailPayload {
+  ok: boolean
+  api: ApitestApiItem
+  template: {
+    headers: [string, string][]
+    body: string | null
+    varsMap: Record<string, string>
+  }
+  tests: string[]
+  placeholders: { name: string; envVar: string; derived: boolean }[]
+  requestSchema?: string | null
+  requestSchemaPath?: string | null
+  responseSchemaPath?: string | null
+}
+
+/** POST /api/apitest/trigger 响应。 */
+export interface ApitestTriggerPayload {
+  ok: boolean
+  status?: number
+  durationMs?: number
+  contentType?: string | null
+  url?: string
+  bodyText?: string
+  bodyJson?: unknown
+  truncated?: boolean
+  env?: string
+  apiId?: string
+  kind?: string
+  tests?: string[]
+  missing?: string[]
+  message?: string
+  note?: string
+}
+
+/** GET /api/ones/manhour 响应：需求工时四联汇总（人工/自动/ONES 已登记/agent 实际）。 */
+export interface OnesManhourInfo {
+  reqId: string
+  title: string
+  status: string
+  ones?: { raw: string; url: string | null; label: string } | null
+  displayId?: string | null
+  taskUuid?: string | null
+  taskName?: string | null
+  taskUrl?: string | null
+  manualHours?: number | null
+  autoHours?: number | null
+  autoHoursUpdatedAt?: number | null
+  loggedHours?: number | null
+  remainingHours?: number | null
+  agentHours?: number | null
+  agentHoursNote?: string | null
+  logHistory?: OnesManhourLogEntry[]
+  manhourWindowDays?: number
+  onesFetchedAt?: number
+  cacheHit?: boolean
+  warnings?: string[]
+}
+
+/** POST /api/ones/manhour/log 单条结果。 */
+export interface OnesManhourLogResult {
+  date: string
+  hours: number
+  remark?: string
+  status: "prepared" | "logged" | "failed" | string
+  taskUrl?: string
+  message?: string
+}
+
+export interface OnesManhourLogResponse {
+  ok: boolean
+  mode: "prepared" | "execute" | string
+  reqId: string
+  displayId?: string
+  results: OnesManhourLogResult[]
+  warnings?: string[]
+  note?: string
+}
+
 export interface ExperienceSummaryJob {
   version?: number
   reqId?: string
@@ -201,6 +324,8 @@ export interface Requirement {
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
+  /** 需求工时档案（ones-manhour.json）：人工预估 / agent 实际 / 录入历史。 */
+  onesManhour?: OnesManhourFileValue
   /** 绑定的线上问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
   issues?: string[]
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
@@ -221,6 +346,8 @@ export interface Requirement {
   parentReqId?: string
   /** 派生字段：是否子需求。 */
   isSubReq?: boolean
+  /** 实体类型标记：meta.md req-kind（如 rollup = 整合需求）。 */
+  reqKind?: string
   /** 本需求作为父需求时拆出的子需求列表（扫描回填）。 */
   subReqs?: SubReqRef[]
 }
@@ -519,50 +646,6 @@ export interface PiModelOption { providerId: string; modelId: string; label: str
 export interface PiProviderSummary { id: string; api?: string; baseUrl?: string; modelCount: number; hasApiKey: boolean; models: PiModelOption[] }
 export interface PiConfigSummary { settings: { path: string; exists: boolean; defaultProvider: string; defaultModel: string; defaultThinkingLevel: string; enabledModels: string[]; theme: string }; providers: PiProviderSummary[]; thinkingLevels: string[] }
 
-export interface GitAiSuspectStats { total: number; pending: number; confirmedAi: number; missingAi: number; notFound: number; checkFailed: number }
-export type GitAiCompanyStatus = "pending" | "confirmed_ai" | "missing_ai" | "not_found" | "check_failed"
-export interface GitAiSuspectRecord { id: string; projectName: string; commitSha: string; shortSha: string; repoPath?: string | null; remoteUrl?: string | null; subject?: string | null; branch?: string | null; eventSources?: string[]; localNoteState?: string; companyStatus: GitAiCompanyStatus; companyCheckedAt?: number | null; companyError?: string | null; commitWebUrl?: string | null; commitTitle?: string | null; aiRate?: number | null; aiLines?: number | null; humanLines?: number | null; authorName?: string | null; lastSeenAt: number }
-export interface GitAiSuspectsPayload { records: GitAiSuspectRecord[]; stats: GitAiSuspectStats; generatedAt: number }
-export interface GitAiFixStep { label: string; command: string; ok: boolean; stdout?: string; stderr?: string }
-export interface GitAiFixResponse {
-  ok: boolean
-  stillMissing: boolean
-  recheck?: Record<string, unknown> & { companyStatus?: GitAiCompanyStatus; companyError?: string | null }
-  pushSteps?: GitAiFixStep[]
-  piAgent?: { dispatched: boolean; sessionId?: string; skillPath?: string; message: string }
-}
-export interface GitAiHookHealth { path: string | null; exists: boolean; mode: string; recordsToAgentPanel: boolean; executable: boolean }
-export interface GitAiHealthPayload {
-  generatedAt: number
-  storePath: string
-  cli: {
-    binaryPath: string | null
-    installed: boolean
-    version: string | null
-    daemonOk: boolean
-    daemonMessage: string | null
-    trace2Target: string | null
-    trace2Socket: string | null
-    trace2SocketExists: boolean
-    hooksPath: string | null
-    postCommitHook: GitAiHookHealth
-    prePushHook: GitAiHookHealth
-  }
-  piExtension: {
-    globalPath: string
-    sourcePath: string
-    globalExists: boolean
-    sourceExists: boolean
-    sourceMatchesGlobal: boolean
-    autoDiscoveryPath: boolean
-    gitAiBinaryExistsForExtension: boolean
-    registersStatus: boolean
-    tracksTools: string[]
-    status: "ok" | "warn" | "error" | "unknown"
-    message: string
-  }
-}
-
 export interface AutoDrivePayload { jobs: unknown[]; active: number; blocked: number; queue: { active: number; queued: number }; message?: string }
 export interface BranchRepo { repoName: string; branches: string[]; role?: string; path?: string; baseRef?: string; testTargetBranch?: string; uatTargetBranch?: string }
 export interface BranchScope { version: number; updatedAt: number; repos: BranchRepo[]; fallback?: boolean }
@@ -797,6 +880,9 @@ export interface OnesTaskCandidate {
   taskUuid: string
   sources: string[]
   lastActivityAt: number
+  /** 工时报表窗口内已登记工时（小时，原始值÷100000）；无登记为 0。 */
+  actualHours?: number
+  actualHoursRaw?: number
   url: string
   refText: string
 }

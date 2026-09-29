@@ -55,6 +55,8 @@ pub(crate) struct Requirement {
     pub(crate) alignment_path: Option<String>,
     pub(crate) prd_path: Option<String>,
     pub(crate) effort_estimate: Option<Value>,
+    /// 需求工时档案（ones-manhour.json）：人工预估 / agent 实际 / 录入历史。
+    pub(crate) ones_manhour: Option<Value>,
     /// 引用式需求组：本需求 group.json 的成员列表（Some 且非空 = 本需求是组）。
     pub(crate) group_members: Option<Vec<GroupMemberRef>>,
     /// 组发布策略：together | independent。
@@ -67,6 +69,8 @@ pub(crate) struct Requirement {
     pub(crate) group_bottleneck: Option<String>,
     /// 子需求：meta.md frontmatter `parent-req-id`；None = 不是子需求。
     pub(crate) parent_req_id: Option<String>,
+    /// 实体类型标记：meta.md frontmatter `req-kind`（如 rollup = 整合需求）；None = 普通需求。
+    pub(crate) req_kind: Option<String>,
     /// 派生字段：是否子需求（parent_req_id 非空）。
     pub(crate) is_sub_req: bool,
     /// 本需求作为父需求时拆出的子需求列表（扫描回填，按 reqId 查找子需求回填）。
@@ -581,6 +585,11 @@ pub(crate) async fn load_requirement_from_dir(
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
     let is_sub_req = parent_req_id.is_some();
+    let req_kind = fm
+        .fields
+        .get("req-kind")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let mut explicit_projects = Vec::new();
     explicit_projects.extend(split_list(fm.fields.get("project")));
     explicit_projects.extend(split_list(fm.fields.get("projects")));
@@ -629,6 +638,7 @@ pub(crate) async fn load_requirement_from_dir(
     }
     let completed_at = req_state.as_ref().and_then(extract_completed_at);
     let effort = read_json_if_exists(&dir.join("effort-estimate.json")).await;
+    let ones_manhour = read_json_if_exists(&dir.join("ones-manhour.json")).await;
     let project = projects
         .first()
         .cloned()
@@ -676,12 +686,14 @@ pub(crate) async fn load_requirement_from_dir(
         alignment_path: path_if_exists(dir.join("alignment.md")),
         prd_path: path_if_exists(dir.join("prd.md")),
         effort_estimate: effort,
+        ones_manhour,
         group_members: None,
         group_policy: None,
         member_of: Vec::new(),
         group_status: None,
         group_bottleneck: None,
         parent_req_id,
+        req_kind,
         is_sub_req,
         sub_reqs: Vec::new(),
     }))
@@ -931,12 +943,14 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         alignment_path: None,
         prd_path: None,
         effort_estimate: None,
+        ones_manhour: None,
         group_members: None,
         group_policy: None,
         member_of: Vec::new(),
         group_status: None,
         group_bottleneck: None,
         parent_req_id: None,
+        req_kind: None,
         is_sub_req: false,
         sub_reqs: Vec::new(),
     }

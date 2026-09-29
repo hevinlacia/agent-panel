@@ -80,6 +80,7 @@ fn build_meta_doc_writes_parent_req_id_frontmatter() {
         &[],
         "s",
         Some("WMS-049-wave-pick-task"),
+        None,
     );
     assert!(meta.contains("parent-req-id: WMS-049-wave-pick-task"));
     assert!(meta.contains("- Parent requirement: WMS-049-wave-pick-task"));
@@ -97,6 +98,7 @@ fn build_meta_doc_writes_parent_req_id_frontmatter() {
         "",
         &[],
         "s",
+        None,
         None,
     );
     assert!(!without.contains("parent-req-id"));

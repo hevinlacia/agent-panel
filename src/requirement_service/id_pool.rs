@@ -1,14 +1,24 @@
 use super::*;
 
 /// Parse a reqId template containing a single `{seq}` placeholder into
-/// `(prefix, suffix)`. `WMS-{seq}-demo` -> `("WMS", "-demo")`.
-/// 线上问题独立编号池前缀：与普通需求（WMS-）分开计数，目录仍共用 req 根；
+/// `(prefix, suffix)`. `REQ-{seq}-demo` -> `("REQ", "-demo")`.
+/// 线上问题独立编号池前缀：与普通需求主池分开计数，目录仍共用 req 根；
 /// 目录身份证创建后不变，setCategory 切换类别不改号。
-pub(crate) const ISSUE_ID_PREFIX: &str = "WMS-INC";
+/// 编号池前缀只表达**类型**，不表达项目（项目归属由需求所在工作区/仓库名决定）；
+/// 旧 `WMS-`/`WMS-INC-`/`WMS-TST-`/`WMS-GRP-` 前缀继续兼容，具体 id 不改名，
+/// 新建默认用无项目字的新式前缀。
+pub(crate) const ISSUE_ID_PREFIX: &str = "INC";
 /// 测试问题独立编号池：承接 UAT 测试反馈中不属于常规需求的轻量问题。
-pub(crate) const TEST_ISSUE_ID_PREFIX: &str = "WMS-TST";
-/// 需求组（引用式需求组，group.json）独立编号池：组是需求聚合视图，不占用 WMS-<seq> 需求池。
-pub(crate) const GROUP_ID_PREFIX: &str = "WMS-GRP";
+pub(crate) const TEST_ISSUE_ID_PREFIX: &str = "TST";
+/// 需求组（引用式需求组，group.json）独立编号池：组是需求聚合视图，不占用主需求池。
+pub(crate) const GROUP_ID_PREFIX: &str = "GRP";
+/// 普通需求主池（新建默认；旧 WMS- 前缀谱系延续）。
+pub(crate) const REQ_ID_PREFIX: &str = "REQ";
+/// 旧主池前缀：与 REQ 共用序号空间（谱系延续，REQ 从 WMS 主池最大序号之后继续）。
+pub(crate) const LEGACY_REQ_ID_PREFIX: &str = "WMS";
+/// 整合需求（consolidated requirement）独立编号池：父需求 + 子需求 + 发布分支模型，
+/// 不占用主需求池；子需求 id = `<父票号>-S<n>[-slug]` 继承父前缀。
+pub(crate) const ROLLUP_ID_PREFIX: &str = "ROLLUP";
 
 /// issue 家族类别（共用轻量状态机与 incident.md 文档集）：线上问题 / 测试问题。
 pub(crate) fn is_issue_category(category: &str) -> bool {
@@ -23,28 +33,87 @@ fn issue_id_prefix(category: &str) -> Option<&'static str> {
     }
 }
 
-/// 从 reqId 模板前缀推导问题类别（纯函数）：WMS-INC- → 线上问题，WMS-TST- → 测试问题。
-/// 用户约定：登记问题时未强调测试环境的默认线上问题。
-pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str> {
-    let v = raw.trim();
-    if v.starts_with(&format!("{ISSUE_ID_PREFIX}-")) {
-        Some("线上问题")
-    } else if v.starts_with(&format!("{TEST_ISSUE_ID_PREFIX}-")) {
-        Some("测试问题")
-    } else {
-        None
+/// 同一序号空间的池前缀别名（新旧式互为别名）：新建用新式前缀，存量旧式 id 继续有效，
+/// 序号取全部别名形式的最大值延续，避免口语里的同一序号指两个需求。
+pub(crate) fn pool_lineage_prefixes(prefix: &str) -> Vec<String> {
+    match prefix.trim().trim_end_matches('-') {
+        REQ_ID_PREFIX | LEGACY_REQ_ID_PREFIX => {
+            vec![REQ_ID_PREFIX.to_string(), LEGACY_REQ_ID_PREFIX.to_string()]
+        }
+        ISSUE_ID_PREFIX | "WMS-INC" => {
+            vec![ISSUE_ID_PREFIX.to_string(), "WMS-INC".to_string()]
+        }
+        TEST_ISSUE_ID_PREFIX | "WMS-TST" => {
+            vec![TEST_ISSUE_ID_PREFIX.to_string(), "WMS-TST".to_string()]
+        }
+        GROUP_ID_PREFIX | "WMS-GRP" => {
+            vec![GROUP_ID_PREFIX.to_string(), "WMS-GRP".to_string()]
+        }
+        other => vec![other.to_string()],
     }
 }
 
+/// 需求主池专用的“其他池”前缀：主池模板/具体 id 不允许占用这些池（避免池污染）。
+fn is_reserved_non_main_pool_prefix(prefix: &str) -> bool {
+    matches!(
+        prefix.trim().trim_end_matches('-'),
+        ISSUE_ID_PREFIX
+            | "WMS-INC"
+            | TEST_ISSUE_ID_PREFIX
+            | "WMS-TST"
+            | GROUP_ID_PREFIX
+            | "WMS-GRP"
+            | ROLLUP_ID_PREFIX
+    )
+}
+
+/// 具体 id 是否落在保留池形态上：`<保留前缀>-<数字>...`（如 WMS-TST-005-x、GRP-001-x）。
+fn concrete_id_uses_reserved_pool_prefix(id: &str) -> bool {
+    [
+        ISSUE_ID_PREFIX,
+        "WMS-INC",
+        TEST_ISSUE_ID_PREFIX,
+        "WMS-TST",
+        GROUP_ID_PREFIX,
+        "WMS-GRP",
+        ROLLUP_ID_PREFIX,
+    ]
+    .iter()
+    .any(|p| {
+        Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(p)))
+            .expect("valid regex")
+            .is_match(id.trim())
+    })
+}
+
+/// 从 reqId 模板前缀推导问题类别（纯函数）：INC-/WMS-INC- → 线上问题，TST-/WMS-TST- → 测试问题。
+/// 用户约定：登记问题时未强调测试环境的默认线上问题。
+pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str> {
+    let v = raw.trim();
+    for (prefix, category) in [
+        (ISSUE_ID_PREFIX, "线上问题"),
+        ("WMS-INC", "线上问题"),
+        (TEST_ISSUE_ID_PREFIX, "测试问题"),
+        ("WMS-TST", "测试问题"),
+    ] {
+        if v.starts_with(&format!("{prefix}-")) {
+            return Some(category);
+        }
+    }
+    None
+}
+
 /// 创建时按类别/形态规范化 reqId 模板：
-/// - 需求组（members 非空）强制使用 `WMS-GRP-{seq}` 独立编号池，规则与 issue 家族一致；
-/// - 空模板给类别默认池（需求 `WMS-{seq}`，线上问题 `WMS-INC-{seq}`，测试问题 `WMS-TST-{seq}`）；
-/// - issue 类别强制使用本类别前缀：模板改写前缀保留 suffix；具体 id 校验形态，避免误用需求池；
-/// - 需求模板原样透传。
+/// - 需求组（members 非空）强制使用 `GRP-{seq}` 独立编号池（旧 WMS-GRP 具体 id 继续有效）；
+/// - 整合需求（consolidated=true）强制使用 `ROLLUP-{seq}` 独立编号池；
+/// - 空模板给类别默认池：需求 `REQ-{seq}`、线上问题 `INC-{seq}`、测试问题 `TST-{seq}`；
+/// - issue/组/整合池模板带 {seq} 时改写为对应池前缀保留 suffix；具体 id 校验形态；
+/// - 需求主池模板透传（旧 WMS-{seq} 兼容），但不得占用其他池前缀。
 pub(crate) fn normalize_create_id_template(
     raw: &str,
     category: &str,
     is_group: bool,
+    is_consolidated: bool,
 ) -> ApiResult<String> {
     let v = raw.trim();
     if is_group {
@@ -55,20 +124,60 @@ pub(crate) fn normalize_create_id_template(
             let (_, suffix) = split_seq_template(v)?;
             return Ok(format!("{GROUP_ID_PREFIX}-{{seq}}{suffix}"));
         }
-        let re = Regex::new(&format!("^{GROUP_ID_PREFIX}-(\\d+)(-|$)")).expect("valid regex");
+        let valid = pool_lineage_prefixes(GROUP_ID_PREFIX)
+            .iter()
+            .any(|prefix| {
+                Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
+                    .expect("valid regex")
+                    .is_match(v)
+            });
+        if !valid {
+            return Err(ApiError::bad_request(format!(
+                "需求组 reqId 必须使用 {GROUP_ID_PREFIX}-<序号> 独立编号（如 {GROUP_ID_PREFIX}-001-slug）；组是需求聚合视图，不占用主需求池"
+            )));
+        }
+        return Ok(v.to_string());
+    }
+    if is_consolidated {
+        if is_issue_category(category) {
+            return Err(ApiError::bad_request(
+                "整合需求（consolidated=true）只能使用 category=需求，不能用于线上问题/测试问题",
+            ));
+        }
+        if v.is_empty() {
+            return Ok(format!("{ROLLUP_ID_PREFIX}-{{seq}}"));
+        }
+        if v.contains("{seq}") {
+            let (_, suffix) = split_seq_template(v)?;
+            return Ok(format!("{ROLLUP_ID_PREFIX}-{{seq}}{suffix}"));
+        }
+        let re = Regex::new(&format!("^{}-(\\d+)(-|$)", ROLLUP_ID_PREFIX)).expect("valid regex");
         if !re.is_match(v) {
             return Err(ApiError::bad_request(format!(
-                "需求组 reqId 必须使用 {GROUP_ID_PREFIX}-<序号> 独立编号（如 {GROUP_ID_PREFIX}-001-slug）；组是需求聚合视图，不占用 WMS-<seq> 需求池"
+                "整合需求 reqId 必须使用 {ROLLUP_ID_PREFIX}-<序号> 独立编号（如 {ROLLUP_ID_PREFIX}-001-prod-log-fix-rollup）；整合需求不占用主需求池"
             )));
         }
         return Ok(v.to_string());
     }
     let Some(prefix) = issue_id_prefix(category) else {
-        return Ok(if v.is_empty() {
-            "WMS-{seq}".to_string()
-        } else {
-            v.to_string()
-        });
+        if v.is_empty() {
+            return Ok(format!("{REQ_ID_PREFIX}-{{seq}}"));
+        }
+        if v.contains("{seq}") {
+            let (template_prefix, suffix) = split_seq_template(v)?;
+            if is_reserved_non_main_pool_prefix(&template_prefix) {
+                return Err(ApiError::bad_request(format!(
+                    "需求主池模板不能占用其他编号池前缀 {template_prefix}；整合需求请传 consolidated=true，组/问题请用对应类别"
+                )));
+            }
+            return Ok(v.to_string());
+        }
+        if concrete_id_uses_reserved_pool_prefix(v) {
+            return Err(ApiError::bad_request(
+                "需求主池 reqId 不能占用其他编号池前缀（INC/TST/GRP/ROLLUP 及其旧式 WMS-xxx 别名）；整合需求请传 consolidated=true，组/问题请用对应类别",
+            ));
+        }
+        return Ok(v.to_string());
     };
     if v.is_empty() {
         return Ok(format!("{prefix}-{{seq}}"));
@@ -77,15 +186,19 @@ pub(crate) fn normalize_create_id_template(
         let (_, suffix) = split_seq_template(v)?;
         return Ok(format!("{prefix}-{{seq}}{suffix}"));
     }
-    let re = Regex::new(&format!("^{prefix}-(\\d+)(-|$)")).expect("valid regex");
-    if !re.is_match(v) {
+    let valid = pool_lineage_prefixes(prefix).iter().any(|alias| {
+        Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(alias)))
+            .expect("valid regex")
+            .is_match(v)
+    });
+    if !valid {
         let hint = if category == "线上问题" {
             "；复现/验证代码可直接登记分支开发（仅测试环境），正式生产修复承接请创建 category=需求 的普通需求并绑定本问题"
         } else {
             ""
         };
         return Err(ApiError::bad_request(format!(
-            "{category} reqId 必须使用 {prefix}-<序号> 独立编号（如 {prefix}-003-slug）{hint}"
+            "{category} reqId 必须使用 {prefix}-<序号> 独立编号（如 {prefix}-003-slug，旧 WMS-INC-/WMS-TST- 形态兼容）{hint}"
         )));
     }
     Ok(v.to_string())
@@ -150,7 +263,8 @@ pub(crate) fn compute_next_seq_from_ids(ids: &[String], prefix: &str, floor: Opt
 }
 
 /// Allocate the next sequence number for `prefix` by scanning existing
-/// requirements on disk.
+/// requirements on disk. 谱系感知：同序号空间的新旧别名前缀（REQ↔WMS、INC↔WMS-INC 等）
+/// 一起取最大值，新前缀从存量旧池最大序号之后延续。
 pub(crate) async fn allocate_next_seq(
     state: &AppState,
     prefix: &str,
@@ -158,7 +272,28 @@ pub(crate) async fn allocate_next_seq(
 ) -> ApiResult<u64> {
     let reqs = scan_hermes_requirements(state).await?;
     let ids: Vec<String> = reqs.iter().map(|r| r.id.clone()).collect();
-    Ok(compute_next_seq_from_ids(&ids, prefix, floor))
+    Ok(compute_next_seq_from_ids_lineage(&ids, prefix, floor))
+}
+
+/// 谱系感知版 compute_next_seq_from_ids：prefix 的全部别名形式一起计数。
+pub(crate) fn compute_next_seq_from_ids_lineage(
+    ids: &[String],
+    prefix: &str,
+    floor: Option<u64>,
+) -> u64 {
+    let aliases = pool_lineage_prefixes(prefix);
+    let mut max_seq: u64 = 0;
+    for alias in &aliases {
+        let next = compute_next_seq_from_ids(ids, alias, None).saturating_sub(1);
+        if next > max_seq {
+            max_seq = next;
+        }
+    }
+    let mut next = max_seq + 1;
+    if let Some(f) = floor {
+        next = next.max(f);
+    }
+    next
 }
 
 /// Compute the target directory for a fully-resolved reqId, resolving parent

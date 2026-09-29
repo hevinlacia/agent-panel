@@ -193,17 +193,20 @@ pub(crate) async fn merge_branch_pair(
     target_branch: &str,
     target_label: &str,
 ) -> Value {
-    merge_branch_pair_ex(repo, source_branch, target_branch, target_label, false).await
+    merge_branch_pair_ex(repo, source_branch, target_branch, target_label, false, false).await
 }
 
-/// `source_remote_first=true` 时源分支用远端优先解析（适合生产分支等环境分支作源，
-/// 本地分支常滞后）；默认 false 本地优先（需求/子需求分支以本地开发进度为准）。
+/// `source_remote_first`：源分支用远端优先解析（适合生产分支等环境分支作源，本地分支常滞后）。
+/// `target_remote_first`：目标分支用远端优先解析（适合发布分支等多方共享的集成分支：
+/// 远端才是权威状态，本地同名分支可能在上次隔离 worktree 合并后滞后，本地优先会推出非快进）。
+/// 缺省均为 false 本地优先（需求/子需求分支以本地开发进度为准）。
 pub(crate) async fn merge_branch_pair_ex(
     repo: &BranchRepo,
     source_branch: &str,
     target_branch: &str,
     target_label: &str,
     source_remote_first: bool,
+    target_remote_first: bool,
 ) -> Value {
     let source_branch = source_branch.trim();
     let target_branch = target_branch.trim();
@@ -306,7 +309,11 @@ pub(crate) async fn merge_branch_pair_ex(
             ));
         }
     }
-    let Some(target_ref) = resolve_branch_ref_local_first(&project_path, target_branch).await
+    let Some(target_ref) = (if target_remote_first {
+        resolve_branch_ref(&project_path, target_branch).await
+    } else {
+        resolve_branch_ref_local_first(&project_path, target_branch).await
+    })
     else {
         return failed("failed", format!("无法解析目标分支 {target_branch}"));
     };

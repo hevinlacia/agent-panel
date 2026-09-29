@@ -17,20 +17,20 @@ async fn create_requirement_group_rejects_issue_category_and_legacy_pool_id() {
         .expect_err("group with issue category must fail");
     assert!(err.message.contains("category=需求"), "{:?}", err);
 
-    // 组必须使用 WMS-GRP 池：legacy 需求池形态被拒
+    // 组必须使用 GRP 池：legacy 需求池形态被拒
     let mut legacy = group_test_form("WMS-126-legacy-combo", "需求池 id 的组");
     legacy.members = Some(vec![group_test_member_input("G-M3")]);
     let err = create_requirement(&state, legacy)
         .await
         .expect_err("legacy pool group id must fail");
-    assert!(err.message.contains("WMS-GRP"), "{:?}", err);
+    assert!(err.message.contains("GRP-"), "{:?}", err);
 
-    // 默认池 + {seq} 模板：组创建成功并自动分配 WMS-GRP-001
+    // 默认池 + {seq} 模板：组创建成功并自动分配 GRP-001（新式前缀）
     let mut ok = group_test_form("", "默认池组");
     ok.members = Some(vec![group_test_member_input("G-M3")]);
     ok.req_id = "WMS-GRP-{seq}-combo".to_string();
     let res = create_requirement(&state, ok).await.expect("create group");
-    assert_eq!(res["reqId"], json!("WMS-GRP-001-combo"));
+    assert_eq!(res["reqId"], json!("GRP-001-combo"));
 }
 
 /// 并行创建不得撞号（回归）：两个 `{seq}` 模板并发创建（slug 不同）必须拿到连续且
@@ -68,6 +68,7 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
         issues: None,
         members: None,
         release_policy: None,
+        consolidated: None,
         summary: None,
         background: None,
         notes: None,
@@ -116,6 +117,7 @@ fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         issues: None,
         members: None,
         release_policy: None,
+        consolidated: None,
         summary: None,
         background: None,
         notes: None,
@@ -271,7 +273,7 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
     assert!(err.message.contains("invalid releasePolicy"), "{:?}", err);
 
     // releasePolicy 未随 members 一起传。
-    let mut lone_policy = group_test_form("WMS-GRP-006", "孤立策略");
+    let mut lone_policy = group_test_form("REQ-006", "孤立策略");
     lone_policy.release_policy = Some("together".to_string());
     let err = create_requirement(&state, lone_policy)
         .await

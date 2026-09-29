@@ -13,8 +13,8 @@ import {
   Clock3,
   Copy,
   FileCode2,
+  FlaskConical,
   Gauge,
-  GitBranch,
   GitMerge,
   KeyRound,
   LayoutDashboard,
@@ -30,7 +30,6 @@ import {
   Server,
   Settings,
   Siren,
-  Sparkles,
   Unlink2,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
@@ -48,11 +47,6 @@ import type {
   ExperienceSummaryDispatchPayload,
   ExperienceSummaryJob,
   ExperienceSummaryJobsPayload,
-  GitAiCompanyStatus,
-  GitAiFixResponse,
-  GitAiHealthPayload,
-  GitAiSuspectRecord,
-  GitAiSuspectsPayload,
   KnowledgeDraft,
   KnowledgeItem,
   KnowledgeKind,
@@ -93,13 +87,13 @@ import { ErrorBoundary } from "./components/error-boundary"
 import { PROJECT_FILTER_KEY, readProjectFilter, readSidebarCollapsed, persistSidebarCollapsed } from "./lib/preferences"
 import { HarnessSwitcher } from "./features/harness/harness-switcher"
 import { RequirementsData } from "./pages/projects"
-import { GitAiPage } from "./pages/git-ai"
 import { TestdataPage } from "./pages/testdata"
 import { DashboardPage } from "./pages/dashboard"
 import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
 import { ReleasePlanPage } from "./pages/release-plan"
 import { OnesMissingPage } from "./pages/ones-missing"
+import { ManhourPage } from "./pages/manhour"
 import { IssuesPage } from "./pages/issues"
 import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "./lib/diff"
 import { SessionPage, SessionsPage } from "./pages/sessions"
@@ -134,14 +128,14 @@ const navItems = [
   { href: "/projects", label: "需求看板", short: "PR", icon: <ListChecks size={16} /> },
   { href: "/release-plan", label: "发布计划", short: "RP", icon: <Rocket size={16} /> },
   { href: "/ones-missing", label: "ONES 缺失", short: "ON", icon: <Unlink2 size={16} /> },
+  { href: "/manhour", label: "工时录入", short: "MH", icon: <Clock3 size={16} /> },
   { href: "/issues", label: "线上问题", short: "IS", icon: <Siren size={16} /> },
   { href: "/business-knowledge", label: "业务知识", short: "BK", icon: <Library size={16} /> },
   { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
   { href: "/schedulers", label: "Schedulers", short: "SC", icon: <Activity size={16} /> },
   { href: "/auth-sites", label: "登录态", short: "AU", icon: <KeyRound size={16} /> },
-  { href: "/git-ai", label: "Git AI", short: "AI", icon: <GitBranch size={16} /> },
-  { href: "/testdata", label: "造数", short: "TD", icon: <Sparkles size={16} /> },
+  { href: "/testdata", label: "接口测试", short: "IT", icon: <FlaskConical size={16} /> },
   { href: "/settings", label: "Settings", short: "ST", icon: <Settings size={16} /> },
 ]
 
@@ -150,12 +144,12 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc" || path === "/requirement-gate"
   if (href === "/release-plan") return path === "/release-plan"
   if (href === "/ones-missing") return path === "/ones-missing"
+  if (href === "/manhour") return path === "/manhour"
   if (href === "/issues") return path === "/issues"
   if (href === "/business-knowledge") return path === "/business-knowledge"
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/auth-sites") return path === "/auth-sites"
-  if (href === "/git-ai") return path === "/git-ai"
   if (href === "/testdata") return path === "/testdata"
   return path === href
 }
@@ -165,6 +159,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
   if (path === "/release-plan") return { eyebrow: "Release Plan", title: "发布计划" }
   if (path === "/ones-missing") return { eyebrow: "ONES Missing", title: "ONES 缺失统计" }
+  if (path === "/manhour") return { eyebrow: "Manhour", title: "工时录入" }
   if (path === "/issues") return { eyebrow: "Online Issues", title: "线上问题" }
   if (path === "/business-knowledge") return { eyebrow: "Business Knowledge", title: "业务知识" }
   if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
@@ -177,7 +172,6 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
-  if (path === "/git-ai") return { eyebrow: "Git AI", title: "漏标检查" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
   if (path === "/testdata") return { eyebrow: "Test Data", title: "测试造数" }
   return { eyebrow: "Agent Panel", title: "React + Rust" }
@@ -214,6 +208,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
     : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
     : path === "/ones-missing" ? <OnesMissingPage globalProject={project} />
+    : path === "/manhour" ? <ManhourPage globalProject={project} />
     : path === "/issues" ? <IssuesPage globalProject={project} />
     : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
     : path === "/experiences" ? <KnowledgePage kind="experience" />
@@ -226,7 +221,6 @@ export function App({ apiPath }: AppProps) {
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/auth-sites" ? <AuthSitesPage />
-    : path === "/git-ai" ? <GitAiPage />
     : path === "/testdata" ? <TestdataPage />
     : path === "/settings" ? <SettingsPage />
     : path === "/reports" || path === "/report" ? <RemovedPage title="Experience Reports 已移除" detail="OpenCode 经验报告、confirm/reject 和 auto-summary 链路不再保留。" />

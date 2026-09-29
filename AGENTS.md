@@ -11,10 +11,10 @@ Current architecture:
 - `src/http.rs` — Shared HTTP infrastructure: `ApiError`, `ApiResult`, `FormOrJson`, health/notification stubs, and contextual API error help.
 - `src/util.rs` — Cross-module utility helpers for time, string cleanup, status/category normalization, JSON/text atomic writes, path/list conversion, ONES parsing, and shell quoting.
 - `src/markdown.rs` — Markdown/frontmatter parsing and HTML rendering helpers.
-- `src/capability.rs` — Capability/testdata pack read-only APIs and runner preview/dispatch logic.
+- `src/capability.rs` — Capability/testdata pack read-only APIs (造数脚本能力索引/详情/dry-run 与执行 dispatch)。
+- `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取、造数/测试标记启发式），`GET /api/apitest/apis|api` 目录与详情、`POST /api/apitest/trigger` 直接触发（login.mjs 会话注入 + 网关域名路由 + SEA UAT 双域名选择，token 不回显不落盘）。
 - `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
-- `src/git_ai.rs` — Git AI health checks, suspect record refresh, note re-push, and fix-note agent dispatch.
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器）。
 - `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save.
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
@@ -26,15 +26,18 @@ Current architecture:
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
 - `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
 - `src/browser_auth.rs` — Chrome 登录态复用（Browser Auth）：CDP cookie 读取、站点白名单、代发请求、审计日志。
-- `src/ones.rs` — ONES 任务候选与推荐：browser_auth 代理聚合消息通知+工时报表信号源，`GET /api/ones/tasks?reqId=` 按需求标题匹配度推荐可关联任务；候选带进程内存缓存（默认命中，refresh=true 才回源 ONES）。
+- `src/ones.rs` — ONES 任务候选与推荐：browser_auth 代理聚合消息通知+工时报表信号源，`GET /api/ones/tasks?reqId=` 按需求标题匹配度推荐可关联任务；候选带进程内存缓存（默认命中，refresh=true 才回源 ONES）；候选携带工时报表已登记工时（actualHoursRaw）。
+- `src/ones_manhour.rs` — ONES 工时联动：需求工时档案 `ones-manhour.json`（人工预估/agent 实际/录入历史）读写、`GET /api/ones/manhour` 工时四联汇总（人工/自动/ONES 已登记/agent 实际+剩余）、`POST /api/ones/manhour/save`、`POST /api/ones/manhour/log`（雏形为准备模式：生成登记清单+任务链接；ONES 写入接口待抓包验证，接缝函数 push_manhour_to_ones）。
 - `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
 - `web/src/App.tsx` — React SPA router and remaining legacy page modules; still large, but first low-coupling helpers, DTOs, domain constants, shared UI chrome, requirement badges, and Sessions pages have been extracted.
 - `web/src/pages/sessions.tsx` — Sessions list/detail pages and read-only session log viewer.
 - `web/src/pages/auth-sites.tsx` — Chrome 登录态复用页：CDP 状态、站点登录状态、白名单请求、Auth 配置编辑。
 - `web/src/pages/release-plan.tsx` — 发布计划页：按需求 `plan-release` 登记日期分组（当天/已过期/未来/未登记），发版当天快速查看。
+- `web/src/pages/manhour.tsx` — 工时录入页：按状态/创建时间/剩余工时（预估>已录入）/已绑 ONES 筛选需求，勾选填明细后一键生成登记清单（准备模式）。
 - `web/src/components/ui.tsx` — Shared page chrome, feedback cards, panel headers, KPI card, and motion variants.
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
 - `web/src/features/requirements/annotation-panel.tsx` — Diff page right-hand inspector: file summary, key variables, mermaid flow, hunk notes, JSON hand-editing.
+- `web/src/features/requirements/ones-manhour-card.tsx` — 需求详情页 ONES 工时卡片：工时四联展示/编辑（人工预估、agent 实际可编辑）+ 快速登记（准备模式）+ 登记历史。
 - `web/src/features/requirements/mermaid-flow.tsx` — Lazy mermaid renderer for annotation flow diagrams; degrades to source on syntax errors.
 - `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
@@ -43,6 +46,7 @@ Current architecture:
 - `web/src/lib/diff.ts` — Unified diff parsing/stat helpers.
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
+- `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试标记 + 关键字筛选 + 详情触发，test/UAT 切换、入参临时修改不写回模板）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
 
@@ -56,7 +60,7 @@ Removed architecture:
 
 1. Never read or print secret/key files: `.env`, `.env.*`, `credentials.json`, `secrets.json`, `*.pem`, `*.key`, `id_rsa*`, `id_ed25519*`.
 2. Do not shell-eval user input. When commands are needed, use fixed argv and validate IDs/paths first.
-3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, `code-annotations.json`, branch-round scope files (`branches-round-*.json`), and generated context files.
+3. Requirement writes must stay inside the resolved requirement directory and currently target only `state.json`, `meta.md` ONES frontmatter, `effort-estimate.json`, `ones-manhour.json`（工时档案：manualHours/agentHours/logHistory）, `code-annotations.json`, branch-round scope files (`branches-round-*.json`), and generated context files.
 4. Pi session ids are UUIDs. Do not reintroduce `ses_` OpenCode id handling.
 5. Do not reintroduce PTY/terminal functionality unless the user explicitly asks for it.
 6. No git commit/push/branch changes without explicit user request.

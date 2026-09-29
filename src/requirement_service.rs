@@ -160,6 +160,10 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) members: Option<Vec<GroupMemberInput>>,
     /// 组发布策略：independent（默认）/ together（整体发布）。
     pub(crate) release_policy: Option<String>,
+    /// 整合需求标记：true = 使用 ROLLUP-{seq} 独立编号池并在 meta.md 写 req-kind: rollup
+    /// （父需求 + 子需求 + 发布分支模型）；仅 category=需求 时允许，与 members 互斥。
+    #[serde(default)]
+    pub(crate) consolidated: Option<bool>,
     #[serde(default)]
     pub(crate) summary: Option<String>,
     #[serde(default)]

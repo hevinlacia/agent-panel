@@ -1051,11 +1051,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-annotation-flow svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
 .react-annotation-flow-fallback { margin: 0; padding: 10px; border: 1px dashed rgba(148,163,184,.3); border-radius: 12px; color: var(--react-muted); font: .68rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
 .react-annotation-flow-loading { margin: 0; font: .7rem var(--react-mono); }
-.react-gitai-card { grid-template-columns: minmax(0, 1fr) auto; }
-.react-gitai-fix-result { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
 .react-fix-ok { color: #86efac !important; border-color: rgba(34,197,94,.36) !important; background: rgba(34,197,94,.12) !important; }
-.react-gitai-agent-info { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid rgba(245,158,11,.34); border-radius: 14px; background: rgba(245,158,11,.1); color: #fcd34d; font: .8rem/1.5 var(--react-mono); }
-.react-gitai-agent-info code { color: var(--react-cyan); word-break: break-all; }
 .react-fix-note-btn { border: 1px solid rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; color: #fcd34d !important; border-radius: 999px !important; padding: 7px 12px !important; font: 800 .74rem var(--react-mono) !important; cursor: pointer; }
 .react-fix-note-btn:disabled { opacity: .5; cursor: not-allowed; }
 .react-toggle-btn.active { border-color: rgba(34,197,94,.5) !important; background: rgba(34,197,94,.16) !important; color: #86efac !important; }
@@ -1119,3 +1115,35 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
   background: rgba(244, 63, 94, 0.16);
   color: #fda4af;
 }
+
+/* ---- ONES 工时卡片 + 工时录入页（/manhour） ---- */
+.react-manhour-input { width: 84px; padding: 4px 8px; border: 1px solid var(--react-border); border-radius: 8px; background: rgba(0,0,0,.22); color: #fff; font: .78rem var(--react-mono); }
+.react-manhour-logged { color: #67e8f9; }
+.react-manhour-agent-note { margin-top: 8px; }
+.react-manhour-agent-note input { max-width: 460px; }
+.react-manhour-log-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.react-manhour-log-row input { padding: 4px 8px; border: 1px solid var(--react-border); border-radius: 8px; background: rgba(0,0,0,.22); color: #fff; font: .78rem var(--react-mono); }
+.react-manhour-log-row input[type="number"] { width: 76px; }
+.react-manhour-log-row input[type="date"] { width: 130px; }
+.react-manhour-log-row-plain { margin-top: 0; }
+.react-manhour-history { margin-top: 10px; }
+.react-manhour-history summary { cursor: pointer; }
+.react-manhour-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.react-manhour-filters label { display: inline-flex; align-items: center; gap: 6px; color: var(--react-muted); font: .78rem var(--react-mono); }
+.react-manhour-filters input, .react-manhour-filters select { padding: 5px 8px; border: 1px solid var(--react-border); border-radius: 8px; background: rgba(0,0,0,.22); color: #fff; font: .78rem var(--react-mono); }
+.react-manhour-check { cursor: pointer; }
+.react-manhour-status-filter { margin-top: 8px; }
+.react-manhour-status-filter summary { cursor: pointer; }
+.react-manhour-table { width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 0; }
+.react-manhour-table th { padding: 8px 10px; background: rgba(15,20,28,.96); color: var(--react-muted); font: 800 .68rem var(--react-mono); text-align: left; white-space: nowrap; }
+.react-manhour-table td { padding: 8px 10px; border-top: 1px solid rgba(148,163,184,.09); color: var(--react-muted); font: .78rem var(--react-mono); vertical-align: middle; }
+.react-manhour-row-on td { background: rgba(34,211,238,.06); }
+.react-manhour-table a { color: #67e8f9; text-decoration: none; }
+.react-manhour-table a:hover { text-decoration: underline; }
+
+/* ---- 接口测试页（/testdata）：接口目录 + 触发 ---- */
+.react-apitest-detail { margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(148,163,184,.18); }
+.react-apitest-url { word-break: break-all; color: #67e8f9; }
+.react-apitest-body { width: 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--react-border); border-radius: 12px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .78rem/1.55 var(--react-mono); resize: vertical; }
+.react-apitest-json { max-height: 420px; overflow: auto; margin: 10px 0 0; padding: 12px; border: 1px solid rgba(148,163,184,.14); border-radius: 12px; background: rgba(0,0,0,.28); color: #cbd5f5; font: .74rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
+.react-apitest-result { margin-top: 14px; }

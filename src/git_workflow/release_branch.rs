@@ -152,12 +152,73 @@ pub(crate) async fn create_release_branch_repo(
     })
 }
 
-/// 发布分支相对于生产分支的差异统计（复用生产 MR 的三点 diff 逻辑）。
+/// 发布分支相对于生产分支的差异统计：与生产 MR 的三点 diff 同口径，但发布分支是
+/// 远端权威的共享集成分支，源解析远端优先（本地同名分支可能在隔离 worktree 合并后滞后，
+/// 本地优先会把未拉取的合入误判为无差异）。
 pub(crate) async fn release_branch_diff_stat(
     project_path: &Path,
     base_branch: &str,
     branch_name: &str,
 ) -> Option<(i64, i64, i64)> {
-    let stat = compute_prod_diff_stat(project_path, base_branch, branch_name).await?;
-    Some((stat.files, stat.additions, stat.deletions))
+    let _ = git(
+        project_path,
+        &["fetch", "origin", base_branch],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let _ = git(
+        project_path,
+        &["fetch", "origin", branch_name],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let base_ref = format!("origin/{base_branch}");
+    let remote = format!("origin/{branch_name}");
+    let source_ref =
+        if git(
+            project_path,
+            &["rev-parse", "--verify", &format!("{remote}^{{commit}}")],
+            30_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await
+        .ok
+        {
+            remote
+        } else {
+            branch_name.to_string()
+        };
+    let range = format!("{base_ref}...{source_ref}");
+    let numstat = git(
+        project_path,
+        &["diff", "--numstat", "--find-renames", &range, "--"],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !numstat.ok {
+        return None;
+    }
+    let mut files = 0i64;
+    let mut additions = 0i64;
+    let mut deletions = 0i64;
+    for line in numstat.stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        files += 1;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            if let Ok(a) = parts[0].parse::<i64>() {
+                additions += a;
+            }
+            if let Ok(d) = parts[1].parse::<i64>() {
+                deletions += d;
+            }
+        }
+    }
+    Some((files, additions, deletions))
 }

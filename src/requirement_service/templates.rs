@@ -18,6 +18,7 @@ pub(crate) fn requirement_create_files(
     background: Option<&str>,
     notes: Option<&str>,
     parent_req_id: Option<&str>,
+    req_kind: Option<&str>,
 ) -> Vec<(&'static str, String)> {
     let meta = build_meta_doc(
         req_id,
@@ -34,6 +35,7 @@ pub(crate) fn requirement_create_files(
         issues,
         summary,
         parent_req_id,
+        req_kind,
     );
     let mut files: Vec<(&'static str, String)> = vec![
         ("meta.md", meta),
@@ -77,6 +79,7 @@ pub(crate) fn build_meta_doc(
     issues: &[String],
     summary: &str,
     parent_req_id: Option<&str>,
+    req_kind: Option<&str>,
 ) -> String {
     let mut fm = vec![
         format!("req-id: {}", yaml_quote(req_id)),
@@ -87,6 +90,10 @@ pub(crate) fn build_meta_doc(
     if let Some(parent) = parent_req_id {
         // 子需求：frontmatter 记录父需求（meta.md 是父子关系的 source of truth）。
         fm.push(format!("parent-req-id: {}", yaml_quote(parent)));
+    }
+    if let Some(kind) = req_kind {
+        // 实体类型标记（如整合需求 rollup）：ID 前缀之外的结构化类型字段。
+        fm.push(format!("req-kind: {}", yaml_quote(kind)));
     }
     if projects.len() > 1 {
         fm.push(format!("projects: {}", yaml_quote(&projects.join(", "))));
