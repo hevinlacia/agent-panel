@@ -26,7 +26,6 @@ fn review_snapshot_drift_detects_changed_target_commit() {
     );
 }
 
-
 #[test]
 fn review_snapshot_drift_ignores_same_or_missing_commit() {
     let repo = json!({
@@ -50,7 +49,6 @@ fn review_snapshot_drift_ignores_same_or_missing_commit() {
     .is_none());
 }
 
-
 #[test]
 fn incremental_review_drift_parses_coverage_range() {
     let repo = json!({
@@ -72,7 +70,6 @@ fn incremental_review_drift_parses_coverage_range() {
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     );
 }
-
 
 #[test]
 fn incremental_repo_cover_requires_linear_matching_range() {
@@ -111,7 +108,6 @@ fn incremental_repo_cover_requires_linear_matching_range() {
     assert!(!incremental_repo_covers_drift(&wrong_head, &drift));
 }
 
-
 #[tokio::test]
 async fn diff_patch_export_writes_multiline_companion() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -147,7 +143,6 @@ async fn diff_patch_export_writes_multiline_companion() {
     );
 }
 
-
 #[tokio::test]
 async fn review_checklist_put_validates_and_renders_review_md() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -177,7 +172,11 @@ async fn review_checklist_put_validates_and_renders_review_md() {
     )
     .await;
     let err = bad.expect_err("invalid conclusion must be rejected");
-    assert!(err.message.contains("只允许 pass / fail / na"), "{}", err.message);
+    assert!(
+        err.message.contains("只允许 pass / fail / na"),
+        "{}",
+        err.message
+    );
     assert!(err.message.contains("items"), "错误信息应包含 schema 提示");
 
     // 2) 合法保存 → 写 review-checklist.json + review.md 受管小节
@@ -194,8 +193,12 @@ async fn review_checklist_put_validates_and_renders_review_md() {
     .await
     .expect("valid save");
     assert_eq!(ok.0["ok"], json!(true));
-    let saved = std::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).expect("checklist file");
-    assert!(saved.contains("\"conclusion\": \"pass\""), "conclusion 归一化为小写: {saved}");
+    let saved =
+        std::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).expect("checklist file");
+    assert!(
+        saved.contains("\"conclusion\": \"pass\""),
+        "conclusion 归一化为小写: {saved}"
+    );
     let review_md = std::fs::read_to_string(req_dir.join("review.md")).expect("review.md");
     assert!(review_md.contains("<!-- panel:review-checklist:start -->"));
     assert!(review_md.contains("✅ pass"));
@@ -213,7 +216,9 @@ async fn review_checklist_put_validates_and_renders_review_md() {
     .expect("resave");
     let review_md = std::fs::read_to_string(req_dir.join("review.md")).expect("review.md v2");
     assert_eq!(
-        review_md.matches("<!-- panel:review-checklist:start -->").count(),
+        review_md
+            .matches("<!-- panel:review-checklist:start -->")
+            .count(),
         1,
         "受管块只保留一份"
     );
@@ -222,7 +227,6 @@ async fn review_checklist_put_validates_and_renders_review_md() {
     let saved = std::fs::read_to_string(req_dir.join(REVIEW_CHECKLIST_FILE)).expect("checklist v2");
     assert!(saved.contains("\"id\": \"C1\""));
 }
-
 
 #[tokio::test]
 async fn review_gate_requires_completed_checklist() {
@@ -299,7 +303,11 @@ async fn review_gate_requires_completed_checklist() {
     )
     .expect("write checklist v2");
     let decision = review_gate_decision(&req).await.expect("decision");
-    assert_eq!(decision.status, "annotations-required", "{}", decision.reason);
+    assert_eq!(
+        decision.status, "annotations-required",
+        "{}",
+        decision.reason
+    );
     assert!(!decision.allows_testing);
 
     // 5) 落盘代码问题备注（无材料快照场景：只要求 files 非空）→ passed
@@ -435,7 +443,14 @@ async fn review_gate_passes_with_p1_warnings() {
     let decision = review_gate_decision(&req).await.expect("decision");
     assert_eq!(decision.status, "passed", "{}", decision.reason);
     assert!(decision.allows_testing);
-    assert!(decision.warnings.iter().any(|w| w.contains("P1") && w.contains("待修复")), "{:?}", decision.warnings);
+    assert!(
+        decision
+            .warnings
+            .iter()
+            .any(|w| w.contains("P1") && w.contains("待修复")),
+        "{:?}",
+        decision.warnings
+    );
 }
 
 #[tokio::test]
@@ -530,4 +545,3 @@ async fn prepare_review_materials_rejects_unknown_mode() {
     // auto 显式传值等价缺省，不报错（空 scope 也不应该在 mode 校验层失败）
     let _ = prepare_review_materials(&req_dir, "T-902", &scope, Some("auto"), "自测中").await;
 }
-

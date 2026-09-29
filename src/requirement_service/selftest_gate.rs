@@ -23,14 +23,26 @@ enum SelftestResult {
 
 /// 结果单元格为这些值（trim + 小写后整格匹配）时视为缺少测试结果。
 const MISSING_RESULT_CELLS: [&str; 15] = [
-    "", "-", "—", "--", "/", "无", "空", "待测试", "待测", "未测试", "未测", "待执行", "待补充",
-    "待定", "未执行",
+    "",
+    "-",
+    "—",
+    "--",
+    "/",
+    "无",
+    "空",
+    "待测试",
+    "待测",
+    "未测试",
+    "未测",
+    "待执行",
+    "待补充",
+    "待定",
+    "未执行",
 ];
 
 /// 原因/说明单元格为这些值时视为没有实际内容。
-const PLACEHOLDER_CELLS: [&str; 10] = [
-    "", "-", "—", "--", "/", "无", "空", "待补充", "todo", "tbd",
-];
+const PLACEHOLDER_CELLS: [&str; 10] =
+    ["", "-", "—", "--", "/", "无", "空", "待补充", "todo", "tbd"];
 
 /// 自测清单校验结果：problems 非空 = 门禁不放行；warnings 非空 = 放行但需警示（结果未知）。
 #[derive(Debug, Default)]
@@ -213,18 +225,42 @@ fn category_na_with_reason(body: &str) -> Option<bool> {
 /// 「无风险」结论文行是否有依据（去掉关键词与标点后仍有实质内容）。
 fn line_concludes_no_risk(line: &str) -> bool {
     let lower = line.to_lowercase();
-    if !(lower.contains("无风险") || lower.contains("没有风险") || lower.contains("无并发风险") || lower.contains("无边界风险")) {
+    if !(lower.contains("无风险")
+        || lower.contains("没有风险")
+        || lower.contains("无并发风险")
+        || lower.contains("无边界风险"))
+    {
         return false;
     }
     let mut v = line.trim().to_string();
-    for m in ["无风险", "没有风险", "无并发风险", "无边界风险", "风险场景", "不适用"] {
+    for m in [
+        "无风险",
+        "没有风险",
+        "无并发风险",
+        "无边界风险",
+        "风险场景",
+        "不适用",
+    ] {
         v = v.replace(m, "");
     }
     let v = v.trim_matches(|c: char| {
         matches!(
             c,
-            ':' | '：' | ',' | '，' | ';' | '；' | '、' | '(' | ')' | '（' | '）' | '-' | '—' | ' '
-                | '.' | '。'
+            ':' | '：'
+                | ','
+                | '，'
+                | ';'
+                | '；'
+                | '、'
+                | '('
+                | ')'
+                | '（'
+                | '）'
+                | '-'
+                | '—'
+                | ' '
+                | '.'
+                | '。'
         )
     });
     v.chars().count() >= 4
@@ -235,7 +271,8 @@ fn line_concludes_no_risk(line: &str) -> bool {
 pub(crate) fn validate_selftest_checklist(body: &str) -> SelftestChecklistEval {
     let mut eval = SelftestChecklistEval::default();
     let Some(section) = extract_selftest_section(body) else {
-        eval.problems.push(format!("未找到「## {SELFTEST_SECTION}」小节"));
+        eval.problems
+            .push(format!("未找到「## {SELFTEST_SECTION}」小节"));
         return eval;
     };
     let (blocks, orphan) = split_category_blocks(&section);
@@ -479,7 +516,17 @@ fn classify_result_cell(cell: &str) -> SelftestResult {
         return SelftestResult::Missing;
     }
     // 先判失败再判无法测试：「无法通过」属于失败而非无法测试。
-    let fail_markers = ["未通过", "不通过", "无法通过", "失败", "fail", "❌", "✖", "报错", "bug"];
+    let fail_markers = [
+        "未通过",
+        "不通过",
+        "无法通过",
+        "失败",
+        "fail",
+        "❌",
+        "✖",
+        "报错",
+        "bug",
+    ];
     if fail_markers.iter().any(|m| v.contains(m)) {
         return SelftestResult::Fail;
     }
@@ -507,9 +554,30 @@ fn classify_result_cell(cell: &str) -> SelftestResult {
 fn has_inline_reason(result_cell: &str) -> bool {
     let mut v = result_cell.trim().to_lowercase();
     for m in [
-        "未通过", "不通过", "无法通过", "失败", "fail", "❌", "✖", "报错", "bug", "无法测试",
-        "无法验证", "没法测试", "不能测试", "阻塞", "blocked", "跳过", "skip", "通过", "成功",
-        "pass", "ok", "✅", "✔", "⬜",
+        "未通过",
+        "不通过",
+        "无法通过",
+        "失败",
+        "fail",
+        "❌",
+        "✖",
+        "报错",
+        "bug",
+        "无法测试",
+        "无法验证",
+        "没法测试",
+        "不能测试",
+        "阻塞",
+        "blocked",
+        "跳过",
+        "skip",
+        "通过",
+        "成功",
+        "pass",
+        "ok",
+        "✅",
+        "✔",
+        "⬜",
     ] {
         v = v.replace(m, "");
     }

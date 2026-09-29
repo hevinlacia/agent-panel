@@ -12,7 +12,6 @@ fn doc_has_filled_items_rejects_template_only_content() {
     ));
 }
 
-
 #[test]
 fn build_meta_doc_writes_source_line() {
     let meta = build_meta_doc(
@@ -50,7 +49,6 @@ fn build_meta_doc_writes_source_line() {
     );
     assert!(default_meta.contains("source: 产品推动"));
 }
-
 
 #[test]
 fn build_meta_doc_writes_issues_frontmatter_when_bound() {
@@ -90,7 +88,6 @@ fn build_meta_doc_writes_issues_frontmatter_when_bound() {
     assert!(!without.contains("issues:"));
 }
 
-
 #[test]
 fn online_issue_doc_type_resolves_to_troubleshooting_md() {
     assert_eq!(
@@ -110,7 +107,6 @@ fn online_issue_doc_type_resolves_to_troubleshooting_md() {
     assert!(tpl.contains("## 根因"));
 }
 
-
 #[test]
 fn incident_and_root_cause_doc_types_resolve_with_verifiable_evidence_templates() {
     assert_eq!(requirement_doc_file("incident").unwrap(), "incident.md");
@@ -129,7 +125,6 @@ fn incident_and_root_cause_doc_types_resolve_with_verifiable_evidence_templates(
     assert!(root_cause_tpl.contains("可全局搜索的关键字片段"));
     assert!(root_cause_tpl.contains("## 修复路径决策"));
 }
-
 
 #[test]
 fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
@@ -174,7 +169,6 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-
 #[test]
 fn agent_context_tokens_issue_category_uses_issue_doc_set() {
     // token→file 映射必须覆盖 issue 专属 token，否则上下文组装会静默丢弃。
@@ -202,7 +196,6 @@ fn agent_context_tokens_issue_category_uses_issue_doc_set() {
     assert!(normal.contains(&"req.technicalPlan"));
     assert!(!normal.contains(&"req.incident"));
 }
-
 
 #[test]
 fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
@@ -279,7 +272,6 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
     assert!(!normal_names.contains(&"incident.md"));
 }
 
-
 #[test]
 fn render_markdown_handles_heading_list_table_code() {
     let md = "# 标题\n\n> 引用行\n\n## 小节\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n- 项一\n- 项二\n\n- [ ] 待办\n- [x] 已完成\n\n```rust\nlet x = 1;\n```\n\n**加粗** 和 `code`。";
@@ -298,7 +290,6 @@ fn render_markdown_handles_heading_list_table_code() {
     assert!(html.contains("<code>code</code>"));
 }
 
-
 #[test]
 fn render_markdown_escapes_html_and_keeps_dashes() {
     let md = "<script>alert(1)</script> 与 `a < b`\n\n---\n";
@@ -308,7 +299,6 @@ fn render_markdown_escapes_html_and_keeps_dashes() {
     assert!(html.contains("<code>a &lt; b</code>"));
     assert!(html.contains("<hr/>"));
 }
-
 
 #[test]
 fn render_branch_scope_produces_repo_table() {
@@ -320,7 +310,6 @@ fn render_branch_scope_produces_repo_table() {
     let not_json = render_branch_scope_html("not json");
     assert!(not_json.is_none());
 }
-
 
 #[test]
 fn context_page_contains_sections_and_raw_link() {
@@ -398,7 +387,6 @@ fn context_page_contains_sections_and_raw_link() {
 
 // ---- git_workflow: 后端 UAT 分支统一命名 uat（WMS 2026-08 起） ----
 
-
 #[test]
 fn truncate_chars_tail_keeps_latest_content() {
     let (out, truncated) = truncate_chars_tail("abcdef", 4);
@@ -409,7 +397,6 @@ fn truncate_chars_tail_keeps_latest_content() {
     assert!(!truncated);
     assert_eq!(out, "abc");
 }
-
 
 #[test]
 fn resolve_doc_part_rel_path_rejects_traversal_and_non_docs() {
@@ -423,7 +410,6 @@ fn resolve_doc_part_rel_path_rejects_traversal_and_non_docs() {
     assert!(resolve_doc_part_rel_path("docs/notes/001-x.txt").is_err());
     assert!(resolve_doc_part_rel_path("docs/notes/.md").is_err());
 }
-
 
 /// 分册端到端：创建 → 索引行追加 → 序号递增 → 分册读取 → 清单 → validate 阈值告警。
 #[tokio::test]
@@ -558,3 +544,85 @@ async fn doc_part_create_list_and_index_end_to_end() {
     }));
 }
 
+#[test]
+fn section_default_doc_type_maps_issue_family_without_impact_fallback() {
+    // issue 家族 section 必须落到独立文档，不得回退 impact.md（INC-127 实测静默写错文件）
+    assert_eq!(
+        requirement_section_default_doc_type("root-cause"),
+        Some("root-cause")
+    );
+    assert_eq!(
+        requirement_section_default_doc_type("rootCause"),
+        Some("root-cause")
+    );
+    assert_eq!(
+        requirement_section_default_doc_type("incident"),
+        Some("incident")
+    );
+    assert_eq!(
+        requirement_section_default_doc_type("issue"),
+        Some("incident")
+    );
+    // 既有映射保持不变
+    assert_eq!(
+        requirement_section_default_doc_type("impact"),
+        Some("impact")
+    );
+    assert_eq!(
+        requirement_section_default_doc_type("boxCodeIssue"),
+        Some("impact")
+    );
+    assert_eq!(requirement_section_default_doc_type("risk"), Some("impact"));
+    assert_eq!(requirement_section_default_doc_type("test"), Some("test"));
+    // 未知 section 返回 None（由 form_to_edit 转为显式 400）
+    assert_eq!(requirement_section_default_doc_type("does-not-exist"), None);
+}
+
+#[test]
+fn section_form_to_edit_rejects_unknown_section_with_guidance() {
+    let err = requirement_section_form_to_edit(
+        "does-not-exist".to_string(),
+        RequirementSectionForm {
+            req_id: "WMS-000-demo".into(),
+            content: "x".into(),
+            token: None,
+            doc_type: None,
+            heading: None,
+            dry_run: None,
+        },
+    )
+    .err()
+    .expect("unknown section must error");
+    assert!(format!("{err:?}").contains("unknown requirement section"));
+    assert!(format!("{err:?}").contains("root-cause"));
+
+    // token 显式指定时优先生效
+    let edit = requirement_section_form_to_edit(
+        "whatever".to_string(),
+        RequirementSectionForm {
+            req_id: "WMS-000-demo".into(),
+            content: "x".into(),
+            token: Some("req.rootCause".into()),
+            doc_type: None,
+            heading: None,
+            dry_run: None,
+        },
+    )
+    .expect("token path must resolve");
+    assert_eq!(edit.doc_type.as_deref(), Some("root-cause"));
+
+    // section 别名解析
+    let edit = requirement_section_form_to_edit(
+        "root-cause".to_string(),
+        RequirementSectionForm {
+            req_id: "WMS-000-demo".into(),
+            content: "x".into(),
+            token: None,
+            doc_type: None,
+            heading: None,
+            dry_run: None,
+        },
+    )
+    .expect("section alias must resolve");
+    assert_eq!(edit.doc_type.as_deref(), Some("root-cause"));
+}

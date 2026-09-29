@@ -49,7 +49,6 @@ fn normalize_capability_maps_legacy_wms_fields_to_common_schema() {
     assert_eq!(normalized["legacy"]["domain"], "outbound");
 }
 
-
 #[test]
 fn source_normalizes_to_known_values_with_default() {
     assert_eq!(
@@ -64,7 +63,6 @@ fn source_normalizes_to_known_values_with_default() {
     assert!(ensure_source("开发推动").is_ok());
     assert!(ensure_source("QA").is_err());
 }
-
 
 #[test]
 fn dashboard_stats_release_schedule_and_next_release() {
@@ -124,4 +122,3 @@ fn dashboard_stats_release_schedule_and_next_release() {
     let stats_unknown = build_dashboard_stats(vec![mk("R-unknown", Some("unknown"))], now);
     assert!(stats_unknown.next_release.is_none());
 }
-

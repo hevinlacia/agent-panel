@@ -7,14 +7,12 @@ fn split_seq_template_with_suffix() {
     assert_eq!(suffix, "-demo");
 }
 
-
 #[test]
 fn split_seq_template_trailing() {
     let (prefix, suffix) = split_seq_template("WMS-{seq}").unwrap();
     assert_eq!(prefix, "WMS");
     assert_eq!(suffix, "");
 }
-
 
 #[test]
 fn split_seq_template_strips_trailing_hyphen_in_prefix() {
@@ -23,30 +21,25 @@ fn split_seq_template_strips_trailing_hyphen_in_prefix() {
     assert_eq!(prefix, "WMS");
 }
 
-
 #[test]
 fn split_seq_template_rejects_missing_placeholder() {
     assert!(split_seq_template("WMS-043").is_err());
 }
-
 
 #[test]
 fn split_seq_template_rejects_multiple_placeholders() {
     assert!(split_seq_template("WMS-{seq}-{seq}").is_err());
 }
 
-
 #[test]
 fn split_seq_template_rejects_empty_prefix() {
     assert!(split_seq_template("{seq}-demo").is_err());
 }
 
-
 #[test]
 fn split_seq_template_rejects_non_ascii_prefix() {
     assert!(split_seq_template("WMS_测试-{seq}").is_err());
 }
-
 
 #[test]
 fn format_seq_id_pads_to_three_digits() {
@@ -55,7 +48,6 @@ fn format_seq_id_pads_to_three_digits() {
     // 4-digit numbers are not truncated by {:03}
     assert_eq!(format_seq_id("WMS", 1000, "-x"), "WMS-1000-x");
 }
-
 
 #[test]
 fn compute_next_seq_ignores_subrequirements_and_gaps() {
@@ -73,7 +65,6 @@ fn compute_next_seq_ignores_subrequirements_and_gaps() {
     assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 43);
 }
 
-
 #[test]
 fn compute_next_seq_respects_floor() {
     let ids = vec!["WMS-010-a".to_string()];
@@ -81,13 +72,11 @@ fn compute_next_seq_respects_floor() {
     assert_eq!(compute_next_seq_from_ids(&ids, "WMS", Some(50)), 50);
 }
 
-
 #[test]
 fn compute_next_seq_starts_at_one_when_no_match() {
     let ids = vec!["OTHER-099".to_string()];
     assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 1);
 }
-
 
 #[test]
 fn compute_next_seq_ignores_non_numeric_segments() {
@@ -96,7 +85,6 @@ fn compute_next_seq_ignores_non_numeric_segments() {
     assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 6);
 }
 
-
 #[test]
 fn compute_next_seq_matches_subrequirement_numbers() {
     // Ensure the regex captures the number even when followed by a hyphen
@@ -104,7 +92,6 @@ fn compute_next_seq_matches_subrequirement_numbers() {
     let ids = vec!["WMS-003-after-picking-batch".to_string()];
     assert_eq!(compute_next_seq_from_ids(&ids, "WMS", None), 4);
 }
-
 
 #[test]
 fn parse_ones_ref_extracts_url_from_pasted_text_with_prefix() {
@@ -119,7 +106,6 @@ fn parse_ones_ref_extracts_url_from_pasted_text_with_prefix() {
     assert_eq!(r["label"], "JTYC-1347611");
 }
 
-
 #[test]
 fn parse_ones_ref_pure_url_extracts_issue_label() {
     let raw = "https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347611";
@@ -128,7 +114,6 @@ fn parse_ones_ref_pure_url_extracts_issue_label() {
     assert_eq!(r["label"], "JTYC-1347611");
 }
 
-
 #[test]
 fn parse_ones_ref_plain_id_has_no_url() {
     let r = parse_ones_ref("JTYC-1347611").unwrap();
@@ -136,13 +121,11 @@ fn parse_ones_ref_plain_id_has_no_url() {
     assert_eq!(r["label"], "JTYC-1347611");
 }
 
-
 #[test]
 fn parse_ones_ref_empty_input_is_none() {
     assert!(parse_ones_ref("").is_none());
     assert!(parse_ones_ref("   ").is_none());
 }
-
 
 #[test]
 fn normalize_create_id_template_splits_issue_pool() {
@@ -217,7 +200,6 @@ fn normalize_create_id_template_splits_issue_pool() {
     );
 }
 
-
 #[test]
 fn normalize_create_id_template_enforces_group_pool() {
     // 空模板：需求组默认 WMS-GRP-{seq} 独立编号池
@@ -259,7 +241,6 @@ fn normalize_create_id_template_enforces_group_pool() {
     );
 }
 
-
 #[test]
 fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
     // 中文标题不再退化成只剩 domain 的 id（如 biz-wms-wms）
@@ -275,7 +256,6 @@ fn slug_segment_cjk_turns_chinese_title_into_pinyin_id() {
     assert!(id.len() <= 200, "id 过长: {id}");
 }
 
-
 #[test]
 fn slug_segment_cjk_keeps_ascii_behavior() {
     assert_eq!(
@@ -288,13 +268,11 @@ fn slug_segment_cjk_keeps_ascii_behavior() {
     );
 }
 
-
 #[test]
 fn slug_segment_cjk_empty_falls_back() {
     assert_eq!(slug_segment_cjk("???", "fallback"), "fallback");
     assert_eq!(slug_segment_cjk("", "fallback"), "fallback");
 }
-
 
 #[test]
 fn slug_segment_cjk_caps_length() {
@@ -306,7 +284,6 @@ fn slug_segment_cjk_caps_length() {
         slug.chars().count()
     );
 }
-
 
 #[test]
 fn extract_ticket_prefix_handles_pool_prefixes() {
@@ -325,17 +302,28 @@ fn extract_ticket_prefix_handles_pool_prefixes() {
     assert_eq!(extract_ticket_prefix("no-numeric-segment"), None);
 }
 
-
 // ── 问题类别推导（用户约定：未强调测试环境的问题默认线上问题） ────────────────
 
 use crate::requirement_service::{create_requirement, derive_category_from_id_template};
 
 #[test]
 fn derive_category_from_id_template_prefixes() {
-    assert_eq!(derive_category_from_id_template("WMS-INC-{seq}"), Some("线上问题"));
-    assert_eq!(derive_category_from_id_template("WMS-INC-126-review-no-auto-picking"), Some("线上问题"));
-    assert_eq!(derive_category_from_id_template("WMS-TST-{seq}"), Some("测试问题"));
-    assert_eq!(derive_category_from_id_template("WMS-TST-003-cn-uat-x"), Some("测试问题"));
+    assert_eq!(
+        derive_category_from_id_template("WMS-INC-{seq}"),
+        Some("线上问题")
+    );
+    assert_eq!(
+        derive_category_from_id_template("WMS-INC-126-review-no-auto-picking"),
+        Some("线上问题")
+    );
+    assert_eq!(
+        derive_category_from_id_template("WMS-TST-{seq}"),
+        Some("测试问题")
+    );
+    assert_eq!(
+        derive_category_from_id_template("WMS-TST-003-cn-uat-x"),
+        Some("测试问题")
+    );
     assert_eq!(derive_category_from_id_template("WMS-{seq}"), None);
     assert_eq!(derive_category_from_id_template(""), None);
     // 非问题前缀（如 WMS-INCX）不误判
@@ -402,7 +390,9 @@ async fn create_issue_defaults_category_from_id_prefix() {
     // 显式 category=线上问题 + INC 模板：一致，正常创建
     let mut form = issue_test_form("WMS-INC-{seq}", "显式一致");
     form.category = Some("线上问题".to_string());
-    create_requirement(&state, form).await.expect("create explicit inc");
+    create_requirement(&state, form)
+        .await
+        .expect("create explicit inc");
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 import type { ReqCategory, ReqStatus } from "../types"
 
-export const REQ_FLOW_STATUSES: ReqStatus[] = ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"]
+export const REQ_FLOW_STATUSES: ReqStatus[] = ["需求澄清", "开发中", "自测中", "测试中", "人工核查", "发布就绪", "经验总结", "已完成"]
 export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "已复盘", "已关闭"]
 /** 子需求（大需求拆出的并行执行单元）独立轻量状态机：无门禁，环境集成/发布/经验总结都在父需求走。 */
 export const SUB_REQ_STATUSES: ReqStatus[] = ["需求创建", "开发中", "已合入", "已取消"]
@@ -14,6 +14,8 @@ export const statusMeta: Record<string, { color: string; soft: string }> = {
   开发中: { color: "#22d3ee", soft: "rgba(34, 211, 238, 0.14)" },
   自测中: { color: "#3b82f6", soft: "rgba(59, 130, 246, 0.14)" },
   测试中: { color: "#a855f7", soft: "rgba(168, 85, 247, 0.14)" },
+  人工核查: { color: "#fb923c", soft: "rgba(251, 146, 60, 0.14)" },
+  人工复测: { color: "#fb923c", soft: "rgba(251, 146, 60, 0.14)" },
   经验总结: { color: "#eab308", soft: "rgba(234, 179, 8, 0.14)" },
   发布就绪: { color: "#34d399", soft: "rgba(52, 211, 153, 0.14)" },
   已完成: { color: "#22c55e", soft: "rgba(34, 197, 94, 0.14)" },

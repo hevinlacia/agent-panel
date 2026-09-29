@@ -9,7 +9,6 @@ fn target_from_branch_accepts_lowercase_uat() {
     assert!(target_from_branch("production").is_err());
 }
 
-
 #[test]
 fn merge_option_label_renders_lowercase_uat_backend() {
     assert_eq!(merge_option_label("backend", "uat"), "后端 UAT (uat)");
@@ -23,7 +22,6 @@ fn merge_option_label_renders_lowercase_uat_backend() {
         "前端 UAT (master)"
     );
 }
-
 
 #[test]
 fn default_merge_selection_prefers_lowercase_uat_for_backend_testing() {
@@ -48,7 +46,6 @@ fn default_merge_selection_prefers_lowercase_uat_for_backend_testing() {
         Some("test")
     );
 }
-
 
 #[test]
 fn target_branch_matches_repo_accepts_lowercase_uat_for_backend() {
@@ -79,7 +76,6 @@ fn target_branch_matches_repo_accepts_lowercase_uat_for_backend() {
     assert!(!target_branch_matches_repo(&frontend, "uat"));
     assert!(!target_branch_matches_repo(&frontend, "UAT-2607"));
 }
-
 
 #[test]
 fn is_production_target_branch_blocks_backend_master_and_frontend_production() {
@@ -114,7 +110,6 @@ fn is_production_target_branch_blocks_backend_master_and_frontend_production() {
     assert!(!is_production_target_branch(&frontend, "test"));
 }
 
-
 #[tokio::test]
 async fn merge_skips_repos_on_exclusion_list() {
     let scope = BranchScope {
@@ -146,7 +141,6 @@ async fn merge_skips_repos_on_exclusion_list() {
     assert!(results[0]["message"].as_str().unwrap().contains("排除名单"));
 }
 
-
 #[tokio::test]
 async fn merge_does_not_skip_repos_outside_exclusion_list() {
     let scope = BranchScope {
@@ -170,4 +164,3 @@ async fn merge_does_not_skip_repos_outside_exclusion_list() {
     assert_ne!(results[0]["excluded"], true);
     assert_ne!(results[0]["status"], "skipped");
 }
-

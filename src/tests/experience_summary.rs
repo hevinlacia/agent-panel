@@ -15,7 +15,6 @@ fn experience_summary_dispatch_triggers_for_issue_reviewed() {
     assert!(!experience_summary_triggered(&req));
 }
 
-
 #[test]
 fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check() {
     let mut req = default_requirement_for_test("WMS-INC-111-x");
@@ -36,14 +35,12 @@ fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check(
     assert!(prompt.contains("experience-summary-context"));
 }
 
-
 #[test]
 fn online_issue_statuses_map_to_online_issue_phase_prompt() {
     for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
         assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");
     }
 }
-
 
 #[test]
 fn experience_summary_entered_at_picks_last_history_entry() {
@@ -60,7 +57,6 @@ fn experience_summary_entered_at_picks_last_history_entry() {
     assert_eq!(experience_summary_entered_at_from_state(&state, 9999), 4000);
 }
 
-
 #[test]
 fn experience_summary_entered_at_falls_back_when_no_history() {
     // 历史缺失或没有经验总结记录时回退到 updated_at。
@@ -75,7 +71,6 @@ fn experience_summary_entered_at_falls_back_when_no_history() {
         5555
     );
 }
-
 
 #[test]
 fn experience_summary_overdue_respects_grace_window() {
@@ -100,7 +95,6 @@ fn experience_summary_overdue_respects_grace_window() {
     // entered_at 无效（<=0）-> 不推进。
     assert!(!experience_summary_overdue(0, now, 2 * day_ms));
 }
-
 
 #[test]
 fn should_auto_complete_only_for_real_experience_summary_status() {
@@ -152,7 +146,6 @@ fn should_auto_complete_only_for_real_experience_summary_status() {
     ));
 }
 
-
 #[test]
 fn expire_stale_job_gate_blocks_failed_and_incomplete() {
     // 总结失败：无论自动总结开关，绝不自动推进，需求停留在经验总结等用户处理。
@@ -193,24 +186,65 @@ fn dispatch_gate_serializes_with_max_agents_one() {
 
 #[test]
 fn classify_job_status_covers_dispatch_paths() {
-    assert!(matches!(classify_experience_job("completed", 1, 2), ExperienceJobClass::Completed));
-    assert!(matches!(classify_experience_job("running", 1, 2), ExperienceJobClass::Running));
+    assert!(matches!(
+        classify_experience_job("completed", 1, 2),
+        ExperienceJobClass::Completed
+    ));
+    assert!(matches!(
+        classify_experience_job("running", 1, 2),
+        ExperienceJobClass::Running
+    ));
     // attempts < 上限 → 重试转 pending；到顶 → 终态失败
-    assert!(matches!(classify_experience_job("failed", 1, 2), ExperienceJobClass::Retryable));
-    assert!(matches!(classify_experience_job("failed", 2, 2), ExperienceJobClass::FailedFinal));
-    assert!(matches!(classify_experience_job("pending", 0, 2), ExperienceJobClass::Pending));
-    assert!(matches!(classify_experience_job("", 0, 2), ExperienceJobClass::Pending));
-    assert!(matches!(classify_experience_job("paused", 0, 2), ExperienceJobClass::Unknown));
+    assert!(matches!(
+        classify_experience_job("failed", 1, 2),
+        ExperienceJobClass::Retryable
+    ));
+    assert!(matches!(
+        classify_experience_job("failed", 2, 2),
+        ExperienceJobClass::FailedFinal
+    ));
+    assert!(matches!(
+        classify_experience_job("pending", 0, 2),
+        ExperienceJobClass::Pending
+    ));
+    assert!(matches!(
+        classify_experience_job("", 0, 2),
+        ExperienceJobClass::Pending
+    ));
+    assert!(matches!(
+        classify_experience_job("paused", 0, 2),
+        ExperienceJobClass::Unknown
+    ));
 }
 
 #[test]
 fn stale_transition_only_applies_to_running_jobs() {
     let now = 10_000_000_i64;
     let stale = 2 * 60 * 60 * 1000;
-    assert!(experience_job_is_stale("running", Some(now - stale - 1), now, stale));
+    assert!(experience_job_is_stale(
+        "running",
+        Some(now - stale - 1),
+        now,
+        stale
+    ));
     // 恰好到点不算超（严格大于）
-    assert!(!experience_job_is_stale("running", Some(now - stale), now, stale));
-    assert!(!experience_job_is_stale("running", Some(now - 1000), now, stale));
+    assert!(!experience_job_is_stale(
+        "running",
+        Some(now - stale),
+        now,
+        stale
+    ));
+    assert!(!experience_job_is_stale(
+        "running",
+        Some(now - 1000),
+        now,
+        stale
+    ));
     assert!(!experience_job_is_stale("running", None, now, stale));
-    assert!(!experience_job_is_stale("pending", Some(now - stale - 1), now, stale));
+    assert!(!experience_job_is_stale(
+        "pending",
+        Some(now - stale - 1),
+        now,
+        stale
+    ));
 }

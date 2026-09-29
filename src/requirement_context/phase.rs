@@ -132,6 +132,9 @@ pub(crate) fn default_intent_for_status(status: &str) -> &'static str {
         "开发中" => "overview",
         "自测中" => "self-test",
         "测试中" => "self-test",
+        // 人工核查阶段 agent 的任务：准备 UAT 测试数据/复测材料，供人工复测；
+        // 复用 self-test token 集（技术方案 + 测试文档 + 上线清单）。
+        "人工核查" => "self-test",
         "经验总结" => "experience-summary",
         "排查中" => "progress",
         "已定位" => "overview",
@@ -209,6 +212,27 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 false,
             ),
             file_check(dir, BRANCH_SCOPE_FILE, "test/UAT 合并目标可计算", false),
+        ],
+        "人工核查" => vec![
+            file_check(
+                dir,
+                "test.md",
+                "agent 测试结果与证据（人工复测的对照基准）",
+                true,
+            ),
+            any_file_check(
+                dir,
+                &["review.md", "code-review-ai.md", CODE_REVIEW_FILE],
+                "代码审查门禁已通过或豁免",
+                true,
+            ),
+            file_check(
+                dir,
+                "manual-check.md",
+                "人工核查材料：UAT 复测清单 + 测试数据说明 + 视觉验收要点（agent 准备）",
+                false,
+            ),
+            file_check(dir, BRANCH_SCOPE_FILE, "UAT 环境与合并目标可计算", false),
         ],
         "经验总结" => vec![
             file_check(

@@ -34,6 +34,10 @@ pub(crate) struct CodeReviewForm {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SyncBaseForm {
     pub(crate) req_id: String,
+    /// 分支登记轮次：1 = 原始 branches.json（默认），>=2 = 修复轮次 branches-round-<n>.json。
+    /// 与代码差异卡片选中的轮次联动，缺省按 1 处理（旧行为不变）。
+    #[serde(default)]
+    pub(crate) round: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

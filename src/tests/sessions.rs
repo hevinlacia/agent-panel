@@ -20,7 +20,6 @@ fn pi_session_file_exists_matches_filename_suffix() {
     ));
 }
 
-
 #[test]
 fn dsh_session_file_exists_matches_workspace_dir_name() {
     let root = tempfile::tempdir().expect("tempdir");
@@ -44,7 +43,6 @@ fn dsh_session_file_exists_matches_workspace_dir_name() {
     write_file(&plain, "placeholder");
     assert!(dsh_session_file_exists(root.path(), other));
 }
-
 
 #[test]
 fn associations_store_defaults_pending_commands_for_legacy_files() {
@@ -73,7 +71,6 @@ fn associations_store_defaults_pending_commands_for_legacy_files() {
     assert_eq!(pending.harness, "pi");
     assert_eq!(pending.created_at, 1_720_000_000_000);
 }
-
 
 /// new-session 命令生命周期端到端（进程内直调 handler，全部落盘在临时目录）：
 /// 1) 首次复制生成 session id；2) 重复复制复用同一 id；3) session 被使用后自动换新；
@@ -203,4 +200,3 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
 }
 
 // ---- requirement group（引用式需求组 group.json）----
-

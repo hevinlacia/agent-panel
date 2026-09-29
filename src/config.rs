@@ -154,6 +154,9 @@ pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
 }
 
 /// 内置默认门禁规则：与历史硬编码门禁行为一致，外加新增的自测清单门禁。
+/// 人工核查（2026-08 新增）：测试中 → 人工核查无硬门禁（agent 测完即推进）；
+/// 进入发布就绪的两条路径（人工核查→发布就绪 / 测试中→发布就绪直达）都挂 review 门禁，
+/// agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
 pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
     vec![
         StatusGateRule {
@@ -164,7 +167,21 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
         StatusGateRule {
             from: "自测中".into(),
             to: "测试中".into(),
-            gates: vec!["review".into(), "selftest-checklist".into(), "test-scenario".into()],
+            gates: vec![
+                "review".into(),
+                "selftest-checklist".into(),
+                "test-scenario".into(),
+            ],
+        },
+        StatusGateRule {
+            from: "人工核查".into(),
+            to: "发布就绪".into(),
+            gates: vec!["review".into()],
+        },
+        StatusGateRule {
+            from: "测试中".into(),
+            to: "发布就绪".into(),
+            gates: vec!["review".into()],
         },
         StatusGateRule {
             from: "排查中".into(),
@@ -194,7 +211,9 @@ pub(crate) fn normalize_status_gate_rules_strict(
 }
 
 /// 读取配置时宽容归一化：非法条目静默丢弃，避免脏配置阻塞整个面板。
-pub(crate) fn normalize_status_gate_rules_lenient(rules: Vec<StatusGateRule>) -> Vec<StatusGateRule> {
+pub(crate) fn normalize_status_gate_rules_lenient(
+    rules: Vec<StatusGateRule>,
+) -> Vec<StatusGateRule> {
     normalize_status_gate_rules(rules, false).unwrap_or_default()
 }
 
@@ -479,9 +498,7 @@ pub(crate) async fn read_config(state: &AppState) -> Result<AppConfig> {
     cfg.deploy_freeze = normalize_deploy_freeze(cfg.deploy_freeze);
     cfg.experience_summary_max_agents =
         clamp_experience_summary_max_agents(cfg.experience_summary_max_agents);
-    cfg.status_gates = cfg
-        .status_gates
-        .map(normalize_status_gate_rules_lenient);
+    cfg.status_gates = cfg.status_gates.map(normalize_status_gate_rules_lenient);
     Ok(cfg)
 }
 

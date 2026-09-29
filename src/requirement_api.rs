@@ -1319,9 +1319,14 @@ pub(crate) async fn api_requirement_code_review_post(
     // 刷新代码差异时不再同步生产基线分支;
     // 如需同步本地 base 分支到最新远端,由独立的“同步生产基线”按钮触发(/api/requirement/sync-base)。
     let review = run_code_review_scan(&req_dir, &req.id, &branch_scope).await?;
+    // 与 master-diff 一致的自动清理：无文件差异的应用从 branches.json 移除。
+    let (pruned_repos, pruned_written) =
+        prune_no_diff_repos(&req_dir, &branch_scope, &review).await?;
     Ok(Json(json!({
         "ok": true,
         "branchScope": branch_scope,
+        "prunedRepos": pruned_repos,
+        "prunedWritten": pruned_written,
         "review": review,
     })))
 }
@@ -1369,9 +1374,14 @@ pub(crate) async fn api_requirement_review_materials_post(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
         ))
     })?;
-    let materials =
-        prepare_review_materials(&req_dir, &req.id, &branch_scope, body.mode.as_deref(), &req.status)
-            .await?;
+    let materials = prepare_review_materials(
+        &req_dir,
+        &req.id,
+        &branch_scope,
+        body.mode.as_deref(),
+        &req.status,
+    )
+    .await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
@@ -1405,11 +1415,15 @@ pub(crate) async fn api_requirement_master_diff(
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
     let review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    // 自动清理：某应用全部登记分支均无文件差异（且 diff 读取无失败/截断）时，
+    // 把它从本轮次登记文件移除，避免已合入/未开发的分支残留登记。
+    let (pruned_repos, pruned_written) =
+        prune_no_diff_repos(&req_dir, &branch_scope, &review).await?;
     // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
     let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
     Ok(Json(
-        json!({ "ok": true, "round": round, "branchScope": branch_scope, "snapshots": snapshots }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots }),
     ))
 }
 
@@ -1523,7 +1537,10 @@ fn validate_annotations_doc(annotations: &Value) -> Result<(), String> {
             };
             for (j, item) in items.iter().enumerate() {
                 let Some(item) = item.as_object() else {
-                    return Err(format!("annotations.files[{}].{}[{}] 必须是对象", i, key, j));
+                    return Err(format!(
+                        "annotations.files[{}].{}[{}] 必须是对象",
+                        i, key, j
+                    ));
                 };
                 if !item.get(required_field).is_some_and(|v| v.is_string()) {
                     return Err(format!(
@@ -1710,16 +1727,17 @@ pub(crate) async fn api_requirement_review_checklist_get(
     State(state): State<AppState>,
     Query(q): Query<GateDetailQuery>,
 ) -> ApiResult<Json<Value>> {
-    let id = q
-        .id
-        .or(q.req_id)
-        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let id =
+        q.id.or(q.req_id)
+            .ok_or_else(|| ApiError::bad_request("missing id"))?;
     let req = get_real_requirement(&state, &id).await?;
     let checklist = read_json_if_exists(
         &PathBuf::from(req.req_dir.unwrap_or_default()).join(REVIEW_CHECKLIST_FILE),
     )
     .await;
-    Ok(Json(json!({ "ok": true, "reqId": req.id, "checklist": checklist })))
+    Ok(Json(
+        json!({ "ok": true, "reqId": req.id, "checklist": checklist }),
+    ))
 }
 
 /// 保存审查清单：严格校验后写 review-checklist.json，并同步渲染 review.md 受管小节。
@@ -1730,7 +1748,9 @@ pub(crate) async fn api_requirement_review_checklist_put(
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
-        ApiError::bad_request("requirement has no directory; cannot save review checklist".to_string())
+        ApiError::bad_request(
+            "requirement has no directory; cannot save review checklist".to_string(),
+        )
     })?);
     ensure_requirement_dir_writable(&state, &req_dir).await?;
     let items = validate_review_checklist_items(&body.items.unwrap_or(Value::Null))?;
@@ -1823,9 +1843,7 @@ fn resolve_repo_path(
 ) -> Result<PathBuf, ApiError> {
     if let Some(raw) = provided {
         let expanded = expand_registration_path(raw).ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "repo {repo_name} 的 path 无法解析：\"{raw}\""
-            ))
+            ApiError::bad_request(format!("repo {repo_name} 的 path 无法解析：\"{raw}\""))
         })?;
         if !expanded.is_dir() {
             return Err(ApiError::bad_request(format!(
@@ -1899,17 +1917,13 @@ pub(crate) async fn api_requirement_branch_registration_get(
     State(state): State<AppState>,
     Query(q): Query<BranchRegistrationQuery>,
 ) -> ApiResult<Json<Value>> {
-    let id = q
-        .id
-        .or(q.req_id)
-        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let id =
+        q.id.or(q.req_id)
+            .ok_or_else(|| ApiError::bad_request("missing id"))?;
     let req = get_real_requirement(&state, &id).await?;
     let round = q.round.unwrap_or(1).max(1);
-    let scope = read_branch_scope_round(
-        &PathBuf::from(req.req_dir.unwrap_or_default()),
-        round,
-    )
-    .await?;
+    let scope =
+        read_branch_scope_round(&PathBuf::from(req.req_dir.unwrap_or_default()), round).await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
@@ -1928,7 +1942,9 @@ pub(crate) async fn api_requirement_branch_registration_put(
     let body = form.0;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
-        ApiError::bad_request("requirement has no directory; cannot save branch registration".to_string())
+        ApiError::bad_request(
+            "requirement has no directory; cannot save branch registration".to_string(),
+        )
     })?);
     ensure_requirement_dir_writable(&state, &req_dir).await?;
     let round = body.round.unwrap_or(1).max(1);
@@ -1942,7 +1958,8 @@ pub(crate) async fn api_requirement_branch_registration_put(
     };
     if list.is_empty() {
         return Err(ApiError::bad_request(
-            "repos 不能为空：登记至少要列出一个仓库；如需清空登记请手动删除登记文件（半手工场景）".to_string(),
+            "repos 不能为空：登记至少要列出一个仓库；如需清空登记请手动删除登记文件（半手工场景）"
+                .to_string(),
         ));
     }
 
@@ -1979,7 +1996,9 @@ pub(crate) async fn api_requirement_branch_registration_put(
             .map(str::trim)
             .unwrap_or_default();
         if repo_name.is_empty() {
-            return Err(ApiError::bad_request(format!("repos[{no}].repoName 不能为空")));
+            return Err(ApiError::bad_request(format!(
+                "repos[{no}].repoName 不能为空"
+            )));
         }
         if submitted_names.iter().any(|n| n == repo_name) {
             return Err(ApiError::bad_request(format!(
@@ -2057,9 +2076,10 @@ pub(crate) async fn api_requirement_branch_registration_put(
     let mut to_verify: Vec<(String, PathBuf, String)> = Vec::new();
     for entry in &entries {
         let branch = entry.branches[0].clone();
-        let Some(ex) = existing.as_ref().and_then(|scope| {
-            scope.repos.iter().find(|r| r.repo_name == entry.repo_name)
-        }) else {
+        let Some(ex) = existing
+            .as_ref()
+            .and_then(|scope| scope.repos.iter().find(|r| r.repo_name == entry.repo_name))
+        else {
             added.push(entry.repo_name.clone());
             to_verify.push((
                 entry.repo_name.clone(),
@@ -2070,10 +2090,7 @@ pub(crate) async fn api_requirement_branch_registration_put(
             continue;
         };
         if ex.branches.iter().any(|b| b == &branch) {
-            if ex.role == entry.role
-                && ex.path == entry.path
-                && ex.base_ref == entry.base_ref
-            {
+            if ex.role == entry.role && ex.path == entry.path && ex.base_ref == entry.base_ref {
                 unchanged.push(entry.repo_name.clone());
             } else {
                 updated.push(entry.repo_name.clone());
@@ -2133,13 +2150,17 @@ pub(crate) async fn api_requirement_sync_base(
     form: FormOrJson<SyncBaseForm>,
 ) -> ApiResult<Json<Value>> {
     let req = get_real_requirement(&state, &form.0.req_id).await?;
-    let branch_scope = read_branch_scope(&PathBuf::from(req.req_dir.unwrap_or_default()))
-        .await?
-        .ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
-            ))
-        })?;
+    // 按代码差异卡片选中的轮次同步：轮次 1 用 branches.json，>=2 用 branches-round-<n>.json，
+    // 保证修复轮次登记的应用集合也被同步到本地生产分支。
+    let round = form.0.round.unwrap_or(1).max(1);
+    let branch_scope =
+        read_branch_scope_round(&PathBuf::from(req.req_dir.unwrap_or_default()), round)
+            .await?
+            .ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "missing branch scope file for round {round}; run req-branches-update first"
+                ))
+            })?;
     let mut results = Vec::new();
     for repo in &branch_scope.repos {
         results.push(sync_repo_base_branch(repo).await);

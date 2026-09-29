@@ -7,7 +7,7 @@ import { formatDuration } from "../lib/format"
 import { statusMeta } from "../lib/requirements"
 import { cardVariants, EmptyCard, ErrorCard, KpiCard, LoadingCard, PanelHead } from "../components/ui"
 
-const PIPELINE_STATUSES = ["需求澄清", "开发中", "自测中", "测试中"]
+const PIPELINE_STATUSES = ["需求澄清", "开发中", "自测中", "测试中", "人工核查"]
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
 
 function weekdayOf(date: string): string {

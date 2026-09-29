@@ -50,8 +50,8 @@ pub(crate) use git_workflow::*;
 use harness::*;
 use http::*;
 use knowledge::*;
-use ones::*;
 use markdown::*;
+use ones::*;
 use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
@@ -116,8 +116,12 @@ static REQ_STATUSES: &[&str] = &[
     "开发中",
     "自测中",
     "测试中",
-    // 发布就绪：人工已检查代码（或重大变更已经他人 review），随时可发布。
+    // 人工核查：agent 测试完成后，人工负责视觉验收、主流程复测和人工代码审查；
+    // agent 在该阶段的职责是准备 UAT 测试数据/复测材料（manual-check.md），方便人工复测。
+    // 人工核查通过后由人工在 UI 推进发布就绪 = 人工确权，保证发布就绪的需求真的随时可发。
+    // 发布就绪：agent 测试过 + 代码审查过 + 人工复测过，随时可发布。
     // 经验总结：发布检查通过后沉淀知识/经验/skill 改进；停留超期自动推进已完成。
+    "人工核查",
     "发布就绪",
     "经验总结",
     "已完成",
@@ -136,6 +140,7 @@ static REQ_FLOW_STATUSES: &[&str] = &[
     "开发中",
     "自测中",
     "测试中",
+    "人工核查",
     "发布就绪",
     "经验总结",
     "已完成",
@@ -153,6 +158,7 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("待设计", "需求澄清"),
     ("待开发", "需求澄清"),
     ("待上线", "经验总结"),
+    ("人工复测", "人工核查"),
     ("线上排查", "排查中"),
     ("问题排查", "排查中"),
     ("已确认", "已定位"),
@@ -310,16 +316,23 @@ async fn main() -> Result<()> {
         )
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
-        .route("/api/requirement/status-flow", get(api_requirement_status_flow))
+        .route(
+            "/api/requirement/status-flow",
+            get(api_requirement_status_flow),
+        )
         .route(
             "/api/requirement/review-checklist",
             get(api_requirement_review_checklist_get).put(api_requirement_review_checklist_put),
         )
         .route(
             "/api/requirement/branch-registration",
-            get(api_requirement_branch_registration_get).put(api_requirement_branch_registration_put),
+            get(api_requirement_branch_registration_get)
+                .put(api_requirement_branch_registration_put),
         )
-        .route("/api/requirement/status-gate-detail", get(api_requirement_status_gate_detail))
+        .route(
+            "/api/requirement/status-gate-detail",
+            get(api_requirement_status_gate_detail),
+        )
         .route("/api/requirement/category", post(api_requirement_category))
         .route(
             "/api/requirement/convert-issue",

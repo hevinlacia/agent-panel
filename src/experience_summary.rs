@@ -218,7 +218,11 @@ pub(crate) enum ExperienceJobClass {
     Unknown,
 }
 
-pub(crate) fn classify_experience_job(status: &str, attempts: i64, max_attempts: i64) -> ExperienceJobClass {
+pub(crate) fn classify_experience_job(
+    status: &str,
+    attempts: i64,
+    max_attempts: i64,
+) -> ExperienceJobClass {
     match status {
         "completed" => ExperienceJobClass::Completed,
         "running" => ExperienceJobClass::Running,
@@ -235,8 +239,16 @@ pub(crate) fn classify_experience_job(status: &str, attempts: i64, max_attempts:
 }
 
 /// 运行超时判定（纯函数）：running 且 started_at 超过 stale 窗口（服务重启误杀场景）。
-pub(crate) fn experience_job_is_stale(status: &str, started_at: Option<i64>, now: i64, stale_ms: i64) -> bool {
-    status == "running" && started_at.map(|started| now - started > stale_ms).unwrap_or(false)
+pub(crate) fn experience_job_is_stale(
+    status: &str,
+    started_at: Option<i64>,
+    now: i64,
+    stale_ms: i64,
+) -> bool {
+    status == "running"
+        && started_at
+            .map(|started| now - started > stale_ms)
+            .unwrap_or(false)
 }
 
 /// 并发额度决策（纯函数）：active 未达上限才允许 spawn，否则排队。
@@ -312,7 +324,12 @@ pub(crate) async fn dispatch_experience_summary_jobs(
                     .to_string(),
             );
         }
-        if experience_job_is_stale(&job.status, job.started_at, now, EXPERIENCE_SUMMARY_JOB_STALE_MS) {
+        if experience_job_is_stale(
+            &job.status,
+            job.started_at,
+            now,
+            EXPERIENCE_SUMMARY_JOB_STALE_MS,
+        ) {
             job.status = "failed".to_string();
             job.finished_at = Some(now);
             job.error = Some(format!(

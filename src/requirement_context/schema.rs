@@ -3,7 +3,8 @@ use super::*;
 pub(crate) fn requirement_api_schema() -> Value {
     json!({
         "version": 5,
-        "flow": ["需求澄清", "开发中", "自测中", "测试中", "发布就绪", "经验总结", "已完成"],
+        "flow": ["需求澄清", "开发中", "自测中", "测试中", "人工核查", "发布就绪", "经验总结", "已完成"],
+        "flowNotes": {"人工核查": "agent 测试完成后人工负责视觉验收、主流程复测和人工代码审查；agent 负责准备 UAT 测试数据与复测材料（manual-check.md），人工在 UI 推进发布就绪 = 人工确权"},
         "statusValues": REQ_STATUSES,
         "subStatuses": SUB_REQ_STATUSES,
         "statusAliases": REQ_STATUS_ALIASES,

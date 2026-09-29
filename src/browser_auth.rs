@@ -404,7 +404,9 @@ fn effective_cookie_allowlist(auth: &BrowserAuthConfig) -> Vec<String> {
 /// 读取 Chrome 登录 cookie：优先直读 cookie 数据库（无 CDP、无弹窗），
 /// 失败时回退到 CDP（可能触发 Chrome “允许远程调试”确认）。
 /// 只返回白名单域名内的 cookie。返回 (读取方式, cookies)。
-pub(crate) async fn load_chrome_cookies(auth: &BrowserAuthConfig) -> Result<(String, Vec<ChromeCookie>)> {
+pub(crate) async fn load_chrome_cookies(
+    auth: &BrowserAuthConfig,
+) -> Result<(String, Vec<ChromeCookie>)> {
     let allowlist = effective_cookie_allowlist(auth);
     match load_chrome_cookies_db(&allowlist).await {
         Ok(cookies) => Ok(("db".into(), cookies)),

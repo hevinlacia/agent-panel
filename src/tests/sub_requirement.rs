@@ -9,7 +9,6 @@ fn sub_req_seq_extracts_trailing_number() {
     assert_eq!(sub_req_seq("WMS-GRP-001-x"), None);
 }
 
-
 #[test]
 fn sub_branch_name_appends_suffix() {
     assert_eq!(
@@ -19,7 +18,6 @@ fn sub_branch_name_appends_suffix() {
     assert_eq!(sub_branch_name("feature/x-", 3), "feature/x-sub3");
 }
 
-
 fn sub_req_for_test(status: &str) -> Requirement {
     let mut req = default_requirement_for_test("WMS-049-S1-fix-logging");
     req.status = status.to_string();
@@ -27,7 +25,6 @@ fn sub_req_for_test(status: &str) -> Requirement {
     req.parent_req_id = Some("WMS-049-wave-pick-task".to_string());
     req
 }
-
 
 #[test]
 fn sub_status_transition_enforces_flow() {
@@ -50,7 +47,6 @@ fn sub_status_transition_enforces_flow() {
     assert!(ensure_sub_req_status_transition(&sub_req_for_test("开发中"), "开发中").is_ok());
 }
 
-
 #[test]
 fn non_sub_req_cannot_use_sub_only_statuses() {
     use requirement_service::ensure_status_allowed_for_non_sub;
@@ -60,7 +56,6 @@ fn non_sub_req_cannot_use_sub_only_statuses() {
     assert!(ensure_status_allowed_for_non_sub("开发中").is_ok());
     assert!(ensure_status_allowed_for_non_sub("排查中").is_ok());
 }
-
 
 #[test]
 fn build_meta_doc_writes_parent_req_id_frontmatter() {
@@ -101,7 +96,6 @@ fn build_meta_doc_writes_parent_req_id_frontmatter() {
     assert!(!without.contains("parent-req-id"));
 }
 
-
 #[test]
 fn snapshot_note_mentions_parent_and_independence() {
     let note = snapshot_note("WMS-049-wave-pick-task", "background.md");
@@ -109,7 +103,6 @@ fn snapshot_note_mentions_parent_and_independence() {
     assert!(note.contains("background.md"));
     assert!(note.contains("独立维护"));
 }
-
 
 /// 子需求端到端（进程内直调 handler）：创建 → 文档快照复制 → 列表过滤 → 父子回填 →
 /// 子需求轻量状态机 → 字段边界（ONES/plan-release/issues/类别）。
@@ -309,4 +302,3 @@ async fn sub_requirement_create_flow_end_to_end() {
 }
 
 // ===================== 文档分册（doc parts）单元测试 =====================
-

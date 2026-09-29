@@ -177,7 +177,8 @@ async fn review_annotations_gate_state(req_dir: &Path) -> ReviewAnnotationsState
                     .map(str::trim)
                     .unwrap_or_default()
                     .is_empty()
-                    && !f.get("path")
+                    && !f
+                        .get("path")
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .unwrap_or_default()
@@ -224,9 +225,7 @@ async fn review_annotations_gate_state(req_dir: &Path) -> ReviewAnnotationsState
         }
         let commit = value_string(repo, "targetCommit")
             .filter(|c| !c.is_empty())
-            .or_else(|| {
-                value_string(repo, "coverageToCommit").filter(|c| !c.is_empty())
-            });
+            .or_else(|| value_string(repo, "coverageToCommit").filter(|c| !c.is_empty()));
         let Some(commit) = commit else {
             continue;
         };
@@ -802,9 +801,7 @@ pub(crate) fn review_gate_blocked(raw: &str) -> bool {
             .unwrap_or(false);
     }
     // 旧格式启发式：严重问题/阻塞项小节非空或 ❌ + 阻塞表述 → 拦截。
-    if raw.contains('❌')
-        && (raw.contains("阻塞") || raw.contains("严重问题"))
-    {
+    if raw.contains('❌') && (raw.contains("阻塞") || raw.contains("严重问题")) {
         return true;
     }
     review_gate_section(raw, &["严重问题", "Blocking Items", "阻塞项"])

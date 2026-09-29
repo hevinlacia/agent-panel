@@ -11,11 +11,11 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use axum::{
     extract::{Query, State},
     Json,
 };
-use anyhow::anyhow;
 use chrono::Duration;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -154,8 +154,7 @@ pub(crate) async fn api_ones_tasks(
             Ok(req) => {
                 requirement_title = req.title.clone();
                 let haystack = build_requirement_haystack(&req).await;
-                recommendations =
-                    recommend_ones_tasks(&haystack, &req.title, &candidates, &team);
+                recommendations = recommend_ones_tasks(&haystack, &req.title, &candidates, &team);
             }
             Err(err) => warnings.push(format!("需求 {req_id} 读取失败: {err:#}")),
         }
@@ -184,15 +183,28 @@ async fn fetch_ones_candidates(
     let mut map: HashMap<String, OnesTaskCandidate> = HashMap::new();
     let mut warnings: Vec<String> = Vec::new();
 
-    let notices_path = format!("/project/api/project/team/{team}/notices?type=1&limit={NOTICE_LIMIT}");
-    match send_site_request(site, "GET", &notices_path, HashMap::new(), None, None, cookies).await {
+    let notices_path =
+        format!("/project/api/project/team/{team}/notices?type=1&limit={NOTICE_LIMIT}");
+    match send_site_request(
+        site,
+        "GET",
+        &notices_path,
+        HashMap::new(),
+        None,
+        None,
+        cookies,
+    )
+    .await
+    {
         Ok(resp) if resp.status == 200 => {
             if let Some(data) = resp.body_json {
                 merge_notices(&mut map, &data);
             }
         }
         Ok(resp) if resp.status == 401 || resp.status == 403 => {
-            warnings.push("ONES 登录态已过期（通知接口 401），请在 Chrome 中刷新 ONES 页面后重试".into());
+            warnings.push(
+                "ONES 登录态已过期（通知接口 401），请在 Chrome 中刷新 ONES 页面后重试".into(),
+            );
         }
         Ok(resp) => warnings.push(format!("notices 请求返回 {}", resp.status)),
         Err(err) => warnings.push(format!("notices 请求失败: {err:#}")),
@@ -222,7 +234,9 @@ async fn fetch_ones_candidates(
             }
         }
         Ok(resp) if resp.status == 401 || resp.status == 403 => {
-            warnings.push("ONES 登录态已过期（工时报表 401），请在 Chrome 中刷新 ONES 页面后重试".into());
+            warnings.push(
+                "ONES 登录态已过期（工时报表 401），请在 Chrome 中刷新 ONES 页面后重试".into(),
+            );
         }
         Ok(resp) => warnings.push(format!("manhour GraphQL 请求返回 {}", resp.status)),
         Err(err) => warnings.push(format!("manhour GraphQL 请求失败: {err:#}")),
@@ -232,12 +246,17 @@ async fn fetch_ones_candidates(
 }
 
 fn graphql_path(team: &str) -> String {
-    format!("/project/api/project/team/{team}/items/graphql?t=report-data__workspace_manhour-{team}")
+    format!(
+        "/project/api/project/team/{team}/items/graphql?t=report-data__workspace_manhour-{team}"
+    )
 }
 
 fn graphql_headers() -> HashMap<String, String> {
     HashMap::from([
-        ("content-type".into(), "application/json;charset=UTF-8".into()),
+        (
+            "content-type".into(),
+            "application/json;charset=UTF-8".into(),
+        ),
         ("accept".into(), "application/json, text/plain, */*".into()),
     ])
 }
@@ -343,7 +362,9 @@ fn merge_buckets(map: &mut HashMap<String, OnesTaskCandidate>, data: &Value) {
         return;
     };
     for b in buckets {
-        let Some(col) = b.get("columnField") else { continue };
+        let Some(col) = b.get("columnField") else {
+            continue;
+        };
         let Some(display_id) = col.get("displayId").and_then(Value::as_str) else {
             continue;
         };
@@ -374,16 +395,14 @@ fn merge_candidate(
     if key.is_empty() {
         return;
     }
-    let entry = map
-        .entry(key)
-        .or_insert_with(|| OnesTaskCandidate {
-            display_id: display_id.trim().to_string(),
-            name: String::new(),
-            project: String::new(),
-            task_uuid: String::new(),
-            sources: Vec::new(),
-            last_activity_at: 0,
-        });
+    let entry = map.entry(key).or_insert_with(|| OnesTaskCandidate {
+        display_id: display_id.trim().to_string(),
+        name: String::new(),
+        project: String::new(),
+        task_uuid: String::new(),
+        sources: Vec::new(),
+        last_activity_at: 0,
+    });
     if entry.name.is_empty() {
         entry.name = name.trim().to_string();
     }
@@ -409,10 +428,7 @@ fn sort_candidates(a: &OnesTaskCandidate, b: &OnesTaskCandidate) -> Ordering {
 /// displayId 尾部数字按数值比较（JTYC-1348129 > JTYC-999999）。
 fn natural_key(display_id: &str) -> (String, u64) {
     match display_id.rsplit_once('-') {
-        Some((prefix, num)) => (
-            prefix.to_string(),
-            num.parse::<u64>().unwrap_or(0),
-        ),
+        Some((prefix, num)) => (prefix.to_string(), num.parse::<u64>().unwrap_or(0)),
         None => (display_id.to_string(), 0),
     }
 }
@@ -614,10 +630,7 @@ mod tests {
 
     #[test]
     fn sort_candidates_natural_desc() {
-        let mut v = vec![
-            candidate("JTYC-999", "a"),
-            candidate("JTYC-1348129", "b"),
-        ];
+        let mut v = vec![candidate("JTYC-999", "a"), candidate("JTYC-1348129", "b")];
         v[0].last_activity_at = 0;
         v[1].last_activity_at = 0;
         v.sort_by(sort_candidates);

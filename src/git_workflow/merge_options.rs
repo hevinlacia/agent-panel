@@ -99,10 +99,12 @@ pub(crate) fn default_merge_selection(
 ) -> Option<String> {
     match status {
         "自测中" => options.iter().find(|v| v.as_str() == "test").cloned(),
-        "测试中" if kind == "frontend" => {
+        // 人工核查阶段人工在 UAT 复测，默认合并环境与测试中一致：
+        // 前端 UAT (master) / 后端 UAT (uat 或 UAT-*)。
+        "测试中" | "人工核查" if kind == "frontend" => {
             options.iter().find(|v| v.as_str() == "master").cloned()
         }
-        "测试中" if kind == "backend" => {
+        "测试中" | "人工核查" if kind == "backend" => {
             // 优先选统一命名的小写 uat（WMS 2026-08 起后端 UAT 分支统一为 uat），无则回退 UAT-* 历史分支
             options
                 .iter()

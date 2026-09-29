@@ -14,14 +14,12 @@ fn skipped_statuses_reports_forward_phase_gaps() {
     );
 }
 
-
 #[test]
 fn skipped_statuses_ignores_adjacent_and_backward_moves() {
     assert!(skipped_statuses(Some("需求澄清"), "开发中").is_empty());
     assert!(skipped_statuses(Some("测试中"), "开发中").is_empty());
     assert!(skipped_statuses(None, "开发中").is_empty());
 }
-
 
 #[test]
 fn status_transition_alias_normalizes_event_type() {
@@ -31,7 +29,6 @@ fn status_transition_alias_normalizes_event_type() {
     );
     assert_eq!(requirement_event_label("statusTransition"), "状态切换");
 }
-
 
 #[test]
 fn status_gate_rules_default_seed_preserves_historical_gates() {
@@ -58,9 +55,12 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     assert_eq!(gates_of("已修复", "已复盘"), vec!["issue-troubleshooting"]);
     // 未配置的流转不拦。
     assert!(gates_of("需求澄清", "开发中").is_empty());
-    assert!(gates_of("测试中", "发布就绪").is_empty());
+    assert!(gates_of("测试中", "人工核查").is_empty());
+    // 人工核查（2026-08 新增）：进入发布就绪的两条路径都挂 review 门禁兜底 agent 推进；
+    // 人工在 UI 推进跳过门禁 = 人工确权（视觉验收 + 主流程复测 + 人工审码）。
+    assert_eq!(gates_of("人工核查", "发布就绪"), vec!["review"]);
+    assert_eq!(gates_of("测试中", "发布就绪"), vec!["review"]);
 }
-
 
 #[test]
 fn status_gate_rules_normalize_validates_and_dedupes() {
@@ -110,7 +110,6 @@ fn status_gate_rules_normalize_validates_and_dedupes() {
     assert_eq!(lenient[0].gates, vec!["review"]);
 }
 
-
 #[test]
 fn effective_status_gates_none_uses_defaults_empty_disables() {
     let mut cfg = AppConfig::default();
@@ -127,7 +126,6 @@ fn effective_status_gates_none_uses_defaults_empty_disables() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].gates, vec!["selftest-checklist"]);
 }
-
 
 /// 状态门禁端到端（进程内直调 handler）：配置驱动分发 + via=ui 人工跳过。
 #[tokio::test]
@@ -180,8 +178,7 @@ async fn status_transition_gates_config_driven_and_ui_skipped() {
         .expect("unconfigured reverse transition passes");
 
     // 4) 补齐三分类自测清单后，agent 推进自测中→测试中放行。
-    std::fs::write(req_dir.join("test.md"), selftest_test_md_body())
-        .expect("write test.md");
+    std::fs::write(req_dir.join("test.md"), selftest_test_md_body()).expect("write test.md");
     let _ = api_requirement_status(State(state.clone()), form("测试中", None))
         .await
         .expect("filled checklist passes agent transition");
@@ -195,7 +192,6 @@ async fn status_transition_gates_config_driven_and_ui_skipped() {
         .await
         .expect("unconfigured pair has no gates");
 }
-
 
 /// 状态流转卡片 API：门禁三态（failed 预览 / unverified 人工跳过 / passed 流转时已通过）。
 #[tokio::test]
@@ -247,7 +243,7 @@ async fn status_flow_reports_gate_states_with_unverified() {
 
     // 1) 未走过的流转：实时预览评估，缺自测清单 → failed。
     let v = flow().await;
-    assert_eq!(v["statuses"].as_array().expect("statuses").len(), 7);
+    assert_eq!(v["statuses"].as_array().expect("statuses").len(), 8);
     assert_eq!(v["currentIndex"], json!(2));
     assert_eq!(junction_gate(&v)["state"], json!("failed"));
 
@@ -288,8 +284,7 @@ async fn status_flow_reports_gate_states_with_unverified() {
     assert_eq!(junction_gate(&v)["state"], json!("failed"));
 
     // 4) 补齐三分类自测清单后 agent 推进（无 via，门禁校验通过）→ 标 passed。
-    std::fs::write(req_dir.join("test.md"), selftest_test_md_body())
-        .expect("write test.md");
+    std::fs::write(req_dir.join("test.md"), selftest_test_md_body()).expect("write test.md");
     let _ = api_requirement_status(
         State(state.clone()),
         FormOrJson(StatusForm {
@@ -346,7 +341,6 @@ async fn status_flow_reports_gate_states_with_unverified() {
         .contains("实时评估通过"));
 }
 
-
 #[test]
 fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
     // 新状态机：排查中 → 已定位 → 已修复 → 已复盘 / 已关闭。
@@ -358,7 +352,6 @@ fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
     assert_eq!(canonical_status("问题确认").unwrap(), "已定位");
     assert_eq!(canonical_status("线上排查").unwrap(), "排查中");
 }
-
 
 #[test]
 fn selftest_checklist_missing_section_fails() {
@@ -381,7 +374,14 @@ fn selftest_checklist_requires_category_sections() {
     )
     .problems;
     for cat in ["主流程测试", "边界场景测试", "高并发/大流量场景测试"] {
-        assert!(problems.iter().any(|p| p.contains(cat) && p.contains("分类小节")), "{}: {:?}", cat, problems);
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains(cat) && p.contains("分类小节")),
+            "{}: {:?}",
+            cat,
+            problems
+        );
     }
 }
 
@@ -398,7 +398,6 @@ fn selftest_checklist_requires_result_and_reason() {
     assert!(problems[1].contains("场景C") && problems[1].contains("原因"));
 }
 
-
 #[test]
 fn selftest_checklist_fail_blocks_and_cannot_test_warns() {
     // 失败项（即使写了原因）→ 问题，门禁不放行；无法测试项（有原因）→ 警示，放行但结果未知
@@ -408,8 +407,20 @@ fn selftest_checklist_fail_blocks_and_cannot_test_warns() {
         "#### 风险场景分析\n- MQ 重复消费时库存重复释放\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 同一单 MQ 重复投递 | 通过 | - |",
     );
     let eval = validate_selftest_checklist(&body);
-    assert!(eval.problems.iter().any(|p| p.contains("场景B") && p.contains("不放行")), "{:?}", eval);
-    assert!(eval.warnings.iter().any(|w| w.contains("场景C") && w.contains("结果未知")), "{:?}", eval);
+    assert!(
+        eval.problems
+            .iter()
+            .any(|p| p.contains("场景B") && p.contains("不放行")),
+        "{:?}",
+        eval
+    );
+    assert!(
+        eval.warnings
+            .iter()
+            .any(|w| w.contains("场景C") && w.contains("结果未知")),
+        "{:?}",
+        eval
+    );
 
     // 全部通过 → 无问题无警示
     let all_pass = selftest_body_with_categories(
@@ -431,7 +442,12 @@ fn selftest_checklist_boundary_requires_analysis_then_table() {
         "不适用：无并发路径",
     );
     let problems = validate_selftest_checklist(&no_analysis).problems;
-    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("风险场景分析")), "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("边界场景测试") && p.contains("风险场景分析")),
+        "{problems:?}"
+    );
 
     // 2) 有分析但没有测试清单表 → 拦截
     let no_table = selftest_body_with_categories(
@@ -440,19 +456,26 @@ fn selftest_checklist_boundary_requires_analysis_then_table() {
         "不适用：无并发路径",
     );
     let problems = validate_selftest_checklist(&no_table).problems;
-    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("没有测试清单表")), "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("边界场景测试") && p.contains("没有测试清单表")),
+        "{problems:?}"
+    );
 }
 
 #[test]
 fn selftest_checklist_na_and_no_risk_conclusions_pass() {
     // 1) 整类不适用但没写原因 → 拦截
-    let na_no_reason = selftest_body_with_categories(
-        "| 1 | 场景A | 通过 | - |",
-        "不适用",
-        "不适用：无并发路径",
-    );
+    let na_no_reason =
+        selftest_body_with_categories("| 1 | 场景A | 通过 | - |", "不适用", "不适用：无并发路径");
     let problems = validate_selftest_checklist(&na_no_reason).problems;
-    assert!(problems.iter().any(|p| p.contains("边界场景测试") && p.contains("不适用但没写明原因")), "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.contains("边界场景测试") && p.contains("不适用但没写明原因")),
+        "{problems:?}"
+    );
 
     // 2) 分析结论为无风险（带依据）→ 无需测试清单表，直接放行
     let no_risk = selftest_body_with_categories(
@@ -470,11 +493,11 @@ fn selftest_checklist_na_and_no_risk_conclusions_pass() {
     );
     let problems = validate_selftest_checklist(&no_risk_no_reason).problems;
     assert!(
-        problems.iter().any(|p| p.contains("边界场景测试") && (p.contains("没有测试清单表") || p.contains("风险场景分析为空"))),
+        problems.iter().any(|p| p.contains("边界场景测试")
+            && (p.contains("没有测试清单表") || p.contains("风险场景分析为空"))),
         "{problems:?}"
     );
 }
-
 
 #[test]
 fn selftest_checklist_requires_result_column_and_items() {
@@ -490,7 +513,6 @@ fn selftest_checklist_requires_result_column_and_items() {
     assert!(empty.iter().any(|p| p.contains("没有")));
 }
 
-
 #[test]
 fn should_auto_advance_issues_only_for_experience_or_later() {
     assert!(should_auto_advance_issues("经验总结"));
@@ -500,7 +522,6 @@ fn should_auto_advance_issues_only_for_experience_or_later() {
     assert!(!should_auto_advance_issues("开发中"));
     assert!(!should_auto_advance_issues("已定位"));
 }
-
 
 /// 门禁验证详情页 API：实时校验状态 + 按门禁类型的详细内容。
 #[tokio::test]
@@ -554,7 +575,6 @@ async fn status_gate_detail_reports_state_and_detail() {
 
 // ===================== 子需求（sub-requirement）单元测试 =====================
 
-
 #[tokio::test]
 async fn selftest_gate_waived_for_hotfix_requirements() {
     // 抢修模式（issues 非空）：test.md 缺失也放行
@@ -572,5 +592,3 @@ async fn selftest_gate_waived_for_hotfix_requirements() {
     assert!(!normal.is_hotfix());
     assert!(selftest_checklist_problems(&normal).await.is_empty() == false);
 }
-
-

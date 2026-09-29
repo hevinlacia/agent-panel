@@ -939,6 +939,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 /* 差异页代码主列需要更宽：仅对含差异三栏布局的页面放宽全局 1480px 内容宽度上限（:has 不支持时自动回退默认宽度）。 */
 .react-main:has(.react-diff-shell) { width: min(100%, 2360px); }
 .react-diff-shell { display: grid; grid-template-columns: 300px minmax(0, 1fr) clamp(320px, 24vw, 420px); gap: 16px; align-items: start; }
+.react-diff-shell.react-diff-inspector-collapsed { grid-template-columns: 300px minmax(0, 1fr) auto; }
 .react-diff-sidebar { position: sticky; top: 92px; max-height: calc(100vh - 112px); overflow: auto; border: 1px solid var(--react-border); border-radius: 18px; background: linear-gradient(180deg, rgba(15,20,28,.94), rgba(8,12,18,.96)); padding: 12px; }
 .react-diff-compare { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; align-items: center; padding-bottom: 12px; border-bottom: 1px solid rgba(148,163,184,.12); color: var(--react-muted); font: .76rem var(--react-mono); }
 .react-diff-compare select { min-width: 0; border: 1px solid var(--react-border); border-radius: 10px; padding: 7px 9px; background: rgba(255,255,255,.045); color: var(--react-text); font: .74rem var(--react-mono); outline: none; }
@@ -1010,6 +1011,13 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-annotation-title em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--react-muted); font: .7rem var(--react-mono); font-style: normal; }
 .react-annotation-edit-btn { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; border: 1px solid rgba(56,189,248,.36); border-radius: 999px; padding: 5px 10px; background: rgba(56,189,248,.1); color: #7dd3fc; font: 800 .68rem var(--react-mono); cursor: pointer; }
 .react-annotation-edit-btn:hover { background: rgba(56,189,248,.2); }
+.react-annotation-head-actions { display: inline-flex; align-items: center; gap: 6px; }
+/* 折叠态：窄竖条 rail，点击展开；有内容时亮蓝点提示 */
+.react-annotation-collapsed { align-items: center; gap: 9px; padding: 16px 9px; cursor: pointer; overflow: hidden; }
+.react-annotation-collapsed:hover { border-color: rgba(56,189,248,.5); background: linear-gradient(180deg, rgba(56,189,248,.14), rgba(8,12,18,.96)); }
+.react-annotation-collapsed svg { color: var(--react-muted); flex: 0 0 auto; }
+.react-annotation-collapsed .react-annotation-rail-label { writing-mode: vertical-rl; color: var(--react-cyan); font: 850 .72rem var(--react-mono); letter-spacing: .32em; user-select: none; }
+.react-annotation-collapsed .react-annotation-rail-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 999px; background: #38bdf8; box-shadow: 0 0 6px rgba(56,189,248,.8); }
 .react-annotation-stale { display: flex; align-items: center; gap: 7px; border: 1px solid rgba(245,158,11,.34); border-radius: 12px; padding: 8px 10px; background: rgba(245,158,11,.1); color: #fcd34d; font: 700 .7rem var(--react-mono); }
 .react-annotation-editor { display: flex; flex-direction: column; gap: 8px; }
 .react-annotation-editor textarea { min-height: 320px; width: 100%; resize: vertical; border: 1px solid var(--react-border); border-radius: 12px; padding: 10px; background: rgba(255,255,255,.04); color: var(--react-text); font: .72rem/1.55 var(--react-mono); outline: none; }
@@ -1055,7 +1063,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-billable-summary span:first-child { font: 800 .78rem var(--react-mono); color: #bbf7d0; letter-spacing: .02em; }
 .react-billable-summary strong { font: 850 1.5rem var(--react-mono); color: #4ade80; }
 .react-billable-summary .react-muted { color: var(--react-muted); font: .74rem var(--react-mono); }
-@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-diff-toolbar { top: 72px; } .react-diff-topbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
+@media (max-width: 1040px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr 1fr; } .react-diff-shell, .react-diff-shell.react-diff-inspector-collapsed { grid-template-columns: 1fr; } .react-diff-sidebar, .react-diff-inspector { position: relative; top: 0; max-height: none; } .react-annotation-collapsed { flex-direction: row; justify-content: center; padding: 10px 14px; } .react-annotation-collapsed .react-annotation-rail-label { writing-mode: horizontal-tb; } .react-diff-toolbar { top: 72px; } .react-diff-topbar { top: 72px; } .react-knowledge-editor { position: relative; top: 0; } }
 @media (max-width: 680px) { .react-filter-grid,.react-settings-grid,.react-status-options,.react-list-card,.react-env-row,.react-req-card,.react-merge-select-grid,.react-knowledge-layout,.react-knowledge-form { grid-template-columns: 1fr; } .react-card-side { align-items: flex-start; } .react-card-select { align-items: flex-start; flex-direction: row; } .react-meta-grid { grid-template-columns: 1fr; } }
 .react-warn-note { color: #d97706; font: 600 .72rem var(--react-mono); }
 

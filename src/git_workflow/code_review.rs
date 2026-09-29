@@ -294,7 +294,11 @@ pub(crate) async fn prepare_review_materials(
                     format!(
                         "检测到 {} 个仓库的需求分支 HEAD 已推进（{}）；{}，已重新生成全量审查快照",
                         drifts.len(),
-                        drifts.iter().map(|d| d.repo_name.as_str()).collect::<Vec<_>>().join("、"),
+                        drifts
+                            .iter()
+                            .map(|d| d.repo_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join("、"),
                         mode_reason
                     ),
                     "full",

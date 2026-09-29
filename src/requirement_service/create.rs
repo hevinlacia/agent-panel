@@ -9,7 +9,12 @@ pub(crate) async fn create_requirement(
     // 用户约定：登记问题未强调测试环境的默认线上问题；显式 category 与前缀冲突时拒绝。
     let id_template_raw = form.req_id.trim();
     let derived_category = derive_category_from_id_template(id_template_raw);
-    let category = match form.category.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    let category = match form
+        .category
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         Some(explicit) => {
             if let Some(derived) = derived_category {
                 if explicit != derived {
@@ -722,6 +727,12 @@ pub(crate) fn requirement_section_form_to_edit(
                 .map(str::to_string)
         })
         .or_else(|| requirement_section_default_doc_type(&section).map(str::to_string));
+    if doc_type.is_none() {
+        // 未知 section：显式拒绝并列出可用落点，禁止静默写入其他文档。
+        return Err(ApiError::bad_request(format!(
+            "unknown requirement section: {section}; pass token or docType explicitly, or use a known section key: impact, test, background, memory, config, technical-plan, release, review, notes, root-cause, incident"
+        )));
+    }
     let heading = form
         .heading
         .or_else(|| Some(requirement_section_default_heading(&section).to_string()));
@@ -746,15 +757,18 @@ pub(crate) fn requirement_section_form_to_edit(
 
 pub(crate) fn requirement_section_default_doc_type(section: &str) -> Option<&'static str> {
     let s = normalize_section_key(section);
-    if matches!(
+    // issue 家族（线上问题/测试问题文档集）：incident.md / root-cause.md 必须是独立落点，
+    // 不得再回退到 impact.md（历史 bug：rootcause 被旧别名映射进 impact，静默写错文件）。
+    if matches!(s.as_str(), "rootcause") {
+        Some("root-cause")
+    } else if matches!(s.as_str(), "incident" | "issue") {
+        Some("incident")
+    } else if matches!(
         s.as_str(),
         "test" | "tests" | "selftest" | "uat" | "testcase" | "testcases"
     ) {
         Some("test")
-    } else if matches!(
-        s.as_str(),
-        "impact" | "risk" | "risks" | "rootcause" | "boxcodeissue" | "issue"
-    ) {
+    } else if matches!(s.as_str(), "impact" | "risk" | "risks" | "boxcodeissue") {
         Some("impact")
     } else if matches!(
         s.as_str(),
@@ -790,6 +804,7 @@ pub(crate) fn requirement_section_default_heading(section: &str) -> &str {
         "selftest" => "自测证据",
         "uat" => "UAT 验证",
         "impact" => "影响面评估",
+        "incident" => "问题现象",
         "risk" | "risks" => "风险与回滚",
         "decision" | "decisions" => "关键决策",
         "summary" | "agentcontext" => "Agent 摘要",

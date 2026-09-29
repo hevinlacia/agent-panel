@@ -50,6 +50,96 @@ pub(crate) async fn read_branch_scope_round(
     Ok(Some(scope))
 }
 
+/// 判断单仓库单分支快照是否“真正无文件差异”：files 为空，且 diff/文件列表读取无失败、
+/// 无截断。diff 命令失败（error 非空）或输出被截断时不判空，避免把“读不到 diff”误当成“没有差异”。
+fn snapshot_has_no_file_diff(snapshot: &Value) -> bool {
+    let files_empty = snapshot
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|files| files.is_empty())
+        .unwrap_or(true);
+    if !files_empty {
+        return false;
+    }
+    if snapshot.get("error").map(Value::is_null) != Some(true) {
+        return false;
+    }
+    if snapshot
+        .get("diffTruncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    // name-status/numstat 读取失败时 files 必为空，但差异可能真实存在，不能判空。
+    snapshot
+        .get("warnings")
+        .and_then(Value::as_array)
+        .map(|warnings| {
+            !warnings.iter().any(|w| {
+                w.as_str()
+                    .map(|s| s.contains("文件列表读取失败") || s.contains("Diff 读取失败"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(true)
+}
+
+/// 生成代码差异后自动清理登记：某应用本轮登记的全部分支快照都无文件差异时，
+/// 把该应用从本轮次登记文件（branches.json / branches-round-<n>.json）移除并原子写回
+/// （刷新 updated_at、version 补齐到 2）。典型场景：需求分支已合入生产（三点 diff 为空）
+/// 后登记残留。全部应用都无差异时不写文件——登记不允许清空（与 PUT 语义一致），
+/// 只返回候选由调用方提示。返回 (被移除的 repoName 列表, 登记文件是否写回)。
+pub(crate) async fn prune_no_diff_repos(
+    req_dir: &Path,
+    scope: &BranchScope,
+    review: &Value,
+) -> Result<(Vec<String>, bool)> {
+    let snapshots = review.get("repos").and_then(Value::as_array);
+    let Some(snapshots) = snapshots else {
+        return Ok((Vec::new(), false));
+    };
+    let removed: Vec<String> = scope
+        .repos
+        .iter()
+        .filter(|repo| {
+            let branch_snapshots: Vec<&Value> = snapshots
+                .iter()
+                .filter(|s| {
+                    s.get("repoName").and_then(Value::as_str) == Some(repo.repo_name.as_str())
+                })
+                .collect();
+            // 至少有一个分支快照，且全部分支都无文件差异才移除整个应用。
+            !branch_snapshots.is_empty()
+                && branch_snapshots
+                    .iter()
+                    .all(|s| snapshot_has_no_file_diff(s))
+        })
+        .map(|repo| repo.repo_name.clone())
+        .collect();
+    if removed.is_empty() {
+        return Ok((removed, false));
+    }
+    let remaining: Vec<BranchRepo> = scope
+        .repos
+        .iter()
+        .filter(|repo| !removed.contains(&repo.repo_name))
+        .cloned()
+        .collect();
+    if remaining.is_empty() {
+        return Ok((removed, false));
+    }
+    let mut next = scope.clone();
+    next.repos = remaining;
+    next.updated_at = now_ms();
+    if next.version < 2 {
+        next.version = 2;
+    }
+    let file = branch_scope_file_for_round(scope.round.max(1));
+    atomic_write_json(&req_dir.join(&file), &next).await?;
+    Ok((removed, true))
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BranchRoundInfo {

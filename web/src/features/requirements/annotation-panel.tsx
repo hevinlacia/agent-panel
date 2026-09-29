@@ -5,7 +5,7 @@
  * the user hand-edit the annotation JSON. Code display itself stays
  * untouched — all explanation lives here.
  */
-import { AlignLeft, Boxes, Braces, MessageSquareText, Save, ScrollText, Table2, TriangleAlert, X } from "lucide-react"
+import { AlignLeft, Boxes, Braces, MessageSquareText, PanelRightClose, PanelRightOpen, Save, ScrollText, Table2, TriangleAlert, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Markdown } from "../../markdown"
 import { EmptyCard } from "../../components/ui"
@@ -23,13 +23,16 @@ interface AnnotationPanelProps {
   onLocate: (lineIndex: number) => void
   onSave: (next: CodeFileAnnotation) => Promise<void>
   saving: boolean
+  /** 折叠态由父级页面持有（控制 grid 列宽 + localStorage 记忆）；折叠时本组件渲染成窄竖条，点击展开。 */
+  collapsed: boolean
+  onToggleCollapse: () => void
 }
 
 function SectionHead({ icon, title }: { icon: React.ReactNode; title: string }) {
   return <div className="react-annotation-section-head">{icon}<span>{title}</span></div>
 }
 
-export function AnnotationPanel({ fileLabel, annotation, stale, activeNotes, unmatchedNotes, onLocate, onSave, saving }: AnnotationPanelProps) {
+export function AnnotationPanel({ fileLabel, annotation, stale, activeNotes, unmatchedNotes, onLocate, onSave, saving, collapsed, onToggleCollapse }: AnnotationPanelProps) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState("")
   const [editError, setEditError] = useState<string | null>(null)
@@ -58,10 +61,20 @@ export function AnnotationPanel({ fileLabel, annotation, stale, activeNotes, unm
     annotation?.summary?.trim() || annotation?.variables?.length || annotation?.flow?.trim() || annotation?.notes?.length,
   )
 
+  // 折叠态：窄竖条 rail，点击整条展开；有内容时亮一个圆点提示。
+  if (collapsed) return <aside className="react-diff-inspector react-annotation-collapsed" onClick={onToggleCollapse} role="button" aria-expanded={false} title="展开说明栏">
+    <PanelRightOpen size={15} />
+    <span className="react-annotation-rail-label">代码说明</span>
+    {hasContent ? <span className="react-annotation-rail-dot" title="当前文件有说明内容" /> : null}
+  </aside>
+
   return <aside className="react-diff-inspector">
     <div className="react-annotation-head">
       <div className="react-annotation-title"><ScrollText size={14} /><strong>说明</strong><em title={fileLabel}>{fileLabel.split("/").pop() || fileLabel}</em></div>
-      {!editing ? <button type="button" className="react-annotation-edit-btn" onClick={startEdit} title="编辑该文件备注 JSON"><Braces size={13} />编辑</button> : null}
+      <div className="react-annotation-head-actions">
+        {!editing ? <button type="button" className="react-annotation-edit-btn" onClick={startEdit} title="编辑该文件备注 JSON"><Braces size={13} />编辑</button> : null}
+        <button type="button" className="react-annotation-edit-btn react-annotation-collapse-btn" onClick={onToggleCollapse} title="折叠说明栏（点击右侧竖条可再展开）"><PanelRightClose size={13} /></button>
+      </div>
     </div>
     {stale ? <div className="react-annotation-stale"><TriangleAlert size={13} />备注基于旧 diff，锚定可能过期</div> : null}
     {editing ? <div className="react-annotation-editor">

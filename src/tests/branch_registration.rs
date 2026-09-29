@@ -64,7 +64,6 @@ async fn branch_rounds_file_names_listing_and_create() {
     assert!(!rounds[2].sealed);
 }
 
-
 /// 差异快照按轮次独立保留：修复轮次的新快照不挤掉原始轮次可回退的历史。
 #[tokio::test]
 async fn diff_snapshots_isolated_per_round() {
@@ -113,7 +112,6 @@ async fn diff_snapshots_isolated_per_round() {
     );
 }
 
-
 #[tokio::test]
 async fn branch_registration_put_validates_and_dedupes() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -152,7 +150,13 @@ async fn branch_registration_put_validates_and_dedupes() {
     assert!(run(&["add", "."]).status.success());
     assert!(run(&["commit", "-m", "init"]).status.success());
     assert!(run(&["branch", "feature/x"]).status.success());
-    assert!(run(&["update-ref", "refs/remotes/origin/feature/x", "refs/heads/feature/x"]).status.success());
+    assert!(run(&[
+        "update-ref",
+        "refs/remotes/origin/feature/x",
+        "refs/heads/feature/x"
+    ])
+    .status
+    .success());
 
     let put = |state2: AppState, repos: Value, confirm_change: bool, confirm_removal: bool| {
         api_requirement_branch_registration_put(
@@ -215,7 +219,11 @@ async fn branch_registration_put_validates_and_dedupes() {
     )
     .await
     .expect_err("branch change must be confirmed");
-    assert!(err.message.contains("confirmBranchChange"), "{}", err.message);
+    assert!(
+        err.message.contains("confirmBranchChange"),
+        "{}",
+        err.message
+    );
     assert!(err.message.contains("feature/x"), "{}", err.message);
 
     // 5) 换分支确认 → updated + warning；分支 feature/y 未建 → 400 提示实测失败
@@ -229,7 +237,13 @@ async fn branch_registration_put_validates_and_dedupes() {
     .expect_err("feature/y does not exist");
     assert!(err.message.contains("feature/y"), "{}", err.message);
     assert!(run(&["branch", "feature/y"]).status.success());
-    assert!(run(&["update-ref", "refs/remotes/origin/feature/y", "refs/heads/feature/y"]).status.success());
+    assert!(run(&[
+        "update-ref",
+        "refs/remotes/origin/feature/y",
+        "refs/heads/feature/y"
+    ])
+    .status
+    .success());
     let v = put(
         state.clone(),
         json!([{ "repoName": "rl-log-api", "branch": "feature/y", "path": repo_path_str }]),

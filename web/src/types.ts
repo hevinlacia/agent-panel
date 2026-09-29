@@ -5,7 +5,7 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已取消"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已取消"
 export type ReqCategory = "需求" | "线上问题" | "测试问题"
 
 export interface EffortEstimate {
@@ -544,7 +544,7 @@ export interface ReviewGateStaleRepo { repoName: string; branch: string; project
 export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[]; warnings?: string[]; annotations?: { present?: boolean; stale?: boolean; reason?: string } | null } }
 export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number; round?: number }
 export interface DiffSnapshotsPayload { ok: boolean; round?: number; snapshots: CodeDiffSnapshot[] }
-export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; snapshots: CodeDiffSnapshot[] }
+export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; prunedRepos?: string[]; prunedWritten?: boolean; snapshots: CodeDiffSnapshot[] }
 /** 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次文件 branches-round-<n>.json */
 export interface BranchRoundInfo { round: number; file: string; updatedAt: number; repoCount: number; branchCount: number; sealed: boolean }
 export interface BranchRoundsPayload { ok: boolean; reqId: string; rounds: BranchRoundInfo[]; latest: number }

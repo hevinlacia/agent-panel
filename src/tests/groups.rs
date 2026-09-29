@@ -33,7 +33,6 @@ async fn create_requirement_group_rejects_issue_category_and_legacy_pool_id() {
     assert_eq!(res["reqId"], json!("WMS-GRP-001-combo"));
 }
 
-
 /// 并行创建不得撞号（回归）：两个 `{seq}` 模板并发创建（slug 不同）必须拿到连续且
 /// 不同的序号。旧实现仅靠 create_dir 的 AlreadyExists 兜底，slug 不同则目录名不同
 /// 永不冲突；而扫描式占号也观察不到未写 meta.md 的预留目录，导致两个请求都拿到 117。
@@ -98,7 +97,6 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
     assert!(req_root.join("T-002-bbb").join("meta.md").is_file());
 }
 
-
 fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
     RequirementCreateForm {
         req_id: req_id.to_string(),
@@ -125,7 +123,6 @@ fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
     }
 }
 
-
 fn group_test_state(tmp: &tempfile::TempDir) -> AppState {
     let data = tmp.path().join("data");
     let proj = tmp.path().join("proj");
@@ -140,14 +137,12 @@ fn group_test_state(tmp: &tempfile::TempDir) -> AppState {
     )
 }
 
-
 fn group_test_member_input(id: &str) -> GroupMemberInput {
     GroupMemberInput {
         req_id: id.to_string(),
         note: None,
     }
 }
-
 
 #[tokio::test]
 async fn group_status_aggregation_takes_min_member_status() {
@@ -204,7 +199,11 @@ async fn group_status_aggregation_takes_min_member_status() {
     // 对外主状态同步为派生聚合值（不再停留在创建时的静态状态）。
     assert_eq!(group.status, "开发中");
     // description 摘要里的静态 Status 行也同步为聚合状态。
-    assert!(group.description.contains("- Status: 开发中"), "{}", group.description);
+    assert!(
+        group.description.contains("- Status: 开发中"),
+        "{}",
+        group.description
+    );
     // 成员反向引用所属组。
     let member = reqs
         .iter()
@@ -215,7 +214,6 @@ async fn group_status_aggregation_takes_min_member_status() {
         .iter()
         .any(|g| g == "WMS-GRP-001-aggregation"));
 }
-
 
 #[tokio::test]
 async fn create_requirement_group_writes_group_json_and_defaults_policy() {
@@ -238,7 +236,6 @@ async fn create_requirement_group_writes_group_json_and_defaults_policy() {
     assert_eq!(file.members.len(), 1);
     assert_eq!(file.members[0].req_id, "G-M1");
 }
-
 
 #[tokio::test]
 async fn create_requirement_group_rejects_invalid_members_and_policy() {
@@ -294,7 +291,6 @@ async fn create_requirement_group_rejects_invalid_members_and_policy() {
         .expect_err("nested group must fail");
     assert!(err.message.contains("组嵌套"), "{:?}", err);
 }
-
 
 #[tokio::test]
 async fn validate_requirement_reports_group_json_problems_and_warnings() {
@@ -373,7 +369,6 @@ async fn validate_requirement_reports_group_json_problems_and_warnings() {
         .any(|p| p.as_str().unwrap_or("").contains("group.json")));
 }
 
-
 #[tokio::test]
 async fn group_status_is_locked_against_manual_status_writes() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -426,4 +421,3 @@ async fn group_status_is_locked_against_manual_status_writes() {
     // 对外主状态随成员推进同步为派生值。
     assert_eq!(group.status, "自测中");
 }
-

@@ -35,6 +35,15 @@ export function persistSidebarCollapsed(collapsed: boolean) {
 }
 
 export const PROJECT_SHOW_SUB_REQS_KEY = "agent-panel.projects.showSubReqs"
+export const DIFF_INSPECTOR_COLLAPSED_KEY = "agent-panel.diffInspectorCollapsed"
+
+export function readDiffInspectorCollapsed(): boolean {
+  try { return localStorage.getItem(DIFF_INSPECTOR_COLLAPSED_KEY) === "1" } catch { return false }
+}
+
+export function persistDiffInspectorCollapsed(collapsed: boolean) {
+  try { localStorage.setItem(DIFF_INSPECTOR_COLLAPSED_KEY, collapsed ? "1" : "0") } catch { /* ignore */ }
+}
 
 export function readShowSubReqs(): boolean {
   try { return localStorage.getItem(PROJECT_SHOW_SUB_REQS_KEY) === "1" } catch { return false }

@@ -16,7 +16,10 @@ pub(crate) async fn ensure_status_transition_gates(
     }
     let cfg = read_config(state).await.unwrap_or_default();
     let rules = effective_status_gates(&cfg);
-    let Some(rule) = rules.iter().find(|r| r.from == from && r.to == target_status) else {
+    let Some(rule) = rules
+        .iter()
+        .find(|r| r.from == from && r.to == target_status)
+    else {
         return Ok(());
     };
     for gate in &rule.gates {

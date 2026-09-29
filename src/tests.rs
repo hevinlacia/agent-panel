@@ -2,18 +2,19 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 // 按业务域拆分的测试子模块（verbatim 移动，不改断言）。
-mod status_gates;
-mod id_seq;
-mod groups;
-mod experience_summary;
-mod docs_render;
-mod review_flow;
-mod merge_options;
 mod branch_registration;
-mod sessions;
-mod sub_requirement;
-mod misc;
+mod branch_scope_prune;
 mod cainiao_mock;
+mod docs_render;
+mod experience_summary;
+mod groups;
+mod id_seq;
+mod merge_options;
+mod misc;
+mod review_flow;
+mod sessions;
+mod status_gates;
+mod sub_requirement;
 
 fn chrono_like_unique_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,13 +24,11 @@ fn chrono_like_unique_suffix() -> u128 {
         .unwrap_or(0)
 }
 
-
 fn default_requirement_for_test(req_id: &str) -> Requirement {
     let mut req = default_requirement(Vec::new());
     req.id = req_id.to_string();
     req
 }
-
 
 fn write_file(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -37,7 +36,6 @@ fn write_file(path: &Path, content: &str) {
     }
     std::fs::write(path, content).expect("write file");
 }
-
 
 fn temp_app_state(data: &Path, pi_root: &Path, dsh_root: &Path) -> AppState {
     AppState {

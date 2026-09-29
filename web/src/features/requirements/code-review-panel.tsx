@@ -39,7 +39,7 @@ export function CodeReviewPanel({ req, round, onRoundChange }: { req: Requiremen
     setSyncing(true)
     setActionError(null)
     try {
-      const payload = await postForm<SyncBasePayload>("/api/requirement/sync-base", { reqId: req.id })
+      const payload = await postForm<SyncBasePayload>("/api/requirement/sync-base", { reqId: req.id, round: String(round) })
       setSyncPayload(payload)
       refresh()
       gate.refresh()
