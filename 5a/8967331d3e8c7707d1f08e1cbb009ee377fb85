@@ -1,0 +1,29 @@
+src/requirement_service/selftest_gate.rs
+  7957130c1a4cf081 89-238
+web/src/pages/requirement-gate.tsx
+  7957130c1a4cf081 2,10-49,103
+src/requirement_api.rs
+  7957130c1a4cf081 679,684
+web/src/types.ts
+  7957130c1a4cf081 530-551
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "5a8967331d3e8c7707d1f08e1cbb009ee377fb85",
+  "prompts": {
+    "7957130c1a4cf081": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "bdc3a42d-2301-4c4f-96ff-038ae88e0e69",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 222,
+      "total_deletions": 7,
+      "accepted_lines": 216,
+      "overriden_lines": 0
+    }
+  }
+}
