@@ -47,7 +47,7 @@ export function RequirementAttachmentsPanel({ req }: { req: Requirement }) {
   const activeBadge = active ? (active.summary.length ? active.summary.join(" / ") : active.extension || "-") : ""
   const chip = loading ? "loading" : error ? "error" : `${rows.length} 个文件`
   return <section id="attachments" className="react-panel react-attachments-panel"><PanelHead kicker="Attachments" title="附件" chip={chip} />
-    <p className="react-muted">展示需求目录 <code>attachments/</code> 下的非代码资产（排查数据、SQL、截图、导出件等），与上线清单相互独立；左侧选择附件（名称右侧可一键复制内容/路径），右侧展示全文，附件多、内容大时左右独立滚动。</p>
+    <p className="react-muted">上线资产事实源：开发/测试中用到的 SQL 与配置变更都实时沉淀在需求目录 <code>attachments/</code> 下，发布前通读一遍即可确认要执行哪些 SQL、做哪些配置。SQL 文件展示 UPDATE/INSERT/DELETE/ALTER 统计（文件头注释块含用途/目标环境/上线是否需执行/回滚方式）；左侧选择附件（名称右侧可一键复制内容/路径），右侧展示全文，附件多、内容大时左右独立滚动。</p>
     {error ? <p className="react-effort-error">附件加载失败：{error}</p> : loading ? <LoadingCard label="正在加载附件…" /> : rows.length === 0 ? <p className="react-muted">暂无附件。</p> : <div className="react-att-layout">
       <div className="react-att-list">{rows.map((row) => <div key={row.filename} role="button" className={`react-att-item${row.filename === selected ? " react-att-active" : ""}`} onClick={() => setSelected(row.filename)}>
         <span className="react-att-item-name" title={row.filename}>{row.filename}</span>
@@ -81,7 +81,6 @@ export function RequirementFilesPanel({ req }: { req: Requirement }) {
     { title: "按需阶段文件", note: "进入自测、发布、审查、经验总结等阶段后再创建。", rows: [
       existing("test.md", req.testPath),
       existing("test-scenario.md", req.testScenarioPath),
-      existing("release-manifest.md", req.releaseManifestPath),
       existing("release-check.md", req.releaseCheckPath),
       existing("experience-summary.md", req.experienceSummaryPath),
       existing("troubleshooting.md", req.troubleshootingPath),
@@ -93,6 +92,7 @@ export function RequirementFilesPanel({ req }: { req: Requirement }) {
       existing("memory.md", req.memoryPath),
       existing("branch.md", req.branchPath),
       existing("config-changes.md", req.configPath),
+      existing("release-manifest.md", req.releaseManifestPath),
     ].filter(Boolean) as [string, string][] },
   ]
   return <section className="react-panel"><PanelHead kicker="Files" title="需求文件" />

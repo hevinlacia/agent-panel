@@ -2,7 +2,7 @@
 
 ## 必读
 - test.md、technical-plan.md、notes.md、review.md
-- 按需读取 release-manifest.md；历史 impact.md / config-changes.md 仅在已有内容时参考
+- 按需读取附件目录（SQL / release-config.md）；历史 release-manifest.md / config-changes.md / impact.md 仅在已有内容时参考
 - `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-agent-self-test-evidence.md`（Agent Panel managed，id: conventions-wms-agent-self-test-evidence）
 
 ## 必做

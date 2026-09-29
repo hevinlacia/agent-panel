@@ -171,7 +171,7 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 true,
             ),
             file_check(dir, BRANCH_SCOPE_FILE, "repo/branch 机器可读映射", false),
-            file_check(dir, "release-manifest.md", "有上线资产时按需维护", false),
+            attachments_check(dir, "有上线 SQL/配置时按需落附件", false),
             file_check(dir, "test.md", "进入自测前按需创建验证场景", false),
         ],
         "自测中" => vec![
@@ -183,7 +183,7 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "实际实现与方案一致或已同步修正",
                 true,
             ),
-            file_check(dir, "release-manifest.md", "有上线资产时完成自检", false),
+            attachments_check(dir, "上线 SQL/配置已落附件", false),
             any_file_check(
                 dir,
                 &["review.md", "code-review-ai.md", CODE_REVIEW_FILE],
@@ -205,12 +205,7 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "测试修复后的实现方案仍可审查",
                 true,
             ),
-            file_check(
-                dir,
-                "release-manifest.md",
-                "有上线资产时待测版本清单完整",
-                false,
-            ),
+            attachments_check(dir, "上线 SQL/配置已落附件", false),
             file_check(dir, BRANCH_SCOPE_FILE, "test/UAT 合并目标可计算", false),
         ],
         "人工核查" => vec![
@@ -243,7 +238,7 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             ),
             file_check(dir, "test.md", "验证结果和证据可复用", true),
             file_check(dir, "technical-plan.md", "最终实现方案可追溯", true),
-            file_check(dir, "release-manifest.md", "有上线资产时变更无遗漏", false),
+            attachments_check(dir, "上线资产无遗漏（SQL/配置附件齐全）", false),
             file_check(dir, "notes.md", "关键决策和坑点可追溯", false),
         ],
         "排查中" => vec![
@@ -315,16 +310,34 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             file_check(dir, "release-check.md", "发布/完成前检查记录", false),
             file_check(dir, "test.md", "最终验证证据", true),
             file_check(dir, "technical-plan.md", "最终技术方案", true),
-            file_check(
-                dir,
-                "release-manifest.md",
-                "有上线资产时最终上线清单",
-                false,
-            ),
+            attachments_check(dir, "上线资产最终核对（附件齐全）", false),
         ],
         _ => vec![file_check(dir, "technical-plan.md", "需求技术方案", false)],
     }
 }
+/// 附件目录检查：attachments/ 下存在任意文件即视为已沉淀上线资产（SQL/配置）。
+pub(crate) fn attachments_check(dir: &Path, label: &str, required: bool) -> Value {
+    let attachments_dir = dir.join("attachments");
+    let mut file_count = 0usize;
+    if let Ok(rd) = std::fs::read_dir(&attachments_dir) {
+        file_count = rd
+            .flatten()
+            .filter(|e| e.metadata().map(|m| m.is_file()).unwrap_or(false))
+            .count();
+    }
+    let ok = file_count > 0;
+    json!({
+        "id": "attachments-dir",
+        "label": label,
+        "required": required,
+        "ok": ok,
+        "status": if ok { "ok" } else if required { "missing" } else { "optionalMissing" },
+        "source": "attachments/",
+        "bytes": file_count,
+        "path": attachments_dir.to_string_lossy()
+    })
+}
+
 pub(crate) fn file_check(dir: &Path, file: &str, label: &str, required: bool) -> Value {
     let path = dir.join(file);
     let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
@@ -388,12 +401,11 @@ pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&
         "self-test" => vec![
             "req.technicalPlan",
             "req.test",
-            "req.releaseManifest",
+            "req.attachments",
             "req.memory",
             "req.notes",
         ],
         "release-check" => vec![
-            "req.releaseManifest",
             "req.attachments",
             "req.technicalPlan",
             "req.test",
@@ -402,7 +414,6 @@ pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&
             "req.memory",
         ],
         "config" => vec![
-            "req.releaseManifest",
             "req.attachments",
             "req.technicalPlan",
             "req.memory",
@@ -424,6 +435,7 @@ pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&
         _ => vec![
             "req.background",
             "req.technicalPlan",
+            "req.attachments",
             "req.memory",
             "req.notes",
         ],

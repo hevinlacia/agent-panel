@@ -12,6 +12,13 @@
 - 如果候选来自当前 session 的具体操作，应写得更详细：触发场景、关键命令/API、相关文件、证据、失败现象、修复方式和适用边界。
 - 候选不等于立刻落地：不能确定时标记 `confidence: needs-confirmation`；是否写入知识库、经验库或更新 skill，留到经验总结阶段决策。
 
+## 附件实时沉淀（上线资产事实源）
+- 需求目录 `attachments/` 是本次需求上线资产（SQL、配置、人工动作）的单一事实源；开发/自测/测试/排查中产生或使用的 SQL 与配置变更当场落成附件，不等发布前回忆。
+- SQL 存为 `attachments/<序号>-<用途>.sql`，文件头注释块固定写四项：`-- 用途: ...` / `-- 目标环境: test|UAT-CN|UAT-SEA|生产-CN|生产-SEA` / `-- 上线是否需执行: 是|否`（否=仅测试造数或验证用）/ `-- 回滚方式: ...|无需`。
+- 配置与人工动作写入 `attachments/release-config.md`（追加式），每条含：类型（Apollo/Nacos/DTS/Topic/Group/Job/控制台/权限）、对象（namespace+key 或名称）、变更内容、环境、是否已发布、是否需上线动作、回滚方式。
+- 纯测试用的造数/验证 SQL 同样落附件并标 `-- 上线是否需执行: 否`——它们既是测试证据，也是排障复用资产。
+- notes.md / release-check.md 只引用附件文件名和结论，不重复贴 SQL 全文。
+
 ## 推荐事件格式
 - `POST /api/requirement/events`
 - `type`: `knowledgeReference` / `learningCandidate` / `skillImprovementCandidate`

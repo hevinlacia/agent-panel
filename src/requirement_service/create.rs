@@ -777,15 +777,11 @@ pub(crate) fn requirement_section_default_doc_type(section: &str) -> Option<&'st
         Some("background")
     } else if matches!(s.as_str(), "memory" | "summary" | "agentcontext") {
         Some("memory")
-    } else if matches!(s.as_str(), "config" | "configchanges") {
-        Some("config-changes")
     } else if matches!(
         s.as_str(),
         "technicalplan" | "techplan" | "implementation" | "implementationplan" | "solution"
     ) {
         Some("technical-plan")
-    } else if matches!(s.as_str(), "release" | "manifest" | "releasemanifest") {
-        Some("release-manifest")
     } else if matches!(s.as_str(), "review" | "codereview") {
         Some("review")
     } else if matches!(s.as_str(), "notes" | "note" | "progress") {
@@ -808,11 +804,9 @@ pub(crate) fn requirement_section_default_heading(section: &str) -> &str {
         "risk" | "risks" => "风险与回滚",
         "decision" | "decisions" => "关键决策",
         "summary" | "agentcontext" => "Agent 摘要",
-        "config" | "configchanges" => "配置变更",
         "technicalplan" | "techplan" | "implementation" | "implementationplan" | "solution" => {
             "技术方案"
         }
-        "release" | "manifest" | "releasemanifest" => "上线清单",
         "review" | "codereview" => "代码审查结论",
         "progress" => "进展记录",
         _ => section.trim(),

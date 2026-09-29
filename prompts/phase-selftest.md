@@ -2,7 +2,7 @@
 
 ## 必读
 - technical-plan.md、test.md、notes.md、review.md、code-review-ai.md
-- 按需读取 release-manifest.md；历史 impact.md / config-changes.md 仅在已有内容时参考
+- 按需读取附件目录（SQL / release-config.md）；历史 release-manifest.md / config-changes.md / impact.md 仅在已有内容时参考
 - `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-agent-self-test-evidence.md`（Agent Panel managed，id: conventions-wms-agent-self-test-evidence）
 - `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/items/conventions-wms-backend-logging.md`（Agent Panel managed，id: conventions-wms-backend-logging）
 
@@ -20,7 +20,7 @@
   每项填写结果（通过/失败/无法测试）；**全部通过直接放行；存在「无法测试/跳过」（写明原因）放行但门禁展示 ⚠ 警示（结果未知）；存在「失败」门禁不放行**，失败项必须写明具体原因
 - 在 test.md 写入 A/B/C/D 置信度
 - 复核并更新 technical-plan.md：实际实现若和最初方案不一致，补齐真实实现路径、关键文件/类、风险与验证计划，方便人工先看方案再审 diff
-- 若存在新增/变更的表、配置、Topic/Group、Job、开关、接口或上线人工动作，创建/复核 release-manifest.md，不能遗漏
+- 若存在新增/变更的表、配置、Topic/Group、Job、开关或上线人工动作，按「附件实时沉淀」规范落附件（SQL 文件头注释块 + release-config.md），不能遗漏
 - 完成代码审查门禁：调用 agent-panel-code-review skill 执行审查（门禁强制走该 skill：备料 → 深度审查 → 结论落盘），生成详细 code-review-ai.md（顶部含 `Source: agent-panel-code-review skill` 标记）+ 代码问题备注 code-annotations.json（每条 finding 一条 hunk note，差异页可见）+ review.md 结论 `Review Gate: PASS` / `BLOCKED` / `WAIVED`；审查模式默认发布就绪前全量、发布就绪起增量，用户显式指定时覆盖
 
 ## 禁止

@@ -153,7 +153,7 @@ pub(crate) async fn render_requirement_attachments_context(
     if rows.is_empty() {
         return "# 非代码附件\n\n- 暂无 attachments/ 附件。\n".to_string();
     }
-    let mut out = String::from("# 非代码附件 / Release Attachments\n\n> 这些是需求目录 attachments/ 下的非代码发版资产，发版前应与上线清单一并核对。\n\n| 文件 | 类型/统计 | 大小 | 更新时间 | 路径 |\n| --- | --- | ---: | --- | --- |\n");
+    let mut out = String::from("# 上线资产附件 / Release Attachments\n\n> 需求目录 attachments/ 下的上线资产事实源：SQL（文件头注释块含用途/目标环境/上线是否需执行/回滚方式）与配置/人工动作记录；发布预检时逐项核对，标注「上线是否需执行: 否」的为测试专用资产。\n\n| 文件 | 类型/统计 | 大小 | 更新时间 | 路径 |\n| --- | --- | ---: | --- | --- |\n");
     for row in &rows {
         let filename = row.get("filename").and_then(Value::as_str).unwrap_or("-");
         let ext = row.get("extension").and_then(Value::as_str).unwrap_or("-");

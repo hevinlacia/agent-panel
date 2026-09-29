@@ -10,7 +10,7 @@
 - 开始实现前先更新 technical-plan.md 的总体方案、影响范围、核心流程变化、风险/灰度/回滚和验证计划；实现过程中若方向或关键文件变化，继续同步更新
 - 实现最小正确改动并同步维护 technical-plan.md/notes.md
 - 运行中如果出现可复用业务规则、排查路径、测试数据方法或 skill 改进机会，按固定提示词实时记录结构化事件
-- 有代码分支范围时维护 branches.json；有上线资产、配置、DB、MQ、Job、接口影响时创建/维护 release-manifest.md
+- 有代码分支范围时维护 branches.json；产生 DB/配置/MQ/Job 等上线资产时，按固定提示词的「附件实时沉淀」规范把 SQL 和配置变更落成附件（SQL 文件 + attachments/release-config.md）
 - 涉及入口、MQ、Job、外部调用、异常处理时补齐 tid 日志
 - **开发推动的需求（meta.md source: 开发推动）**：进入自测/测试前必须创建并填写 test-scenario.md（测试场景文档），让测试自主理解需求并评估测试范围：
   - 需求说明：这个需求是干嘛的（背景、使用场景、功能点/变更点清单）
@@ -28,4 +28,4 @@
 - 代码改动完成且关键路径可解释
 - technical-plan.md 能在代码差异前说明实现全局视图、关键改动点、风险和验证路径
 - 开发推动的需求：test-scenario.md 已完成（需求说明 + 开发评估的测试范围 + 测试覆盖场景）
-- notes.md 记录阶段性进展；必要的 branches.json / release-manifest.md 已按需维护
+- notes.md 记录阶段性进展；必要的 branches.json 已按需维护，上线 SQL/配置已落附件

@@ -2,7 +2,7 @@
 
 ## 必读
 - 先调用 `GET /api/requirement/experience-summary-context?id=<reqId>&limit=200` 获取过程候选、已引用知识/经验 ID 和去重提示
-- experience-summary.md、notes.md、technical-plan.md、test.md、background.md、release-manifest.md、release-check.md、review.md
+- experience-summary.md、notes.md、technical-plan.md、test.md、background.md、attachments/（上线 SQL/配置附件）、release-check.md、review.md
 - 历史兼容：若已有 memory.md / impact.md，可作为参考读取
 - Agent Panel 业务知识库和经验库当前记录；相关 skill 的 SKILL.md 按需读取
 

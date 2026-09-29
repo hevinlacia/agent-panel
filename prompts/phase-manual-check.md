@@ -2,7 +2,7 @@
 
 ## 必读
 - test.md（agent 已验证的场景与证据，人工复测的对照基准）
-- technical-plan.md、release-manifest.md、review.md / code-review-ai.md
+- technical-plan.md、attachments/（上线 SQL/配置附件）、review.md / code-review-ai.md
 - `$WMS_WORKSPACE_ROOT/.agents/business-knowledge/`（Agent Panel managed）里与该需求相关的业务知识
 
 ## 必做
