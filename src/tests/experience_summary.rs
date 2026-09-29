@@ -248,3 +248,36 @@ fn stale_transition_only_applies_to_running_jobs() {
         stale
     ));
 }
+
+#[test]
+fn injection_context_keeps_fixed_prompt_but_omits_state_phase_prompt_body() {
+    let mut out = String::new();
+    let context = json!({
+        "phaseRuntime": {
+            "currentStatus": "开发中",
+            "intent": "overview",
+            "recommendedIntent": "overview",
+            "fixedPhasePromptFile": "prompts/phase-common.md",
+            "statePhasePromptFile": "prompts/phase-dev.md",
+            "fixedPhasePrompt": "全阶段固定提示词正文",
+            "statePhasePrompt": "开发中阶段专属提示词正文",
+            "currentPhasePrompt": "拼接结果不应出现在启动快照",
+            "entryChecks": [],
+            "phaseGaps": { "missingRequiredEntryChecks": [] }
+        },
+        "summaryDocs": [],
+        "recentEvents": [],
+        "apis": {},
+        "recommendedWrites": []
+    });
+    append_agent_context_markdown(&mut out, &context);
+    // 全周期通用提示词正文保留（不会随状态过期）。
+    assert!(out.contains("Fixed Lifecycle Prompt"));
+    assert!(out.contains("全阶段固定提示词正文"));
+    // 阶段专属提示词正文不得内嵌进 system prompt 快照（状态推进会使其过期并与新阶段冲突）。
+    assert!(!out.contains("开发中阶段专属提示词正文"));
+    assert!(!out.contains("拼接结果不应出现在启动快照"));
+    // 必须以元规则指向 Refresh Context URL 实时获取阶段提示词。
+    assert!(out.contains("intentionally NOT included"));
+    assert!(out.contains("Refresh Context URL"));
+}

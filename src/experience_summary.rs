@@ -629,7 +629,7 @@ pub(crate) fn render_injection_context(
         append_agent_context_markdown(&mut out, context);
     }
     out.push_str("## Operating Rules\n");
-    out.push_str("1. This startup snapshot is only for initial grounding; after status changes or before substantial edits, refresh the agent context URL above.\n");
+    out.push_str("1. This startup snapshot is only for initial grounding. Phase-specific prompts are intentionally NOT baked into this file: fetch the agent context URL above before starting work and after every status change, and follow `phaseRuntime` (fixedPhasePrompt + statePhasePrompt) as the single source of truth for the current phase.\n");
     out.push_str("2. Prefer `POST /api/requirement/events`, `/api/requirement/sections/{section}`, or `/api/requirement/edit` over directly rewriting requirement files.\n");
     out.push_str("3. Keep `technical-plan.md` and `notes.md` current when implementation direction, risks, validation evidence, or open questions change.\n");
     out.push_str("4. Record real-time `knowledgeReference`, `learningCandidate`, and `skillImprovementCandidate` events when current-session details may help later experience summary.\n");
@@ -639,12 +639,13 @@ pub(crate) fn render_injection_context(
 
 pub(crate) fn append_agent_context_markdown(out: &mut String, context: &Value) {
     if let Some(phase) = context.get("phaseRuntime") {
-        out.push_str("## Current Phase Snapshot\n");
-        push_value_bullet(out, "Current Status", phase.get("currentStatus"));
-        push_value_bullet(out, "Intent", phase.get("intent"));
+        out.push_str("## Phase Snapshot (at session startup)\n");
+        out.push_str("> 本节是 session 创建那一刻的阶段快照。阶段专属提示词**刻意不内嵌**在本快照中：需求状态在 session 生命周期内会持续推进，固化进 system prompt 的阶段要求会过期并与新阶段冲突。阶段提示词的单一事实源是上方 Refresh Context URL——每次调用都按需求最新状态实时重建。\n\n");
+        push_value_bullet(out, "Startup Status", phase.get("currentStatus"));
+        push_value_bullet(out, "Startup Intent", phase.get("intent"));
         push_value_bullet(out, "Recommended Intent", phase.get("recommendedIntent"));
         push_value_bullet(out, "Fixed Prompt File", phase.get("fixedPhasePromptFile"));
-        push_value_bullet(out, "State Prompt File", phase.get("statePhasePromptFile"));
+        push_value_bullet(out, "State Prompt File (startup)", phase.get("statePhasePromptFile"));
         if let Some(prompt) = phase.get("fixedPhasePrompt").and_then(Value::as_str) {
             let (excerpt, truncated) = truncate_chars(prompt.trim(), 1_400);
             out.push_str("\n### Fixed Lifecycle Prompt\n```text\n");
@@ -654,15 +655,11 @@ pub(crate) fn append_agent_context_markdown(out: &mut String, context: &Value) {
             }
             out.push_str("\n```\n");
         }
-        if let Some(prompt) = phase.get("statePhasePrompt").and_then(Value::as_str) {
-            let (excerpt, truncated) = truncate_chars(prompt.trim(), 1_600);
-            out.push_str("\n### State-Specific Phase Prompt\n```text\n");
-            out.push_str(excerpt.trim());
-            if truncated {
-                out.push_str("\n[state prompt truncated in startup context]");
-            }
-            out.push_str("\n```\n");
-        }
+        out.push_str("\n### State-Specific Phase Prompt (intentionally NOT included)\n");
+        out.push_str("本快照**不含**阶段专属提示词正文（需求澄清/开发中/自测中/测试中等各阶段的身份、必做、禁止与完成标准）。工作规则：\n\n");
+        out.push_str("- **开始任何实质性工作前**：调用上方 Refresh Context URL（`GET /api/requirement/context?id=...&for=agent`），按响应中 `phaseRuntime.currentPhasePrompt`（fixed + state 拼接）执行当前阶段要求。\n");
+        out.push_str("- **每次状态推进后**（agent 调 status API 或用户在面板 UI 改状态）：下一轮重新拉取 Refresh Context URL，以新的 `phaseRuntime` 为准，不要延续启动快照或上一阶段的阶段要求。\n");
+        out.push_str("- 阶段提示词以最新一次拉取为准；历史阶段的提示词只作为状态轨迹参考，不约束当前行为。\n\n");
         if let Some(checks) = phase.get("entryChecks").and_then(Value::as_array) {
             out.push_str("\n### Entry Checks\n");
             for check in checks.iter().take(8) {
