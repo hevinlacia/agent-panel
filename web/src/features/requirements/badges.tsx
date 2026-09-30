@@ -40,6 +40,18 @@ export function reworkBadge(req: Requirement) {
   return <span className="react-status-pill react-rework-badge" title={title} style={{ color: high ? "#fca5a5" : "#fbbf24", background: high ? "rgba(248, 113, 113, 0.12)" : "rgba(251, 191, 36, 0.12)", borderColor: high ? "rgba(248, 113, 113, 0.5)" : "rgba(251, 191, 36, 0.45)" }}>↺ R{rounds}</span>
 }
 
+/** 发布就绪小循环徽标：需求曾从发布就绪回开发中做上线前快速修复（fast-fix loop）。 */
+export function releaseReadyBadge(req: Requirement) {
+  const rounds = req.releaseReadyRounds ?? 0
+  if (rounds <= 0) return null
+  const title = [
+    `发布就绪小循环 ${rounds} 轮（F${rounds}）：发布就绪 → 开发中`,
+    "上线前快速修复：小改动、默认免单测、只部署 UAT（CN+SEA 成对）并在 UAT 测试",
+    "agent 加载 phase-dev-release-ready 变体提示词：增量审查后直通发布就绪",
+  ].join("\n")
+  return <span className="react-status-pill react-rework-badge" title={title} style={{ color: "#7dd3fc", background: "rgba(56, 189, 248, 0.12)", borderColor: "rgba(56, 189, 248, 0.45)" }}>⚡ F{rounds}</span>
+}
+
 export function experienceSummaryStage(req: Requirement): "available" | "running" | "completed" | "failed" | "skipped" | "none" {
   const status = req.experienceSummaryJob?.status || ""
   if (status === "completed") return "completed"

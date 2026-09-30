@@ -32,9 +32,13 @@ pub(crate) async fn build_phase_runtime_context(
         .flatten()
         .unwrap_or_else(|| json!({ "version": 1, "status": req.status, "history": [] }));
     let rework_rounds = rework_round_count(&state_json);
-    let rework_mode = req.status == "开发中" && rework_rounds > 0;
+    let release_ready_rounds = release_ready_round_count(&state_json);
+    // 循环语境：最近一次进入开发中来自打回（返工）还是发布就绪（上线前快速修复）。
+    let loop_kind = dev_loop_kind_from_state(&state_json);
+    let rework_mode = req.status == "开发中" && loop_kind == DevLoopKind::Rework;
+    let fast_fix_mode = req.status == "开发中" && loop_kind == DevLoopKind::ReleaseReady;
     let fixed_phase_prompt = load_fixed_phase_prompt(state).await;
-    let state_phase_prompt = load_phase_prompt(state, &req.status, rework_rounds).await;
+    let state_phase_prompt = load_phase_prompt(state, &req.status, loop_kind, rework_rounds, release_ready_rounds).await;
     let current_phase_prompt = [fixed_phase_prompt.trim(), state_phase_prompt.trim()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -113,11 +117,14 @@ pub(crate) async fn build_phase_runtime_context(
         "recommendedIntent": default_intent_for_status(&req.status),
         "reworkRounds": rework_rounds,
         "reworkMode": rework_mode,
+        "releaseReadyRounds": release_ready_rounds,
+        "fastFixMode": fast_fix_mode,
+        "loopKind": loop_kind.as_str(),
         "fixedPhasePromptFile": PHASE_COMMON_PROMPT_FILE,
         "fixedPhasePrompt": fixed_phase_prompt.trim(),
-        "statePhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
+        "statePhasePromptFile": phase_prompt_file_for(&req.status, loop_kind),
         "statePhasePrompt": state_phase_prompt.trim(),
-        "currentPhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
+        "currentPhasePromptFile": phase_prompt_file_for(&req.status, loop_kind),
         "currentPhasePrompt": current_phase_prompt.trim(),
         "entryChecks": entry_checks,
         "phaseGaps": phase_gaps,
@@ -232,6 +239,21 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 false,
             ),
             file_check(dir, BRANCH_SCOPE_FILE, "UAT 环境与合并目标可计算", false),
+        ],
+        "发布就绪" => vec![
+            any_file_check(
+                dir,
+                &["review.md", "code-review-ai.md", CODE_REVIEW_FILE],
+                "代码审查门禁已通过或豁免",
+                true,
+            ),
+            file_check(
+                dir,
+                "release-check.md",
+                "发布预检结论（发布就绪小循环回归后需补充本轮改动核对）",
+                false,
+            ),
+            file_check(dir, BRANCH_SCOPE_FILE, "分支与合并目标可计算", false),
         ],
         "经验总结" => vec![
             file_check(

@@ -86,6 +86,25 @@ function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayl
         if (a.stale) return <div className="react-drive-blockers"><strong>代码问题备注过期</strong><p>{a.reason || "备注提交指纹与最新审查材料不一致"}：备注锚定的是旧 diff，需按最新材料复核后重新 PUT /api/requirement/annotations（刷新 reviewedCommit 指纹）。</p></div>
         return <div className="react-save-hint">✓ 代码问题备注已就绪：差异页右侧说明栏展示文件摘要与问题 hunk 备注，提交指纹与当前审查材料一致。</div>
       })() : null}
+      {detail.roundRecords?.length ? (() => {
+        const kindLabel: Record<string, string> = { main: "主流程", rework: "返工轮次", "release-ready": "发布就绪小循环", other: "其他小节" }
+        const mark = (c?: string | null) => c === "PASS" ? "✅ PASS" : c === "BLOCKED" ? "❌ BLOCKED" : c === "WAIVED" ? "⚠ WAIVED" : "⬜ 未见结论"
+        return <div className="react-drive-blockers">
+          <strong>循环审查记录（主流程 / 返工轮次 / 发布就绪小循环）{detail.snapshotRounds?.length ? <span className="react-muted">　diff 快照轮次：{detail.snapshotRounds.join("、")}</span> : null}</strong>
+          <ul>
+            {detail.roundRecords.map((r, i) => (
+              <li key={i}>
+                <code>{kindLabel[r.kind] || r.kind}</code>
+                {r.round != null ? <strong>　第 {r.round} 轮</strong> : null}
+                {r.heading ? <span>　{r.heading}</span> : null}
+                <span>　<strong>{mark(r.conclusion)}</strong></span>
+                <span className="react-muted">　来源 {r.source}{r.docUpdatedAt ? ` · ${formatDateTime(r.docUpdatedAt)}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="react-muted">轮次结论约定：review.md / code-review-ai.md 顶部 = 主流程结论；追加小节标题「返工轮次 N」「发布就绪轮次 N」分别对应打回返工与发布就绪小循环的增量审查结论（每轮结论行 `Review Gate: PASS/BLOCKED/WAIVED` 独立成行）。</p>
+        </div>
+      })() : null}
       {staleRepos.length ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong><ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul><p>点击「准备审查材料」重新备料复审（发布就绪起默认增量，只审上次已审 commit → 当前 HEAD 的新增 diff；非线性历史自动回退全量）。</p></div> : null}
       <GateWarnings warnings={detail.warnings} />
       {detail.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{detail.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}

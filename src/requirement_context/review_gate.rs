@@ -52,6 +52,8 @@ pub(crate) async fn review_gate_json(req: &Requirement) -> ApiResult<Value> {
             "actions": gate.actions,
             "staleRepos": gate.stale_repos,
             "incrementalReview": gate.incremental_review,
+            "roundRecords": review_round_records(&dir).await,
+            "snapshotRounds": diff_snapshot_rounds(&dir).await,
             "checkedAt": now_ms(),
         }
     }))
@@ -256,6 +258,121 @@ fn review_annotations_summary(state: &ReviewAnnotationsState) -> Value {
         }
         ReviewAnnotationsState::Valid => json!({ "present": true, "stale": false }),
     }
+}
+
+/// 门禁详情用：按循环语境整理历史审查结论记录（三种情况：主流程 / 返工轮次 / 发布就绪小循环）。
+/// review.md / code-review-ai.md 是追加式结论文档：主流程结论在文档顶部（首个小节标题前），
+/// 后续轮次以小节标题标注（约定「返工轮次 N」「发布就绪轮次 N」/「发布就绪小循环 N」）。
+/// 每条记录提取该小节内第一处 `Review Gate:` 结论行（PASS/BLOCKED/WAIVED）；
+/// 轮次小节即使暂无结论行也收录（缺结论本身就是待补信号），一般小节只在带结论行时收录。
+pub(crate) async fn review_round_records(req_dir: &Path) -> Vec<Value> {
+    let mut records: Vec<Value> = Vec::new();
+    for (source, path) in [
+        ("review.md", req_dir.join("review.md")),
+        ("code-review-ai.md", req_dir.join("code-review-ai.md")),
+    ] {
+        let Ok(raw) = fs::read_to_string(&path).await else {
+            continue;
+        };
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let doc_updated_at = file_modified_ms(&path).await.unwrap_or(0);
+        // 切分小节：首个标题之前的内容视为主流程结论区。
+        let mut sections: Vec<(Option<(usize, String)>, Vec<&str>)> = vec![(None, Vec::new())];
+        for line in raw.lines() {
+            match parse_markdown_heading(line) {
+                Some(heading) => sections.push((Some(heading), Vec::new())),
+                None => {
+                    if let Some(last) = sections.last_mut() {
+                        last.1.push(line);
+                    }
+                }
+            }
+        }
+        for (heading, lines) in &sections {
+            let conclusion = lines.iter().find_map(|l| review_gate_conclusion_token(l));
+            let (kind, round) = match heading {
+                None => ("main", None),
+                Some((_, text)) => classify_round_heading(text),
+            };
+            if matches!(kind, "main" | "other") && conclusion.is_none() {
+                continue;
+            }
+            records.push(json!({
+                "kind": kind,
+                "round": round,
+                "heading": heading.as_ref().map(|(_, text)| text.clone()),
+                "source": source,
+                "conclusion": conclusion,
+                "docUpdatedAt": doc_updated_at,
+            }));
+        }
+    }
+    records
+}
+
+/// 小节标题 → (循环语境, 轮次号)。约定标题含「返工轮次」= 返工轮次；
+/// 含「发布就绪」且带「轮次/小循环」= 发布就绪小循环；其余视为一般小节。
+pub(crate) fn classify_round_heading(text: &str) -> (&'static str, Option<u64>) {
+    let round = extract_first_number(text);
+    if text.contains("返工轮次") {
+        return ("rework", round);
+    }
+    if text.contains("发布就绪") && (text.contains("轮次") || text.contains("小循环")) {
+        return ("release-ready", round);
+    }
+    ("other", round)
+}
+
+/// 提取文本中第一段连续数字作为轮次号。
+pub(crate) fn extract_first_number(text: &str) -> Option<u64> {
+    let mut digits = String::new();
+    for ch in text.chars() {
+        if ch.is_ascii_digit() {
+            digits.push(ch);
+        } else if !digits.is_empty() {
+            break;
+        }
+    }
+    digits.parse().ok()
+}
+
+/// 从一行文本提取 Review Gate 结论 token：PASS / BLOCKED / WAIVED。
+pub(crate) fn review_gate_conclusion_token(line: &str) -> Option<&'static str> {
+    let lower = line.to_lowercase();
+    if !lower.contains("review gate:") {
+        return None;
+    }
+    if lower.contains("waived") {
+        Some("WAIVED")
+    } else if lower.contains("blocked") {
+        Some("BLOCKED")
+    } else if lower.contains("pass") {
+        Some("PASS")
+    } else {
+        None
+    }
+}
+
+/// 门禁详情用：diff 快照栈里出现过的轮次号（供按轮次回看差异材料）。
+async fn diff_snapshot_rounds(req_dir: &Path) -> Vec<u64> {
+    let Some(doc) = read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE)).await else {
+        return Vec::new();
+    };
+    let mut rounds: Vec<u64> = doc
+        .get("snapshots")
+        .and_then(Value::as_array)
+        .map(|snapshots| {
+            snapshots
+                .iter()
+                .filter_map(|s| s.get("round").and_then(Value::as_u64))
+                .collect()
+        })
+        .unwrap_or_default();
+    rounds.sort_unstable();
+    rounds.dedup();
+    rounds
 }
 
 pub(crate) async fn review_gate_decision(req: &Requirement) -> ApiResult<ReviewGateDecision> {

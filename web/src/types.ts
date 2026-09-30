@@ -308,6 +308,8 @@ export interface Requirement {
   completedAt?: number
   /** 打回返工轮次：人工核查/测试中 → 开发中 的回退次数（rework loop）。 */
   reworkRounds?: number
+  /** 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数（fast-fix loop）。 */
+  releaseReadyRounds?: number
   sessionIds: string[]
   reqDir?: string
   metaPath?: string
@@ -489,7 +491,15 @@ export interface StatusFlowTransition {
 export interface StatusFlowRework {
   to: string
   fromStatuses: string[]
+  /** 打回返工轮次（向后兼容字段，等于 loops.rework.rounds）。 */
   rounds: number
+  /** 发布就绪小循环轮次：发布就绪 → 开发中（上线前快速修复）。 */
+  releaseReadyRounds?: number
+  /** 分循环轮次明细。 */
+  loops?: {
+    rework?: { fromStatuses: string[]; rounds: number }
+    releaseReady?: { fromStatuses: string[]; rounds: number }
+  }
 }
 
 export interface StatusFlowPayload {
@@ -527,6 +537,10 @@ export interface StatusGateDetail {
     items?: { id?: string; title?: string; conclusion?: string; note?: string; evidence?: string }[]
   } | null
   annotations?: { present?: boolean; stale?: boolean; reason?: string } | null
+  /** 按循环语境整理的历史审查结论记录（主流程 / 返工轮次 / 发布就绪小循环）。 */
+  roundRecords?: ReviewRoundRecord[]
+  /** diff 快照栈里出现过的轮次号（供按轮次回看差异材料）。 */
+  snapshotRounds?: number[]
   /** 放行但需用户注意的警示（如 P1 严重问题、无法测试项）。 */
   warnings?: string[] | null
   actions?: string[]
@@ -539,6 +553,16 @@ export interface StatusGateDetail {
   category?: string | null
   /** 自测清单门禁：test.md 结构化自测清单（每项含结果与原因）。 */
   selftestChecklist?: SelftestChecklistPayload | null
+}
+
+/** 循环语境审查结论记录：主流程结论 + 各轮次追加结论（review.md / code-review-ai.md）。 */
+export interface ReviewRoundRecord {
+  kind: "main" | "rework" | "release-ready" | "other"
+  round?: number | null
+  heading?: string | null
+  source: string
+  conclusion?: "PASS" | "BLOCKED" | "WAIVED" | null
+  docUpdatedAt?: number
 }
 
 export interface SelftestChecklistItem {

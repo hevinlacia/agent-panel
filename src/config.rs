@@ -161,8 +161,9 @@ pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
 
 /// 内置默认门禁规则：与历史硬编码门禁行为一致，外加新增的自测清单门禁。
 /// 人工核查（2026-08 新增）：测试中 → 人工核查无硬门禁（agent 测完即推进）；
-/// 进入发布就绪的两条路径（人工核查→发布就绪 / 测试中→发布就绪直达）都挂 review 门禁，
-/// agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
+/// 进入发布就绪的路径（人工核查→发布就绪 / 测试中→发布就绪直达 / 开发中→发布就绪小循环直通）都挂
+/// review 门禁，agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
+/// 开发中→发布就绪（2026-09 新增）服务发布就绪小循环：上线前小改动改完必须增量审查刷新快照后才能回发布就绪。
 pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
     vec![
         StatusGateRule {
@@ -186,6 +187,13 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
         },
         StatusGateRule {
             from: "测试中".into(),
+            to: "发布就绪".into(),
+            gates: vec!["review".into()],
+        },
+        // 发布就绪小循环：开发中 → 发布就绪 直通（跳过自测中/测试中/人工核查），
+        // 挂 review 门禁保证小改动经增量审查刷新快照后才能回发布就绪；不挂 selftest-checklist（快）。
+        StatusGateRule {
+            from: "开发中".into(),
             to: "发布就绪".into(),
             gates: vec!["review".into()],
         },
