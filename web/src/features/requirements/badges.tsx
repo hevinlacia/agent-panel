@@ -27,6 +27,19 @@ export function groupBadge(req: Requirement) {
   return <span className="react-status-pill react-group-badge" title={title} style={{ color: "#818cf8", background: "rgba(129, 140, 248, 0.14)", borderColor: "rgba(129, 140, 248, 0.45)" }}>组 {members.length}{missing ? "⚠" : ""}</span>
 }
 
+/** 返工徽标：需求曾被人工核查/测试阶段打回开发中重做（rework loop）。 */
+export function reworkBadge(req: Requirement) {
+  const rounds = req.reworkRounds ?? 0
+  if (rounds <= 0) return null
+  const high = rounds >= 3
+  const title = [
+    `打回返工 ${rounds} 轮（R${rounds}）：人工核查/测试中 → 开发中`,
+    high ? "⚠ 打回≥3 次：建议回头补需求澄清/拆分，而不是继续磨" : null,
+    "返工轮次 agent 加载 phase-dev-rework 变体提示词：增量修复 + test.md 返工回归小节 + 增量审查",
+  ].filter(Boolean).join("\n")
+  return <span className="react-status-pill react-rework-badge" title={title} style={{ color: high ? "#fca5a5" : "#fbbf24", background: high ? "rgba(248, 113, 113, 0.12)" : "rgba(251, 191, 36, 0.12)", borderColor: high ? "rgba(248, 113, 113, 0.5)" : "rgba(251, 191, 36, 0.45)" }}>↺ R{rounds}</span>
+}
+
 export function experienceSummaryStage(req: Requirement): "available" | "running" | "completed" | "failed" | "skipped" | "none" {
   const status = req.experienceSummaryJob?.status || ""
   if (status === "completed") return "completed"

@@ -26,18 +26,20 @@ pub(crate) async fn build_phase_runtime_context(
     intent: &str,
     dir: &Path,
 ) -> Value {
-    let fixed_phase_prompt = load_fixed_phase_prompt(state).await;
-    let state_phase_prompt = load_phase_prompt(state, &req.status).await;
-    let current_phase_prompt = [fixed_phase_prompt.trim(), state_phase_prompt.trim()]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
     let state_json = read_requirement_state(dir)
         .await
         .ok()
         .flatten()
         .unwrap_or_else(|| json!({ "version": 1, "status": req.status, "history": [] }));
+    let rework_rounds = rework_round_count(&state_json);
+    let rework_mode = req.status == "开发中" && rework_rounds > 0;
+    let fixed_phase_prompt = load_fixed_phase_prompt(state).await;
+    let state_phase_prompt = load_phase_prompt(state, &req.status, rework_rounds).await;
+    let current_phase_prompt = [fixed_phase_prompt.trim(), state_phase_prompt.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
     let history = state_json
         .get("history")
         .and_then(Value::as_array)
@@ -109,11 +111,13 @@ pub(crate) async fn build_phase_runtime_context(
         "currentStatus": req.status,
         "intent": intent,
         "recommendedIntent": default_intent_for_status(&req.status),
+        "reworkRounds": rework_rounds,
+        "reworkMode": rework_mode,
         "fixedPhasePromptFile": PHASE_COMMON_PROMPT_FILE,
         "fixedPhasePrompt": fixed_phase_prompt.trim(),
-        "statePhasePromptFile": phase_prompt_file(&req.status),
+        "statePhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
         "statePhasePrompt": state_phase_prompt.trim(),
-        "currentPhasePromptFile": phase_prompt_file(&req.status),
+        "currentPhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
         "currentPhasePrompt": current_phase_prompt.trim(),
         "entryChecks": entry_checks,
         "phaseGaps": phase_gaps,

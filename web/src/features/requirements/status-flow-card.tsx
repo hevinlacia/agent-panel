@@ -65,7 +65,8 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
   return <section id="status-flow" className="react-panel react-statusflow-panel">
     <PanelHead kicker="Status Flow" title="状态流转与门禁" chip={data ? `当前 ${data.currentStatus}` : flow.loading ? "loading" : "-"} />
     <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过（流转时通过，或门禁材料当前满足）、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工/系统流转且门禁材料当前不满足，悬停看原因）。点击具体门禁可跳转门禁验证详情页。<strong>点击任意非当前状态节点，弹窗确认后即强制修改状态（via=ui，跳过门禁）</strong>；需求组状态为派生值不可点击。</p>
-    {flow.error ? <p className="react-effort-error">{flow.error}</p> : !data ? <p className="react-muted">加载中…</p> : <div className="react-statusflow-strip">
+    {flow.error ? <p className="react-effort-error">{flow.error}</p> : !data ? <p className="react-muted">加载中…</p> : <>
+      <div className="react-statusflow-strip">
       {data.statuses.map((s, i) => <Fragment key={s}>
         {i > 0 ? <StatusFlowJunction reqId={req.id} transition={data.transitions[i - 1]} /> : null}
         <div
@@ -79,7 +80,17 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
           <span>{s}</span>
           {statusFlowNodeState(i, data.currentIndex) === "current" ? <em>当前</em> : null}
         </div>
-      </Fragment>)}</div>}
+      </Fragment>)}
+      </div>
+      {data.rework ? <div className="react-statusflow-rework">
+        <span className="react-statusflow-rework-loop">↺ 返工回路</span>
+        <span>{data.rework.fromStatuses.join(" / ")} → {data.rework.to}</span>
+        {data.rework.rounds > 0
+          ? <em className={`react-statusflow-rework-count${data.rework.rounds >= 3 ? " is-high" : ""}`}>已打回 {data.rework.rounds} 次（R{data.rework.rounds}）</em>
+          : <em>尚未发生打回</em>}
+        <span className="react-statusflow-rework-hint react-muted">打回是测试/产品的人工判断：点击「开发中」节点确认后即回退（via=ui），回退计入返工轮次；agent 会加载返工变体提示词做增量修复，重新走 自测 → 测试 门禁链路。打回≥3 次建议回头补需求澄清而非继续磨。</span>
+      </div> : null}
+    </>}
     {pending ? <div className="react-modal-overlay" onClick={closeConfirm}>
       <div className="react-modal-card" onClick={(e) => e.stopPropagation()}>
         <h3>确认修改需求状态？</h3>

@@ -23,6 +23,37 @@ pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
     matches!(new_status, "经验总结" | "发布就绪" | "已完成")
 }
 
+/// 打回返工回退边：人工核查/测试阶段发现问题打回开发中，计一轮返工（rework loop）。
+/// 前向已完成开发后再回到开发中才叫返工；自测中退回开发中属于正常纠偏，不计数。
+pub(crate) fn is_rework_transition(from: Option<&str>, to: &str) -> bool {
+    to == "开发中"
+        && from
+            .map(|f| matches!(f, "人工核查" | "人工复测" | "测试中"))
+        .unwrap_or(false)
+}
+
+/// 返工轮次计数：优先读显式字段 `reworkRounds`；
+/// 字段缺失（历史需求）时从 history 派生：统计 from 为打回来源且 status=开发中 的回退次数。
+pub(crate) fn rework_round_count(state: &Value) -> u64 {
+    if let Some(n) = state.get("reworkRounds").and_then(Value::as_u64) {
+        return n;
+    }
+    state
+        .get("history")
+        .and_then(Value::as_array)
+        .map(|history| {
+            history
+                .iter()
+                .filter(|entry| {
+                    let from = entry.get("from").and_then(Value::as_str);
+                    let to = entry.get("status").and_then(Value::as_str);
+                    is_rework_transition(from, to.unwrap_or_default())
+                })
+                .count() as u64
+        })
+        .unwrap_or(0)
+}
+
 /// 子需求状态机流转合法性（两种路径，见 SUB_REQ_STATUSES）：
 /// ① 父集成模型（legacy）：需求创建 → 开发中 → 已合入；
 /// ② 整合发布模型：需求创建 → 开发中 → 自测中/测试中/发布就绪（可跳级，独立发布进度）
@@ -174,20 +205,32 @@ pub(crate) async fn write_requirement_status_checked(
         .and_then(Value::as_str)
         .map(|s| s.to_string());
     let changed = from.as_deref() != Some(new_status);
+    let rework_rounds_before = rework_round_count(&previous);
+    let rework = changed && is_rework_transition(from.as_deref(), new_status);
+    let rework_rounds = if rework {
+        rework_rounds_before + 1
+    } else {
+        rework_rounds_before
+    };
     let mut history = previous
         .get("history")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
     let transition = if changed {
-        json!({
+        let mut entry = json!({
             "status": new_status,
             "from": from,
             "at": now_ms(),
             "note": note.unwrap_or(""),
             "skippedStatuses": skipped_statuses(from.as_deref(), new_status),
             "gateCheck": gate_check.as_str()
-        })
+        });
+        if rework {
+            entry["rework"] = json!(true);
+            entry["reworkRound"] = json!(rework_rounds);
+        }
+        entry
     } else {
         Value::Null
     };
@@ -204,6 +247,7 @@ pub(crate) async fn write_requirement_status_checked(
         "changed": changed,
         "lastTransition": transition,
         "category": previous.get("category").cloned().unwrap_or(Value::Null),
+        "reworkRounds": rework_rounds,
         "updatedAt": now_ms(),
         "history": history
     });
@@ -221,6 +265,7 @@ pub(crate) async fn write_requirement_category(req_dir: &str, new_category: &str
         "version": 1,
         "status": previous.get("status").and_then(Value::as_str).unwrap_or("开发中"),
         "category": new_category,
+        "reworkRounds": rework_round_count(&previous),
         "updatedAt": now_ms(),
         "history": previous.get("history").cloned().unwrap_or_else(|| json!([]))
     });
