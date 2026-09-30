@@ -1,0 +1,25 @@
+prompts/phase-selftest.md
+  3383ca845e2d1d5c 16-17,39
+prompts/phase-testing.md
+  3383ca845e2d1d5c 11-12,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "789f588cdd72020a93f3442533e3c37c77a9e485",
+  "prompts": {
+    "3383ca845e2d1d5c": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f0ef-0c93-7148-baa2-dbd046840d30",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 1,
+      "accepted_lines": 6,
+      "overriden_lines": 0
+    }
+  }
+}
