@@ -1,0 +1,29 @@
+web/src/lib/preferences.ts
+  21eef245192274ea 56-66
+web/src/pages/projects.tsx
+  21eef245192274ea 8,57-69,148,151,170
+web/src/features/requirements/sub-req-panels.tsx
+  21eef245192274ea 2,5,18-23,48
+web/src/styles.css
+  21eef245192274ea 533-537
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "a034c5b8772441d1ea362cd644df6c78989a7b51",
+  "prompts": {
+    "21eef245192274ea": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f0d1-046e-73b0-a3ef-95b2ef2f13fc",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 42,
+      "total_deletions": 6,
+      "accepted_lines": 42,
+      "overriden_lines": 0
+    }
+  }
+}
