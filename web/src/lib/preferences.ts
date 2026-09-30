@@ -53,3 +53,14 @@ export function readShowSubReqs(): boolean {
 export function persistShowSubReqs(show: boolean) {
   try { localStorage.setItem(PROJECT_SHOW_SUB_REQS_KEY, show ? "1" : "0") } catch { /* ignore */ }
 }
+
+/** 默认折叠子需求：列表页整合需求树、详情页子需求面板共享的初始折叠状态，切换即记住。 */
+export const SUB_REQS_COLLAPSED_KEY = "agent-panel.subReqsCollapsed"
+
+export function readSubReqsCollapsed(): boolean {
+  try { return localStorage.getItem(SUB_REQS_COLLAPSED_KEY) === "1" } catch { return false }
+}
+
+export function persistSubReqsCollapsed(collapsed: boolean) {
+  try { localStorage.setItem(SUB_REQS_COLLAPSED_KEY, collapsed ? "1" : "0") } catch { /* ignore */ }
+}
