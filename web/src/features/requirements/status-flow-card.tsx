@@ -42,6 +42,10 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
   const pendingGates = pending && data
     ? data.transitions.find((t) => t.from === req.status && t.to === pending)?.gates ?? []
     : []
+  /** 打回返工轮次（loops 明细优先，向后兼容 rounds 字段）。 */
+  const reworkRounds = data?.rework ? (data.rework.loops?.rework?.rounds ?? data.rework.rounds) : 0
+  /** 发布就绪小循环轮次。 */
+  const fastFixRounds = data?.rework?.releaseReadyRounds ?? 0
   const closeConfirm = () => {
     if (saving) return
     setPending(null)
@@ -83,12 +87,16 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
       </Fragment>)}
       </div>
       {data.rework ? <div className="react-statusflow-rework">
-        <span className="react-statusflow-rework-loop">↺ 返工回路</span>
-        <span>{data.rework.fromStatuses.join(" / ")} → {data.rework.to}</span>
-        {data.rework.rounds > 0
-          ? <em className={`react-statusflow-rework-count${data.rework.rounds >= 3 ? " is-high" : ""}`}>已打回 {data.rework.rounds} 次（R{data.rework.rounds}）</em>
+        <span className="react-statusflow-rework-loop">↺ 回到开发中的循环</span>
+        <span>打回返工：{(data.rework.loops?.rework?.fromStatuses ?? data.rework.fromStatuses.filter((s) => s !== "发布就绪")).join(" / ") || "人工核查 / 测试中"} → 开发中</span>
+        {reworkRounds > 0
+          ? <em className={`react-statusflow-rework-count${reworkRounds >= 3 ? " is-high" : ""}`}>已打回 {reworkRounds} 次（R{reworkRounds}）</em>
           : <em>尚未发生打回</em>}
-        <span className="react-statusflow-rework-hint react-muted">打回是测试/产品的人工判断：点击「开发中」节点确认后即回退（via=ui），回退计入返工轮次；agent 会加载返工变体提示词做增量修复，重新走 自测 → 测试 门禁链路。打回≥3 次建议回头补需求澄清而非继续磨。</span>
+        <span>发布就绪小循环：发布就绪 → 开发中</span>
+        {fastFixRounds > 0
+          ? <em className="react-statusflow-rework-count">已进行 {fastFixRounds} 轮（F{fastFixRounds}）</em>
+          : <em>尚未发生</em>}
+        <span className="react-statusflow-rework-hint react-muted">打回是测试/产品的人工判断：点击「开发中」节点确认后即回退（via=ui），回退计入返工轮次；agent 会加载返工变体提示词做增量修复，重新走 自测 → 测试 门禁链路。打回≥3 次建议回头补需求澄清而非继续磨。从「发布就绪」点击「开发中」= 进入上线前快速小循环：小改动、默认免单测、只部署 UAT（CN+SEA 成对）并在 UAT 测试，agent 加载快速修复变体提示词，增量审查通过后直通发布就绪（门禁记录见门禁详情页的循环审查记录）。</span>
       </div> : null}
     </>}
     {pending ? <div className="react-modal-overlay" onClick={closeConfirm}>

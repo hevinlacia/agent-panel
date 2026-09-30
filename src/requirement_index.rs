@@ -36,6 +36,9 @@ pub(crate) struct Requirement {
     /// 打回返工轮次：人工核查/测试中 → 开发中 的回退次数
     /// （state.json `reworkRounds`，历史数据字段缺失时从 history 派生）。
     pub(crate) rework_rounds: u64,
+    /// 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数
+    /// （state.json `releaseReadyRounds`，历史数据字段缺失时从 history 派生）。
+    pub(crate) release_ready_rounds: u64,
     pub(crate) req_dir: Option<String>,
     pub(crate) meta_path: Option<String>,
     pub(crate) background_path: Option<String>,
@@ -664,6 +667,10 @@ pub(crate) async fn load_requirement_from_dir(
         updated_at,
         completed_at,
         rework_rounds: req_state.as_ref().map(rework_round_count).unwrap_or(0),
+        release_ready_rounds: req_state
+            .as_ref()
+            .map(release_ready_round_count)
+            .unwrap_or(0),
         req_dir: Some(dir.to_string_lossy().to_string()),
         meta_path: Some(meta_path.to_string_lossy().to_string()),
         background_path: path_if_exists(dir.join("background.md")),
@@ -926,6 +933,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         updated_at: now,
         completed_at: None,
         rework_rounds: 0,
+        release_ready_rounds: 0,
         req_dir: None,
         meta_path: None,
         background_path: None,

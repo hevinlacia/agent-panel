@@ -352,6 +352,7 @@ fn context_page_contains_sections_and_raw_link() {
         updated_at: 0,
         completed_at: None,
         rework_rounds: 0,
+    release_ready_rounds: 0,
         req_dir: None,
         meta_path: None,
         background_path: None,

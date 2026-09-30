@@ -783,11 +783,14 @@ pub(crate) async fn api_requirement_status_flow(
         .map(|i| i as u32);
     // 历史流转里每个状态最近一次进入时的门禁校验方式（gateCheck）。
     let mut gate_checks: HashMap<String, String> = HashMap::new();
-    // 返工轮次（rework loop）：人工核查/测试中 → 开发中 的打回次数。
+    // 返工轮次（rework loop）：人工核查/测试中 → 开发中 的打回次数；
+    // 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数。
     let mut rework_rounds: u64 = 0;
+    let mut release_ready_rounds: u64 = 0;
     if let Some(dir) = req.req_dir.as_deref() {
         if let Ok(Some(state_json)) = read_requirement_state(Path::new(dir)).await {
             rework_rounds = rework_round_count(&state_json);
+            release_ready_rounds = release_ready_round_count(&state_json);
             if let Some(history) = state_json.get("history").and_then(Value::as_array) {
                 for entry in history {
                     if let (Some(st), Some(gc)) = (
@@ -871,8 +874,13 @@ pub(crate) async fn api_requirement_status_flow(
     let rework = if !is_issue && !req.is_sub_req {
         json!({
             "to": "开发中",
-            "fromStatuses": ["人工核查", "测试中"],
+            "fromStatuses": ["人工核查", "测试中", "发布就绪"],
             "rounds": rework_rounds,
+            "releaseReadyRounds": release_ready_rounds,
+            "loops": {
+                "rework": { "fromStatuses": ["人工核查", "测试中"], "rounds": rework_rounds },
+                "releaseReady": { "fromStatuses": ["发布就绪"], "rounds": release_ready_rounds }
+            }
         })
     } else {
         Value::Null

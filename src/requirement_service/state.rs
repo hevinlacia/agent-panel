@@ -26,10 +26,46 @@ pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
 /// 打回返工回退边：人工核查/测试阶段发现问题打回开发中，计一轮返工（rework loop）。
 /// 前向已完成开发后再回到开发中才叫返工；自测中退回开发中属于正常纠偏，不计数。
 pub(crate) fn is_rework_transition(from: Option<&str>, to: &str) -> bool {
-    to == "开发中"
-        && from
-            .map(|f| matches!(f, "人工核查" | "人工复测" | "测试中"))
-        .unwrap_or(false)
+    matches!(dev_loop_kind(from, to), DevLoopKind::Rework)
+}
+
+/// 回到「开发中」的循环类型：返工（人工核查/测试中打回）与发布就绪小循环（上线前快速修复）。
+/// 两种循环共用“回到开发中重新迭代”的机制，但语境、提示词变体和轮次计数分开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DevLoopKind {
+    /// 非循环进入（首轮开发或无法判定）。
+    None,
+    /// 打回返工：人工核查/测试中 → 开发中。
+    Rework,
+    /// 发布就绪小循环：发布就绪 → 开发中（上线前小改动，免单测、UAT-only）。
+    ReleaseReady,
+}
+
+impl DevLoopKind {
+    pub(crate) fn as_str(self) -> Option<&'static str> {
+        match self {
+            DevLoopKind::None => None,
+            DevLoopKind::Rework => Some("rework"),
+            DevLoopKind::ReleaseReady => Some("release-ready"),
+        }
+    }
+}
+
+/// 回到「开发中」的循环类型判定：按来源状态区分返工与发布就绪小循环。
+pub(crate) fn dev_loop_kind(from: Option<&str>, to: &str) -> DevLoopKind {
+    if to != "开发中" {
+        return DevLoopKind::None;
+    }
+    match from {
+        Some("发布就绪") => DevLoopKind::ReleaseReady,
+        Some("人工核查") | Some("人工复测") | Some("测试中") => DevLoopKind::Rework,
+        _ => DevLoopKind::None,
+    }
+}
+
+/// 发布就绪小循环回边：发布就绪 → 开发中（上线前小改动快速迭代）。
+pub(crate) fn is_release_ready_loop_transition(from: Option<&str>, to: &str) -> bool {
+    matches!(dev_loop_kind(from, to), DevLoopKind::ReleaseReady)
 }
 
 /// 返工轮次计数：优先读显式字段 `reworkRounds`；
@@ -52,6 +88,54 @@ pub(crate) fn rework_round_count(state: &Value) -> u64 {
                 .count() as u64
         })
         .unwrap_or(0)
+}
+
+/// 发布就绪小循环轮次：优先读显式字段 `releaseReadyRounds`；
+/// 字段缺失（历史需求）时从 history 派生：统计 from=发布就绪 且 status=开发中 的回退次数。
+pub(crate) fn release_ready_round_count(state: &Value) -> u64 {
+    if let Some(n) = state.get("releaseReadyRounds").and_then(Value::as_u64) {
+        return n;
+    }
+    state
+        .get("history")
+        .and_then(Value::as_array)
+        .map(|history| {
+            history
+                .iter()
+                .filter(|entry| {
+                    let from = entry.get("from").and_then(Value::as_str);
+                    let to = entry.get("status").and_then(Value::as_str);
+                    is_release_ready_loop_transition(from, to.unwrap_or_default())
+                })
+                .count() as u64
+        })
+        .unwrap_or(0)
+}
+
+/// 最近一次进入「开发中」的循环语境（阶段提示词变体选择依据）：
+/// 取 history 中最后一条 status=开发中 的条目，按其 from 判定循环类型。
+/// 按“最近一次来源”而非“累计轮次”判定，避免经历过小循环的需求在后续正常打回时拿错变体；
+/// 无历史条目时兜底：reworkRounds > 0 视为返工（兼容老数据）。
+pub(crate) fn dev_loop_kind_from_state(state: &Value) -> DevLoopKind {
+    if let Some(history) = state.get("history").and_then(Value::as_array) {
+        if let Some(entry) = history
+            .iter()
+            .rev()
+            .find(|e| e.get("status").and_then(Value::as_str) == Some("开发中"))
+        {
+            let from = entry.get("from").and_then(Value::as_str);
+            return match from {
+                Some("发布就绪") => DevLoopKind::ReleaseReady,
+                Some("人工核查") | Some("人工复测") | Some("测试中") => DevLoopKind::Rework,
+                _ => DevLoopKind::None,
+            };
+        }
+    }
+    if rework_round_count(state) > 0 {
+        DevLoopKind::Rework
+    } else {
+        DevLoopKind::None
+    }
 }
 
 /// 子需求状态机流转合法性（两种路径，见 SUB_REQ_STATUSES）：
@@ -206,11 +290,23 @@ pub(crate) async fn write_requirement_status_checked(
         .map(|s| s.to_string());
     let changed = from.as_deref() != Some(new_status);
     let rework_rounds_before = rework_round_count(&previous);
-    let rework = changed && is_rework_transition(from.as_deref(), new_status);
+    let release_ready_rounds_before = release_ready_round_count(&previous);
+    let loop_kind = if changed {
+        dev_loop_kind(from.as_deref(), new_status)
+    } else {
+        DevLoopKind::None
+    };
+    let rework = loop_kind == DevLoopKind::Rework;
+    let release_ready_loop = loop_kind == DevLoopKind::ReleaseReady;
     let rework_rounds = if rework {
         rework_rounds_before + 1
     } else {
         rework_rounds_before
+    };
+    let release_ready_rounds = if release_ready_loop {
+        release_ready_rounds_before + 1
+    } else {
+        release_ready_rounds_before
     };
     let mut history = previous
         .get("history")
@@ -229,6 +325,12 @@ pub(crate) async fn write_requirement_status_checked(
         if rework {
             entry["rework"] = json!(true);
             entry["reworkRound"] = json!(rework_rounds);
+            entry["loop"] = json!("rework");
+            entry["loopRound"] = json!(rework_rounds);
+        }
+        if release_ready_loop {
+            entry["loop"] = json!("release-ready");
+            entry["loopRound"] = json!(release_ready_rounds);
         }
         entry
     } else {
@@ -248,6 +350,7 @@ pub(crate) async fn write_requirement_status_checked(
         "lastTransition": transition,
         "category": previous.get("category").cloned().unwrap_or(Value::Null),
         "reworkRounds": rework_rounds,
+        "releaseReadyRounds": release_ready_rounds,
         "updatedAt": now_ms(),
         "history": history
     });
@@ -266,6 +369,7 @@ pub(crate) async fn write_requirement_category(req_dir: &str, new_category: &str
         "status": previous.get("status").and_then(Value::as_str).unwrap_or("开发中"),
         "category": new_category,
         "reworkRounds": rework_round_count(&previous),
+        "releaseReadyRounds": release_ready_round_count(&previous),
         "updatedAt": now_ms(),
         "history": previous.get("history").cloned().unwrap_or_else(|| json!([]))
     });
