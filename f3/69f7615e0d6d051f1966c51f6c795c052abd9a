@@ -1,0 +1,25 @@
+src/main.rs
+  af118826a0d45220 99
+prompts/phase-dev-release-ready.md
+  af118826a0d45220 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f369f7615e0d6d051f1966c51f6c795c052abd9a",
+  "prompts": {
+    "af118826a0d45220": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f10d-5b3f-7766-9ce3-822e80d9aca6",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 35,
+      "total_deletions": 0,
+      "accepted_lines": 35,
+      "overriden_lines": 0
+    }
+  }
+}
