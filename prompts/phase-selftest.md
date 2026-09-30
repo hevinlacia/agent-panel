@@ -13,6 +13,8 @@
 - 用 tid 串起入口、关键分支、成功/失败日志
 - 验证 DB 或副作用并做反向检查
 - 按固定提示词实时记录可复用验证方法、测试数据准备方式、日志/DB 证据链或 skill 改进候选
+- 造数能力沉淀（UAT 回归前置）：UAT 不能直连写库，测试中阶段的回归效率完全依赖 API 造数脚本与接口模板。自测中每次准备测试数据优先复用 `$WMS_WORKSPACE_ROOT/.agents/testdata/` 已固化能力（先查 `capabilities.yaml` / `api/catalog.yaml`，不手拼请求）；探索出新造数路径、接口调用或发现现有脚本/模板过时时，按该 pack 的 Path Maintenance Contract（见其 AGENTS.md）当场回填最小载体（capabilities.yaml / recipes / finders / verifiers / api/catalog.yaml + api/bruno/ + schemas/）并验证（`npm run validate` / dry-run），不留到经验总结阶段
+- 推进「测试中」前盘点 UAT 造数前置：test.md 自测清单中每个需要造数的场景确认有可用的 API 造数能力或接口模板，缺失的在本阶段用 test 环境探索、验证并回填（test 库可写，是最后的自由探索窗口）；确实无 API 路径的场景在 test.md 标注（如依赖存量数据），不要把造数探索遗留到 UAT 回归现场
 - 在 test.md「自测清单」按三类小节维护（自测门禁强校验）：
   1. **主流程测试**：主链路场景逐项列出并填写结果
   2. **边界场景测试**：先在「#### 风险场景分析」逐条分析出边界/异常风险场景，再把风险转成测试清单逐项完成；确认无风险写 `无风险场景：<依据>`，整类不适用写 `不适用：<原因>`
@@ -34,3 +36,4 @@
 - 核心场景至少达到 B 级证据
 - review.md 或 code-review-ai.md 已给出明确门禁结论（PASS/BLOCKED/WAIVED）
 - test.md 留下可复用验证链路和证据摘要
+- 需造数场景的 UAT 造数前置已盘点：可复用的 API 造数能力/接口模板已确认可用，本阶段新探索路径已回填 testdata pack，无 API 路径的场景已在 test.md 标注
