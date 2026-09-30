@@ -530,6 +530,11 @@ button, input, select, textarea { font: inherit; }
 
 /* ===== 子需求（sub-requirement）===== */
 .react-sub-badge { color: #67e8f9; font-weight: 600; }
+/* 列表页整合需求卡片上的子需求折叠/展开按钮（替代徽章链接，点击收起/展开子需求树）。 */
+.react-sub-toggle { display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(103, 232, 249, 0.35); border-radius: 999px; padding: 3px 10px; background: rgba(103, 232, 249, 0.08); color: #67e8f9; font: 600 0.72rem var(--react-mono); cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.react-sub-toggle:hover { border-color: rgba(103, 232, 249, 0.7); background: rgba(103, 232, 249, 0.16); }
+.react-sub-chevron { transition: transform .18s ease; opacity: .85; flex-shrink: 0; }
+.react-sub-chevron.collapsed, .react-sub-toggle.collapsed .react-sub-chevron { transform: rotate(-90deg); }
 .react-sub-create-form { flex-wrap: wrap; }
 .react-sub-create-form input { min-width: 180px; }
 .react-sub-op-results { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
