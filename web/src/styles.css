@@ -1184,3 +1184,33 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-gate-item-name { flex: 1 1 240px; }
 .react-gate-item-result { white-space: nowrap; }
 .react-gate-risk ul { margin: 4px 0 8px; padding-left: 20px; }
+
+/* ===== Pi 会话聊天页（/pi-chat，RPC over WebSocket） ===== */
+.react-pichat-panel { display: flex; flex-direction: column; gap: 12px; min-height: 60vh; }
+.react-pichat-status { display: flex; align-items: center; gap: 10px; color: var(--react-muted); font-size: .8rem; flex-wrap: wrap; }
+.react-pichat-status code { font: .72rem var(--react-mono); color: var(--react-cyan); }
+.react-pichat-status em { font-style: normal; color: var(--react-faint); }
+.react-pichat-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--react-faint); flex: none; }
+.react-pichat-dot.on { background: var(--react-green); box-shadow: 0 0 8px rgba(34, 197, 94, .6); }
+.react-pichat-exit { border: 1px solid rgba(245, 158, 11, .4); border-radius: 10px; padding: 10px 14px; color: var(--react-amber); font-size: .82rem; }
+.react-pichat-exit pre { margin: 8px 0 0; max-height: 180px; overflow: auto; font: .72rem var(--react-mono); color: var(--react-muted); white-space: pre-wrap; }
+.react-pichat-note { margin: 0; color: var(--react-amber); font-size: .82rem; }
+.react-pichat-stream { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 6px 2px; max-height: 58vh; }
+.react-pichat-msg { display: flex; gap: 10px; align-items: flex-start; }
+.react-pichat-msg.user { flex-direction: row-reverse; }
+.react-pichat-role { flex: none; font: 800 .64rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--react-faint); border: 1px solid var(--react-border); border-radius: 999px; padding: 3px 9px; margin-top: 2px; }
+.react-pichat-msg.assistant .react-pichat-role { color: var(--react-cyan); border-color: var(--react-border-strong); }
+.react-pichat-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 76%; }
+.react-pichat-msg.user .react-pichat-body { align-items: flex-end; }
+.react-pichat-text { margin: 0; padding: 10px 14px; background: var(--react-panel-strong); border: 1px solid var(--react-border); border-radius: 12px; font-size: .88rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.react-pichat-msg.user .react-pichat-text { background: rgba(34, 211, 238, .1); border-color: var(--react-border-strong); }
+.react-pichat-typing { color: var(--react-muted); animation: react-pichat-pulse 1.2s ease-in-out infinite; }
+@keyframes react-pichat-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.react-pichat-thinking summary, .react-pichat-tool summary { cursor: pointer; color: var(--react-purple); font: .74rem var(--react-mono); list-style: none; }
+.react-pichat-tool summary { color: var(--react-muted); }
+.react-pichat-tool.running summary { color: var(--react-amber); }
+.react-pichat-thinking pre, .react-pichat-tool pre { margin: 6px 0 0; padding: 10px 12px; background: rgba(2, 6, 12, .6); border: 1px solid var(--react-border); border-radius: 8px; font: .72rem var(--react-mono); max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--react-muted); }
+.react-pichat-input { display: flex; gap: 10px; align-items: flex-end; border-top: 1px solid var(--react-border); padding-top: 12px; }
+.react-pichat-input textarea { flex: 1; resize: vertical; min-height: 52px; max-height: 180px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 10px; color: var(--react-text); font: .86rem/1.5 inherit; padding: 10px 12px; }
+.react-pichat-input textarea:focus { outline: none; border-color: var(--react-border-strong); }
+.react-pichat-input-actions { display: flex; gap: 8px; }

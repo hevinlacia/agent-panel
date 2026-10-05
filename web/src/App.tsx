@@ -170,6 +170,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
+  if (path === "/pi-chat") return { eyebrow: "Pi Agent", title: "Pi 会话" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }

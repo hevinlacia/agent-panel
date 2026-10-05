@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use axum::{
@@ -30,6 +30,7 @@ mod markdown;
 mod ones;
 mod ones_manhour;
 mod paths;
+mod pi_rpc;
 mod pi_config;
 mod requirement_api;
 mod requirement_context;
@@ -55,6 +56,7 @@ use knowledge::*;
 use markdown::*;
 use ones::*;
 use ones_manhour::*;
+use pi_rpc::*;
 use pi_config::*;
 use requirement_api::*;
 use requirement_context::*;
@@ -197,6 +199,8 @@ struct AppState {
     requirement_create_lock: Arc<Mutex<()>>,
     /// ONES 候选任务内存缓存（GET /api/ones/tasks 默认命中，refresh=true 回源）。
     ones_cache: Arc<Mutex<Option<OnesCache>>>,
+    /// pi RPC 会话注册表：session id → 活跃 `pi --mode rpc` 子进程（全局单例）。
+    pi_rpc_sessions: PiRpcRegistry,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -257,6 +261,7 @@ async fn main() -> Result<()> {
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
         ones_cache: Arc::new(Mutex::new(None)),
+        pi_rpc_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // Start the cainiao print mock server on boot if enabled in config.
@@ -513,6 +518,8 @@ async fn main() -> Result<()> {
         )
         .route("/api/config", get(api_config).post(api_config_post))
         .route("/api/config/skills", get(api_config_skills))
+        .route("/api/pi-chat/open", get(api_pi_chat_open))
+        .route("/ws/pi-chat", get(ws_pi_chat))
         .route("/api/auth-sites", get(api_auth_sites))
         .route("/api/ones/tasks", get(api_ones_tasks))
         .route("/api/ones/manhour", get(api_ones_manhour))
