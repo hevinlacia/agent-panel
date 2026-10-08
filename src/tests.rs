@@ -17,6 +17,7 @@ mod review_flow;
 mod sessions;
 mod status_gates;
 mod sub_requirement;
+mod uat_regression;
 
 fn chrono_like_unique_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};

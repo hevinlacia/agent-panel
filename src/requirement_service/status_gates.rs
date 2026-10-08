@@ -32,6 +32,7 @@ async fn dispatch_status_gate(gate: &str, req: &Requirement) -> ApiResult<()> {
     match gate {
         "review" => ensure_review_gate_allows_testing(req).await,
         "selftest-checklist" => ensure_selftest_checklist_allows_testing(req).await,
+        "uat-regression" => ensure_uat_regression_allows_release(req).await,
         "test-scenario" => ensure_test_scenario_allows_testing(req).await,
         "issue-root-cause" => ensure_issue_root_cause_allows_transition(req).await,
         "issue-troubleshooting" => ensure_issue_troubleshooting_allows_transition(req).await,
@@ -76,6 +77,22 @@ pub(crate) async fn evaluate_status_gate(gate: &str, req: &Requirement) -> Statu
         }
         "selftest-checklist" => {
             let eval = selftest_checklist_eval(req).await;
+            if eval.problems.is_empty() {
+                StatusGateEval {
+                    passed: true,
+                    reason: "当前满足通过条件".into(),
+                    warnings: eval.warnings,
+                }
+            } else {
+                StatusGateEval {
+                    passed: false,
+                    reason: eval.problems.join("；"),
+                    warnings: Vec::new(),
+                }
+            }
+        }
+        "uat-regression" => {
+            let eval = uat_regression_eval(req).await;
             if eval.problems.is_empty() {
                 StatusGateEval {
                     passed: true,

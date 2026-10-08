@@ -684,6 +684,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
                 "selftestChecklist": checklist,
             })
         }
+        "uat-regression" => uat_regression_detail(&req).await,
         "test-scenario" => {
             let body = match req.req_dir.as_deref() {
                 Some(dir) => tokio::fs::read_to_string(PathBuf::from(dir).join("test-scenario.md"))
