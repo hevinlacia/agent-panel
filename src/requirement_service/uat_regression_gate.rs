@@ -83,6 +83,7 @@ pub(crate) async fn uat_regression_eval(req: &Requirement) -> UatRegressionEval 
 }
 
 /// 门禁详情：读取 test.md 并返回结构化 UAT 回归清单（found=false 表示无文件/无小节）。
+/// 外层结构由 requirement_api 包装（problems/warnings/hotfix/uatRegression），
 /// sections 结构与自测清单详情一致，前端可复用同一渲染组件。
 pub(crate) async fn uat_regression_detail(req: &Requirement) -> Value {
     let missing = json!({ "found": false, "sections": [] });
@@ -97,7 +98,7 @@ pub(crate) async fn uat_regression_detail(req: &Requirement) -> Value {
         return missing;
     }
     let body = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-    let (eval, na_reason, items) = validate_uat_regression(&body);
+    let (_, na_reason, items) = validate_uat_regression(&body);
     json!({
         "found": true,
         "sections": [{
@@ -106,8 +107,6 @@ pub(crate) async fn uat_regression_detail(req: &Requirement) -> Value {
             "riskAnalysis": [],
             "items": items,
         }],
-        "problems": eval.problems,
-        "warnings": eval.warnings,
     })
 }
 
