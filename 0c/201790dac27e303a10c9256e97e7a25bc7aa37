@@ -1,0 +1,25 @@
+src/requirement_service/uat_regression_gate.rs
+  42acf908d1a5e84a 86,101
+src/requirement_api.rs
+  42acf908d1a5e84a 687-696
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0c201790dac27e303a10c9256e97e7a25bc7aa37",
+  "prompts": {
+    "42acf908d1a5e84a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11a8c-f265-7683-9cdc-a5f4c0a29976",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 12,
+      "total_deletions": 4,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    }
+  }
+}
