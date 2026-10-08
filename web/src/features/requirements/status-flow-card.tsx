@@ -2,6 +2,7 @@ import { Fragment, useState } from "react"
 import type { Requirement, StatusFlowPayload, StatusFlowTransition } from "../../types"
 import { postForm, useFetch } from "../../lib/api"
 import { PanelHead } from "../../components/ui"
+import { SUSPEND_STATUS } from "../../lib/requirements"
 
 function statusFlowNodeState(i: number, currentIndex: number | null): "done" | "current" | "todo" {
   if (currentIndex == null || i > currentIndex) return "todo"
@@ -39,7 +40,7 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
     setPending(status)
   }
   /** 待确认流转上的门禁配置（仅相邻流转挂门禁；多跳进入无门禁含义）。 */
-  const pendingGates = pending && data
+  const pendingGates = pending && data && pending !== SUSPEND_STATUS
     ? data.transitions.find((t) => t.from === req.status && t.to === pending)?.gates ?? []
     : []
   /** 打回返工轮次（loops 明细优先，向后兼容 rounds 字段）。 */
@@ -56,7 +57,7 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
     setSaving(true)
     setError(null)
     try {
-      await postForm("/api/requirement/status", { reqId: req.id, status: pending, via: "ui", note: "状态流转卡点击修改" })
+      await postForm("/api/requirement/status", { reqId: req.id, status: pending, via: "ui", note: pending === SUSPEND_STATUS ? "状态流转卡点击挂起" : req.status === SUSPEND_STATUS ? "状态流转卡取消挂起" : "状态流转卡点击修改" })
       setPending(null)
       flow.refresh()
       onSaved?.()
@@ -66,9 +67,18 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
       setSaving(false)
     }
   }
+  const suspended = Boolean(data?.suspended) || req.status === SUSPEND_STATUS
+  const resumeStatus = data?.resumeStatus || null
+  /** 子需求走独立轻量状态机（后端拒绝挂起）；需求组状态为派生值不可改。 */
+  const canSuspend = !isGroup && !req.isSubReq
   return <section id="status-flow" className="react-panel react-statusflow-panel">
     <PanelHead kicker="Status Flow" title="状态流转与门禁" chip={data ? `当前 ${data.currentStatus}` : flow.loading ? "loading" : "-"} />
-    <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过（流转时通过，或门禁材料当前满足）、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工/系统流转且门禁材料当前不满足，悬停看原因）。点击具体门禁可跳转门禁验证详情页。<strong>点击任意非当前状态节点，弹窗确认后即强制修改状态（via=ui，跳过门禁）</strong>；需求组状态为派生值不可点击。</p>
+    <p className="react-muted">一长条展示需求全流程状态（已完成 / 当前 / 待推进）；相邻状态之间竖排该流转配置的门禁：✓ 已通过（流转时通过，或门禁材料当前满足）、✗ 未通过（会拦住 agent 自动推进）、○ 未校验（人工/系统流转且门禁材料当前不满足，悬停看原因）。点击具体门禁可跳转门禁验证详情页。<strong>点击任意非当前状态节点，弹窗确认后即强制修改状态（via=ui，跳过门禁）</strong>；需求组状态为派生值不可点击。「挂起」是流水外标记状态：任何状态都可挂起，不影响流水位置，适合需求暂时不做的场景；再次点击按钮即取消挂起，回到挂起前状态；列表页可按挂起筛选。</p>
+    {canSuspend ? <div className="react-statusflow-suspend-actions">
+      {suspended
+        ? <button type="button" className="react-toggle-btn is-suspending" disabled={saving || !resumeStatus} onClick={() => resumeStatus && openConfirm(resumeStatus)} title={resumeStatus ? `取消挂起，恢复到挂起前状态「${resumeStatus}」（确认后强制修改，跳过门禁）` : "状态历史缺失，无法自动恢复；请在上方状态条点击目标状态手动恢复"}>▶ 取消挂起（恢复到 {resumeStatus ?? "…"}）</button>
+        : <button type="button" className="react-toggle-btn" disabled={saving} onClick={() => openConfirm(SUSPEND_STATUS)} title="挂起是流水外标记状态：任何状态可挂起，不影响流水位置，恢复时回到挂起前状态；列表页可按挂起筛选">⏸ 挂起需求</button>}
+    </div> : null}
     {flow.error ? <p className="react-effort-error">{flow.error}</p> : !data ? <p className="react-muted">加载中…</p> : <>
       <div className="react-statusflow-strip">
       {data.statuses.map((s, i) => <Fragment key={s}>
@@ -101,9 +111,13 @@ function StatusFlowCard({ req, onSaved }: { req: Requirement; onSaved?: () => vo
     </>}
     {pending ? <div className="react-modal-overlay" onClick={closeConfirm}>
       <div className="react-modal-card" onClick={(e) => e.stopPropagation()}>
-        <h3>确认修改需求状态？</h3>
+        <h3>{pending === SUSPEND_STATUS ? "确认挂起需求？" : req.status === SUSPEND_STATUS ? "确认取消挂起？" : "确认修改需求状态？"}</h3>
         <p>需求 <strong>{req.id}</strong></p>
-        <p>状态将从 <strong>{req.status}</strong> 修改为 <strong>{pending}</strong>；人工修改跳过状态门禁，操作会记入状态历史（via=ui）。</p>
+        {pending === SUSPEND_STATUS
+          ? <p>状态将从 <strong>{req.status}</strong> 标记为 <strong>挂起</strong>；挂起是流水外标记（任何状态可挂起），不影响流水进度，再次点击按钮即取消挂起并回到挂起前状态。操作会记入状态历史（via=ui）。</p>
+          : req.status === SUSPEND_STATUS
+            ? <p>将取消挂起，状态从 <strong>挂起</strong> 恢复为 <strong>{pending}</strong>（挂起前的流水状态或你选择的目标状态）；人工修改跳过状态门禁，操作会记入状态历史（via=ui）。</p>
+            : <p>状态将从 <strong>{req.status}</strong> 修改为 <strong>{pending}</strong>；人工修改跳过状态门禁，操作会记入状态历史（via=ui）。</p>}
         {pendingGates.length ? <p>该流转配置了门禁（{pendingGates.map((g) => g.label).join("、")}）：人工进入会记录为人工流转；只要门禁材料当前满足，卡片仍显示 ✓ 已通过。</p> : null}
         {error ? <p className="react-effort-error">{error}</p> : null}
         <div className="react-modal-actions">

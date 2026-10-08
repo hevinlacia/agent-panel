@@ -18,6 +18,30 @@ pub(crate) async fn read_requirement_state(dir: &Path) -> Result<Option<Value>> 
     Ok(None)
 }
 
+/// 挂起是流水外标记状态：恢复目标取状态历史里最近一次非挂起状态；
+/// 历史缺失时兜底 previousStatus（挂起写入时的 from）。仍找不到返回 None，
+/// 前端降级为提示用户在状态条上手动选择目标状态。
+pub(crate) fn resume_status_from_state(state: &Value) -> Option<String> {
+    let from_history = state
+        .get("history")
+        .and_then(Value::as_array)
+        .and_then(|history| {
+            history
+                .iter()
+                .rev()
+                .find(|e| e.get("status").and_then(Value::as_str) != Some("挂起"))
+                .and_then(|e| e.get("status").and_then(Value::as_str))
+                .map(|s| s.to_string())
+        });
+    from_history.or_else(|| {
+        state
+            .get("previousStatus")
+            .and_then(Value::as_str)
+            .filter(|s| *s != "挂起")
+            .map(|s| s.to_string())
+    })
+}
+
 /// 需求状态达到「经验总结」及以上时，才允许自动推进关联线上问题。
 pub(crate) fn should_auto_advance_issues(new_status: &str) -> bool {
     matches!(new_status, "经验总结" | "发布就绪" | "已完成")

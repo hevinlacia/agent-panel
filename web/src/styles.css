@@ -843,6 +843,9 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-statusflow-rework-count { color: #fbbf24; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(251,191,36,.5); }
 .react-statusflow-rework-count.is-high { color: #fca5a5; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.08); }
 .react-statusflow-rework-hint { flex-basis: 100%; font-size: .68rem; }
+/* 挂起（流水外标记状态）toggle 按钮：未挂起显示挂起、已挂起显示取消挂起 */
+.react-statusflow-suspend-actions { margin-bottom: 10px; display: flex; }
+.react-toggle-btn.is-suspending { color: #fbbf24; border-color: rgba(245,158,11,.55); }
 /* 门禁验证详情页 */
 .react-gate-detail-state { display: inline-flex; gap: 12px; padding: 10px 16px; border-radius: 12px; font: 700 .92rem var(--react-mono); margin: 6px 0 12px; }
 .react-gate-detail-state strong { font-size: .95rem; }

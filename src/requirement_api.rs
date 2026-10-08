@@ -782,6 +782,10 @@ pub(crate) async fn api_requirement_status_flow(
         .iter()
         .position(|s| *s == req.status)
         .map(|i| i as u32);
+    // 挂起是流水外标记状态：currentIndex 为 null（currentKnown=false），
+    // 恢复目标由状态历史派生（resume_status_from_state），供前端一键回到挂起前状态。
+    let suspended = req.status == "挂起";
+    let mut resume_status: Option<String> = None;
     // 历史流转里每个状态最近一次进入时的门禁校验方式（gateCheck）。
     let mut gate_checks: HashMap<String, String> = HashMap::new();
     // 返工轮次（rework loop）：人工核查/测试中 → 开发中 的打回次数；
@@ -801,6 +805,9 @@ pub(crate) async fn api_requirement_status_flow(
                         gate_checks.insert(st.to_string(), gc.to_string());
                     }
                 }
+            }
+            if suspended {
+                resume_status = resume_status_from_state(&state_json);
             }
         }
     }
@@ -892,6 +899,8 @@ pub(crate) async fn api_requirement_status_flow(
         "category": req.category,
         "currentStatus": req.status,
         "currentKnown": current_index.is_some(),
+        "suspended": suspended,
+        "resumeStatus": resume_status,
         "statuses": statuses,
         "currentIndex": current_index,
         "transitions": transitions,

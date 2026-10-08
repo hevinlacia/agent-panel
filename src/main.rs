@@ -182,6 +182,10 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
 static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题"];
 /// 需求推动方：产品推动（默认）可问产品要测试范围；开发推动必须先沉淀测试场景文档才能进入测试中。
 static REQ_SOURCES: &[&str] = &["产品推动", "开发推动"];
+/// 流水外标记状态：不进 REQ_STATUSES/REQ_FLOW_STATUSES 流水序列（不影响组聚合序数、
+/// skipped_statuses 跳过计算、状态门禁规则），任何状态都可置为挂起，恢复时回到挂起前状态。
+/// 子需求/需求组不支持挂起（子需求独立状态机拒绝，组状态为派生值被锁）。
+static REQ_MARKER_STATUSES: &[&str] = &["挂起"];
 
 #[derive(Clone)]
 struct AppState {
