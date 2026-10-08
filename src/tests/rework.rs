@@ -225,3 +225,65 @@ fn trash_cleanup_rework_dir(dir: &Path) {
     // 测试临时目录：属本测试自建产物，直接删除
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[tokio::test]
+async fn suspend_round_trip_keeps_flow_history_and_resume_target() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent-panel-suspend-test-{}",
+        chrono_like_unique_suffix()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp req dir");
+    // 先推进到开发中
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "开发中",
+        Some("初始推进"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("initial transition");
+    // 任意状态可挂起：开发中 → 挂起，不算返工/小循环，也不算跳过流水状态
+    let suspended = write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "挂起",
+        Some("状态流转卡点击挂起"),
+        GateCheckMode::Skipped,
+    )
+    .await
+    .expect("suspend transition");
+    assert_eq!(suspended["status"], json!("挂起"));
+    assert_eq!(suspended["reworkRounds"], json!(0));
+    assert_eq!(suspended["releaseReadyRounds"], json!(0));
+    assert_eq!(suspended["lastTransition"]["from"], json!("开发中"));
+    assert_eq!(suspended["lastTransition"]["skippedStatuses"], json!([]));
+    // 恢复目标：状态历史里最近一次非挂起状态 = 开发中
+    assert_eq!(resume_status_from_state(&suspended), Some("开发中".to_string()));
+    // 恢复到挂起前状态，再走流水不丢失挂起痕迹
+    let resumed = write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "测试中",
+        Some("从挂起恢复后手动推进"),
+        GateCheckMode::Skipped,
+    )
+    .await
+    .expect("resume transition");
+    assert_eq!(resumed["status"], json!("测试中"));
+    assert_eq!(resumed["reworkRounds"], json!(0));
+    // 再次挂起：恢复目标变为测试中（最近一次非挂起）
+    let suspended_again = write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "挂起",
+        Some("再次挂起"),
+        GateCheckMode::Skipped,
+    )
+    .await
+    .expect("second suspend");
+    assert_eq!(resume_status_from_state(&suspended_again), Some("测试中".to_string()));
+    // 历史缺失时兜底 previousStatus（非挂起才可用）
+    assert_eq!(
+        resume_status_from_state(&json!({ "status": "挂起", "previousStatus": "开发中" })),
+        Some("开发中".to_string())
+    );
+    assert_eq!(resume_status_from_state(&json!({ "status": "挂起" })), None);
+    trash_cleanup_rework_dir(&dir);
+}

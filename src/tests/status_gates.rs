@@ -357,6 +357,27 @@ fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
 }
 
 #[test]
+fn suspend_status_is_valid_but_outside_flow() {
+    // 挂起可经 canonical_status 校验（任意状态可挂起的合法目标），
+    // 但不在流水序列（REQ_STATUSES/REQ_FLOW_STATUSES）：不影响组聚合序数、
+    // skipped_statuses 跳过计算和门禁规则匹配。
+    assert_eq!(canonical_status("挂起").unwrap(), "挂起");
+    assert!(!REQ_STATUSES.contains(&"挂起"));
+    assert!(!REQ_FLOW_STATUSES.contains(&"挂起"));
+    assert!(!SUB_REQ_STATUSES.contains(&"挂起"));
+    // 挂起目标不算“跳过”流水状态；从挂起恢复到流水状态也不算。
+    assert!(skipped_statuses(Some("开发中"), "挂起").is_empty());
+    assert!(skipped_statuses(Some("挂起"), "测试中").is_empty());
+}
+
+#[test]
+fn sub_req_and_marker_status_sets_do_not_overlap() {
+    // 子需求状态机不含挂起：ensure_sub_req_status_transition 天然拒绝子需求挂起。
+    assert!(!SUB_REQ_STATUSES.contains(&"挂起"));
+    assert_eq!(REQ_MARKER_STATUSES, &["挂起"]);
+}
+
+#[test]
 fn selftest_checklist_missing_section_fails() {
     let problems = validate_selftest_checklist("# Test\n\n## 自测记录\n- ⬜ 待执行\n").problems;
     assert!(problems.iter().any(|p| p.contains("未找到")));
