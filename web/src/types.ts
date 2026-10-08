@@ -553,6 +553,8 @@ export interface StatusGateDetail {
   category?: string | null
   /** 自测清单门禁：test.md 结构化自测清单（每项含结果与原因）。 */
   selftestChecklist?: SelftestChecklistPayload | null
+  /** UAT 回归门禁：test.md「## UAT 回归」结构化回归清单（结构同 selftestChecklist）。 */
+  uatRegression?: SelftestChecklistPayload | null
 }
 
 /** 循环语境审查结论记录：主流程结论 + 各轮次追加结论（review.md / code-review-ai.md）。 */

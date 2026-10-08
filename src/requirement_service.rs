@@ -353,6 +353,7 @@ pub(crate) struct RequirementEventTestCase {
 }
 
 mod create;
+mod compliance;
 mod doc;
 mod doc_parts;
 mod events;
@@ -363,9 +364,11 @@ mod selftest_gate;
 mod state;
 mod status_gates;
 mod templates;
+mod uat_regression_gate;
 mod validate;
 
 pub(crate) use create::*;
+pub(crate) use compliance::*;
 pub(crate) use doc::*;
 pub(crate) use doc_parts::*;
 pub(crate) use events::*;
@@ -376,4 +379,5 @@ pub(crate) use selftest_gate::*;
 pub(crate) use state::*;
 pub(crate) use status_gates::*;
 pub(crate) use templates::*;
+pub(crate) use uat_regression_gate::*;
 pub(crate) use validate::*;

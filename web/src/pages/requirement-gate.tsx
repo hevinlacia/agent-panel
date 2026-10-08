@@ -150,6 +150,27 @@ function SelftestGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPa
   </section>
 }
 
+function UatGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayload["detail"]> }) {
+  const problems = detail.problems || []
+  return <section className="react-panel"><PanelHead kicker="UAT Regression" title="UAT 回归校验详情" />
+    <p className="react-muted">校验目标：test.md「## UAT 回归」逐项给出回归结果与证据（| # | 场景 | 结果 | 证据 |，结果=通过/失败/无法测试/未执行）——证据必须是已发生的可核对事实（tid/日志关键字/接口返回/DB 前后值），计划与状态流转动作不算证据。全部通过放行；「无法测试」（有原因）放行但警示；失败/未执行/缺结果/通过但证据不可采不放行；整节不适用写 {'`不适用：<原因>`'}。</p>
+    {detail.hotfix ? <p className="react-save-hint">抢修模式（已关联线上问题）：UAT 回归门禁默认放行，速度优先。</p> : null}
+    {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ UAT 回归校验通过：每项都有结果与证据；存在「无法测试」项时放行但下方警示结果未知。</p>}
+    <SelftestChecklistView checklist={detail.uatRegression ?? { found: false, sections: [] }} />
+    <GateWarnings warnings={detail.warnings} />
+    <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`## UAT 回归
+
+| # | 场景 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 混合明细任务确认（缺货明细保留） | 通过 | UAT tid=abc123；DB 头 900、缺货明细 700 保留 |
+| 2 | 整单取消后明细行展示 | 无法测试 | UAT 无整单取消入口，由测试同事人工覆盖 |
+
+# 证据 = 已发生事实：tid / 日志关键字 / 接口返回 / DB 前后值
+# 不算证据：待执行/计划/后续、状态流转动作（“已推进状态”）、推断
+# 整节不适用写：不适用：<原因>`}</pre></details>
+  </section>
+}
+
 function DocGateDetail({ detail, title, file }: { detail: NonNullable<StatusGateDetailPayload["detail"]>; title: string; file: string }) {
   return <section className="react-panel"><PanelHead kicker="Doc Gate" title={title} />
     <div className="react-meta-grid">
@@ -177,6 +198,7 @@ export function RequirementGatePage() {
       </section>
       {d.gate === "review" && d.detail ? <ReviewGateDetail detail={d.detail} /> : null}
       {d.gate === "selftest-checklist" && d.detail ? <SelftestGateDetail detail={d.detail} /> : null}
+      {d.gate === "uat-regression" && d.detail ? <UatGateDetail detail={d.detail} /> : null}
       {d.gate === "test-scenario" && d.detail ? <DocGateDetail detail={d.detail} title="测试场景文档校验" file="test-scenario.md" /> : null}
       {d.gate === "issue-root-cause" && d.detail ? <DocGateDetail detail={d.detail} title="线上问题定位校验" file="root-cause.md" /> : null}
       {d.gate === "issue-troubleshooting" && d.detail ? <DocGateDetail detail={d.detail} title="线上问题复盘校验" file="troubleshooting.md" /> : null}

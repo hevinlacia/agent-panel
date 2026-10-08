@@ -335,6 +335,10 @@ async fn main() -> Result<()> {
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
         .route(
+            "/api/requirement/compliance",
+            get(api_requirement_compliance),
+        )
+        .route(
             "/api/requirement/status-flow",
             get(api_requirement_status_flow),
         )

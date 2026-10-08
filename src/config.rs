@@ -139,6 +139,11 @@ pub(crate) static STATUS_GATE_DEFS: &[StatusGateDef] = &[
         description: "test.md「自测清单」必须列出测试项目且每项有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因",
     },
     StatusGateDef {
+        id: "uat-regression",
+        label: "UAT 回归门禁",
+        description: "test.md「## UAT 回归」必须逐项给出回归结果与证据（| # | 场景 | 结果 | 证据 |）；证据须是已发生的可核对事实（tid/日志关键字/接口返回/DB 前后值），计划与状态流转动作不算；全通过放行，「无法测试」（有原因）放行但警示，失败/未执行/缺结果/通过但证据不可采不放行；整节不适用写 `不适用：<原因>`",
+    },
+    StatusGateDef {
         id: "test-scenario",
         label: "测试场景文档门禁",
         description: "仅 source=开发推动 生效：流转前必须完成 test-scenario.md（需求说明 + 开发评估测试范围 + 覆盖场景）",
@@ -160,7 +165,11 @@ pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
 }
 
 /// 内置默认门禁规则：与历史硬编码门禁行为一致，外加新增的自测清单门禁。
-/// 人工核查（2026-08 新增）：测试中 → 人工核查无硬门禁（agent 测完即推进）；
+/// 人工核查（2026-08 新增）：测试中 → 人工核查原无硬门禁（agent 测完即推进）；
+/// 2026-10 新增 uat-regression 门禁（WMS-136 实测：agent 把「用户推进状态」当 UAT 回归证据，
+/// 薄证据一路畅通到发布就绪）：测试中 → 人工核查、及进入发布就绪的两条流转都挂 UAT 回归门禁，
+/// agent API 推进时要求 test.md「## UAT 回归」逐项有结果与证据；人工在 UI 推进跳过门禁 = 人工确权
+/// （状态流转卡片会实时评估门禁材料并展示三态，人工跳过是知情跳过）。
 /// 进入发布就绪的路径（人工核查→发布就绪 / 测试中→发布就绪直达 / 开发中→发布就绪小循环直通）都挂
 /// review 门禁，agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
 /// 开发中→发布就绪（2026-09 新增）服务发布就绪小循环：上线前小改动改完必须增量审查刷新快照后才能回发布就绪。
@@ -181,14 +190,19 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
             ],
         },
         StatusGateRule {
+            from: "测试中".into(),
+            to: "人工核查".into(),
+            gates: vec!["uat-regression".into()],
+        },
+        StatusGateRule {
             from: "人工核查".into(),
             to: "发布就绪".into(),
-            gates: vec!["review".into()],
+            gates: vec!["review".into(), "uat-regression".into()],
         },
         StatusGateRule {
             from: "测试中".into(),
             to: "发布就绪".into(),
-            gates: vec!["review".into()],
+            gates: vec!["review".into(), "uat-regression".into()],
         },
         // 发布就绪小循环：开发中 → 发布就绪 直通（跳过自测中/测试中/人工核查），
         // 挂 review 门禁保证小改动经增量审查刷新快照后才能回发布就绪；不挂 selftest-checklist（快）。

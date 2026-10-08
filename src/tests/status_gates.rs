@@ -55,11 +55,19 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     assert_eq!(gates_of("已修复", "已复盘"), vec!["issue-troubleshooting"]);
     // 未配置的流转不拦。
     assert!(gates_of("需求澄清", "开发中").is_empty());
-    assert!(gates_of("测试中", "人工核查").is_empty());
+    // 2026-10 新增：测试中 → 人工核查挂 UAT 回归门禁（原无门禁）。
+    assert_eq!(gates_of("测试中", "人工核查"), vec!["uat-regression"]);
     // 人工核查（2026-08 新增）：进入发布就绪的路径都挂 review 门禁兜底 agent 推进；
+    // 2026-10 新增：同时挂 UAT 回归门禁。
     // 人工在 UI 推进跳过门禁 = 人工确权（视觉验收 + 主流程复测 + 人工审码）。
-    assert_eq!(gates_of("人工核查", "发布就绪"), vec!["review"]);
-    assert_eq!(gates_of("测试中", "发布就绪"), vec!["review"]);
+    assert_eq!(
+        gates_of("人工核查", "发布就绪"),
+        vec!["review", "uat-regression"]
+    );
+    assert_eq!(
+        gates_of("测试中", "发布就绪"),
+        vec!["review", "uat-regression"]
+    );
     // 发布就绪小循环（2026-09 新增）：开发中 → 发布就绪 直通挂 review 门禁，
     // 小改动必须增量审查刷新快照后才能回发布就绪；不挂 selftest-checklist（快）。
     assert_eq!(gates_of("开发中", "发布就绪"), vec!["review"]);
