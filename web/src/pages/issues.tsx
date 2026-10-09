@@ -9,7 +9,7 @@ import { useMemo, useState } from "react"
 import type { Requirement, ReqCategory } from "../types"
 import { useFetch } from "../lib/api"
 import { relAge } from "../lib/format"
-import { ISSUE_STATUS_OPTIONS } from "../lib/requirements"
+import { ISSUE_STATUS_OPTIONS, REGION_LABELS } from "../lib/requirements"
 import { ISSUES_FALLBACK_EXCLUDED_STATUSES, persistIssuesDefaultExcludedStatuses, readIssuesDefaultExcludedStatuses } from "../lib/preferences"
 import { projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
@@ -62,12 +62,22 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   }
   const urlType = urlParams.get("type")
   const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" ? urlType : "")
+  // 区域筛选：__none__ = 未登记；其它值为 meta.md region 字段（cn/sea，后续可扩展更多国家/区域）。
+  const urlRegion = urlParams.get("region") || ""
+  const [regionFilter, setRegionFilter] = useState(urlRegion)
   const reqs = data?.requirements || []
 
-  // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机
   // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机；平铺列表按更新时间倒序。
   const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题").sort((a, b) => b.updatedAt - a.updatedAt), [reqs])
   const typedIssues = useMemo(() => (typeFilter ? issues.filter((r) => r.category === typeFilter) : issues), [issues, typeFilter])
+  /** 区域选项：从现有数据 distinct 动态生成（含未登记），新增国家/区域零代码扩展。 */
+  const regionValues = useMemo(() => [...new Set(issues.map((r) => r.region ?? ""))].filter(Boolean).sort(), [issues])
+  const hasUnregisteredRegion = useMemo(() => issues.some((r) => !r.region), [issues])
+  const regionIssues = useMemo(() => (
+    regionFilter === "__none__" ? typedIssues.filter((r) => !r.region)
+      : regionFilter ? typedIssues.filter((r) => r.region === regionFilter)
+      : typedIssues
+  ), [typedIssues, regionFilter])
   /** 反查修复需求：绑定该线上问题的普通需求（meta.md issues 字段）。 */
   const fixReqOf = useMemo(() => {
     const map = new Map<string, Requirement>()
@@ -89,6 +99,10 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     setTypeFilter(value)
     syncUrl({ type: value })
   }
+  const changeRegion = (value: string) => {
+    setRegionFilter(value)
+    syncUrl({ region: value })
+  }
   const changeCreatedFrom = (value: string) => {
     setCreatedFrom(value)
     syncUrl({ createdFrom: value })
@@ -97,10 +111,11 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     setCreatedTo(value)
     syncUrl({ createdTo: value })
   }
-  const syncUrl = (patch: { q?: string; type?: string; status?: string[]; createdFrom?: string; createdTo?: string }) => {
+  const syncUrl = (patch: { q?: string; type?: string; region?: string; status?: string[]; createdFrom?: string; createdTo?: string }) => {
     const q = new URLSearchParams(window.location.search)
     if (patch.q !== undefined) { patch.q ? q.set("q", patch.q) : q.delete("q") }
     if (patch.type !== undefined) { patch.type ? q.set("type", patch.type) : q.delete("type") }
+    if (patch.region !== undefined) { patch.region ? q.set("region", patch.region) : q.delete("region") }
     if (patch.createdFrom !== undefined) { patch.createdFrom ? q.set("createdFrom", patch.createdFrom) : q.delete("createdFrom") }
     if (patch.createdTo !== undefined) { patch.createdTo ? q.set("createdTo", patch.createdTo) : q.delete("createdTo") }
     if (patch.status !== undefined) {
@@ -109,7 +124,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     }
     window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
   }
-  /** 匹配基数：类型/项目/关键字命中（含精确编号快速路径），不含状态筛选。 */
+  /** 匹配基数：类型/区域/项目/关键字命中（含精确编号快速路径），不含状态筛选。 */
   const matchBase = useMemo(() => {
     const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
     const kw = tokens.length === 1 ? tokens[0] : ""
@@ -117,15 +132,15 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     // 直接按 ID 命中（全等 / 前缀 / 序号段匹配），无视项目筛选；精确命中为空时回退到模糊查找。
     if (kw) {
       const exact = /^[a-z]+-((inc|tst)-)?\d+/.test(kw)
-        ? typedIssues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
+        ? regionIssues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
         : /^\d+$/.test(kw)
-          ? typedIssues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
+          ? regionIssues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
           : []
       if (exact.length) return exact
     }
     let base = effectiveProject
-      ? typedIssues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
-      : typedIssues
+      ? regionIssues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
+      : regionIssues
     // 创建时间筛选（天精度）：与需求列表同口径，含首尾两天的完整 24h。
     if (createdFrom) base = base.filter((r) => r.createdAt >= new Date(`${createdFrom}T00:00:00`).getTime())
     if (createdTo) base = base.filter((r) => r.createdAt <= new Date(`${createdTo}T23:59:59`).getTime())
@@ -143,7 +158,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
       })
     }
     return base
-  }, [typedIssues, effectiveProject, keyword, fixReqOf, createdFrom, createdTo])
+  }, [regionIssues, effectiveProject, keyword, fixReqOf, createdFrom, createdTo])
   // 状态筛选：勾选后只显示选中状态；未勾选时应用默认排除过滤。
   const filtered = useMemo(
     () => (statuses.length
@@ -172,6 +187,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     {globalProject ? null : <section className="react-panel react-filter-panel">
       <div className="react-filter-grid">
         <label>类型<select value={typeFilter} onChange={(e) => changeType(e.target.value as "" | ReqCategory)}><option value="">全部（含测试问题）</option><option value="线上问题">线上问题</option><option value="测试问题">测试问题</option></select></label>
+        <label>区域<select value={regionFilter} onChange={(e) => changeRegion(e.target.value)}><option value="">全部区域</option>{regionValues.map((r) => <option key={r} value={r}>{REGION_LABELS[r] ?? r}</option>)}{hasUnregisteredRegion ? <option value="__none__">未登记</option> : null}</select></label>
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
         <label>创建开始<input type="date" value={createdFrom} onChange={(e) => changeCreatedFrom(e.target.value)} /></label>
         <label>创建结束<input type="date" value={createdTo} onChange={(e) => changeCreatedTo(e.target.value)} /></label>
@@ -208,6 +224,7 @@ function IssueCard({ req, index, fixReq, showType }: { req: Requirement; index: 
     <div className="react-card-side">
       {hasTroubleshootingDoc(req) ? <a className="react-effort-badge" href={`/requirement?id=${encodeURIComponent(req.id)}#troubleshooting`} title="查看排查经验（怎么排查 + 怎么修复）">排查经验</a> : null}
       {needExperience ? <span className="react-ones-badge react-ones-missing" title="已修复但排查经验（troubleshooting.md）未沉淀，复盘前必须填写">⚠ 待沉淀经验</span> : null}
+      {req.region ? <span className="react-status-pill" title={`区域：${REGION_LABELS[req.region] ?? req.region}`} style={{ color: "#60a5fa", background: "rgba(96, 165, 250, 0.12)", borderColor: "rgba(96, 165, 250, 0.4)" }}>{REGION_LABELS[req.region] ?? req.region}</span> : null}
       {showType ? (req.category === "测试问题"
         ? <span className="react-status-pill" title="测试问题：UAT 测试反馈中不属于常规需求的轻量问题（WMS-TST- 编号池）" style={{ color: "#fbbf24", background: "rgba(251, 191, 36, 0.12)", borderColor: "rgba(251, 191, 36, 0.4)" }}>测试问题</span>
         : <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span>) : null}

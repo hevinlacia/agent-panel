@@ -332,6 +332,8 @@ export interface Requirement {
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
+  /** 区域维度（issue 家族）：cn=中国 / sea=东南亚，后续可扩展更多国家/区域；未登记为 null。 */
+  region?: string | null
   /** 需求工时档案（ones-manhour.json）：人工预估 / agent 实际 / 录入历史。 */
   onesManhour?: OnesManhourFileValue
   /** 绑定的线上问题 req id 列表（仅普通需求，meta.md issues 字段）。 */

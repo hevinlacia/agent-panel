@@ -153,6 +153,10 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) plan_release: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 区域维度（仅 issue 家族：cn=中国 / sea=东南亚，可扩展更多国家/区域）；
+    /// 仅线上问题/测试问题可设置，普通需求传入报 400。
+    #[serde(default)]
+    pub(crate) region: Option<String>,
     /// 创建时绑定的线上问题 req id 列表（仅 category=需求 时有意义）。
     pub(crate) issues: Option<Vec<String>>,
     /// 引用式需求组成员（reqId + 可选 note）；members 非空 = 创建需求组，
@@ -198,6 +202,9 @@ pub(crate) struct RequirementPatchForm {
     pub(crate) plan_release: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 区域维度（仅 issue 家族）：Some(值) 设置、Some("") 清空、None 不动。
+    #[serde(default)]
+    pub(crate) region: Option<String>,
     /// 绑定的线上问题 req id 列表；空列表表示清空绑定。
     pub(crate) issues: Option<Vec<String>>,
     #[serde(default)]

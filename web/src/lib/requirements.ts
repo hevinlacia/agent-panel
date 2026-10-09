@@ -8,6 +8,8 @@ export const REQ_LIST_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, SUSPEND_STA
 export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "已复盘", "已关闭"]
 /** 线上问题页状态筛选选项：专用状态机（排查中→已定位→已修复→已复盘/已关闭）；后端已收欦 issue 家族不允许常规需求流状态。 */
 export const ISSUE_STATUS_OPTIONS: string[] = [...ISSUE_STATUSES]
+/** region 区域值显示标签：cn=中国 / sea=东南亚；未知值由调用方原样展示（后续新增国家/区域无需改此处）。 */
+export const REGION_LABELS: Record<string, string> = { cn: "中国", sea: "东南亚" }
 /** 子需求状态机：父集成模型（需求创建→开发中→已合入）或整合发布模型（…→发布就绪→已合入→已发布，独立发布进度）。 */
 export const SUB_REQ_STATUSES: ReqStatus[] = ["需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消"]
 export const REQ_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, ...ISSUE_STATUSES]

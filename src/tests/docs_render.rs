@@ -385,6 +385,7 @@ fn context_page_contains_sections_and_raw_link() {
         req_kind: None,
         is_sub_req: false,
         sub_reqs: Vec::new(),
+        region: None,
     };
     let html = render_requirement_context_html(&req, "release-check", &value);
     assert!(html.contains("上线清单 Release Manifest"));

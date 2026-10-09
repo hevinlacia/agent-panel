@@ -1016,6 +1016,7 @@ pub(crate) async fn api_requirement_convert_issue(
         &state,
         RequirementCreateForm {
             req_id: String::new(),
+            region: None,
             title: format!("{}（代码修复）", issue.title),
             project: Some(issue.project.clone()),
             projects: Some(issue.projects.clone()),

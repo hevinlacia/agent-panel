@@ -8,6 +8,7 @@ mod cainiao_mock;
 mod docs_render;
 mod experience_summary;
 mod groups;
+mod issue_region;
 mod issue_status_machine;
 mod id_seq;
 mod merge_options;

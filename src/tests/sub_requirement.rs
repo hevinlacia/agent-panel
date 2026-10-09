@@ -286,6 +286,7 @@ async fn sub_requirement_create_flow_end_to_end() {
             issues: None,
             note: None,
             dry_run: None,
+            region: None,
         }),
     )
     .await

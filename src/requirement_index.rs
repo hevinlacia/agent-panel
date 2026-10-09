@@ -27,6 +27,9 @@ pub(crate) struct Requirement {
     /// 需求推动方：产品推动（默认）/ 开发推动；开发推动必须先完成测试场景文档。
     pub(crate) source: String,
     pub(crate) ones: Option<String>,
+    /// 区域维度（issue 家族专用）：cn=中国 / sea=东南亚，后续可扩展更多国家/区域；
+    /// 存量问题与未登记记录为 None，前端筛选归入「未登记」。
+    pub(crate) region: Option<String>,
     /// 绑定的线上问题 req id 列表（meta.md issues 字段，仅普通需求使用）。
     pub(crate) issues: Vec<String>,
     pub(crate) plan_release: Option<String>,
@@ -585,6 +588,11 @@ pub(crate) async fn load_requirement_from_dir(
         .get("plan-release")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let region = fm
+        .fields
+        .get("region")
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
     let parent_req_id = fm
         .fields
         .get("parent-req-id")
@@ -661,6 +669,7 @@ pub(crate) async fn load_requirement_from_dir(
         category: Some(category),
         source,
         ones,
+        region,
         issues,
         plan_release,
         created_at,
@@ -918,6 +927,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
     Requirement {
         id: DEFAULT_REQ_ID.into(),
         title: "默认需求".into(),
+            region: None,
         status: "开发中".into(),
         projects: vec![DEFAULT_PROJECT_NAME.into()],
         project: DEFAULT_PROJECT_NAME.into(),
