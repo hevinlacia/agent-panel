@@ -1014,7 +1014,25 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-diff-line-hunk td:nth-child(3) { color: #93c5fd; }
 .react-diff-code tbody tr { cursor: pointer; }
 .react-diff-code tbody tr:hover td { background: rgba(56,189,248,.07); }
-.react-diff-code tbody tr.react-diff-line-focus td { box-shadow: inset 3px 0 0 #38bdf8; background: rgba(56,189,248,.1); }
+/* 行级多选选中态：点击行单独变蓝，再点取消；与 hunk 无关 */
+.react-diff-code tbody tr.react-diff-line-selected td { background: rgba(56,189,248,.17) !important; }
+.react-diff-code tbody tr.react-diff-line-selected:hover td { background: rgba(56,189,248,.24) !important; }
+/* 当前锚点行（右侧说明面板定位的行）：左侧亮条单独标记，不再整 hunk 高亮 */
+.react-diff-code tbody tr.react-diff-line-focus td { box-shadow: inset 3px 0 0 #38bdf8; }
+/* 未修改区间折叠标记行（文件头 / hunk 间 / 文件尾） */
+.react-diff-code tbody tr.react-diff-gap-row, .react-diff-code tbody tr.react-diff-gap-row:hover { cursor: default; }
+.react-diff-code tbody tr.react-diff-gap-row td { padding: 0; background: rgba(148,163,184,.045); border-bottom: 1px dashed rgba(148,163,184,.18); }
+.react-diff-gap-row button { display: flex; width: 100%; align-items: center; gap: 7px; padding: 4px 14px; border: 0; background: transparent; color: #94a3b8; font: 700 .66rem var(--react-mono); cursor: pointer; text-align: left; }
+.react-diff-gap-row button:hover:not(:disabled) { color: #7dd3fc; background: rgba(56,189,248,.07); }
+.react-diff-gap-row button:disabled { opacity: .55; cursor: wait; }
+.react-diff-gap-row svg { flex: 0 0 auto; }
+/* import 区块折叠标记：紫色调与未修改区间区分 */
+.react-diff-gap-row.react-diff-gap-import td { background: rgba(167,139,250,.07); border-bottom-color: rgba(167,139,250,.22); }
+.react-diff-gap-row.react-diff-gap-import button { color: #c4b5fd; }
+.react-diff-gap-row.react-diff-gap-import button:hover:not(:disabled) { color: #ddd6fe; background: rgba(167,139,250,.1); }
+/* gap 展开后的未修改内容行：弱化展示，不可选中 */
+.react-diff-code tbody tr.react-diff-line-gap { cursor: default; }
+.react-diff-code tbody tr.react-diff-line-gap td:nth-child(3) { color: #7c8ea3; }
 .react-diff-annotated { color: #4ade80; }
 
 /* ---- diff annotation inspector (right column) ---- */

@@ -2,11 +2,12 @@ import { ArrowLeft, FileCode2, GitBranch, MessageSquareText, Plus, Redo2, Refres
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { AnnotationsPayload, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, DiffSnapshotsPayload, MasterDiffPayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
-import { compactPath, diffDomId, diffLineDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
+import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
 import { formatDateTime } from "../lib/format"
 import { annotationStaleRepos, buildAnnotationIndex, hunkOwners, matchHunkNotes, normalizeCodeAnnotations } from "../lib/annotations"
 import { readDiffInspectorCollapsed, persistDiffInspectorCollapsed } from "../lib/preferences"
 import { AnnotationPanel } from "../features/requirements/annotation-panel"
+import { DiffFileCard, type DiffFileCardHandle } from "../features/requirements/diff-file-card"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome } from "../components/ui"
 import { RequirementsData } from "./projects"
 
@@ -33,8 +34,25 @@ export function RequirementDiffPage() {
   const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
   const stats = reviewStats(review)
   const [activeKey, setActiveKey] = useState("")
-  /** 行级联动状态：用户点击的 diff 行（key + 行下标），驱动右侧说明面板与 hunk 高亮。 */
+  /** 行级选中：点击切换选中/取消，支持跨行多选；最后操作的行作为右侧说明面板锚点（activeLine）。 */
+  const [selectedLines, setSelectedLines] = useState<{ key: string; line: number }[]>([])
   const [activeLine, setActiveLine] = useState<{ key: string; line: number } | null>(null)
+  const selectedSet = useMemo(() => new Set(selectedLines.map((s) => `${s.key}#${s.line}`)), [selectedLines])
+  const activeRowKey = activeLine ? `${activeLine.key}#${activeLine.line}` : null
+  const toggleLine = (key: string, line: number) => {
+    setActiveKey(key)
+    const rowId = `${key}#${line}`
+    if (selectedSet.has(rowId)) {
+      const next = selectedLines.filter((s) => !(s.key === key && s.line === line))
+      setSelectedLines(next)
+      setActiveLine((cur) => (cur && cur.key === key && cur.line === line ? (next.length ? next[next.length - 1] : null) : cur))
+    } else {
+      setSelectedLines([...selectedLines, { key, line }])
+      setActiveLine({ key, line })
+    }
+  }
+  /** 卡片句柄：展开被折叠的 import 区块并滚动到锚点行。 */
+  const cardRefs = useRef(new Map<string, DiffFileCardHandle>())
   const [savingAnnotation, setSavingAnnotation] = useState(false)
   // 右侧说明栏折叠：折叠后 grid 第三列变成窄竖条，点击展开；localStorage 记忆上次选择。
   const [inspectorCollapsed, setInspectorCollapsed] = useState(readDiffInspectorCollapsed)
@@ -101,7 +119,8 @@ export function RequirementDiffPage() {
       setLoadingDiff(false)
     }
   }
-  useEffect(() => { setActiveLine(null) }, [viewIndex])
+  // 快照切换/重新生成时清空选中与锚点（行下标空间已变化）。
+  useEffect(() => { setSelectedLines([]); setActiveLine(null) }, [review])
   useEffect(() => {
     if (!files.length) { setActiveKey(""); return }
     const exists = files.some((item) => `${item.repo.repoName}:${item.file.path}` === activeKey)
@@ -133,7 +152,8 @@ export function RequirementDiffPage() {
     const lineIndex = noteLocateMap.get(noteIndex)
     if (lineIndex == null) return
     setActiveLine({ key: activeKey, line: lineIndex })
-    document.getElementById(diffLineDomId(activeKey, lineIndex))?.scrollIntoView({ behavior: "smooth", block: "center" })
+    // 由卡片负责展开所在折叠区块并在渲染后滚动到行。
+    cardRefs.current.get(activeKey)?.revealLine(lineIndex)
   }
   const saveAnnotation = async (next: CodeFileAnnotation) => {
     if (!reqId) return
@@ -196,7 +216,7 @@ export function RequirementDiffPage() {
             {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
           </details>
         })}</div></aside>
-      <main className="react-diff-main"><div className="react-diff-topbar"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{snapshots.length ? <span>快照 {viewIndex + 1}/{snapshots.length}</span> : null}{review?.savedAt ? <span>生成 {formatDateTime(review.savedAt)}</span> : review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{viewIndex > 0 ? <span className="react-warn-note">⚠ 正在查看历史快照（base: {review?.baseRef || baseRef}），备注锚定以当前显示快照为准</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}{pruneNotice ? <span className="react-warn-note">✂ {pruneNotice}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{files.length ? <div className="react-diff-hscroll" ref={scrollBarRef} onScroll={onHScrollBarScroll}><div className="react-diff-hscroll-pad" style={{ width: hScrollWidth }} /></div> : null}</div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成代码差异…" /> : files.length === 0 ? <EmptyCard>{snapshots.length === 0 ? <>暂无代码差异快照。点右上角「生成代码差异」首次生成并保存；之后每次刷新都会保留旧版本，可回退对比。</> : "该快照没有可展示的文件级差异。"}</EmptyCard> : <div className="react-diff-scroll-body" ref={scrollBodyRef} onScroll={onHScrollBodyScroll}>{files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const owners = hunkOwners(item.lines); const focusHunk = activeLine && activeLine.key === key ? owners[activeLine.line] ?? -1 : -1; return <article key={key} id={diffDomId(key)} className="react-diff-file-card"><header><div><FileCode2 size={16} /><strong>{item.repo.repoName}/{item.file.path}</strong><em className="react-diff-base-label">vs {item.repo.baseRef || review?.baseRef || "?"}</em></div><span><b>+{item.file.additions}</b><i>-{item.file.deletions}</i></span></header>{item.lines.length ? <table className="react-diff-code"><tbody>{item.lines.map((line, i) => <tr key={i} id={diffLineDomId(key, i)} className={`react-diff-line-${line.type}${focusHunk >= 0 && owners[i] === focusHunk ? " react-diff-line-focus" : ""}`} onClick={() => { setActiveKey(key); setActiveLine({ key, line: i }) }}><td>{line.oldNo}</td><td>{line.newNo}</td><td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td></tr>)}</tbody></table> : <pre className="react-diff-preview">{item.diff || "该文件 diff 已截断或为空。"}</pre>}</article> })}</div>}</main>
+      <main className="react-diff-main"><div className="react-diff-topbar"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{snapshots.length ? <span>快照 {viewIndex + 1}/{snapshots.length}</span> : null}{review?.savedAt ? <span>生成 {formatDateTime(review.savedAt)}</span> : review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{viewIndex > 0 ? <span className="react-warn-note">⚠ 正在查看历史快照（base: {review?.baseRef || baseRef}），备注锚定以当前显示快照为准</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}{pruneNotice ? <span className="react-warn-note">✂ {pruneNotice}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{files.length ? <div className="react-diff-hscroll" ref={scrollBarRef} onScroll={onHScrollBarScroll}><div className="react-diff-hscroll-pad" style={{ width: hScrollWidth }} /></div> : null}</div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成代码差异…" /> : files.length === 0 ? <EmptyCard>{snapshots.length === 0 ? <>暂无代码差异快照。点右上角「生成代码差异」首次生成并保存；之后每次刷新都会保留旧版本，可回退对比。</> : "该快照没有可展示的文件级差异。"}</EmptyCard> : <div className="react-diff-scroll-body" ref={scrollBodyRef} onScroll={onHScrollBodyScroll}>{files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const snapKey = review?.savedAt || review?.updatedAt || viewIndex; return <DiffFileCard key={`${key}#${snapKey}`} ref={(h) => { if (h) cardRefs.current.set(key, h); else cardRefs.current.delete(key) }} view={item} review={review} selectedSet={selectedSet} activeRowKey={activeRowKey} onToggleLine={toggleLine} /> })}</div>}</main>
       <AnnotationPanel
         fileLabel={activeView ? `${activeView.repo.repoName}/${activeView.file.path}` : ""}
         annotation={activeAnnotation}

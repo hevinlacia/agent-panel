@@ -230,3 +230,20 @@ fn resolve_skill_path_prefers_override_and_supports_three_shapes() {
     let empty = BTreeMap::new();
     assert!(resolve_skill_path_with(&empty, "req-tracker").ends_with("SKILL.md"));
 }
+
+#[test]
+fn limit_output_truncates_at_line_boundary() {
+    let value = "aaa\nbbb\nccc".to_string();
+    let (out, truncated) = limit_output(value.clone(), 8);
+    assert!(truncated);
+    // 保留到最后一个完整换行，不产生半行。
+    assert_eq!(out, "aaa\nbbb\n");
+    // 未超限原样返回。
+    let (same, truncated) = limit_output(value, 64);
+    assert!(!truncated);
+    assert_eq!(same, "aaa\nbbb\nccc");
+    // 单个无换行超长字符串退回硬截。
+    let (hard, truncated) = limit_output("x".repeat(100), 10);
+    assert!(truncated);
+    assert_eq!(hard.len(), 10);
+}

@@ -15,7 +15,8 @@ Current architecture:
 - `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取，vars 映射缺失时 camelCase→WMS_UPPER_SNAKE 启发式；kind 造数/测试标记，catalog 显式 kind 字段优先）+ 消费 `api/profiles.yaml` 环境契约（网关域名/必需头/x_params 构造，缺失时内置 fallback）；`GET /api/apitest/apis|api`、`POST /api/apitest/trigger`（dry_run=true 返回脱敏构造预览；登录态 login.mjs 自动获取；三环境实测：test/uat-cn/uat-sea，SEA UAT 按路径前缀双域名，X-PDA-Version 派生，token 不回显不落盘）。
 - `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
-- `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器）。
+- `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器，超限输出按行边界截断）。
+- `src/git_file_lines.rs` — Diff 页展开上下文用的文件行切片 API：`GET /api/git/file-lines`（projectPath+commit+path 校验后 `git show`，返回 totalLines/binary/行切片，单次最多 2500 行），供前端展开 diff 中被折叠的未修改区间。
 - `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save.
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
 - `src/requirement_release.rs` — 整合需求发布分支（consolidated release branches）：登记文件 `release-branches.json` 读写与 API（create/list/merge-sub/sync-prod/prod-mr/mark-released）；发布分支以各仓生产分支为 base，子需求分支合入预集成，发布走发布分支 → 生产分支 MR，封版时把覆盖子需求推进「已发布」。
@@ -43,7 +44,8 @@ Current architecture:
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
 - `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.
 - `web/src/lib/requirements.ts` — Requirement status/category constants and status color metadata.
-- `web/src/lib/diff.ts` — Unified diff parsing/stat helpers.
+- `web/src/lib/diff.ts` — Unified diff parsing/stat helpers；含 import 行识别与折叠区块（buildImportBlocks）、未修改区间扫描（computeFileGaps：文件头/hunk 间/文件尾 gap + 行号偏移）。
+- `web/src/features/requirements/diff-file-card.tsx` — Diff 页单文件卡片：未修改区间可展开标记（短文件 ≤2000 行自动全展开、长文件分块按需展开）、import 区块默认折叠、行级点击选中/多选（选中态与 hunk 解耦）；备注锚定仍用解析后 diff 行下标，gap/折叠行仅是渲染层插入。
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
 - `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试标记 + 关键字筛选 + 详情触发，test/UAT 切换、入参临时修改不写回模板）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
