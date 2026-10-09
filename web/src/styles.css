@@ -497,6 +497,13 @@ button, input, select, textarea { font: inherit; }
 .react-collapse-head.open .react-collapse-chevron { transform: rotate(180deg); }
 .react-excluded-status-options { opacity: .94; }
 .react-excluded-status-option.active { border-color: rgba(248,113,113,.48); background: rgba(248,113,113,.12); color: #fecaca; }
+/* 默认排除状态编辑区：草稿勾选 + 显式保存按钮 */
+.react-excluded-editor { min-width: 0; }
+.react-excluded-save-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.react-excluded-save-row button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(34,197,94,.4); border-radius: 999px; padding: 6px 14px; background: rgba(34,197,94,.14); color: #86efac; font: 800 .7rem var(--react-mono); cursor: pointer; }
+.react-excluded-save-row button:hover:not(:disabled) { background: rgba(34,197,94,.26); color: #bbf7d0; }
+.react-excluded-save-row button:disabled { opacity: .45; cursor: not-allowed; }
+.react-excluded-save-row em { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; }
 .react-status-option { display: flex; align-items: center; gap: 8px; min-height: 44px; border: 1px solid var(--react-border); border-radius: 15px; padding: 8px 10px; background: rgba(255,255,255,0.04); color: var(--react-muted); cursor: pointer; }
 .react-status-option.active { border-color: var(--react-border-strong); background: rgba(34,211,238,0.1); color: var(--react-text); }
 .react-status-option strong { margin-left: auto; color: var(--react-text); }
