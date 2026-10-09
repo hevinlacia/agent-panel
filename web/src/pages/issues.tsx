@@ -1,4 +1,4 @@
-/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），按线上问题专用状态机（排查中→已定位→已修复→已复盘/已关闭）分组。
+/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），平铺列表 + 状态筛选（排查中→已定位→已修复→已复盘，含「常规流程中」伪状态）。
  * Public surface: IssuesPage used by web/src/App.tsx route /issues.
  * Constraints: read-only view over /api/requirements; 排查经验沉淀状态以 troubleshooting.md 是否存在判定；测试问题（WMS-TST-）承接 UAT 测试反馈中不属于常规需求的轻量问题。
  * Read-this-with: web/src/pages/ones-missing.tsx for page patterns and prompts/phase-online-issue.md for the state machine.
@@ -9,21 +9,15 @@ import { useMemo, useState } from "react"
 import type { Requirement, ReqCategory } from "../types"
 import { useFetch } from "../lib/api"
 import { relAge } from "../lib/format"
-import { ISSUE_STATUSES } from "../lib/requirements"
+import { ISSUE_STATUS_OPTIONS } from "../lib/requirements"
+import { ISSUES_FALLBACK_EXCLUDED_STATUSES, persistIssuesDefaultExcludedStatuses, readIssuesDefaultExcludedStatuses } from "../lib/preferences"
 import { projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 
-/** 状态分组顺序；未识别状态归入「其他」放最后。 */
-const ISSUE_ORDER: string[] = [...ISSUE_STATUSES]
+/** 状态筛选选项顺序；未识别状态归入「常规流程中」伪状态。 */
+const STATUS_OPTIONS: string[] = ISSUE_STATUS_OPTIONS
 /** 需要排查经验的阶段：已修复起应开始沉淀，已复盘必须已有。 */
 const EXPERIENCE_REQUIRED: string[] = ["已修复", "已复盘"]
-
-interface IssueGroup {
-  status: string
-  reqs: Requirement[]
-  /** 折叠分组（如已关闭）默认收起 */
-  collapsible?: boolean
-}
 
 function hasTroubleshootingDoc(req: Requirement): boolean {
   return Boolean(req.troubleshootingPath)
@@ -34,15 +28,45 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const urlParams = new URLSearchParams(window.location.search)
   const [keyword, setKeyword] = useState(urlParams.get("q") || "")
   const [project, setProject] = useState("")
-  // 可折叠分组（已关闭 / 常规流程中）各自独立记忆展开状态，默认折叠。
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ "已关闭": true, "常规流程中": true })
-  const toggleCollapsed = (status: string) => setCollapsed((prev) => ({ ...prev, [status]: !prev[status] }))
+  // 创建时间筛选（天精度）：线上问题一般当天排查当天出结果，常用于看某天登记的问题（起止同一天）。
+  const [createdFrom, setCreatedFrom] = useState(urlParams.get("createdFrom") || "")
+  const [createdTo, setCreatedTo] = useState(urlParams.get("createdTo") || "")
+  // 状态筛选：勾选后只显示选中状态；空 = 按默认排除过滤（与需求列表交互一致）。
+  const [statuses, setStatuses] = useState<string[]>(urlParams.getAll("status").filter((s) => STATUS_OPTIONS.includes(s)))
+  const toggleStatus = (s: string) => setStatuses((cur) => {
+    const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
+    syncUrl({ status: next })
+    return next
+  })
+  // 默认排除状态：与需求列表同款「草稿 + 保存按钮」模型；独立存储 key（状态集合与需求不同）。
+  const [issuesDefaultExcluded, setIssuesDefaultExcludedState] = useState<string[]>(readIssuesDefaultExcludedStatuses)
+  const [excludedDraft, setExcludedDraft] = useState<string[]>(() => readIssuesDefaultExcludedStatuses())
+  const [excludedOpen, setExcludedOpen] = useState(false)
+  const [excludedJustSaved, setExcludedJustSaved] = useState(false)
+  const saveIssuesDefaultExcluded = (next: string[]) => {
+    const cleaned = next.filter((s, i, arr) => STATUS_OPTIONS.includes(s) && arr.indexOf(s) === i)
+    setIssuesDefaultExcludedState(cleaned)
+    setExcludedDraft(cleaned)
+    persistIssuesDefaultExcludedStatuses(cleaned)
+  }
+  const statusOrder = (list: string[]) => STATUS_OPTIONS.filter((s) => list.includes(s))
+  const excludedDirty = JSON.stringify(statusOrder(excludedDraft)) !== JSON.stringify(statusOrder(issuesDefaultExcluded))
+  const toggleExcludedOpen = () => {
+    if (!excludedOpen) setExcludedDraft(issuesDefaultExcluded) // 展开时以已保存值为草稿
+    setExcludedOpen(!excludedOpen)
+  }
+  const saveExcludedDraft = () => {
+    saveIssuesDefaultExcluded(excludedDraft)
+    setExcludedJustSaved(true)
+    window.setTimeout(() => setExcludedJustSaved(false), 1600)
+  }
   const urlType = urlParams.get("type")
   const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" ? urlType : "")
   const reqs = data?.requirements || []
 
   // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机
-  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题"), [reqs])
+  // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机；平铺列表按更新时间倒序。
+  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题").sort((a, b) => b.updatedAt - a.updatedAt), [reqs])
   const typedIssues = useMemo(() => (typeFilter ? issues.filter((r) => r.category === typeFilter) : issues), [issues, typeFilter])
   /** 反查修复需求：绑定该线上问题的普通需求（meta.md issues 字段）。 */
   const fixReqOf = useMemo(() => {
@@ -65,14 +89,29 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     setTypeFilter(value)
     syncUrl({ type: value })
   }
-  const syncUrl = (patch: { q?: string; type?: string }) => {
+  const changeCreatedFrom = (value: string) => {
+    setCreatedFrom(value)
+    syncUrl({ createdFrom: value })
+  }
+  const changeCreatedTo = (value: string) => {
+    setCreatedTo(value)
+    syncUrl({ createdTo: value })
+  }
+  const syncUrl = (patch: { q?: string; type?: string; status?: string[]; createdFrom?: string; createdTo?: string }) => {
     const q = new URLSearchParams(window.location.search)
     if (patch.q !== undefined) { patch.q ? q.set("q", patch.q) : q.delete("q") }
     if (patch.type !== undefined) { patch.type ? q.set("type", patch.type) : q.delete("type") }
+    if (patch.createdFrom !== undefined) { patch.createdFrom ? q.set("createdFrom", patch.createdFrom) : q.delete("createdFrom") }
+    if (patch.createdTo !== undefined) { patch.createdTo ? q.set("createdTo", patch.createdTo) : q.delete("createdTo") }
+    if (patch.status !== undefined) {
+      q.delete("status")
+      for (const s of patch.status) q.append("status", s)
+    }
     window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
   }
-  const filtered = useMemo(() => {
-    // 多关键字：空格分隔 AND 匹配；单个关键词保留精确编号快速路径（形如问题 ID 或纯数字序号）。
+  const statusOf = (r: Requirement) => (STATUS_OPTIONS.includes(r.status) ? r.status : "常规流程中")
+  /** 匹配基数：类型/项目/关键字命中（含精确编号快速路径），不含状态筛选。 */
+  const matchBase = useMemo(() => {
     const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
     const kw = tokens.length === 1 ? tokens[0] : ""
     // 精确编号查找：关键词形如问题 ID（wms-inc-112 / wms-tst-003 / inc-112 / tst-3）或纯数字序号（112）时，
@@ -82,51 +121,50 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
         ? typedIssues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
         : /^\d+$/.test(kw)
           ? typedIssues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
-          : null
-      if (exact?.length) return exact
+          : []
+      if (exact.length) return exact
     }
-    const base = effectiveProject
+    let base = effectiveProject
       ? typedIssues.filter((r) => (r.projects?.length ? r.projects : [r.project]).includes(effectiveProject))
       : typedIssues
-    if (!tokens.length) return base
-    return base.filter((r) => {
-      const fix = fixReqOf.get(r.id)
-      const haystack = [
-        r.id,
-        r.title,
-        r.description || "",
-        (r.projects?.length ? r.projects : [r.project]).filter(Boolean).join(" "),
-        fix?.title || "",
-      ].join(" ").toLowerCase()
-      return tokens.every((t) => haystack.includes(t))
-    })
-  }, [typedIssues, effectiveProject, keyword, fixReqOf])
-
-  const groups = useMemo<IssueGroup[]>(() => {
-    const byStatus = new Map<string, Requirement[]>()
-    for (const r of filtered) {
-      const key = ISSUE_ORDER.includes(r.status) ? r.status : "常规流程中"
-      const list = byStatus.get(key) || []
-      list.push(r)
-      byStatus.set(key, list)
+    // 创建时间筛选（天精度）：与需求列表同口径，含首尾两天的完整 24h。
+    if (createdFrom) base = base.filter((r) => r.createdAt >= new Date(`${createdFrom}T00:00:00`).getTime())
+    if (createdTo) base = base.filter((r) => r.createdAt <= new Date(`${createdTo}T23:59:59`).getTime())
+    if (tokens.length) {
+      base = base.filter((r) => {
+        const fix = fixReqOf.get(r.id)
+        const haystack = [
+          r.id,
+          r.title,
+          r.description || "",
+          (r.projects?.length ? r.projects : [r.project]).filter(Boolean).join(" "),
+          fix?.title || "",
+        ].join(" ").toLowerCase()
+        return tokens.every((t) => haystack.includes(t))
+      })
     }
-    const order = [...ISSUE_ORDER, "常规流程中"]
-    return order
-      .filter((status) => byStatus.has(status))
-      .map((status) => ({
-        status,
-        reqs: byStatus.get(status)!.sort((a, b) => b.updatedAt - a.updatedAt),
-        collapsible: status === "已关闭" || status === "常规流程中",
-      }))
-  }, [filtered])
+    return base
+  }, [typedIssues, effectiveProject, keyword, fixReqOf, createdFrom, createdTo])
+  // 状态筛选：勾选后只显示选中状态；未勾选时应用默认排除（未识别状态归入「常规流程中」伪状态参与排除）。
+  const filtered = useMemo(
+    () => (statuses.length
+      ? matchBase.filter((r) => statuses.includes(statusOf(r)))
+      : matchBase.filter((r) => !issuesDefaultExcluded.includes(statusOf(r)))),
+    [matchBase, statuses, issuesDefaultExcluded],
+  )
+  /** 状态计数：跨全部状态统计（与需求列表计数口径一致），跟随类型/项目/关键字筛选。 */
+  const counts = useMemo(
+    () => Object.fromEntries(STATUS_OPTIONS.map((s) => [s, matchBase.filter((r) => statusOf(r) === s).length])) as Record<string, number>,
+    [matchBase],
+  )
+  const countBy = (status: string) => counts[status] ?? 0
+  // KPI 指标用匹配基数（不含状态筛选）统计，避免切换状态勾选时指标跳动。
+  const troubleshootingCount = matchBase.filter(hasTroubleshootingDoc).length
+  const pendingExperience = matchBase.filter((r) => EXPERIENCE_REQUIRED.includes(r.status) && !hasTroubleshootingDoc(r)).length
 
-  const countBy = (status: string) => groups.find((g) => g.status === status)?.reqs.length ?? 0
-  const troubleshootingCount = filtered.filter(hasTroubleshootingDoc).length
-  const pendingExperience = filtered.filter((r) => EXPERIENCE_REQUIRED.includes(r.status) && !hasTroubleshootingDoc(r)).length
-
-  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），按专用状态机分组：排查中 → 已定位 → 已修复 → 已复盘。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。排查/复现需要改代码时可直接登记 branches.json 在需求分支开发，合入 test/UAT 环境分支验证，禁止合入生产分支；已定位→已修复 双路径：数据修复直接推进；正式生产修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
+  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），平铺列表展示，状态可用复选框筛选：排查中 → 已定位 → 已修复 → 已复盘。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。排查/复现需要改代码时可直接登记 branches.json 在需求分支开发，合入 test/UAT 环境分支验证，禁止合入生产分支；已定位→已修复 双路径：数据修复直接推进；正式生产修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
     <section className="react-kpi-grid-5">
-      <KpiCard icon={<Siren size={20} />} label={typeFilter || "问题总数"} value={filtered.length} sub={typeFilter ? `${typeFilter} · 全部状态` : "全部状态"} tone="total" />
+      <KpiCard icon={<Siren size={20} />} label={typeFilter || "问题总数"} value={matchBase.length} sub={typeFilter ? `${typeFilter} · 全部状态` : "全部状态"} tone="total" />
       <KpiCard icon={<Siren size={20} />} label="排查中" value={countBy("排查中")} sub="收集证据验证假设" tone="avg" />
       <KpiCard icon={<Siren size={20} />} label="已定位" value={countBy("已定位")} sub="根因与方案明确" tone="active" />
       <KpiCard icon={<TriangleAlert size={20} />} label="待沉淀经验" value={pendingExperience} sub="已修复但排查经验未填" tone={pendingExperience > 0 ? "avg" : "total"} />
@@ -136,27 +174,21 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
       <div className="react-filter-grid">
         <label>类型<select value={typeFilter} onChange={(e) => changeType(e.target.value as "" | ReqCategory)}><option value="">全部（含测试问题）</option><option value="线上问题">线上问题</option><option value="测试问题">测试问题</option></select></label>
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
+        <label>创建开始<input type="date" value={createdFrom} onChange={(e) => changeCreatedFrom(e.target.value)} /></label>
+        <label>创建结束<input type="date" value={createdTo} onChange={(e) => changeCreatedTo(e.target.value)} /></label>
         <label className="react-filter-grow">查找问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / WMS-TST-3 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
       </div>
-      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题，未强调测试环境的问题默认线上问题）；「已关闭」「常规流程中」分组默认折叠，点击展开。「常规流程中」不是新的问题类型：问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态。排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
+      <div className="react-filter-section-head"><span>状态筛选</span><em>勾选后只显示选中状态（覆盖默认排除）；计数跟随类型/项目/关键字/日期跨全部状态统计</em></div>
+      <div className="react-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`} title={s === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}><input type="checkbox" checked={statuses.includes(s)} onChange={() => toggleStatus(s)} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
+      <button type="button" className={`react-filter-section-head react-collapse-head ${excludedOpen ? "open" : ""}`} onClick={toggleExcludedOpen} aria-expanded={excludedOpen}><span>默认排除状态</span><em className="react-collapse-summary">{excludedOpen ? "未勾选上方状态筛选时自动生效；勾选只改草稿，点「保存默认排除」才生效" : (issuesDefaultExcluded.length ? `默认排除：${issuesDefaultExcluded.join(" / ")}` : "默认不排除任何状态")}<ChevronDown size={14} className="react-collapse-chevron" /></em></button>
+      {excludedOpen ? <div className="react-excluded-editor"><div className="react-status-options react-excluded-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`} title={s === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}><input type="checkbox" checked={excludedDraft.includes(s)} onChange={(e) => setExcludedDraft((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-excluded-save-row"><button type="button" onClick={saveExcludedDraft} disabled={!excludedDirty}>{excludedJustSaved ? "已保存 ✓" : "保存默认排除"}</button><button type="button" onClick={() => saveIssuesDefaultExcluded(ISSUES_FALLBACK_EXCLUDED_STATUSES)} disabled={!excludedDirty && issuesDefaultExcluded.join() === ISSUES_FALLBACK_EXCLUDED_STATUSES.join()}>恢复默认</button><em>{excludedDirty ? "有未保存的修改，保存后作用于列表并记住" : "与已保存一致"}</em></div></div> : null}
+      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题，未强调测试环境的问题默认线上问题）；列表按更新时间倒序平铺展示。排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : groups.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : groups.map((group) => group.collapsible && collapsed[group.status] && !keyword.trim()
-      ? <section key={group.status} className="react-panel">
-        <button type="button" className="react-filter-section-head react-collapse-head" onClick={() => toggleCollapsed(group.status)} aria-expanded={false} title={group.status === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}>
-          <span>{group.status}</span>
-          <em className="react-collapse-summary">{group.reqs.length} 条 · 点击展开</em>
-          <ChevronDown size={14} className="react-collapse-chevron" />
-        </button>
-      </section>
-      : <IssueSection key={group.status} status={group.status} reqs={group.reqs} fixReqOf={fixReqOf} showType={!typeFilter} />)}
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : filtered.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : statuses.length ? "选中状态下没有问题，取消部分状态勾选试试。" : matchBase.length ? "当前默认排除设置下没有可见问题，可展开「默认排除状态」调整。" : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : <section className="react-panel">
+      <PanelHead kicker="Online Issues" title="问题列表" chip={`${filtered.length} 条`} />
+      <div className="react-card-list">{filtered.map((req, index) => <IssueCard key={req.id} req={req} index={index} fixReq={fixReqOf.get(req.id)} showType={!typeFilter} />)}</div>
+    </section>}
   </PageChrome>
-}
-
-function IssueSection({ status, reqs, fixReqOf, showType }: { status: string; reqs: Requirement[]; fixReqOf: Map<string, Requirement>; showType: boolean }) {
-  return <section className="react-panel">
-    <PanelHead kicker="Online Issue" title={status} chip={`${reqs.length} 条`} />
-    {reqs.length === 0 ? <EmptyCard>该状态下没有问题。</EmptyCard> : <div className="react-card-list">{reqs.map((req, index) => <IssueCard key={req.id} req={req} index={index} fixReq={fixReqOf.get(req.id)} showType={showType} />)}</div>}
-  </section>
 }
 
 function IssueCard({ req, index, fixReq, showType }: { req: Requirement; index: number; fixReq?: Requirement; showType: boolean }) {

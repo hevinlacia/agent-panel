@@ -1,5 +1,5 @@
 import type { ReqStatus } from "../types"
-import { REQ_LIST_STATUSES } from "./requirements"
+import { ISSUE_STATUS_OPTIONS, REQ_LIST_STATUSES } from "./requirements"
 
 export const PROJECT_FILTER_KEY = "agent-panel.project"
 export const PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.projects.defaultExcludedStatuses"
@@ -26,6 +26,28 @@ export function readDefaultExcludedStatuses(): string[] {
 
 export function persistDefaultExcludedStatuses(statuses: string[]) {
   try { localStorage.setItem(PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY, JSON.stringify(statuses)) } catch { /* ignore */ }
+}
+
+export const ISSUES_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.issues.defaultExcludedStatuses"
+/** 线上问题默认排除：已关闭（无价值关闭的问题）默认不展示，与旧版分组默认折叠行为一致。 */
+export const ISSUES_FALLBACK_EXCLUDED_STATUSES: string[] = ["已关闭"]
+
+export function readIssuesDefaultExcludedStatuses(): string[] {
+  try {
+    const raw = localStorage.getItem(ISSUES_DEFAULT_EXCLUDED_STATUSES_KEY)
+    if (!raw) return ISSUES_FALLBACK_EXCLUDED_STATUSES
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return ISSUES_FALLBACK_EXCLUDED_STATUSES
+    // 校验列表须与线上问题页复选框选项（ISSUE_STATUS_OPTIONS）一致，含「常规流程中」伪状态；
+    // 不得误用 REQ_STATUSES——那会让保存的状态在刷新读取时被静默丢弃（需求列表踩过的坑）。
+    return parsed.filter((s) => typeof s === "string" && ISSUE_STATUS_OPTIONS.includes(s))
+  } catch {
+    return ISSUES_FALLBACK_EXCLUDED_STATUSES
+  }
+}
+
+export function persistIssuesDefaultExcludedStatuses(statuses: string[]) {
+  try { localStorage.setItem(ISSUES_DEFAULT_EXCLUDED_STATUSES_KEY, JSON.stringify(statuses)) } catch { /* ignore */ }
 }
 
 export function readSidebarCollapsed(): boolean {
