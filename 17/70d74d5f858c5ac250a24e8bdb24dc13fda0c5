@@ -1,0 +1,35 @@
+web/src/lib/preferences.ts
+  c8a47d86c15c21d0 41
+src/util.rs
+  c8a47d86c15c21d0 176-197
+src/requirement_service/create.rs
+  c8a47d86c15c21d0 53-54,569-570
+src/requirement_api.rs
+  c8a47d86c15c21d0 935-936
+web/src/pages/issues.tsx
+  c8a47d86c15c21d0 1,17,147,150-151,156,181,183
+web/src/lib/requirements.ts
+  c8a47d86c15c21d0 9-10
+src/tests/issue_status_machine.rs
+  c8a47d86c15c21d0 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1770d74d5f858c5ac250a24e8bdb24dc13fda0c5",
+  "prompts": {
+    "c8a47d86c15c21d0": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a11fdf-4db8-75b2-a926-177c379f5d01",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 18,
+      "accepted_lines": 41,
+      "overriden_lines": 0
+    }
+  }
+}
