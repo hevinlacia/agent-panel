@@ -1,5 +1,5 @@
 import type { ReqStatus } from "../types"
-import { REQ_STATUSES } from "./requirements"
+import { REQ_LIST_STATUSES } from "./requirements"
 
 export const PROJECT_FILTER_KEY = "agent-panel.project"
 export const PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.projects.defaultExcludedStatuses"
@@ -16,7 +16,9 @@ export function readDefaultExcludedStatuses(): string[] {
     if (!raw) return FALLBACK_DEFAULT_EXCLUDED_STATUSES
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return FALLBACK_DEFAULT_EXCLUDED_STATUSES
-    return parsed.filter((s) => typeof s === "string" && REQ_STATUSES.includes(s as ReqStatus))
+    // 校验列表须与复选框选项（REQ_LIST_STATUSES）一致：含「挂起」等流水外标记状态；
+    // 曾误用 REQ_STATUSES（不含挂起）导致保存的「挂起」在刷新读取时被静默丢弃。
+    return parsed.filter((s) => typeof s === "string" && REQ_LIST_STATUSES.includes(s as ReqStatus))
   } catch {
     return FALLBACK_DEFAULT_EXCLUDED_STATUSES
   }
