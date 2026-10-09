@@ -50,7 +50,8 @@ pub(crate) async fn create_requirement(
     if is_issue_category(&category) && form.status.is_none() {
         status = "排查中".to_string();
     }
-    ensure_status(&status)?;
+    // issue 家族只允许轻流程状态机，不接受常规需求流状态（修复进展由关联 FIX 需求承载）。
+    ensure_status_for_category(Some(&category), &status)?;
     // 需求组（members 非空）只能使用 category=需求；issue 家族不支持组。
     let is_group = form.members.as_ref().is_some_and(|m| !m.is_empty());
     if is_group && is_issue_category(&category) {
@@ -565,6 +566,8 @@ pub(crate) async fn update_requirement(
             ensure_sub_req_status_transition(&req, &status)?;
         } else {
             ensure_status_allowed_for_non_sub(&status)?;
+            // issue 家族只允许轻流程状态机，不接受常规需求流状态。
+            ensure_status_for_category(req.category.as_deref(), &status)?;
         }
         // 状态流转门禁（配置驱动）：review / selftest-checklist / test-scenario / issue-*。
         // edit 接口主要供 agent 与脚本使用，始终强校验；人工在 Panel UI 上改状态走 status 接口并跳过。

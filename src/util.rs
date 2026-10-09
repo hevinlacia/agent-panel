@@ -173,6 +173,28 @@ pub(crate) fn ensure_status(value: &str) -> ApiResult<()> {
     canonical_status(value).map(|_| ())
 }
 
+/// 按类别收紣状态集：issue 家族（线上问题/测试问题）只允许轻流程状态机
+/// （排查中/已定位/已修复/已复盘/已关闭）+ 流水外标记状态「挂起」。
+/// 不再允许 issue 记录携带常规需求流状态（需求澄清/开发中/…），
+/// 修复进展由关联 FIX 需求承载（问题侧仅推到已定位，需求 ≥经验总结 时自动推问题到已修复）。
+/// 非 issue 类别维持全集校验不变。
+pub(crate) fn ensure_status_for_category(category: Option<&str>, status: &str) -> ApiResult<()> {
+    ensure_status(status)?;
+    let is_issue = matches!(category, Some(c) if is_issue_category(c));
+    if !is_issue {
+        return Ok(());
+    }
+    if ISSUE_STATUSES.contains(&status) || status == "挂起" {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(format!(
+        "{} 只能使用轻流程状态（{}）或挂起，不能使用常规需求流状态「{}」；修复进展请转出修复需求（convert-issue）并绑定本问题",
+        category.unwrap_or(""),
+        ISSUE_STATUSES.join("/"),
+        status
+    )))
+}
+
 pub(crate) fn ensure_category(value: &str) -> ApiResult<()> {
     if REQ_CATEGORIES.contains(&value) {
         Ok(())
