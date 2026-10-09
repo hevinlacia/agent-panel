@@ -75,7 +75,22 @@ pub(crate) async fn create_requirement(
         Some(state.requirement_create_lock.lock().await)
     };
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
-    let id_template = normalize_create_id_template(form.req_id.trim(), &category, is_group, is_consolidated)?;
+    // 修复需求自动路由：category=需求 且绑定 issues（线上问题）= 代码修复性质 → FIX 独立编号池。
+    // 修复仍走普通需求状态机（7 状态 + 门禁），仅前缀 + req-kind=fix 区分；存量 REQ/WMS 绑定需求不改号。
+    let is_fix = !is_group
+        && !is_consolidated
+        && category == "需求"
+        && form
+            .issues
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|s| !s.trim().is_empty()));
+    let id_template = normalize_create_id_template(
+        form.req_id.trim(),
+        &category,
+        is_group,
+        is_consolidated,
+        is_fix,
+    )?;
     let (req_id, target_dir) =
         resolve_req_id_and_target_dir(state, &base, &id_template, &form, dry_run).await?;
 
@@ -142,7 +157,13 @@ pub(crate) async fn create_requirement(
         background.as_deref(),
         notes.as_deref(),
         None,
-        if is_consolidated { Some("rollup") } else { None },
+        if is_consolidated {
+            Some("rollup")
+        } else if is_fix {
+            Some("fix")
+        } else {
+            None
+        },
     );
     let mut planned: Vec<String> = files
         .iter()
@@ -178,7 +199,13 @@ pub(crate) async fn create_requirement(
         "source": source,
         "project": project,
         "projects": projects,
-        "reqKind": if is_consolidated { json!("rollup") } else { Value::Null },
+        "reqKind": if is_consolidated {
+            json!("rollup")
+        } else if is_fix {
+            json!("fix")
+        } else {
+            Value::Null
+        },
         "reqDir": target_dir.to_string_lossy(),
         "files": planned,
         "group": group_file.map(|g| json!({

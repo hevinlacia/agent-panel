@@ -354,7 +354,7 @@ export interface Requirement {
   parentReqId?: string
   /** 派生字段：是否子需求。 */
   isSubReq?: boolean
-  /** 实体类型标记：meta.md req-kind（如 rollup = 整合需求）。 */
+  /** 实体类型标记：meta.md req-kind（rollup = 整合需求，fix = 修复需求：绑定线上问题的代码修复，独立 FIX 编号池）。 */
   reqKind?: string
   /** 本需求作为父需求时拆出的子需求列表（扫描回填）。 */
   subReqs?: SubReqRef[]
