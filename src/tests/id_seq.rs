@@ -447,6 +447,7 @@ fn issue_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         background: None,
         notes: None,
         dry_run: None,
+        region: None,
     }
 }
 

@@ -85,6 +85,25 @@ pub(crate) async fn create_requirement(
             .issues
             .as_ref()
             .is_some_and(|v| v.iter().any(|s| !s.trim().is_empty()));
+    // 区域维度：仅 issue 家族支持（cn=中国 / sea=东南亚，后续可扩展更多国家/区域）；
+    // 不设硬枚举，值统一小写规范化；不传则不写入（存量问题由 PATCH 补登记）。
+    // 必须在占号（resolve_req_id_and_target_dir）之前校验，避免 400 后遗留空占号目录。
+    let region = match form
+        .region
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(raw) => {
+            if !is_issue_category(&category) {
+                return Err(ApiError::bad_request(
+                    "只有线上问题/测试问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+                ));
+            }
+            raw.to_lowercase()
+        }
+        None => String::new(),
+    };
     let id_template = normalize_create_id_template(
         form.req_id.trim(),
         &category,
@@ -141,7 +160,7 @@ pub(crate) async fn create_requirement(
     )
     .await?;
 
-    let files = requirement_create_files(
+    let mut files = requirement_create_files(
         &req_id,
         &title,
         &status,
@@ -175,6 +194,12 @@ pub(crate) async fn create_requirement(
     }
     if !dry_run {
         fs::create_dir_all(&target_dir).await?;
+        // 区域维度写入 meta frontmatter（落盘前就地改 meta 模板）。
+        if !region.is_empty() {
+            if let Some(slot) = files.iter_mut().find(|(n, _)| *n == "meta.md") {
+                slot.1 = set_frontmatter_field(&slot.1, "region", &region);
+            }
+        }
         for (name, body) in &files {
             atomic_write_text(&target_dir.join(name), body).await?;
         }
@@ -197,6 +222,7 @@ pub(crate) async fn create_requirement(
         "title": title,
         "status": status,
         "category": category,
+        "region": if region.is_empty() { Value::Null } else { json!(region) },
         "source": source,
         "project": project,
         "projects": projects,
@@ -525,6 +551,17 @@ pub(crate) async fn update_requirement(
         let value = ones.trim().to_string();
         meta_next = set_frontmatter_field(&meta_next, "ones", &value);
         changes.push("meta.ones".into());
+    }
+    if let Some(region) = form.region.as_deref() {
+        // 区域维度仅 issue 家族支持；空字符串 = 清除（set_frontmatter_field 空值即移除字段）。
+        if !is_issue_category(req.category.as_deref().unwrap_or("需求")) {
+            return Err(ApiError::bad_request(
+                "只有线上问题/测试问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+            ));
+        }
+        let value = region.trim().to_lowercase();
+        meta_next = set_frontmatter_field(&meta_next, "region", &value);
+        changes.push("meta.region".into());
     }
     if let Some(category) = form.category.as_deref() {
         ensure_category(category)?;
