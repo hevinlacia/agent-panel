@@ -16,6 +16,10 @@ pub(crate) const GROUP_ID_PREFIX: &str = "GRP";
 pub(crate) const REQ_ID_PREFIX: &str = "REQ";
 /// 旧主池前缀：与 REQ 共用序号空间（谱系延续，REQ 从 WMS 主池最大序号之后继续）。
 pub(crate) const LEGACY_REQ_ID_PREFIX: &str = "WMS";
+/// 修复需求独立编号池：category=需求 且绑定 issues（线上问题）的记录 = 代码修复性质，
+/// 与普通需求主池（REQ）分开计数；由创建时的 issues 绑定自动路由，不靠人工选择。
+/// 修复也放在需求列表中（category=需求，同一套状态机），仅前缀+req-kind=fix 区分。
+pub(crate) const FIX_ID_PREFIX: &str = "FIX";
 /// 整合需求（consolidated requirement）独立编号池：父需求 + 子需求 + 发布分支模型，
 /// 不占用主需求池；子需求 id = `<父票号>-S<n>[-slug]` 继承父前缀。
 pub(crate) const ROLLUP_ID_PREFIX: &str = "ROLLUP";
@@ -49,6 +53,9 @@ pub(crate) fn pool_lineage_prefixes(prefix: &str) -> Vec<String> {
         GROUP_ID_PREFIX | "WMS-GRP" => {
             vec![GROUP_ID_PREFIX.to_string(), "WMS-GRP".to_string()]
         }
+        FIX_ID_PREFIX => {
+            vec![FIX_ID_PREFIX.to_string()]
+        }
         other => vec![other.to_string()],
     }
 }
@@ -63,6 +70,7 @@ fn is_reserved_non_main_pool_prefix(prefix: &str) -> bool {
             | "WMS-TST"
             | GROUP_ID_PREFIX
             | "WMS-GRP"
+            | FIX_ID_PREFIX
             | ROLLUP_ID_PREFIX
     )
 }
@@ -76,6 +84,7 @@ fn concrete_id_uses_reserved_pool_prefix(id: &str) -> bool {
         "WMS-TST",
         GROUP_ID_PREFIX,
         "WMS-GRP",
+        FIX_ID_PREFIX,
         ROLLUP_ID_PREFIX,
     ]
     .iter()
@@ -106,14 +115,16 @@ pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str
 /// 创建时按类别/形态规范化 reqId 模板：
 /// - 需求组（members 非空）强制使用 `GRP-{seq}` 独立编号池（旧 WMS-GRP 具体 id 继续有效）；
 /// - 整合需求（consolidated=true）强制使用 `ROLLUP-{seq}` 独立编号池；
-/// - 空模板给类别默认池：需求 `REQ-{seq}`、线上问题 `INC-{seq}`、测试问题 `TST-{seq}`；
-/// - issue/组/整合池模板带 {seq} 时改写为对应池前缀保留 suffix；具体 id 校验形态；
+/// - 修复需求（is_fix：category=需求 且绑定 issues）强制使用 `FIX-{seq}` 独立编号池；
+/// - 空模板给类别默认池：需求 `REQ-{seq}`、修复 `FIX-{seq}`、线上问题 `INC-{seq}`、测试问题 `TST-{seq}`；
+/// - issue/组/整合/修复池模板带 {seq} 时改写为对应池前缀保留 suffix；具体 id 校验形态；
 /// - 需求主池模板透传（旧 WMS-{seq} 兼容），但不得占用其他池前缀。
 pub(crate) fn normalize_create_id_template(
     raw: &str,
     category: &str,
     is_group: bool,
     is_consolidated: bool,
+    is_fix: bool,
 ) -> ApiResult<String> {
     let v = raw.trim();
     if is_group {
@@ -159,6 +170,28 @@ pub(crate) fn normalize_create_id_template(
         }
         return Ok(v.to_string());
     }
+    if is_fix {
+        if v.is_empty() {
+            return Ok(format!("{FIX_ID_PREFIX}-{{seq}}"));
+        }
+        if v.contains("{seq}") {
+            let (_, suffix) = split_seq_template(v)?;
+            return Ok(format!("{FIX_ID_PREFIX}-{{seq}}{suffix}"));
+        }
+        let valid = pool_lineage_prefixes(FIX_ID_PREFIX)
+            .iter()
+            .any(|prefix| {
+                Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
+                    .expect("valid regex")
+                    .is_match(v)
+            });
+        if !valid {
+            return Err(ApiError::bad_request(format!(
+                "修复需求 reqId 必须使用 {FIX_ID_PREFIX}-<序号> 独立编号（如 {FIX_ID_PREFIX}-001-slug）；绑定 issues 的记录是代码修复性质，不占用需求主池；不绑 issues 请去掉 issues 字段用 REQ 池"
+            )));
+        }
+        return Ok(v.to_string());
+    }
     let Some(prefix) = issue_id_prefix(category) else {
         if v.is_empty() {
             return Ok(format!("{REQ_ID_PREFIX}-{{seq}}"));
@@ -174,7 +207,7 @@ pub(crate) fn normalize_create_id_template(
         }
         if concrete_id_uses_reserved_pool_prefix(v) {
             return Err(ApiError::bad_request(
-                "需求主池 reqId 不能占用其他编号池前缀（INC/TST/GRP/ROLLUP 及其旧式 WMS-xxx 别名）；整合需求请传 consolidated=true，组/问题请用对应类别",
+                "需求主池 reqId 不能占用其他编号池前缀（INC/TST/GRP/FIX/ROLLUP 及其旧式 WMS-xxx 别名）；整合需求请传 consolidated=true，组/问题/修复请用对应类别或绑定 issues",
             ));
         }
         return Ok(v.to_string());
