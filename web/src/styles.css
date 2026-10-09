@@ -1002,7 +1002,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-diff-scroll-body::-webkit-scrollbar { display: none; }
 .react-diff-toolbar div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .react-diff-toolbar strong { color: #fff; }
-.react-diff-file-card { width: max-content; min-width: 100%; overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); }
+.react-diff-file-card { width: max-content; min-width: 100%; overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); scroll-margin-top: 148px; }
 .react-diff-file-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(16,22,31,.95); }
 .react-diff-file-card header div { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--react-text); }
 .react-diff-file-card header svg { color: var(--react-cyan); flex: 0 0 auto; }

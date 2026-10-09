@@ -143,18 +143,57 @@ export function RequirementDiffPage() {
     }
     return map
   }, [hunkNotes, activeAnnotation])
+  // 滚动跟随（scrollspy）：程序化滚动期间暂停，避免经过中间文件时高亮闪烁。
+  const spySuppressedUntil = useRef(0)
+  const suppressSpy = (ms = 1000) => { spySuppressedUntil.current = Date.now() + ms }
   const scrollToFile = (key: string) => {
     setActiveKey(key)
     setActiveLine(null)
+    suppressSpy()
     document.getElementById(diffDomId(key))?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
   const locateNote = (noteIndex: number) => {
     const lineIndex = noteLocateMap.get(noteIndex)
     if (lineIndex == null) return
     setActiveLine({ key: activeKey, line: lineIndex })
+    suppressSpy(900)
     // 由卡片负责展开所在折叠区块并在渲染后滚动到行。
     cardRefs.current.get(activeKey)?.revealLine(lineIndex)
   }
+  // 阅读滚动跟随：把视口顶部参考线附近的文件卡片同步为当前文件，左侧文件栏与右侧说明面板联动；
+  // 点侧栏跳转/定位备注等程序化滚动期间不跟随。滚动到底部时强制选中最后一个文件。
+  const spyRafPending = useRef(false)
+  useEffect(() => {
+    if (!files.length) return
+    const offset = 150 // 顶部 sticky 工具栏高度 + 余量（与 .react-diff-file-card 的 scroll-margin-top 对应）
+    const compute = () => {
+      if (Date.now() < spySuppressedUntil.current) return
+      let current = ""
+      for (const item of files) {
+        const key = `${item.repo.repoName}:${item.file.path}`
+        const el = document.getElementById(diffDomId(key))
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= offset) current = key
+        else break
+      }
+      const doc = document.documentElement
+      if (window.innerHeight + window.scrollY >= doc.scrollHeight - 4) current = `${files[files.length - 1].repo.repoName}:${files[files.length - 1].file.path}`
+      if (!current) current = `${files[0].repo.repoName}:${files[0].file.path}`
+      setActiveKey((cur) => (cur === current ? cur : current))
+    }
+    const onScroll = () => {
+      if (spyRafPending.current) return
+      spyRafPending.current = true
+      requestAnimationFrame(() => { spyRafPending.current = false; compute() })
+    }
+    window.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("resize", onScroll)
+    compute()
+    return () => {
+      window.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", onScroll)
+    }
+  }, [files])
   const saveAnnotation = async (next: CodeFileAnnotation) => {
     if (!reqId) return
     setSavingAnnotation(true)
