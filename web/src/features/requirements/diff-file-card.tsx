@@ -3,7 +3,9 @@
  * - 未修改区间（文件头 / hunk 之间 / 文件尾）渲染为可展开标记，短文件（≤2000 行）自动全部展开，
  *   长文件按需分块展开，解决“文件展示不全、突然截断”的问题；
  * - 连续 import 区域默认折叠，点击展开；
- * - 行级点击选中/取消，支持多选；选中态与 hunk 无关。
+ * - 行级点击选中/取消，支持多选；选中态与 hunk 无关；
+ * - 代码行语法高亮（shiki）：连续可高亮行整体分词（hunk 头/标记行不入流不断流，
+ *   gap 展开后 token 流与文件真实行序连续，跨行注释/字符串状态正确），失败降级纯文本。
  * 行锚点约束：备注/选中一律使用解析后 diff 行下标（view.lines 的 idx），
  * gap 展开行与折叠标记只是渲染层插入，不改变下标空间。
  */
@@ -11,6 +13,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import { ChevronDown, ChevronRight, FileCode2 } from "lucide-react"
 import type { CodeDiffSnapshot } from "../../types"
 import { fetchJson } from "../../lib/api"
+import { inferDiffLanguage, highlightUnits, type HighlightUnit, type ThemedToken } from "../../lib/highlight"
 import {
   buildImportBlocks,
   computeFileGaps,
@@ -46,7 +49,17 @@ type RenderRow =
   | { kind: "diff"; idx: number }
   | { kind: "importToggle"; blockId: string; count: number; adds: number; dels: number; open: boolean }
   | { kind: "gapToggle"; gap: FileGap; from: number; to: number; loading: boolean; error: string | null }
-  | { kind: "gapLine"; no: number; text: string; drift: number }
+  | { kind: "gapLine"; gapId: string; no: number; text: string; drift: number }
+
+/** 高亮行渲染：token 有颜色/字重才包 span，其余原样输出（内容已转义）。 */
+function TokenSpans({ tokens }: { tokens: ThemedToken[] }) {
+  return <>{tokens.map((t, i) => {
+    const fs = t.fontStyle ?? 0
+    return (t.color || fs)
+      ? <span key={i} style={{ color: t.color, fontStyle: fs & 1 ? "italic" : undefined, fontWeight: fs & 2 ? 700 : undefined }}>{t.content}</span>
+      : t.content
+  })}</>
+}
 
 export interface DiffFileCardHandle {
   /** 展开目标行所在的折叠 import 区块（如已折叠）并把行滚动到视口中间。 */
@@ -171,22 +184,55 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
     document.getElementById(diffLineDomId(key, idx))?.scrollIntoView({ behavior: "smooth", block: "center" })
   })
 
-  const rows = useMemo<RenderRow[]>(() => {
-    const out: RenderRow[] = []
+  // 行渲染序列 + 语法高亮单元：连续可高亮行（diff 非 hunk 行 / gap 展开行）组成一个单元整体分词，
+  // hunk 头与各类标记行不参与也不打断单元——gap 展开后 token 流与文件真实行序连续，状态跨 gap 保持正确。
+  const rendered = useMemo(() => {
+    const rows: RenderRow[] = []
+    const units: HighlightUnit[] = []
     const gapByFrom = new Map(allGaps.map((g) => [g.from, g]))
     const blockStarts = new Map(importBlocks.map((b) => [b.from, b]))
+    // 复用单元缓冲（unitActive 标记开启），避免闭包内可空变量的 TS 收窄问题。
+    const unit: { rowKeys: string[]; texts: string[] } = { rowKeys: [], texts: [] }
+    let unitActive = false
+    const pushTokenizable = (rowKey: string, text: string) => {
+      if (!unitActive) {
+        unit.rowKeys.length = 0
+        unit.texts.length = 0
+        unitActive = true
+      }
+      unit.rowKeys.push(rowKey)
+      unit.texts.push(text)
+    }
+    const flushUnit = () => {
+      if (!unitActive) return
+      units.push({ rowKeys: [...unit.rowKeys], text: unit.texts.join("\n") })
+      unitActive = false
+    }
+    const pushDiffRow = (idx: number) => {
+      const line = view.lines[idx]
+      rows.push({ kind: "diff", idx })
+      if (line.type !== "hunk") pushTokenizable(`d:${idx}`, line.text)
+    }
     const emitGapRows = (gap: FileGap) => {
       const st = gapStateOf(gapStates, gap.id)
       const chunks = [...st.chunks].sort((a, b) => a.from - b.from)
       let cursor = gap.from
       for (const chunk of chunks) {
-        if (chunk.from > cursor) out.push({ kind: "gapToggle", gap, from: cursor, to: chunk.from - 1, loading: st.loading, error: st.error })
+        if (chunk.from > cursor) {
+          flushUnit()
+          rows.push({ kind: "gapToggle", gap, from: cursor, to: chunk.from - 1, loading: st.loading, error: st.error })
+        }
         for (let n = chunk.from; n <= chunk.to; n += 1) {
-          out.push({ kind: "gapLine", no: n, text: chunk.lines[n - chunk.from] ?? "", drift: gap.drift })
+          const text = chunk.lines[n - chunk.from] ?? ""
+          rows.push({ kind: "gapLine", gapId: gap.id, no: n, text, drift: gap.drift })
+          pushTokenizable(`g:${gap.id}:${n}`, text)
         }
         cursor = Math.max(cursor, chunk.to + 1)
       }
-      if (cursor <= gap.to) out.push({ kind: "gapToggle", gap, from: cursor, to: gap.to, loading: st.loading, error: st.error })
+      if (cursor <= gap.to) {
+        flushUnit()
+        rows.push({ kind: "gapToggle", gap, from: cursor, to: gap.to, loading: st.loading, error: st.error })
+      }
     }
     let prevNew = 0
     let i = 0
@@ -209,20 +255,48 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
       }
       const block = blockStarts.get(i)
       if (block) {
-        out.push({ kind: "importToggle", blockId: block.id, count: block.to - block.from + 1, adds: block.adds, dels: block.dels, open: openImports.has(block.id) })
+        flushUnit()
+        rows.push({ kind: "importToggle", blockId: block.id, count: block.to - block.from + 1, adds: block.adds, dels: block.dels, open: openImports.has(block.id) })
         if (openImports.has(block.id)) {
-          for (let j = block.from; j <= block.to; j += 1) out.push({ kind: "diff", idx: j })
+          for (let j = block.from; j <= block.to; j += 1) pushDiffRow(j)
         }
         i = block.to + 1
         continue
       }
-      out.push({ kind: "diff", idx: i })
+      pushDiffRow(i)
       if (line.type === "add" || line.type === "ctx") prevNew = Number(line.newNo)
       i += 1
     }
+    flushUnit()
     if (bottomGap) emitGapRows(bottomGap)
-    return out
+    return { rows, units }
   }, [view, allGaps, importBlocks, openImports, gapStates, bottomGap])
+  const rows = rendered.rows
+
+  // 语法高亮：按文件扩展名推断语言，异步分词后按 rowKey 注入；内容签名去重避免重复分词。
+  const lang = useMemo(() => inferDiffLanguage(view.file.path), [view.file.path])
+  const [tokenMap, setTokenMap] = useState<Record<string, ThemedToken[]>>({})
+  const tokenSigRef = useRef("")
+  const highlightSig = useMemo(() => {
+    if (!lang || !rendered.units.length) return ""
+    let h = 5381
+    for (const u of rendered.units) {
+      h = (h * 33) ^ u.rowKeys.length
+      for (let i = 0; i < u.text.length; i += 1) h = (h * 33) ^ u.text.charCodeAt(i)
+    }
+    return `${lang}:${rendered.units.length}:${h >>> 0}`
+  }, [lang, rendered.units])
+  useEffect(() => {
+    if (!lang || !rendered.units.length || !highlightSig) return
+    if (tokenSigRef.current === highlightSig) return
+    let cancelled = false
+    highlightUnits(lang, rendered.units).then((map) => {
+      if (cancelled) return
+      tokenSigRef.current = highlightSig
+      setTokenMap((prev) => ({ ...prev, ...map }))
+    })
+    return () => { cancelled = true }
+  })
 
   const truncatedRepo = Boolean(view.repo.diffTruncated)
 
@@ -236,6 +310,8 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
         const i = row.idx
         const line = view.lines[i]
         const rowKey = `${key}#${i}`
+        const prefix = line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "
+        const tokens = line.type === "hunk" ? undefined : tokenMap[`d:${i}`]
         return <tr
           key={`d${i}`}
           id={diffLineDomId(key, i)}
@@ -244,7 +320,7 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
         >
           <td>{line.oldNo}</td>
           <td>{line.newNo}</td>
-          <td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td>
+          <td><code>{prefix}{line.text ? (tokens ? <TokenSpans tokens={tokens} /> : line.text) : " "}</code></td>
         </tr>
       }
       if (row.kind === "importToggle") {
@@ -274,7 +350,7 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
       return <tr key={`gl${ri}`} className="react-diff-line-ctx react-diff-line-gap">
         <td>{row.no - row.drift > 0 ? row.no - row.drift : ""}</td>
         <td>{row.no}</td>
-        <td><code> {row.text || " "}</code></td>
+        <td><code>{" "}{row.text ? (tokenMap[`g:${row.gapId}:${row.no}`] ? <TokenSpans tokens={tokenMap[`g:${row.gapId}:${row.no}`]} /> : row.text) : " "}</code></td>
       </tr>
     })}</tbody></table> : <pre className="react-diff-preview">{truncatedRepo && !view.diff ? "该仓库 diff 超出输出上限，此文件内容未包含在快照中；可分仓或减小差异后重新生成。" : view.diff || "该文件 diff 已截断或为空。"}</pre>}
   </article>

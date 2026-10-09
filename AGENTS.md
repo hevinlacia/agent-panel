@@ -45,6 +45,7 @@ Current architecture:
 - `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.
 - `web/src/lib/requirements.ts` — Requirement status/category constants and status color metadata.
 - `web/src/lib/diff.ts` — Unified diff parsing/stat helpers；含 import 行识别与折叠区块（buildImportBlocks）、未修改区间扫描（computeFileGaps：文件头/hunk 间/文件尾 gap + 行号偏移）。
+- `web/src/lib/highlight.ts` — Diff 页语法高亮（shiki + JS 正则引擎，无 WASM）：扩展名推断语言、语法包按需动态加载、按「连续可高亮行」单元整体分词（跨行注释/字符串状态正确），token 结果缓存，失败降级纯文本。
 - `web/src/features/requirements/diff-file-card.tsx` — Diff 页单文件卡片：未修改区间可展开标记（短文件 ≤2000 行自动全展开、长文件分块按需展开）、import 区块默认折叠、行级点击选中/多选（选中态与 hunk 解耦）；备注锚定仍用解析后 diff 行下标，gap/折叠行仅是渲染层插入。
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
