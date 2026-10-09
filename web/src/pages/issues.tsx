@@ -1,4 +1,4 @@
-/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），平铺列表 + 状态筛选（排查中→已定位→已修复→已复盘，含「常规流程中」伪状态）。
+/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），平铺列表 + 状态筛选（排查中→已定位→已修复→已复盘/已关闭）。
  * Public surface: IssuesPage used by web/src/App.tsx route /issues.
  * Constraints: read-only view over /api/requirements; 排查经验沉淀状态以 troubleshooting.md 是否存在判定；测试问题（WMS-TST-）承接 UAT 测试反馈中不属于常规需求的轻量问题。
  * Read-this-with: web/src/pages/ones-missing.tsx for page patterns and prompts/phase-online-issue.md for the state machine.
@@ -14,7 +14,7 @@ import { ISSUES_FALLBACK_EXCLUDED_STATUSES, persistIssuesDefaultExcludedStatuses
 import { projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 
-/** 状态筛选选项顺序；未识别状态归入「常规流程中」伪状态。 */
+/** 状态筛选选项顺序；后端已收欦 issue 家族不允许常规需求流状态，无需伪状态兜底。 */
 const STATUS_OPTIONS: string[] = ISSUE_STATUS_OPTIONS
 /** 需要排查经验的阶段：已修复起应开始沉淀，已复盘必须已有。 */
 const EXPERIENCE_REQUIRED: string[] = ["已修复", "已复盘"]
@@ -109,7 +109,6 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     }
     window.history.replaceState(null, "", `/issues${q.toString() ? `?${q}` : ""}`)
   }
-  const statusOf = (r: Requirement) => (STATUS_OPTIONS.includes(r.status) ? r.status : "常规流程中")
   /** 匹配基数：类型/项目/关键字命中（含精确编号快速路径），不含状态筛选。 */
   const matchBase = useMemo(() => {
     const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
@@ -145,16 +144,16 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     }
     return base
   }, [typedIssues, effectiveProject, keyword, fixReqOf, createdFrom, createdTo])
-  // 状态筛选：勾选后只显示选中状态；未勾选时应用默认排除（未识别状态归入「常规流程中」伪状态参与排除）。
+  // 状态筛选：勾选后只显示选中状态；未勾选时应用默认排除过滤。
   const filtered = useMemo(
     () => (statuses.length
-      ? matchBase.filter((r) => statuses.includes(statusOf(r)))
-      : matchBase.filter((r) => !issuesDefaultExcluded.includes(statusOf(r)))),
+      ? matchBase.filter((r) => statuses.includes(r.status))
+      : matchBase.filter((r) => !issuesDefaultExcluded.includes(r.status))),
     [matchBase, statuses, issuesDefaultExcluded],
   )
   /** 状态计数：跨全部状态统计（与需求列表计数口径一致），跟随类型/项目/关键字筛选。 */
   const counts = useMemo(
-    () => Object.fromEntries(STATUS_OPTIONS.map((s) => [s, matchBase.filter((r) => statusOf(r) === s).length])) as Record<string, number>,
+    () => Object.fromEntries(STATUS_OPTIONS.map((s) => [s, matchBase.filter((r) => r.status === s).length])) as Record<string, number>,
     [matchBase],
   )
   const countBy = (status: string) => counts[status] ?? 0
@@ -179,9 +178,9 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
         <label className="react-filter-grow">查找问题<input value={keyword} onChange={(e) => setKeywordSync(e.target.value)} placeholder="编号精确：WMS-INC-112 / WMS-TST-3 / 112；或关键字模糊：标题 / 描述 / 关联需求" /></label>
       </div>
       <div className="react-filter-section-head"><span>状态筛选</span><em>勾选后只显示选中状态（覆盖默认排除）；计数跟随类型/项目/关键字/日期跨全部状态统计</em></div>
-      <div className="react-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`} title={s === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}><input type="checkbox" checked={statuses.includes(s)} onChange={() => toggleStatus(s)} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
+      <div className="react-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={() => toggleStatus(s)} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
       <button type="button" className={`react-filter-section-head react-collapse-head ${excludedOpen ? "open" : ""}`} onClick={toggleExcludedOpen} aria-expanded={excludedOpen}><span>默认排除状态</span><em className="react-collapse-summary">{excludedOpen ? "未勾选上方状态筛选时自动生效；勾选只改草稿，点「保存默认排除」才生效" : (issuesDefaultExcluded.length ? `默认排除：${issuesDefaultExcluded.join(" / ")}` : "默认不排除任何状态")}<ChevronDown size={14} className="react-collapse-chevron" /></em></button>
-      {excludedOpen ? <div className="react-excluded-editor"><div className="react-status-options react-excluded-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`} title={s === "常规流程中" ? "问题正走常规需求流程（需求澄清/开发中/自测中）或尚未登记状态" : undefined}><input type="checkbox" checked={excludedDraft.includes(s)} onChange={(e) => setExcludedDraft((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-excluded-save-row"><button type="button" onClick={saveExcludedDraft} disabled={!excludedDirty}>{excludedJustSaved ? "已保存 ✓" : "保存默认排除"}</button><button type="button" onClick={() => saveIssuesDefaultExcluded(ISSUES_FALLBACK_EXCLUDED_STATUSES)} disabled={!excludedDirty && issuesDefaultExcluded.join() === ISSUES_FALLBACK_EXCLUDED_STATUSES.join()}>恢复默认</button><em>{excludedDirty ? "有未保存的修改，保存后作用于列表并记住" : "与已保存一致"}</em></div></div> : null}
+      {excludedOpen ? <div className="react-excluded-editor"><div className="react-status-options react-excluded-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`}><input type="checkbox" checked={excludedDraft.includes(s)} onChange={(e) => setExcludedDraft((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-excluded-save-row"><button type="button" onClick={saveExcludedDraft} disabled={!excludedDirty}>{excludedJustSaved ? "已保存 ✓" : "保存默认排除"}</button><button type="button" onClick={() => saveIssuesDefaultExcluded(ISSUES_FALLBACK_EXCLUDED_STATUSES)} disabled={!excludedDirty && issuesDefaultExcluded.join() === ISSUES_FALLBACK_EXCLUDED_STATUSES.join()}>恢复默认</button><em>{excludedDirty ? "有未保存的修改，保存后作用于列表并记住" : "与已保存一致"}</em></div></div> : null}
       <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题，未强调测试环境的问题默认线上问题）；列表按更新时间倒序平铺展示。排查经验在需求详情页「排查经验」面板维护，线上问题进入已复盘前必须先填写（测试问题门禁更轻）。</span></div>
     </section>}
     {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : filtered.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : statuses.length ? "选中状态下没有问题，取消部分状态勾选试试。" : matchBase.length ? "当前默认排除设置下没有可见问题，可展开「默认排除状态」调整。" : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : <section className="react-panel">

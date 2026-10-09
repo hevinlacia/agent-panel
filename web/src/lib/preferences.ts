@@ -38,7 +38,7 @@ export function readIssuesDefaultExcludedStatuses(): string[] {
     if (!raw) return ISSUES_FALLBACK_EXCLUDED_STATUSES
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return ISSUES_FALLBACK_EXCLUDED_STATUSES
-    // 校验列表须与线上问题页复选框选项（ISSUE_STATUS_OPTIONS）一致，含「常规流程中」伪状态；
+    // 校验列表须与线上问题页复选框选项（ISSUE_STATUS_OPTIONS）一致；
     // 不得误用 REQ_STATUSES——那会让保存的状态在刷新读取时被静默丢弃（需求列表踩过的坑）。
     return parsed.filter((s) => typeof s === "string" && ISSUE_STATUS_OPTIONS.includes(s))
   } catch {

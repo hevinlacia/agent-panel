@@ -932,6 +932,8 @@ pub(crate) async fn api_requirement_status(
         ensure_sub_req_status_transition(&req, &status)?;
     } else {
         ensure_status_allowed_for_non_sub(&status)?;
+        // issue 家族只允许轻流程状态机，不接受常规需求流状态。
+        ensure_status_for_category(req.category.as_deref(), &status)?;
     }
     // 状态流转门禁（配置驱动）：agent/API 推进时强校验；via=ui 表示人在 Panel 界面上修改，直接跳过。
     let gate_check = if body.via.as_deref() == Some("ui") {
