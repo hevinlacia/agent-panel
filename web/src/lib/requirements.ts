@@ -6,6 +6,8 @@ export const SUSPEND_STATUS: ReqStatus = "挂起"
 /** 需求列表页状态筛选选项：流水状态 + 流水外标记状态。 */
 export const REQ_LIST_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, SUSPEND_STATUS]
 export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "已复盘", "已关闭"]
+/** 线上问题页状态筛选选项：专用状态机 + 「常规流程中」伪状态（问题正走常规需求流程或尚未登记状态）。 */
+export const ISSUE_STATUS_OPTIONS: string[] = [...ISSUE_STATUSES, "常规流程中"]
 /** 子需求状态机：父集成模型（需求创建→开发中→已合入）或整合发布模型（…→发布就绪→已合入→已发布，独立发布进度）。 */
 export const SUB_REQ_STATUSES: ReqStatus[] = ["需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消"]
 export const REQ_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, ...ISSUE_STATUSES]
