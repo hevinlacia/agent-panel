@@ -1,0 +1,57 @@
+src/requirement_service/doc.rs
+  4fa74e1d667f84e1 63,88,111
+web/src/lib/api.ts
+  4fa74e1d667f84e1 28-35
+web/src/App.tsx
+  4fa74e1d667f84e1 25,96,132,149,165,216
+src/requirement_service/status_gates.rs
+  4fa74e1d667f84e1 39,123,176-197
+src/requirement_service/create.rs
+  4fa74e1d667f84e1 128-130,177,355,555-559
+src/requirement_index.rs
+  4fa74e1d667f84e1 36-38,594-598,683,951
+web/src/features/requirements/schedule-info-card.tsx
+  4fa74e1d667f84e1 1-174
+web/src/pages/requirement.tsx
+  4fa74e1d667f84e1 13,140-141
+src/requirement_service.rs
+  4fa74e1d667f84e1 154-156,206-208
+src/tests/status_gates.rs
+  4fa74e1d667f84e1 56-58,60
+web/src/types.ts
+  4fa74e1d667f84e1 14,16-20,350-351
+src/config.rs
+  4fa74e1d667f84e1 161-165,224-234
+web/src/pages/schedule.tsx
+  4fa74e1d667f84e1 1-510
+src/requirement_service/templates.rs
+  4fa74e1d667f84e1 15,35,80,119,128
+src/requirement_api.rs
+  4fa74e1d667f84e1 1031,2396-2397,2403-2404,2409-2410,2420-2434,2437-2438,2440-2442,2445-2486
+web/src/lib/schedule.ts
+  4fa74e1d667f84e1 1-334
+prompts/phase-clarify.md
+  4fa74e1d667f84e1 36-39,65
+web/src/pages/projects.tsx
+  4fa74e1d667f84e1 48-49,91-96,110,167,171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "fa984b182bd4a0637f709a856f68bc2490e0647d",
+  "prompts": {
+    "4fa74e1d667f84e1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a124a8-9b07-756c-a138-94f699df30c9",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 1671,
+      "total_deletions": 486,
+      "accepted_lines": 1209,
+      "overriden_lines": 0
+    }
+  }
+}
