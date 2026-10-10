@@ -467,6 +467,15 @@ export interface DeployFreeze {
   since?: string
 }
 
+/** 自动任务派发时间窗口：仅窗口内允许自动派发；start > end = 跨午夜；手动派发不受限。 */
+export interface DispatchWindow {
+  enabled?: boolean
+  /** 窗口起点 HH:MM（本地时间，含）。 */
+  start: string
+  /** 窗口终点 HH:MM（本地时间，排他）。 */
+  end: string
+}
+
 export interface StatusGateRule {
   from: ReqStatus | string
   to: ReqStatus | string
@@ -630,6 +639,8 @@ export interface ConfigPayload {
   cainiaoMockPort?: number
   /** 发版冻结：开启后 ylops_deploy.py 拒绝在 UAT（uat-sg/uat-cn）触发构建/部署。 */
   deployFreeze?: DeployFreeze
+  /** 自动总结派发时间窗口：仅窗口内自动派发（手动不受限）；null/缺省 = 不限。 */
+  experienceSummaryDispatchWindow?: DispatchWindow | null
   mergeExcludedRepos?: string[]
   /** 未配置（undefined）时后端使用内置默认门禁；显式空数组 = 关闭所有门禁。 */
   statusGates?: StatusGateRule[] | null
