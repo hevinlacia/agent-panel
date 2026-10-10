@@ -1028,6 +1028,7 @@ pub(crate) async fn api_requirement_convert_issue(
             owner: None,
             start_date: None,
             plan_release: None,
+            submit_test_date: None,
             ones: None,
             source: None,
             issues: Some(vec![issue.id.clone()]),
@@ -2392,17 +2393,21 @@ pub(crate) async fn api_recommendations(
     Ok(Json(json!({ "recommendations": recommendations })))
 }
 
-/// 预估工时表单：仅 req_id 为占位估算；带 estimated_hours 时由 agent/用户
-/// 显式提交评估结果（自动预估工时的维护入口，面板与 agent 会话均可调用）。
+/// 预估工时表单：仅 req_id 为占位估算；带 estimated_hours 时由 agent/用户显式提交评估结果；
+/// 带 manual_hours 时为人工矫正（排期统计优先于 agent 预估，与评估字段共存互不覆盖）。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EffortEstimateForm {
     pub(crate) req_id: String,
     pub(crate) estimated_hours: Option<f64>,
+    /// 人工矫正工时（真实工时口径）：Some(>0) 覆盖、Some(0) 清除矫正、None 不动。
+    pub(crate) manual_hours: Option<f64>,
     pub(crate) summary: Option<String>,
     pub(crate) model: Option<String>,
 }
 
+/// 需求详情页/排期页共用的工时档案结构：
+/// estimatedHours = agent/评估工时；manualHours = 人工矫正；排期统计取 manual ?? estimate。
 pub(crate) async fn api_effort_estimate(
     State(state): State<AppState>,
     form: FormOrJson<EffortEstimateForm>,
@@ -2412,29 +2417,73 @@ pub(crate) async fn api_effort_estimate(
         .0
         .estimated_hours
         .filter(|h| h.is_finite() && *h > 0.0 && *h <= 1000.0);
-    let estimate = match explicit {
-        Some(hours) => json!({
+    let manual = form
+        .0
+        .manual_hours
+        .filter(|h| h.is_finite() && *h >= 0.0 && *h <= 1000.0);
+    let summary_input = form
+        .0
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    // 读现有档案：写评估不销毁人工矫正，写矫正不覆盖评估。
+    let mut estimate = match req.effort_estimate.as_ref() {
+        Some(v) if v.is_object() => v.clone(),
+        _ => json!({
             "version": 1,
             "coefficient": 1.0,
-            "baseHours": hours,
-            "estimatedHours": hours,
+            "baseHours": 0,
+            "estimatedHours": 0,
             "factors": [],
-            "summary": form.0.summary.unwrap_or_default(),
-            "model": form.0.model.unwrap_or_else(|| "agent-manual".to_string()),
-            "updatedAt": now_ms()
-        }),
-        None => json!({
-            "version": 1,
-            "coefficient": 1.0,
-            "baseHours": 4,
-            "estimatedHours": 4,
-            "factors": [],
-            "summary": "Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.",
-            "model": "manual-placeholder",
-            "updatedAt": now_ms()
+            "summary": "",
+            "model": "",
+            "updatedAt": 0
         }),
     };
-    if let Some(dir) = req.req_dir {
+    if let Some(h) = explicit {
+        estimate["version"] = json!(1);
+        estimate["coefficient"] = json!(1.0);
+        estimate["baseHours"] = json!(h);
+        estimate["estimatedHours"] = json!(h);
+        if let Some(s) = &summary_input {
+            estimate["summary"] = json!(s);
+        }
+        estimate["model"] = json!(form
+            .0
+            .model
+            .clone()
+            .unwrap_or_else(|| "agent-manual".to_string()));
+        estimate["updatedAt"] = json!(now_ms());
+    }
+    if let Some(h) = manual {
+        estimate["version"] = json!(1);
+        if h > 0.0 {
+            estimate["manualHours"] = json!(h);
+            estimate["manualUpdatedAt"] = json!(now_ms());
+            if let Some(s) = &summary_input {
+                estimate["summary"] = json!(s);
+            }
+        } else {
+            // Some(0) = 清除人工矫正，回落到 agent 预估。
+            estimate["manualHours"] = Value::Null;
+            estimate["manualUpdatedAt"] = json!(now_ms());
+        }
+    }
+    if explicit.is_none() && manual.is_none() {
+        // 兼容旧行为：无参数调用写占位评估（工时预估门禁视为未预估），但保留已有人工矫正。
+        estimate["version"] = json!(1);
+        estimate["coefficient"] = json!(1.0);
+        estimate["baseHours"] = json!(4);
+        estimate["estimatedHours"] = json!(4);
+        estimate["factors"] = json!([]);
+        estimate["summary"] =
+            json!("Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.");
+        estimate["model"] = json!("manual-placeholder");
+        estimate["updatedAt"] = json!(now_ms());
+    }
+    if let Some(dir) = req.req_dir.as_deref() {
         let path = PathBuf::from(dir).join("effort-estimate.json");
         atomic_write_json(&path, &estimate).await?;
     }

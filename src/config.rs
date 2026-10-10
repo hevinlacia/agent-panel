@@ -158,6 +158,11 @@ pub(crate) static STATUS_GATE_DEFS: &[StatusGateDef] = &[
         label: "线上问题复盘点禁",
         description: "仅 category=线上问题 生效：流转前必须沉淀 troubleshooting.md（怎么排查 + 怎么修复）",
     },
+    StatusGateDef {
+        id: "effort-estimate",
+        label: "工时预估门禁",
+        description: "需求澄清/创建 → 开发中：必须先完成工时预估（effort-estimate.json 非 placeholder），供需求排期页消费；绑线上问题的抢修需求自动豁免",
+    },
 ];
 
 pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
@@ -215,6 +220,18 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
             from: "排查中".into(),
             to: "已定位".into(),
             gates: vec!["issue-root-cause".into()],
+        },
+        // 工时预估门禁（2026-10 新增）：需求澄清完成进入开发前，agent 必须先按 4h 单位（真实工时口径）
+        // 评估工作量并写入 effort-estimate.json，供需求排期页消费；绑线上问题的抢修需求自动豁免。
+        StatusGateRule {
+            from: "需求澄清".into(),
+            to: "开发中".into(),
+            gates: vec!["effort-estimate".into()],
+        },
+        StatusGateRule {
+            from: "需求创建".into(),
+            to: "开发中".into(),
+            gates: vec!["effort-estimate".into()],
         },
         StatusGateRule {
             from: "已修复".into(),

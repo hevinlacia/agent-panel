@@ -125,6 +125,9 @@ pub(crate) async fn create_requirement(
     let plan_release =
         clean_optional(form.plan_release.as_deref()).unwrap_or_else(|| "unknown".to_string());
     ensure_date_or_unknown(&plan_release, "planRelease")?;
+    let submit_test_date =
+        clean_optional(form.submit_test_date.as_deref()).unwrap_or_else(|| "unknown".to_string());
+    ensure_date_or_unknown(&submit_test_date, "submitTestDate")?;
     let ones = clean_optional(form.ones.as_deref()).unwrap_or_default();
     // 创建时绑定线上问题：仅 category=需求 时允许，且每个 id 必须是真实存在的线上问题。
     let mut issues: Vec<String> = Vec::new();
@@ -171,6 +174,7 @@ pub(crate) async fn create_requirement(
         &owner,
         &start_date,
         &plan_release,
+        &submit_test_date,
         &ones,
         &issues,
         &summary,
@@ -347,6 +351,7 @@ pub(crate) async fn create_sub_requirement(
         &parent.source,
         &owner,
         &start_date,
+        "unknown",
         "unknown",
         "",
         &[],
@@ -546,6 +551,12 @@ pub(crate) async fn update_requirement(
         meta_next = set_frontmatter_field(&meta_next, "plan-release", &plan_release);
         meta_next = update_meta_summary_line(&meta_next, "Planned release", &plan_release);
         changes.push("meta.planRelease".into());
+    }
+    if let Some(submit_test_date) = clean_optional(form.submit_test_date.as_deref()) {
+        ensure_date_or_unknown(&submit_test_date, "submitTestDate")?;
+        meta_next = set_frontmatter_field(&meta_next, "submit-test-date", &submit_test_date);
+        meta_next = update_meta_summary_line(&meta_next, "Submit test", &submit_test_date);
+        changes.push("meta.submitTestDate".into());
     }
     if let Some(ones) = form.ones.as_deref() {
         let value = ones.trim().to_string();

@@ -1242,3 +1242,85 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-pichat-input textarea { flex: 1; resize: vertical; min-height: 52px; max-height: 180px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 10px; color: var(--react-text); font: .86rem/1.5 inherit; padding: 10px 12px; }
 .react-pichat-input textarea:focus { outline: none; border-color: var(--react-border-strong); }
 .react-pichat-input-actions { display: flex; gap: 8px; }
+
+/* ===== 需求排期页（/schedule）===== */
+.react-kpi-warn .react-kpi-value { color: var(--react-amber); }
+.react-kpi-violet .react-kpi-value { color: var(--react-purple); }
+.react-kpi-rose .react-kpi-value { color: #fb7185; }
+.react-kpi-green .react-kpi-value { color: var(--react-green); }
+.react-sched-config { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; color: var(--react-muted); font: .8rem var(--react-mono); }
+.react-sched-config label { display: inline-flex; gap: 8px; align-items: center; }
+.react-sched-config input[type="number"] { width: 64px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .82rem var(--react-mono); padding: 6px 8px; }
+.react-sched-config input[type="number"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-check input { accent-color: var(--react-cyan); }
+.react-sched-whatif { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.react-sched-whatif-title { flex: 1 1 220px; max-width: 320px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .82rem var(--react-mono); padding: 8px 10px; }
+.react-sched-whatif-title:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-units { display: inline-flex; gap: 6px; }
+.react-sched-unit { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-muted); font: 800 .74rem var(--react-mono); padding: 7px 10px; cursor: pointer; transition: all .16s ease; }
+.react-sched-unit:hover { border-color: var(--react-border-strong); color: var(--react-text); }
+.react-sched-unit.is-active { border-color: var(--react-cyan); color: var(--react-cyan); background: rgba(34, 211, 238, .12); }
+.react-sched-unit:disabled { opacity: .45; cursor: wait; }
+.react-sched-units-sm .react-sched-unit { padding: 4px 7px; font-size: .68rem; }
+.react-sched-pos { display: inline-flex; gap: 6px; }
+.react-sched-pos button { background: transparent; border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-muted); font: 800 .74rem var(--react-mono); padding: 7px 12px; cursor: pointer; }
+.react-sched-pos button.is-active { border-color: var(--react-purple); color: var(--react-purple); background: rgba(168, 85, 247, .12); }
+.react-sched-whatif-result { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--react-border); border-radius: 10px; background: rgba(2, 6, 12, .45); }
+.react-sched-whatif-result.is-breach { border-color: rgba(251, 113, 133, .5); }
+.react-sched-whatif-summary { margin: 0 0 6px; color: var(--react-text); font: .84rem/1.6 var(--react-mono); }
+.react-sched-whatif-result ul { margin: 0; padding-left: 18px; }
+.react-sched-whatif-result li { color: var(--react-muted); font: .78rem/1.7 var(--react-mono); }
+.react-sched-whatif-result li.is-breach { color: #fb7185; }
+.react-sched-days { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.react-sched-day { display: flex; flex-direction: column; gap: 5px; min-width: 76px; }
+.react-sched-day-date { color: var(--react-muted); font: 800 .68rem var(--react-mono); }
+.react-sched-day-bar { height: 8px; border-radius: 4px; background: rgba(148, 163, 184, .12); overflow: hidden; }
+.react-sched-day-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--react-cyan), var(--react-purple)); }
+.react-sched-day-num { color: var(--react-faint); font: .68rem var(--react-mono); min-height: 1em; }
+.react-sched-table-wrap { overflow-x: auto; }
+.react-sched-table { width: 100%; border-collapse: collapse; font: .8rem var(--react-mono); }
+.react-sched-table th { text-align: left; color: var(--react-muted); font: 800 .66rem var(--react-mono); letter-spacing: .1em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--react-border); white-space: nowrap; }
+.react-sched-table td { padding: 9px 10px; border-bottom: 1px solid rgba(148, 163, 184, .08); vertical-align: middle; }
+.react-sched-table tr.is-overdue td { background: rgba(251, 113, 133, .06); }
+.react-sched-req-link { color: var(--react-cyan); font-weight: 700; margin-right: 8px; }
+.react-sched-req-title { color: var(--react-text); margin-right: 8px; }
+.react-sched-req-projects { font-size: .7rem; }
+.react-sched-src { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; background: rgba(148, 163, 184, .12); color: var(--react-muted); font: .64rem var(--react-mono); font-style: normal; }
+.react-sched-src.is-warn { background: rgba(245, 158, 11, .16); color: var(--react-amber); }
+.react-sched-risk { display: inline-block; padding: 2px 9px; border-radius: 7px; font-weight: 800; font-size: .72rem; }
+.react-sched-risk-overdue { background: rgba(251, 113, 133, .16); color: #fb7185; }
+.react-sched-risk-tight { background: rgba(245, 158, 11, .16); color: var(--react-amber); }
+.react-sched-risk-ok { background: rgba(34, 197, 94, .14); color: var(--react-green); }
+.react-sched-table td input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 7px; color: var(--react-text); font: .74rem var(--react-mono); padding: 5px 7px; color-scheme: dark; }
+.react-sched-table td input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-tl { display: inline-flex; gap: 2px; }
+.react-sched-tl span { width: 12px; height: 14px; border-radius: 3px; background: rgba(148, 163, 184, .1); }
+.react-sched-tl span.is-work { background: linear-gradient(180deg, var(--react-cyan), rgba(34, 211, 238, .55)); }
+.react-sched-tl span.is-deadline { background: #fb7185; box-shadow: 0 0 6px rgba(251, 113, 133, .8); }
+
+/* ===== 需求排期页：并行均摊模型补充 ===== */
+.react-sched-deadline { display: inline-flex; gap: 8px; align-items: center; color: var(--react-muted); font: .8rem var(--react-mono); }
+.react-sched-deadline input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .8rem var(--react-mono); padding: 6px 8px; color-scheme: dark; }
+.react-sched-deadline input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-whatif-detail { margin: 4px 0 0; color: var(--react-amber); font: .76rem/1.6 var(--react-mono); }
+.react-sched-day.react-sched-sat-ok .react-sched-day-date { color: var(--react-green); }
+.react-sched-day.react-sched-sat-full .react-sched-day-date { color: var(--react-amber); }
+.react-sched-day.react-sched-sat-over .react-sched-day-date { color: #fb7185; }
+.react-sched-day-bar { height: 8px; border-radius: 4px; background: rgba(148, 163, 184, .12); overflow: hidden; }
+.react-sched-day-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--react-green), rgba(34, 197, 94, .7)); }
+.react-sched-day-fill.is-full { background: linear-gradient(90deg, var(--react-amber), rgba(245, 158, 11, .7)); }
+.react-sched-day-fill.is-over { background: linear-gradient(90deg, #fb7185, rgba(251, 113, 133, .7)); }
+.react-sched-day-num { color: var(--react-faint); font: .68rem var(--react-mono); min-height: 1em; }
+.react-sched-hotfix { margin-right: 4px; }
+.react-sched-overload-text { color: #fb7185; }
+
+/* ===== 需求详情页：提测时间 / 工时评估卡 ===== */
+.react-sched-info-card .react-sched-info-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.react-sched-info-card input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .84rem var(--react-mono); padding: 7px 10px; color-scheme: dark; }
+.react-sched-info-card input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+.react-sched-effort-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--react-border); border-radius: 10px; background: rgba(2, 6, 12, .4); }
+.react-sched-effort-cell strong { color: #fff; font: 900 1.3rem var(--react-mono); }
+.react-sched-effort-label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; }
+.react-sched-effort-cell em { font-style: normal; }
+.react-sched-effort-summary { color: var(--react-faint); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

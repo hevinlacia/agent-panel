@@ -17,10 +17,10 @@ Current architecture:
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器，超限输出按行边界截断）。
 - `src/git_file_lines.rs` — Diff 页展开上下文用的文件行切片 API：`GET /api/git/file-lines`（projectPath+commit+path 校验后 `git show`，返回 totalLines/binary/行切片，单次最多 2500 行），供前端展开 diff 中被折叠的未修改区间。
-- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save.
+- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save; effort-estimate API 为 read-modify-write：estimatedHours（agent 评估）与 manualHours（人工矫正）共存，排期统计取 manual ?? estimate。
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
 - `src/requirement_release.rs` — 整合需求发布分支（consolidated release branches）：登记文件 `release-branches.json` 读写与 API（create/list/merge-sub/sync-prod/prod-mr/mark-released）；发布分支以各仓生产分支为 base，子需求分支合入预集成，发布走发布分支 → 生产分支 MR，封版时把覆盖子需求推进「已发布」。
-- `src/requirement_service.rs` — Module root: requirement API form DTOs; submodules under `src/requirement_service/`: `create`（创建/更新/备注/事件）、`events`（事件渲染与规范化）、`doc`（文档写入/编辑/章节）、`doc_parts`（文档分册：主文档索引化 + docs/<doc>/ 分册 + 40KB 拆分阈值告警）、`validate`（需求校验）、`paths`（路径安全与可写根解析）、`id_pool`（编号池/序号分配：REQ/WMS 主池、INC 线上问题、TST 测试问题、GRP 组（退役）、FIX 修复需求（category=需求 且绑定 issues 自动路由，独立编号）、ROLLUP 整合需求）、`templates`（建单文件与文档模板）、`state`（状态写入/自动推进，含回到开发中的两类循环轮次：打回返工 reworkRounds（人工核查/测试中 → 开发中，history 标 rework/reworkRound/loop=rework）与发布就绪小循环 releaseReadyRounds（发布就绪 → 开发中，history 标 loop=release-ready/loopRound）；变体判定 dev_loop_kind_from_state 按最近一次进入开发中的来源）、`phase_prompt`（阶段 prompt 加载；开发中按循环语境加载变体：来源=打回 → phase-dev-rework.md 返工变体，来源=发布就绪 → phase-dev-release-ready.md 快速修复变体）、`status_gates`（状态流转门禁注册表与分发：agent API 推进强校验，via=ui 人工改状态跳过；evaluate_status_gate 供状态流转卡片只读评估三态）、`selftest_gate`（自测清单门禁：test.md 自测清单三分类（主流程/边界/高并发大流量）逐项结果解析，边界与并发流量类强制先风险场景分析再列清单；放行语义：全部通过放行、存在无法测试/跳过（有原因）放行但警示、存在失败不放行）。
+- `src/requirement_service.rs` — Module root: requirement API form DTOs; submodules under `src/requirement_service/`: `create`（创建/更新/备注/事件）、`events`（事件渲染与规范化）、`doc`（文档写入/编辑/章节）、`doc_parts`（文档分册：主文档索引化 + docs/<doc>/ 分册 + 40KB 拆分阈值告警）、`validate`（需求校验）、`paths`（路径安全与可写根解析）、`id_pool`（编号池/序号分配：REQ/WMS 主池、INC 线上问题、TST 测试问题、GRP 组（退役）、FIX 修复需求（category=需求 且绑定 issues 自动路由，独立编号）、ROLLUP 整合需求）、`templates`（建单文件与文档模板）、`state`（状态写入/自动推进，含回到开发中的两类循环轮次：打回返工 reworkRounds（人工核查/测试中 → 开发中，history 标 rework/reworkRound/loop=rework）与发布就绪小循环 releaseReadyRounds（发布就绪 → 开发中，history 标 loop=release-ready/loopRound）；变体判定 dev_loop_kind_from_state 按最近一次进入开发中的来源）、`phase_prompt`（阶段 prompt 加载；开发中按循环语境加载变体：来源=打回 → phase-dev-rework.md 返工变体，来源=发布就绪 → phase-dev-release-ready.md 快速修复变体）、`status_gates`（状态流转门禁注册表与分发：agent API 推进强校验，via=ui 人工改状态跳过；evaluate_status_gate 供状态流转卡片只读评估三态；需求澄清/创建 → 开发中挂 effort-estimate 工时预估门禁，抢修需求豁免）、`selftest_gate`（自测清单门禁：test.md 自测清单三分类（主流程/边界/高并发大流量）逐项结果解析，边界与并发流量类强制先风险场景分析再列清单；放行语义：全部通过放行、存在无法测试/跳过（有原因）放行但警示、存在失败不放行）。
 - `src/requirement_context.rs` — Module root: submodule declarations only; submodules under `src/requirement_context/`: `schema`（API schema/token 表）、`intent`（意图与 token 映射）、`context_html`（上下文构建与 HTML 渲染）、`phase`（阶段运行时上下文）、`review_gate`（代码审查门禁判定 + 循环审查记录：主流程/返工轮次/发布就绪小循环三种语境的历史结论按 review.md 轮次小节解析）、`review_drift`（审查快照漂移与风险读取）。
 - `src/experience_summary.rs` — Experience-summary job state, auto-dispatch loops, completion fallback, and startup context injection.
 - `src/sessions.rs` — Pi session JSONL scanning, timeline parsing, and session APIs.
@@ -39,6 +39,7 @@ Current architecture:
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
 - `web/src/features/requirements/annotation-panel.tsx` — Diff page right-hand inspector: file summary, key variables, mermaid flow, hunk notes, JSON hand-editing.
 - `web/src/features/requirements/ones-manhour-card.tsx` — 需求详情页 ONES 工时卡片：工时四联展示/编辑（人工预估、agent 实际可编辑）+ 快速登记（准备模式）+ 登记历史。
+- `web/src/features/requirements/schedule-info-card.tsx` — 需求详情页排期信息卡：提测时间登记 + 倒计时；agent 预估展示 + 人工矫正（manualHours），排期统计优先人工矫正。
 - `web/src/features/requirements/mermaid-flow.tsx` — Lazy mermaid renderer for annotation flow diagrams; degrades to source on syntax errors.
 - `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
@@ -50,6 +51,8 @@ Current architecture:
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
 - `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试标记 + 关键字筛选 + 详情触发，test/UAT 切换、入参临时修改不写回模板）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
+- `web/src/pages/schedule.tsx` — 需求排期页（路由 /schedule，侧边栏「需求排期」）：并行均摊模型（投入→提测区间摊派）的每日饱和度、接单评估（能不能接/能接多大）、行内快改工时与提测日；ONES 登记工时按折算系数换算真实口径。
+- `web/src/lib/schedule.ts` — 排期算法纯函数：4h 单位制、均摊饱和度（utilization）、接单评估（checkAcceptance）、反算容量（maxAcceptable）；饱和度是容量账不锁定每日日程。
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
 

@@ -11,7 +11,13 @@ export type ReqCategory = "需求" | "线上问题" | "测试问题"
 export interface EffortEstimate {
   coefficient: number
   baseHours: number
+  /** agent/评估工时（真实工时口径，4h 单位倍数）。 */
   estimatedHours: number
+  /** 评估来源：agent-auto（澄清完成自动预估）/ agent-manual / schedule-panel / manual-placeholder（占位）。 */
+  model?: string
+  /** 人工矫正工时：排期统计优先于 estimatedHours；null/缺省 = 未矫正。 */
+  manualHours?: number | null
+  manualUpdatedAt?: number
   summary?: string
   updatedAt?: number
 }
@@ -341,6 +347,8 @@ export interface Requirement {
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
   testScenarioPath?: string
   planRelease?: string
+  /** 提测时间（meta.md submit-test-date）：交付测试开始测试的日期 deadline，到点状态须 ≥ 人工核查；unknown/缺省 = 未登记。 */
+  submitTestDate?: string
   effortEstimate?: EffortEstimate
   /** 引用式需求组：本需求 group.json 的成员列表（非空 = 本需求是组）。 */
   groupMembers?: GroupMemberRef[]

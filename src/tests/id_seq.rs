@@ -438,6 +438,7 @@ fn issue_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         owner: None,
         start_date: None,
         plan_release: None,
+            submit_test_date: None,
         ones: None,
         issues: None,
         members: None,
