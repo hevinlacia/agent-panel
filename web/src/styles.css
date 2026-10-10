@@ -1324,3 +1324,13 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-sched-effort-label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; }
 .react-sched-effort-cell em { font-style: normal; }
 .react-sched-effort-summary { color: var(--react-faint); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== Diff 页行信息（blame）===== */
+.react-diff-head-right { display: inline-flex; gap: 10px; align-items: center; }
+.react-diff-blame-btn { display: inline-flex; gap: 4px; align-items: center; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 7px; color: var(--react-muted); font: 800 .68rem var(--react-mono); padding: 4px 9px; cursor: pointer; transition: all .16s ease; }
+.react-diff-blame-btn:hover { border-color: var(--react-border-strong); color: var(--react-text); }
+.react-diff-blame-btn.is-on { border-color: var(--react-cyan); color: var(--react-cyan); background: rgba(34, 211, 238, .12); }
+.react-diff-blame-btn:disabled { opacity: .5; cursor: wait; }
+.react-diff-blame-error { margin: 6px 14px; }
+.react-diff-code .react-diff-blame-cell { white-space: nowrap; color: var(--react-muted); font: .68rem var(--react-mono); padding: 0 10px; border-left: 1px solid rgba(148, 163, 184, .1); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.react-diff-code .react-diff-blame-cell .react-diff-blame-empty { color: var(--react-faint); }

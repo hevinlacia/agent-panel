@@ -22,6 +22,7 @@ mod chrome_cookies;
 mod config;
 mod dsh_client;
 mod experience_summary;
+mod git_blame;
 mod git_file_lines;
 mod git_workflow;
 mod harness;
@@ -50,6 +51,7 @@ use capability::*;
 use chrome_cookies::*;
 use config::*;
 use experience_summary::*;
+use git_blame::*;
 use git_file_lines::*;
 pub(crate) use git_workflow::*;
 use harness::*;
@@ -422,6 +424,7 @@ async fn main() -> Result<()> {
             get(api_requirement_diff_snapshots_get),
         )
         .route("/api/git/file-lines", get(api_git_file_lines))
+        .route("/api/git/blame", get(api_git_blame))
         .route(
             "/api/requirement/branch-rounds",
             get(api_requirement_branch_rounds_get).post(api_requirement_branch_rounds_post),

@@ -10,7 +10,7 @@
  * gap 展开行与折叠标记只是渲染层插入，不改变下标空间。
  */
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronRight, FileCode2 } from "lucide-react"
+import { ChevronDown, ChevronRight, FileCode2, Users } from "lucide-react"
 import type { CodeDiffSnapshot } from "../../types"
 import { fetchJson } from "../../lib/api"
 import { inferDiffLanguage, highlightUnits, type HighlightUnit, type ThemedToken } from "../../lib/highlight"
@@ -35,6 +35,15 @@ interface FileLinesPayload {
   totalLines: number
   binary: boolean
   lines: string[]
+}
+
+interface BlameInfo { author: string; date: string }
+
+interface BlamePayload {
+  ok: boolean
+  totalLines: number
+  truncated: boolean
+  lines: { no: number; author: string; date: string }[]
 }
 
 interface GapChunk { from: number; to: number; lines: string[] }
@@ -97,6 +106,11 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
 ) {
   const key = `${view.repo.repoName}:${view.file.path}`
   const [meta, setMeta] = useState<{ totalLines: number; binary: boolean } | null>(null)
+  // 行信息（blame）：点击工具栏按钮展开每行修改人/修改日期，再点收起（数据保留不重复请求）。
+  const [blameOn, setBlameOn] = useState(false)
+  const [blameMap, setBlameMap] = useState<Record<number, BlameInfo> | null>(null)
+  const [blameLoading, setBlameLoading] = useState(false)
+  const [blameError, setBlameError] = useState<string | null>(null)
   const [gapStates, setGapStates] = useState<Record<string, GapState>>({})
   const [openImports, setOpenImports] = useState<Set<string>>(() => new Set())
 
@@ -298,13 +312,44 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
     return () => { cancelled = true }
   })
 
+  const toggleBlame = () => {
+    const next = !blameOn
+    setBlameOn(next)
+    if (!next || blameMap || blameLoading) return
+    const projectPath = view.repo.projectPath
+    const commit = view.repo.targetCommit
+    if (!projectPath || !commit) {
+      setBlameError("缺少仓库路径或 commit 信息，无法加载行信息")
+      return
+    }
+    setBlameLoading(true)
+    setBlameError(null)
+    const qs = new URLSearchParams({ projectPath, commit, path: view.file.path })
+    fetchJson<BlamePayload>(`/api/git/blame?${qs.toString()}`)
+      .then((p) => {
+        const map: Record<number, BlameInfo> = {}
+        for (const l of p.lines || []) map[l.no] = { author: l.author, date: l.date }
+        setBlameMap(map)
+      })
+      .catch((err) => setBlameError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBlameLoading(false))
+  }
+
+  const blameCell = (newNo: string) => {
+    if (!blameOn) return null
+    const no = Number(newNo)
+    const info = Number.isFinite(no) ? blameMap?.[no] : undefined
+    return <td className="react-diff-blame-cell">{info ? <span title={`${info.author} · ${info.date}`}>{info.author}{info.date ? ` · ${info.date.slice(5)}` : ""}</span> : <span className="react-diff-blame-empty">·</span>}</td>
+  }
+
   const truncatedRepo = Boolean(view.repo.diffTruncated)
 
   return <article id={diffDomId(key)} className="react-diff-file-card">
     <header>
       <div><FileCode2 size={16} /><strong>{view.repo.repoName}/{view.file.path}</strong><em className="react-diff-base-label">vs {view.repo.baseRef || review?.baseRef || "?"}</em></div>
-      <span><b>+{view.file.additions}</b><i>-{view.file.deletions}</i></span>
+      <span className="react-diff-head-right"><b>+{view.file.additions}</b><i>-{view.file.deletions}</i><button type="button" className={`react-diff-blame-btn ${blameOn ? "is-on" : ""}`} onClick={toggleBlame} title={blameOn ? "收起行信息（修改人/修改日期）" : "查看每行的修改人与修改时间（基于目标分支版本 blame）"} disabled={blameLoading}><Users size={13} />{blameLoading ? "加载中…" : "行信息"}</button></span>
     </header>
+    {blameOn && blameError ? <p className="react-effort-error react-diff-blame-error">行信息加载失败：{blameError}</p> : null}
     {view.lines.length ? <table className="react-diff-code"><tbody>{rows.map((row, ri) => {
       if (row.kind === "diff") {
         const i = row.idx
@@ -321,11 +366,12 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
           <td>{line.oldNo}</td>
           <td>{line.newNo}</td>
           <td><code>{prefix}{line.text ? (tokens ? <TokenSpans tokens={tokens} /> : line.text) : " "}</code></td>
+          {blameCell(line.type === "del" ? "" : line.newNo)}
         </tr>
       }
       if (row.kind === "importToggle") {
         return <tr key={`imp${ri}`} className="react-diff-gap-row react-diff-gap-import">
-          <td colSpan={3}>
+          <td colSpan={blameOn ? 4 : 3}>
             <button onClick={() => toggleImport(row.blockId)}>
               {row.open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               import 区块（{row.count} 行{row.adds ? ` · +${row.adds}` : ""}{row.dels ? ` · -${row.dels}` : ""}）· 点击{row.open ? "折叠" : "展开"}
@@ -336,7 +382,7 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
       if (row.kind === "gapToggle") {
         const count = row.to - row.from + 1
         return <tr key={`gap${ri}`} className="react-diff-gap-row">
-          <td colSpan={3}>
+          <td colSpan={blameOn ? 4 : 3}>
             <button onClick={() => expandGap(row.gap, false)} disabled={row.loading}>
               {row.error
                 ? <>展开失败：{row.error} · 点击重试</>
@@ -351,6 +397,7 @@ export const DiffFileCard = forwardRef<DiffFileCardHandle, DiffFileCardProps>(fu
         <td>{row.no - row.drift > 0 ? row.no - row.drift : ""}</td>
         <td>{row.no}</td>
         <td><code>{" "}{row.text ? (tokenMap[`g:${row.gapId}:${row.no}`] ? <TokenSpans tokens={tokenMap[`g:${row.gapId}:${row.no}`]} /> : row.text) : " "}</code></td>
+        {blameCell(String(row.no))}
       </tr>
     })}</tbody></table> : <pre className="react-diff-preview">{truncatedRepo && !view.diff ? "该仓库 diff 超出输出上限，此文件内容未包含在快照中；可分仓或减小差异后重新生成。" : view.diff || "该文件 diff 已截断或为空。"}</pre>}
   </article>

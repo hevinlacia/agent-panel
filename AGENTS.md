@@ -17,6 +17,7 @@ Current architecture:
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器，超限输出按行边界截断）。
 - `src/git_file_lines.rs` — Diff 页展开上下文用的文件行切片 API：`GET /api/git/file-lines`（projectPath+commit+path 校验后 `git show`，返回 totalLines/binary/行切片，单次最多 2500 行），供前端展开 diff 中被折叠的未修改区间。
+- `src/git_blame.rs` — Diff 页行级 blame API：`GET /api/git/blame`（projectPath+commit+path 校验后 `git blame --line-porcelain`，返回每行 author/date），供 diff 文件卡「行信息」按钮展示/收起。
 - `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save; effort-estimate API 为 read-modify-write：estimatedHours（agent 评估）与 manualHours（人工矫正）共存，排期统计取 manual ?? estimate。
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
 - `src/requirement_release.rs` — 整合需求发布分支（consolidated release branches）：登记文件 `release-branches.json` 读写与 API（create/list/merge-sub/sync-prod/prod-mr/mark-released）；发布分支以各仓生产分支为 base，子需求分支合入预集成，发布走发布分支 → 生产分支 MR，封版时把覆盖子需求推进「已发布」。
