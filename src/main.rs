@@ -235,6 +235,12 @@ struct IdQuery {
     /// 分支登记轮次（diff-snapshots / branch-rounds 等）：1 = 原始 branches.json。
     round: Option<u32>,
     status: Option<String>,
+    /// 知识查询：信息观察时间下界（YYYY-MM-DD，含当天）。
+    #[serde(alias = "observedAfter")]
+    observed_after: Option<String>,
+    /// 知识查询：信息观察时间上界（YYYY-MM-DD，含当天）。
+    #[serde(alias = "observedBefore")]
+    observed_before: Option<String>,
     limit: Option<usize>,
     cursor: Option<usize>,
     include_full: Option<bool>,

@@ -717,6 +717,10 @@ export interface KnowledgeItem {
   updatedAt?: string
   lastVerifiedAt?: string
   validUntil?: string
+  observedAt?: string
+  sourceGrade?: string
+  infoAgeDays?: number | null
+  stale?: boolean
   summary?: string
   details?: string | null
   detailsTruncated?: boolean

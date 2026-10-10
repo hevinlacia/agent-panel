@@ -42,6 +42,10 @@ pub(crate) struct KnowledgeAgentQuery {
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
+    observed_after: Option<String>,
+    #[serde(default)]
+    observed_before: Option<String>,
+    #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
     tokens_budget: Option<usize>,
@@ -100,6 +104,10 @@ pub(crate) struct KnowledgeWriteForm {
     #[serde(default)]
     valid_until: Option<String>,
     #[serde(default)]
+    observed_at: Option<String>,
+    #[serde(default)]
+    source_grade: Option<String>,
+    #[serde(default)]
     dry_run: Option<bool>,
 }
 
@@ -111,6 +119,8 @@ struct KnowledgeQueryFilter {
     project: Option<String>,
     scope: Option<String>,
     status: Option<String>,
+    observed_after: Option<String>,
+    observed_before: Option<String>,
     limit: Option<usize>,
     include_full: bool,
     include_outline: bool,
@@ -137,6 +147,8 @@ pub(crate) async fn api_knowledge_list(
         project: clean_optional(query.project.as_deref()),
         scope: clean_optional(query.scope.as_deref()),
         status: clean_optional(query.status.as_deref()),
+        observed_after: clean_optional(query.observed_after.as_deref()),
+        observed_before: clean_optional(query.observed_before.as_deref()),
         limit: query.limit,
         include_full: query.include_full.unwrap_or(false),
         include_outline: true,
@@ -170,6 +182,8 @@ pub(crate) async fn api_agent_knowledge_query(
         project: clean_optional(payload.project.as_deref()),
         scope: clean_optional(payload.scope.as_deref()),
         status: clean_optional(payload.status.as_deref()),
+        observed_after: clean_optional(payload.observed_after.as_deref()),
+        observed_before: clean_optional(payload.observed_before.as_deref()),
         limit: payload
             .limit
             .or_else(|| default_knowledge_limit_for_budget(budget)),
@@ -182,7 +196,7 @@ pub(crate) async fn api_agent_knowledge_query(
         "results": items,
         "generatedAt": now_ms(),
         "usage": {
-            "summary": "Query returns budgeted summaries, outline, score, whyMatched, matchedFields, and matches. Use ids with GET /api/agent/items/full?id=<id> only when more detail is required; use section=<heading> to fetch one Markdown section.",
+            "summary": "Query returns budgeted summaries, outline, score, whyMatched, matchedFields, and matches. Each item carries observedAt/sourceGrade/infoAgeDays/stale (stale = validUntil passed): a large infoAgeDays means the info was observed long ago and may be outdated, not useless — weigh it before trusting operational details. Filter with observedAfter/observedBefore (YYYY-MM-DD, inclusive) when only recently observed facts are needed. Use ids with GET /api/agent/items/full?id=<id> only when more detail is required; use section=<heading> to fetch one Markdown section.",
             "fullItemEndpoint": "/api/agent/items/full?id=<id>",
             "sectionEndpoint": "/api/agent/items/full?id=<id>&section=<heading>",
             "summaryEndpoint": "/api/agent/items/summary?id=<id>",
@@ -439,6 +453,53 @@ fn knowledge_item_matches(item: &Value, filter: &KnowledgeQueryFilter) -> bool {
         && value_filter_matches(item, "project", filter.project.as_deref())
         && value_filter_matches(item, "scope", filter.scope.as_deref())
         && value_filter_matches(item, "status", filter.status.as_deref())
+        && observed_date_matches(item, filter.observed_after.as_deref(), true)
+        && observed_date_matches(item, filter.observed_before.as_deref(), false)
+}
+
+/// 观察时间边界过滤：after 边界要求 observed >= 边界，before 边界要求 observed <= 边界（均含当天）。
+/// 边界值无效或条目缺 observed_at/created_at 时不过滤，避免格式问题把结果全拦掉。
+pub(crate) fn observed_date_matches(item: &Value, bound: Option<&str>, after: bool) -> bool {
+    let Some(bound) = bound.map(str::trim).filter(|v| !v.is_empty()) else {
+        return true;
+    };
+    let Some(bound_date) = parse_iso_date_prefix(bound) else {
+        return true;
+    };
+    match knowledge_observed_date(item) {
+        Some(date) => {
+            if after {
+                date >= bound_date
+            } else {
+                date <= bound_date
+            }
+        }
+        None => true,
+    }
+}
+
+/// 条目的信息观察日期：observed_at 优先，缺省回退 created_at。
+fn knowledge_observed_date(item: &Value) -> Option<chrono::NaiveDate> {
+    let raw = item
+        .get("observedAt")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .or_else(|| item.get("createdAt").and_then(Value::as_str))?;
+    parse_iso_date_prefix(raw)
+}
+
+/// 从字符串开头解析 YYYY-MM-DD（兼容 RFC3339 全格式，只取前 10 字符）。
+pub(crate) fn parse_iso_date_prefix(raw: &str) -> Option<chrono::NaiveDate> {
+    let prefix: String = raw.trim().chars().take(10).collect();
+    if prefix.len() < 10 {
+        return None;
+    }
+    chrono::NaiveDate::parse_from_str(&prefix, "%Y-%m-%d").ok()
+}
+
+fn utc_today() -> chrono::NaiveDate {
+    chrono::Utc::now().date_naive()
 }
 
 fn is_knowledge_meta_file(path: &Path) -> bool {
@@ -601,6 +662,23 @@ async fn read_knowledge_item_file(
                 .map(system_time_to_rfc3339)
         })
         .unwrap_or_else(rfc3339_now);
+    let observed_at = fm
+        .fields
+        .get("observed_at")
+        .or_else(|| fm.fields.get("observedAt"))
+        .cloned()
+        .unwrap_or_else(|| created_at.clone());
+    let info_age_days =
+        parse_iso_date_prefix(&observed_at).map(|d| (utc_today() - d).num_days().max(0));
+    let valid_until_raw = fm
+        .fields
+        .get("valid_until")
+        .or_else(|| fm.fields.get("validUntil"))
+        .cloned()
+        .unwrap_or_default();
+    let stale = parse_iso_date_prefix(&valid_until_raw)
+        .map(|d| utc_today() > d)
+        .unwrap_or(false);
     Ok(json!({
         "id": fm.fields.get("id").cloned().unwrap_or_else(|| file_stem.to_string()),
         "title": title,
@@ -624,6 +702,10 @@ async fn read_knowledge_item_file(
         "updatedAt": updated_at,
         "lastVerifiedAt": fm.fields.get("last_verified_at").or_else(|| fm.fields.get("lastVerifiedAt")).cloned().unwrap_or_default(),
         "validUntil": fm.fields.get("valid_until").or_else(|| fm.fields.get("validUntil")).cloned().unwrap_or_default(),
+        "observedAt": observed_at,
+        "sourceGrade": fm.fields.get("source_grade").or_else(|| fm.fields.get("sourceGrade")).cloned().unwrap_or_default(),
+        "infoAgeDays": info_age_days,
+        "stale": stale,
         "summary": summary,
         "summaryTruncated": summary_truncated,
         "outline": outline,
@@ -1013,6 +1095,25 @@ async fn save_knowledge_item(state: &AppState, form: KnowledgeWriteForm) -> ApiR
     let valid_until = clean_optional(form.valid_until.as_deref())
         .or_else(|| existing_fm.fields.get("valid_until").cloned())
         .unwrap_or_default();
+    let observed_at = clean_optional(form.observed_at.as_deref())
+        .or_else(|| existing_fm.fields.get("observed_at").cloned())
+        .or_else(|| existing_fm.fields.get("observedAt").cloned())
+        .unwrap_or_else(|| created_at.clone());
+    let source_grade_raw = clean_optional(form.source_grade.as_deref())
+        .or_else(|| existing_fm.fields.get("source_grade").cloned())
+        .or_else(|| existing_fm.fields.get("sourceGrade").cloned())
+        .unwrap_or_default();
+    let source_grade = if source_grade_raw.is_empty() {
+        String::new()
+    } else {
+        let normalized = source_grade_raw.trim().to_ascii_uppercase();
+        if !matches!(normalized.as_str(), "A" | "B" | "C" | "D") {
+            return Err(ApiError::bad_request(format!(
+                "sourceGrade must be one of A/B/C/D, got: {source_grade_raw}"
+            )));
+        }
+        normalized
+    };
     let tags = if form.tags.is_empty() {
         frontmatter_list(existing_fm.fields.get("tags"))
     } else {
@@ -1094,6 +1195,8 @@ async fn save_knowledge_item(state: &AppState, form: KnowledgeWriteForm) -> ApiR
         updated_at: &now,
         last_verified_at: &last_verified_at,
         valid_until: &valid_until,
+        observed_at: &observed_at,
+        source_grade: &source_grade,
     });
     atomic_write_text(&source_path, &(details.trim().to_string() + "\n")).await?;
     atomic_write_text(&meta_path, &meta_text).await?;
@@ -1156,6 +1259,8 @@ fn build_knowledge_index_entry(meta_path: &Path, fm: &Frontmatter) -> Value {
         "scope": get("scope", ""),
         "status": get("status", ""),
         "confidence": get("confidence", ""),
+        "observedAt": get("observed_at", ""),
+        "sourceGrade": get("source_grade", ""),
         "summary": get("summary", ""),
         "tags": list("tags"),
         "triggerTerms": list("trigger_terms"),
@@ -1343,6 +1448,8 @@ struct KnowledgeRenderInput<'a> {
     updated_at: &'a str,
     last_verified_at: &'a str,
     valid_until: &'a str,
+    observed_at: &'a str,
+    source_grade: &'a str,
 }
 
 fn render_knowledge_meta_yaml(input: KnowledgeRenderInput<'_>) -> String {
@@ -1359,6 +1466,7 @@ fn render_knowledge_meta_yaml(input: KnowledgeRenderInput<'_>) -> String {
         format!("confidence: {}", yaml_quote(input.confidence)),
         format!("created_at: {}", yaml_quote(input.created_at)),
         format!("updated_at: {}", yaml_quote(input.updated_at)),
+        format!("observed_at: {}", yaml_quote(input.observed_at)),
         format!("source_path: {}", yaml_quote(input.source_path)),
     ];
     if !input.last_verified_at.is_empty() {
@@ -1369,6 +1477,9 @@ fn render_knowledge_meta_yaml(input: KnowledgeRenderInput<'_>) -> String {
     }
     if !input.valid_until.is_empty() {
         lines.push(format!("valid_until: {}", yaml_quote(input.valid_until)));
+    }
+    if !input.source_grade.is_empty() {
+        lines.push(format!("source_grade: {}", yaml_quote(input.source_grade)));
     }
     if !input.source.is_empty() {
         lines.push(format!("source: {}", yaml_quote(input.source)));
