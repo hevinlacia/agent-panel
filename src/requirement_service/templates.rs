@@ -12,6 +12,7 @@ pub(crate) fn requirement_create_files(
     owner: &str,
     start_date: &str,
     plan_release: &str,
+    submit_test_date: &str,
     ones: &str,
     issues: &[String],
     summary: &str,
@@ -31,6 +32,7 @@ pub(crate) fn requirement_create_files(
         owner,
         start_date,
         plan_release,
+        submit_test_date,
         ones,
         issues,
         summary,
@@ -75,6 +77,7 @@ pub(crate) fn build_meta_doc(
     owner: &str,
     start_date: &str,
     plan_release: &str,
+    submit_test_date: &str,
     ones: &str,
     issues: &[String],
     summary: &str,
@@ -113,7 +116,7 @@ pub(crate) fn build_meta_doc(
         .map(|p| format!("\n- Parent requirement: {}", p))
         .unwrap_or_default();
     format!(
-        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}{}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
+        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Submit test: {}\n- Project: {}{}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
         fm.join("\n"),
         req_id,
         title,
@@ -122,6 +125,7 @@ pub(crate) fn build_meta_doc(
         owner,
         start_date,
         plan_release,
+        submit_test_date,
         projects.join(" / "),
         parent_line,
         summary.trim()

@@ -151,6 +151,9 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) start_date: Option<String>,
     #[serde(default)]
     pub(crate) plan_release: Option<String>,
+    /// 提测时间：交付测试开始测试的日期 deadline（unknown = 未登记）。
+    #[serde(default)]
+    pub(crate) submit_test_date: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
     /// 区域维度（仅 issue 家族：cn=中国 / sea=东南亚，可扩展更多国家/区域）；
@@ -200,6 +203,9 @@ pub(crate) struct RequirementPatchForm {
     pub(crate) start_date: Option<String>,
     #[serde(default)]
     pub(crate) plan_release: Option<String>,
+    /// 提测时间：交付测试开始测试的日期 deadline（unknown = 未登记；子需求可独立设置）。
+    #[serde(default)]
+    pub(crate) submit_test_date: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
     /// 区域维度（仅 issue 家族）：Some(值) 设置、Some("") 清空、None 不动。

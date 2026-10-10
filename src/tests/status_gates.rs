@@ -53,8 +53,11 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     // 线上问题硬门禁迁移为默认规则。
     assert_eq!(gates_of("排查中", "已定位"), vec!["issue-root-cause"]);
     assert_eq!(gates_of("已修复", "已复盘"), vec!["issue-troubleshooting"]);
+    // 2026-10 新增：需求澄清/需求创建 → 开发中 挂工时预估门禁（排期依赖，抢修豁免）。
+    assert_eq!(gates_of("需求澄清", "开发中"), vec!["effort-estimate"]);
+    assert_eq!(gates_of("需求创建", "开发中"), vec!["effort-estimate"]);
     // 未配置的流转不拦。
-    assert!(gates_of("需求澄清", "开发中").is_empty());
+    assert!(gates_of("需求澄清", "测试中").is_empty());
     // 2026-10 新增：测试中 → 人工核查挂 UAT 回归门禁（原无门禁）。
     assert_eq!(gates_of("测试中", "人工核查"), vec!["uat-regression"]);
     // 人工核查（2026-08 新增）：进入发布就绪的路径都挂 review 门禁兜底 agent 推进；

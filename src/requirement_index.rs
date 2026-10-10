@@ -33,6 +33,9 @@ pub(crate) struct Requirement {
     /// 绑定的线上问题 req id 列表（meta.md issues 字段，仅普通需求使用）。
     pub(crate) issues: Vec<String>,
     pub(crate) plan_release: Option<String>,
+    /// 提测时间（meta.md frontmatter `submit-test-date`）：交付测试开始测试的日期 deadline；
+    /// 到点时需求状态必须 ≥ 人工核查（开发侧工作全部完成）。unknown = 未登记。
+    pub(crate) submit_test_date: Option<String>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) completed_at: Option<i64>,
@@ -588,6 +591,11 @@ pub(crate) async fn load_requirement_from_dir(
         .get("plan-release")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let submit_test_date = fm
+        .fields
+        .get("submit-test-date")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let region = fm
         .fields
         .get("region")
@@ -672,6 +680,7 @@ pub(crate) async fn load_requirement_from_dir(
         region,
         issues,
         plan_release,
+        submit_test_date,
         created_at,
         updated_at,
         completed_at,
@@ -939,6 +948,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         ones: None,
         issues: Vec::new(),
         plan_release: None,
+        submit_test_date: None,
         created_at: now,
         updated_at: now,
         completed_at: None,

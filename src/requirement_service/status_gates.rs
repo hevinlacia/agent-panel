@@ -36,6 +36,7 @@ async fn dispatch_status_gate(gate: &str, req: &Requirement) -> ApiResult<()> {
         "test-scenario" => ensure_test_scenario_allows_testing(req).await,
         "issue-root-cause" => ensure_issue_root_cause_allows_transition(req).await,
         "issue-troubleshooting" => ensure_issue_troubleshooting_allows_transition(req).await,
+        "effort-estimate" => ensure_effort_estimate_allows_dev(req),
         other => {
             // 配置归一化已拦未知 id；这里兜底放行并记日志，避免脏配置卡死状态流转。
             tracing::warn!(gate = %other, "unknown status gate id, skipping");
@@ -119,6 +120,7 @@ pub(crate) async fn evaluate_status_gate(gate: &str, req: &Requirement) -> Statu
             let outcome = ensure_issue_troubleshooting_allows_transition(req).await;
             gate_eval_from_outcome(outcome)
         }
+        "effort-estimate" => gate_eval_from_outcome(ensure_effort_estimate_allows_dev(req)),
         _ => StatusGateEval {
             passed: true,
             reason: "当前满足通过条件".into(),
@@ -170,6 +172,29 @@ pub(crate) async fn ensure_test_scenario_allows_testing(req: &Requirement) -> Ap
         "开发推动的需求流转前必须先完成测试场景文档 test-scenario.md（需求说明 + 开发评估的测试范围 + 测试覆盖场景）；请在需求详情页「测试场景」面板生成并填写，或让 agent 通过 doc API 更新",
     ))
 }
+
+/// 工时预估门禁：需求澄清/创建 → 开发中 流转前必须有真实工时预估（供需求排期页消费）。
+/// 有效预估 = effort-estimate.json 存在且 model 非 placeholder 且 estimatedHours > 0；
+/// 绑线上问题的抢修需求（is_hotfix）速度优先自动豁免。
+pub(crate) fn ensure_effort_estimate_allows_dev(req: &Requirement) -> ApiResult<()> {
+    if req.is_hotfix() {
+        return Ok(());
+    }
+    match req.effort_estimate.as_ref() {
+        Some(est) => {
+            let model = est.get("model").and_then(Value::as_str).unwrap_or("");
+            let hours = est.get("estimatedHours").and_then(Value::as_f64).unwrap_or(0.0);
+            if model != "manual-placeholder" && hours > 0.0 {
+                Ok(())
+            } else {
+                Err(ApiError::bad_request(EFFORT_ESTIMATE_HINT))
+            }
+        }
+        None => Err(ApiError::bad_request(EFFORT_ESTIMATE_HINT)),
+    }
+}
+
+const EFFORT_ESTIMATE_HINT: &str = "进入开发前必须先完成工时预估（需求排期依赖）：按 4h 单位的真实工时口径评估需求工作量（1u=4h，常规需求 1-8u，不要求精确，大致即可），调用 POST /api/requirement/effort-estimate 传 {\"reqId\":\"...\",\"estimatedHours\":<单位数*4>,\"summary\":\"一句话评估依据\",\"model\":\"agent-auto\"} 后重新推进状态；绑定了线上问题的抢修需求自动豁免";
 
 /// 线上问题定位门禁：流转到「已定位」前必须填完根因与修复决策
 /// （root-cause.md：根因 + 可复核证据链 + 修复路径决策），

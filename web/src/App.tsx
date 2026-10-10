@@ -22,6 +22,7 @@ import {
   Lightbulb,
   List,
   ListChecks,
+  CalendarRange,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -92,6 +93,7 @@ import { DashboardPage } from "./pages/dashboard"
 import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
 import { ReleasePlanPage } from "./pages/release-plan"
+import { SchedulePage } from "./pages/schedule"
 import { OnesMissingPage } from "./pages/ones-missing"
 import { ManhourPage } from "./pages/manhour"
 import { IssuesPage } from "./pages/issues"
@@ -127,6 +129,7 @@ const navItems = [
   { href: "/dashboard", label: "状态看板", short: "DB", icon: <LayoutDashboard size={16} /> },
   { href: "/projects", label: "需求看板", short: "PR", icon: <ListChecks size={16} /> },
   { href: "/release-plan", label: "发布计划", short: "RP", icon: <Rocket size={16} /> },
+  { href: "/schedule", label: "需求排期", short: "SC", icon: <CalendarRange size={16} /> },
   { href: "/ones-missing", label: "ONES 缺失", short: "ON", icon: <Unlink2 size={16} /> },
   { href: "/manhour", label: "工时录入", short: "MH", icon: <Clock3 size={16} /> },
   { href: "/issues", label: "线上问题", short: "IS", icon: <Siren size={16} /> },
@@ -143,6 +146,7 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
   if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc" || path === "/requirement-gate"
   if (href === "/release-plan") return path === "/release-plan"
+  if (href === "/schedule") return path === "/schedule"
   if (href === "/ones-missing") return path === "/ones-missing"
   if (href === "/manhour") return path === "/manhour"
   if (href === "/issues") return path === "/issues"
@@ -158,6 +162,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/" || path === "/dashboard") return { eyebrow: "Dashboard", title: "状态看板" }
   if (path === "/projects" || path === "/requirements") return { eyebrow: "Requirements", title: "需求进度看板" }
   if (path === "/release-plan") return { eyebrow: "Release Plan", title: "发布计划" }
+  if (path === "/schedule") return { eyebrow: "Schedule", title: "需求排期" }
   if (path === "/ones-missing") return { eyebrow: "ONES Missing", title: "ONES 缺失统计" }
   if (path === "/manhour") return { eyebrow: "Manhour", title: "工时录入" }
   if (path === "/issues") return { eyebrow: "Online Issues", title: "线上问题" }
@@ -208,6 +213,7 @@ export function App({ apiPath }: AppProps) {
   const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
     : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
+    : path === "/schedule" ? <SchedulePage globalProject={project} />
     : path === "/ones-missing" ? <OnesMissingPage globalProject={project} />
     : path === "/manhour" ? <ManhourPage globalProject={project} />
     : path === "/issues" ? <IssuesPage globalProject={project} />
