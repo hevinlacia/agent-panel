@@ -296,7 +296,7 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
         },
         StatusGateRule {
             from: "已修复".into(),
-            to: "已复盘".into(),
+            to: "经验总结".into(),
             gates: vec!["issue-troubleshooting".into()],
         },
     ]

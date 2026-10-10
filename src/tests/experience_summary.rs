@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn experience_summary_dispatch_triggers_for_issue_reviewed() {
     let mut req = default_requirement_for_test("WMS-INC-111-x");
-    req.status = "已复盘".to_string();
+    req.status = "经验总结".to_string();
     req.category = Some("线上问题".to_string());
     assert!(experience_summary_triggered(&req));
     req.status = "已修复".to_string();
@@ -18,7 +18,7 @@ fn experience_summary_dispatch_triggers_for_issue_reviewed() {
 #[test]
 fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check() {
     let mut req = default_requirement_for_test("WMS-INC-111-x");
-    req.status = "已复盘".to_string();
+    req.status = "经验总结".to_string();
     req.category = Some("线上问题".to_string());
     let prompt =
         experience_summary_prompt(&req, Path::new("/tmp/x/experience-summary.md"), "sess-1");
@@ -37,9 +37,11 @@ fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check(
 
 #[test]
 fn online_issue_statuses_map_to_online_issue_phase_prompt() {
-    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+    // 问题家族旧「已复盘」并入「经验总结」：与需求流统一加载经验总结阶段 prompt。
+    for s in ["排查中", "已定位", "已修复", "已关闭"] {
         assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");
     }
+    assert_eq!(phase_prompt_file("经验总结"), "prompts/phase-experience-summary.md");
 }
 
 #[test]

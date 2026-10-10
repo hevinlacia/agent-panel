@@ -5,8 +5,8 @@ export const REQ_FLOW_STATUSES: ReqStatus[] = ["需求澄清", "开发中", "自
 export const SUSPEND_STATUS: ReqStatus = "挂起"
 /** 需求列表页状态筛选选项：流水状态 + 流水外标记状态。 */
 export const REQ_LIST_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, SUSPEND_STATUS]
-export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "已复盘", "已关闭"]
-/** 线上问题页状态筛选选项：专用状态机（排查中→已定位→已修复→已复盘/已关闭）；后端已收欦 issue 家族不允许常规需求流状态。 */
+export const ISSUE_STATUSES: ReqStatus[] = ["排查中", "已定位", "已修复", "经验总结", "已关闭"]
+/** 线上问题页状态筛选选项：专用状态机（排查中→已定位→已修复→经验总结/已关闭）；经验总结与需求流统一（进入即触发自动总结任务队列）。 */
 export const ISSUE_STATUS_OPTIONS: string[] = [...ISSUE_STATUSES]
 /** region 区域值显示标签：cn=中国 / sea=东南亚；未知值由调用方原样展示（后续新增国家/区域无需改此处）。 */
 export const REGION_LABELS: Record<string, string> = { cn: "中国", sea: "东南亚" }
@@ -33,7 +33,6 @@ export const statusMeta: Record<string, { color: string; soft: string }> = {
   排查中: { color: "#fb7185", soft: "rgba(244, 63, 94, 0.14)" },
   已定位: { color: "#f97316", soft: "rgba(249, 115, 22, 0.14)" },
   已修复: { color: "#22d3ee", soft: "rgba(34, 211, 238, 0.14)" },
-  已复盘: { color: "#818cf8", soft: "rgba(129, 140, 248, 0.14)" },
   已关闭: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },
   // 子需求状态
   需求创建: { color: "#94a3b8", soft: "rgba(148, 163, 184, 0.14)" },

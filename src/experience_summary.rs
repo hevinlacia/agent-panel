@@ -440,14 +440,11 @@ pub(crate) async fn dispatch_experience_summary_jobs(
     Ok(report)
 }
 
-/// 经验总结自动派发触发条件：
-/// - 普通需求进入「经验总结」；
-/// - 线上问题进入「已复盘」（终态；自动沉淀定位为第二遍独立复核补漏，默认有价值，重复/误报才跳过）。
+/// 经验总结自动派发触发条件（2026-10 统一）：需求与问题家族（线上问题/测试问题）
+/// 进入「经验总结」即触发（问题旧「已复盘」状态经别名映射归一到经验总结）；
+/// 实际派发仍受 experienceSummaryDispatchWindow 时间窗口限制。
 pub(crate) fn experience_summary_triggered(req: &Requirement) -> bool {
-    if req.status == "经验总结" {
-        return true;
-    }
-    req.category.as_deref() == Some("线上问题") && req.status == "已复盘"
+    req.status == "经验总结"
 }
 
 /// 构建自动经验总结 agent 的任务提示词；线上问题走 troubleshooting 复核沉淀分支。
@@ -914,6 +911,11 @@ pub(crate) async fn expire_stale_experience_summary(state: &AppState) -> Result<
     let mut changed = 0;
     for req in reqs {
         if req.status != "经验总结" {
+            continue;
+        }
+        // 问题家族的经验总结不参与 48h 自动完成（「已完成」非法于 issue 状态机）：
+        // 总结完成后由人工确认关闭，避免把问题自动推到非法状态。
+        if is_issue_category(req.category.as_deref().unwrap_or("")) {
             continue;
         }
         let dir = match req_dir_path(&req) {

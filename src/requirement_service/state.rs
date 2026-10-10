@@ -219,7 +219,7 @@ pub(crate) fn ensure_status_allowed_for_non_sub(new_status: &str) -> ApiResult<(
 }
 
 /// 需求进入 >= 经验总结 后，自动把绑定的、仍处于排查中/已定位的线上问题推进到已修复。
-/// 已修复/已复盘/已关闭的线上问题不会被回退；绑定错误或目录不可写时静默跳过。
+/// 已修复/经验总结/已关闭的线上问题不会被回退；绑定错误或目录不可写时静默跳过。
 pub(crate) async fn auto_advance_linked_issues(
     state: &AppState,
     req: &Requirement,
@@ -236,7 +236,7 @@ pub(crate) async fn auto_advance_linked_issues(
         if issue.category.as_deref() != Some("线上问题") {
             continue;
         }
-        if matches!(issue.status.as_str(), "已修复" | "已复盘" | "已关闭") {
+        if matches!(issue.status.as_str(), "已修复" | "经验总结" | "已关闭") {
             continue;
         }
         let Ok(issue_dir) = req_dir_path(&issue) else {

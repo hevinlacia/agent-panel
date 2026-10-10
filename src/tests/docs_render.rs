@@ -144,7 +144,7 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // 排查中：incident + notes 必填，未创建时 required 检查不通过。
-    let checks = phase_entry_checks("排查中", &dir);
+    let checks = phase_entry_checks("排查中", &dir, true);
     let incident_check = checks
         .iter()
         .find(|c| c["id"] == "incident-md")
@@ -153,13 +153,13 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     assert_eq!(incident_check["ok"], false);
     std::fs::write(dir.join("incident.md"), "内容").unwrap();
     std::fs::write(dir.join("notes.md"), "内容").unwrap();
-    let checks = phase_entry_checks("排查中", &dir);
+    let checks = phase_entry_checks("排查中", &dir, true);
     assert!(checks
         .iter()
         .all(|c| c["required"] == false || c["ok"] == true));
     // 已定位：root-cause 缺失但存量 technical-plan.md 兼容放行。
     std::fs::write(dir.join("technical-plan.md"), "存量根因记录").unwrap();
-    let checks = phase_entry_checks("已定位", &dir);
+    let checks = phase_entry_checks("已定位", &dir, true);
     let fallback_check = checks
         .iter()
         .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
@@ -168,7 +168,7 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     assert_eq!(fallback_check["ok"], true);
     // 新问题写 root-cause.md 后同样满足。
     std::fs::write(dir.join("root-cause.md"), "根因与证据链").unwrap();
-    let checks = phase_entry_checks("已定位", &dir);
+    let checks = phase_entry_checks("已定位", &dir, true);
     let fallback_check = checks
         .iter()
         .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
