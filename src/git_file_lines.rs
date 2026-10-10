@@ -110,7 +110,7 @@ pub(crate) async fn api_git_file_lines(
 }
 
 /// 拒绝绝对路径、`..` 上跳、空路径与控制字符，只允许仓库相对路径。
-fn validate_repo_relative_path(path: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_repo_relative_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() {
         return Err(ApiError::bad_request("path 不能为空".to_string()));
     }
