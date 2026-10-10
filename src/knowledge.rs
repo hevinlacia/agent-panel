@@ -1570,7 +1570,8 @@ fn relative_knowledge_source_path(meta_path: &Path, source_path: &Path) -> Strin
 fn category_from_knowledge_id(id: &str) -> String {
     let first = id.split('-').next().unwrap_or_default();
     match first {
-        "api" | "biz" | "conventions" | "link" | "pitfall" | "profile" | "ref" => first.to_string(),
+        "api" | "biz" | "conventions" | "link" | "observation" | "pitfall" | "profile" | "ref" => first.to_string(),
+        "obs" => "observation".to_string(),
         "exp" => "experience".to_string(),
         _ => "general".to_string(),
     }
