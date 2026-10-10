@@ -1,0 +1,23 @@
+src/knowledge.rs
+  75c120b59ba7129d 1573-1574
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "51b6439a6923ab7471f01a5c03961801586edf25",
+  "prompts": {
+    "75c120b59ba7129d": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a12478-eaf0-74cc-b810-1bc06d58cea6",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 1,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
