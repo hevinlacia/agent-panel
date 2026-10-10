@@ -83,7 +83,7 @@ pub(crate) async fn build_phase_runtime_context(
             }))
         })
         .collect();
-    let entry_checks = phase_entry_checks(&req.status, dir);
+    let entry_checks = phase_entry_checks(&req.status, dir, is_issue_category(req.category.as_deref().unwrap_or("")));
     let entry_checks = if req.source == "开发推动" && req.status == "测试中" {
         let mut checks = entry_checks;
         checks.push(file_check(
@@ -150,13 +150,13 @@ pub(crate) fn default_intent_for_status(status: &str) -> &'static str {
         "排查中" => "progress",
         "已定位" => "overview",
         "已修复" => "experience-summary",
-        "已复盘" | "已关闭" => "overview",
+        "已关闭" => "overview",
         "已完成" => "overview",
         _ => "overview",
     }
 }
 
-pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
+pub(crate) fn phase_entry_checks(status: &str, dir: &Path, is_issue: bool) -> Vec<Value> {
     match status {
         "需求澄清" => vec![
             file_check(dir, "background.md", "业务背景、范围和验收口径", true),
@@ -255,6 +255,22 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             ),
             file_check(dir, BRANCH_SCOPE_FILE, "分支与合并目标可计算", false),
         ],
+        // 问题家族的经验总结（原「已复盘」）：排查经验必须已沉淀，可自动派发总结任务复核补漏。
+        "经验总结" if is_issue => vec![
+            file_check(
+                dir,
+                "troubleshooting.md",
+                "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
+                true,
+            ),
+            any_file_check(
+                dir,
+                &["root-cause.md", "technical-plan.md"],
+                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
+                true,
+            ),
+            file_check(dir, "notes.md", "关键结论和坑点可追溯", false),
+        ],
         "经验总结" => vec![
             file_check(
                 dir,
@@ -297,20 +313,13 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 false,
             ),
         ],
-        "已复盘" => vec![
+        "已关闭" => vec![
             file_check(
                 dir,
-                "troubleshooting.md",
-                "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
+                "notes.md",
+                "排查过程与经验库落地记录",
                 true,
             ),
-            any_file_check(
-                dir,
-                &["root-cause.md", "technical-plan.md"],
-                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
-                true,
-            ),
-            file_check(dir, "notes.md", "排查过程与经验库落地记录", true),
         ],
         "已关闭" => vec![
             file_check(

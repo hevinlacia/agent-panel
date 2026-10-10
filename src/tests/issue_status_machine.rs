@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn ensure_status_for_category_rejects_req_flow_status_for_issues() {
     // 轻流程 5 状态 + 挂起：放行
-    for status in ["排查中", "已定位", "已修复", "已复盘", "已关闭", "挂起"] {
+    for status in ["排查中", "已定位", "已修复", "经验总结", "已关闭", "挂起"] {
         assert!(
             ensure_status_for_category(Some("线上问题"), status).is_ok(),
             "线上问题应允许 {status}"
@@ -16,7 +16,7 @@ fn ensure_status_for_category_rejects_req_flow_status_for_issues() {
         );
     }
     // 常规需求流状态：拒绝
-    for status in ["需求澄清", "开发中", "自测中", "测试中", "人工核查", "发布就绪", "经验总结", "已完成"] {
+    for status in ["需求澄清", "开发中", "自测中", "测试中", "人工核查", "发布就绪", "已完成"] {
         let err = ensure_status_for_category(Some("线上问题"), status)
             .expect_err(&format!("线上问题应拒绝 {status}"));
         assert!(err.message.contains(status));

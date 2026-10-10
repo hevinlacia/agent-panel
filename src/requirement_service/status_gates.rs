@@ -222,7 +222,7 @@ pub(crate) async fn ensure_issue_root_cause_allows_transition(req: &Requirement)
     ))
 }
 
-/// 线上问题复盘点禁：流转到「已复盘」前必须已沉淀排查经验
+/// 线上问题经验沉淀门禁：流转到「经验总结」前必须已沉淀排查经验
 /// （troubleshooting.md 含怎么排查/怎么修复），无沉淀价值的问题应直接「已关闭」而不是复盘。
 /// 仅对 category=线上问题 生效。
 pub(crate) async fn ensure_issue_troubleshooting_allows_transition(
@@ -240,6 +240,6 @@ pub(crate) async fn ensure_issue_troubleshooting_allows_transition(
         return Ok(());
     }
     Err(ApiError::bad_request(
-        "进入「已复盘」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
+        "进入「经验总结」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
     ))
 }

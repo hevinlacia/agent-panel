@@ -52,7 +52,7 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     );
     // 线上问题硬门禁迁移为默认规则。
     assert_eq!(gates_of("排查中", "已定位"), vec!["issue-root-cause"]);
-    assert_eq!(gates_of("已修复", "已复盘"), vec!["issue-troubleshooting"]);
+    assert_eq!(gates_of("已修复", "经验总结"), vec!["issue-troubleshooting"]);
     // 2026-10 新增：需求澄清/需求创建 → 开发中 挂工时预估门禁（排期依赖，抢修豁免）。
     assert_eq!(gates_of("需求澄清", "开发中"), vec!["effort-estimate"]);
     assert_eq!(gates_of("需求创建", "开发中"), vec!["effort-estimate"]);
@@ -357,8 +357,8 @@ async fn status_flow_reports_gate_states_with_unverified() {
 
 #[test]
 fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
-    // 新状态机：排查中 → 已定位 → 已修复 → 已复盘 / 已关闭。
-    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+    // 新状态机：排查中 → 已定位 → 已修复 → 经验总结 / 已关闭。
+    for s in ["排查中", "已定位", "已修复", "经验总结", "已关闭"] {
         assert_eq!(canonical_status(s).unwrap(), s);
     }
     // 旧状态兼容：已确认/问题确认 → 已定位。
