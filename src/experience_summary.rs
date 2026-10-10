@@ -285,6 +285,28 @@ pub(crate) async fn dispatch_experience_summary_jobs(
     let now = now_ms();
 
     for req in reqs {
+        // 派发时间窗口（2026-10）：只限制自动派发的触发时机（如 GLM 晚间低价把任务排在夜间）；
+        // 窗口内已 spawn 的任务执行多久都不受限；手动派发（only_req_id 指定）不受窗口限制。
+        // 配置非法时 fail-open（视为不限），避免配置错误停摆自动总结。
+        if only_req_id.is_none() {
+            if let Some(win) = cfg.experience_summary_dispatch_window.as_ref() {
+                if win.enabled {
+                    match dispatch_window_allows(win, chrono::Local::now().time()) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            report.skipped.push(json!({
+                                "reqId": req.id,
+                                "reason": format!("outside dispatch window {}-{}", win.start, win.end),
+                            }));
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "invalid experience summary dispatch window, treating as open");
+                        }
+                    }
+                }
+            }
+        }
         if !experience_summary_triggered(&req) {
             if matches!(
                 req.experience_summary_job
