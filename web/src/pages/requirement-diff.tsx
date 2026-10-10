@@ -1,5 +1,6 @@
-import { ArrowLeft, FileCode2, GitBranch, MessageSquareText, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
+import { ArrowLeft, Copy, FileCode2, GitBranch, MessageSquareText, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import type { AnnotationsPayload, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, DiffSnapshotsPayload, MasterDiffPayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
 import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
@@ -32,6 +33,53 @@ export function RequirementDiffPage() {
   const [viewIndex, setViewIndex] = useState(0)
   const review = snapshots[viewIndex] || null
   const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
+  /** 左侧文件列表悬浮卡：hover 延迟弹出文件全名/仓库/完整路径，卡片可移入选中复制；单例共享。 */
+  const [fileCard, setFileCard] = useState<{ key: string; x: number; y: number } | null>(null)
+  const fileCardShowTimer = useRef<number | null>(null)
+  const fileCardHideTimer = useRef<number | null>(null)
+  const fileCardCopyHint = useRef(false)
+  const [fileCardCopied, setFileCardCopied] = useState(false)
+  const hoveredFile = fileCard ? files.find((f) => `${f.repo.repoName}:${f.file.path}` === fileCard.key) : null
+  const clearFileCardTimers = () => {
+    if (fileCardShowTimer.current) window.clearTimeout(fileCardShowTimer.current)
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardShowTimer.current = null
+    fileCardHideTimer.current = null
+  }
+  const showFileCard = (e: React.MouseEvent<HTMLButtonElement>, key: string) => {
+    clearFileCardTimers()
+    const rect = e.currentTarget.getBoundingClientRect()
+    fileCardShowTimer.current = window.setTimeout(() => {
+      const width = 420
+      const x = rect.right + 10 + width > window.innerWidth ? Math.max(8, rect.left - width - 10) : rect.right + 10
+      const y = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 150))
+      setFileCard({ key, x, y })
+    }, 300)
+  }
+  const scheduleHideFileCard = () => {
+    if (fileCardShowTimer.current) window.clearTimeout(fileCardShowTimer.current)
+    fileCardShowTimer.current = null
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardHideTimer.current = window.setTimeout(() => setFileCard(null), 180)
+  }
+  const cancelHideFileCard = () => {
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardHideTimer.current = null
+  }
+  const closeFileCard = () => {
+    clearFileCardTimers()
+    setFileCard(null)
+    setFileCardCopied(false)
+  }
+  const copyFilePath = async (full: string) => {
+    try {
+      await navigator.clipboard.writeText(full)
+      setFileCardCopied(true)
+      window.setTimeout(() => setFileCardCopied(false), 1600)
+    } catch {
+      /* 剪贴板不可用时用户仍可手动选中复制 */
+    }
+  }
   const stats = reviewStats(review)
   const [activeKey, setActiveKey] = useState("")
   /** 行级选中：点击切换选中/取消，支持跨行多选；最后操作的行作为右侧说明面板锚点（activeLine）。 */
@@ -252,9 +300,15 @@ export function RequirementDiffPage() {
           const repoFiles = files.filter((f) => f.repo.repoName === repoName)
           return <details key={repoName} className="react-diff-repo-group" open>
             <summary><strong>{repoName}</strong><em>base: {repo?.baseRef || baseRef}</em></summary>
-            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
+            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onMouseEnter={(e) => showFileCard(e, key)} onMouseLeave={scheduleHideFileCard} onFocus={() => clearFileCardTimers()} onClick={() => { closeFileCard(); scrollToFile(key) }}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
           </details>
         })}</div></aside>
+      {fileCard && hoveredFile ? createPortal(<div className="react-file-hover-card" style={{ left: fileCard.x, top: fileCard.y }} onMouseEnter={cancelHideFileCard} onMouseLeave={scheduleHideFileCard}>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">文件</span><code>{hoveredFile.file.path}</code></div>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">仓库</span><code>{hoveredFile.repo.repoName}</code></div>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">路径</span><code>{hoveredFile.repo.projectPath ? `${hoveredFile.repo.projectPath.replace(/\/$/, "")}/${hoveredFile.file.path}` : `(${hoveredFile.repo.repoName}) ${hoveredFile.file.path}`}</code></div>
+          <div className="react-file-hover-actions"><button type="button" onClick={() => { const full = hoveredFile.repo.projectPath ? `${hoveredFile.repo.projectPath.replace(/\/$/, "")}/${hoveredFile.file.path}` : hoveredFile.file.path; copyFilePath(full) }}><Copy size={12} />{fileCardCopied ? "已复制 ✓" : "复制完整路径"}</button><em>文字可直接选中复制</em></div>
+        </div>, document.body) : null}
       <main className="react-diff-main"><div className="react-diff-topbar"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{snapshots.length ? <span>快照 {viewIndex + 1}/{snapshots.length}</span> : null}{review?.savedAt ? <span>生成 {formatDateTime(review.savedAt)}</span> : review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{viewIndex > 0 ? <span className="react-warn-note">⚠ 正在查看历史快照（base: {review?.baseRef || baseRef}），备注锚定以当前显示快照为准</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}{pruneNotice ? <span className="react-warn-note">✂ {pruneNotice}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{files.length ? <div className="react-diff-hscroll" ref={scrollBarRef} onScroll={onHScrollBarScroll}><div className="react-diff-hscroll-pad" style={{ width: hScrollWidth }} /></div> : null}</div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成代码差异…" /> : files.length === 0 ? <EmptyCard>{snapshots.length === 0 ? <>暂无代码差异快照。点右上角「生成代码差异」首次生成并保存；之后每次刷新都会保留旧版本，可回退对比。</> : "该快照没有可展示的文件级差异。"}</EmptyCard> : <div className="react-diff-scroll-body" ref={scrollBodyRef} onScroll={onHScrollBodyScroll}>{files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const snapKey = review?.savedAt || review?.updatedAt || viewIndex; return <DiffFileCard key={`${key}#${snapKey}`} ref={(h) => { if (h) cardRefs.current.set(key, h); else cardRefs.current.delete(key) }} view={item} review={review} selectedSet={selectedSet} activeRowKey={activeRowKey} onToggleLine={toggleLine} /> })}</div>}</main>
       <AnnotationPanel
         fileLabel={activeView ? `${activeView.repo.repoName}/${activeView.file.path}` : ""}

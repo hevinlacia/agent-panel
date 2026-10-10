@@ -1334,3 +1334,13 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-diff-blame-error { margin: 6px 14px; }
 .react-diff-code .react-diff-blame-cell { white-space: nowrap; color: var(--react-muted); font: .68rem var(--react-mono); padding: 0 10px; border-left: 1px solid rgba(148, 163, 184, .1); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
 .react-diff-code .react-diff-blame-cell .react-diff-blame-empty { color: var(--react-faint); }
+
+/* ===== Diff 页文件列表悬浮卡（文件全名/完整路径，可选中复制）===== */
+.react-file-hover-card { position: fixed; z-index: 90; width: 420px; max-width: calc(100vw - 16px); padding: 12px 14px; border-radius: 12px; border: 1px solid var(--react-border-strong); background: var(--react-panel-strong); box-shadow: 0 12px 32px rgba(0, 0, 0, .5); user-select: text; cursor: text; }
+.react-file-hover-row { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.react-file-hover-row code { flex: 1; color: var(--react-text); font: .76rem/1.5 var(--react-mono); word-break: break-all; user-select: text; cursor: text; }
+.react-file-hover-label { flex: none; width: 34px; color: var(--react-faint); font: 800 .64rem var(--react-mono); letter-spacing: .1em; }
+.react-file-hover-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--react-border); }
+.react-file-hover-actions button { display: inline-flex; gap: 4px; align-items: center; background: rgba(34, 211, 238, .1); border: 1px solid var(--react-border-strong); border-radius: 7px; color: var(--react-cyan); font: 800 .7rem var(--react-mono); padding: 4px 10px; cursor: pointer; }
+.react-file-hover-actions button:hover { background: rgba(34, 211, 238, .18); }
+.react-file-hover-actions em { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; }
