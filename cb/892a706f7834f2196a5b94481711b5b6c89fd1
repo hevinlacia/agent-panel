@@ -1,0 +1,25 @@
+web/src/types.ts
+  4fa74e1d667f84e1 470-478,642-643
+src/experience_summary.rs
+  4fa74e1d667f84e1 288-309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "cb892a706f7834f2196a5b94481711b5b6c89fd1",
+  "prompts": {
+    "4fa74e1d667f84e1": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a124a8-9b07-756c-a138-94f699df30c9",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 33,
+      "total_deletions": 0,
+      "accepted_lines": 33,
+      "overriden_lines": 0
+    }
+  }
+}
