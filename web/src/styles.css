@@ -1248,6 +1248,23 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-kpi-violet .react-kpi-value { color: var(--react-purple); }
 .react-kpi-rose .react-kpi-value { color: #fb7185; }
 .react-kpi-green .react-kpi-value { color: var(--react-green); }
+
+/* 排期页四项统计平铺条：单行横向布局（icon + label/sub 左，value 右），替代纵向堆叠的高卡片；1px gap 充当分隔线 */
+.react-sched-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-bottom: 20px; border: 1px solid var(--react-border); border-radius: 23px; background: var(--react-border); box-shadow: 0 20px 58px rgba(0, 0, 0, 0.24); overflow: hidden; }
+.react-sched-stat { display: flex; gap: 12px; align-items: center; min-width: 0; padding: 16px 20px; background: linear-gradient(180deg, rgba(19, 24, 32, 0.84), rgba(10, 14, 21, 0.9)), rgba(255, 255, 255, 0.025); }
+.react-sched-stat-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 14px; color: var(--react-cyan); background: rgba(255, 255, 255, 0.052); }
+.react-sched-stat-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.react-sched-stat-label { color: var(--react-muted); font: 800 0.7rem var(--react-mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.react-sched-stat-sub { color: var(--react-faint); font: 0.74rem var(--react-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-sched-stat-value { flex: none; color: #fff; font: 900 2rem/1 var(--react-mono); letter-spacing: -0.04em; }
+.react-sched-stat-rose .react-sched-stat-value { color: #fb7185; }
+.react-sched-stat-warn .react-sched-stat-value { color: var(--react-amber); }
+.react-sched-stat-violet .react-sched-stat-value { color: var(--react-purple); }
+.react-sched-stat-green .react-sched-stat-value { color: var(--react-green); }
+.react-sched-stat-active .react-sched-stat-value { color: var(--react-cyan); }
+.react-sched-stat-avg .react-sched-stat-value { color: var(--react-amber); }
+@media (max-width: 1400px) { .react-sched-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .react-sched-strip { grid-template-columns: 1fr; } }
 .react-sched-config { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; color: var(--react-muted); font: .8rem var(--react-mono); }
 .react-sched-config label { display: inline-flex; gap: 8px; align-items: center; }
 .react-sched-config input[type="number"] { width: 64px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .82rem var(--react-mono); padding: 6px 8px; }
