@@ -14,7 +14,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
-use axum::{extract::{Query, State}, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -82,11 +85,7 @@ pub(crate) fn extract_display_id(ones: Option<&str>) -> Option<String> {
         return None;
     }
     let label = parse_ones_ref(raw)
-        .and_then(|v| {
-            v.get("label")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
+        .and_then(|v| v.get("label").and_then(Value::as_str).map(str::to_string))
         .unwrap_or_default();
     let hay = format!("{label} {raw}");
     let re = Regex::new(r"(?i)([A-Z][A-Z0-9_]*-\d+)").ok()?;
@@ -362,15 +361,10 @@ pub(crate) async fn api_ones_manhour_log(
         let (status, message) = if execute {
             let auth_cfg = read_config(&state).await?;
             let auth = normalize_browser_auth_config(auth_cfg.browser_auth);
-            let site = auth
-                .sites
-                .iter()
-                .find(|s| s.id == ONES_SITE_ID)
-                .cloned();
+            let site = auth.sites.iter().find(|s| s.id == ONES_SITE_ID).cloned();
             let outcome: Result<()> = async {
-                let site = site.ok_or_else(|| {
-                    anyhow!("browserAuth.sites 未配置 id=ones 的站点")
-                })?;
+                let site =
+                    site.ok_or_else(|| anyhow!("browserAuth.sites 未配置 id=ones 的站点"))?;
                 let cookies = load_chrome_cookies(&auth).await?.1;
                 let uuid = task_uuid.clone().ok_or_else(|| {
                     anyhow!("未获取到任务 uuid（工时报表缓存中无 {display_id}），无法写入")
@@ -459,7 +453,10 @@ mod tests {
     #[test]
     fn extract_display_id_from_pasted_text_with_url() {
         let raw = "JTYC-1347611 上架策略新增指定库位 https://ones.jtexpress.com.cn/project/#/team/5BXYuw3B/issue/JTYC-1347611";
-        assert_eq!(extract_display_id(Some(raw)).as_deref(), Some("JTYC-1347611"));
+        assert_eq!(
+            extract_display_id(Some(raw)).as_deref(),
+            Some("JTYC-1347611")
+        );
     }
 
     #[test]

@@ -38,7 +38,14 @@ pub(crate) async fn build_phase_runtime_context(
     let rework_mode = req.status == "开发中" && loop_kind == DevLoopKind::Rework;
     let fast_fix_mode = req.status == "开发中" && loop_kind == DevLoopKind::ReleaseReady;
     let fixed_phase_prompt = load_fixed_phase_prompt(state).await;
-    let state_phase_prompt = load_phase_prompt(state, &req.status, loop_kind, rework_rounds, release_ready_rounds).await;
+    let state_phase_prompt = load_phase_prompt(
+        state,
+        &req.status,
+        loop_kind,
+        rework_rounds,
+        release_ready_rounds,
+    )
+    .await;
     let current_phase_prompt = [fixed_phase_prompt.trim(), state_phase_prompt.trim()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -83,7 +90,11 @@ pub(crate) async fn build_phase_runtime_context(
             }))
         })
         .collect();
-    let entry_checks = phase_entry_checks(&req.status, dir, is_issue_category(req.category.as_deref().unwrap_or("")));
+    let entry_checks = phase_entry_checks(
+        &req.status,
+        dir,
+        is_issue_category(req.category.as_deref().unwrap_or("")),
+    );
     let entry_checks = if req.source == "开发推动" && req.status == "测试中" {
         let mut checks = entry_checks;
         checks.push(file_check(
@@ -313,14 +324,12 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path, is_issue: bool) -> Ve
                 false,
             ),
         ],
-        "已关闭" => vec![
-            file_check(
-                dir,
-                "notes.md",
-                "排查过程与经验库落地记录",
-                true,
-            ),
-        ],
+        "已关闭" => vec![file_check(
+            dir,
+            "notes.md",
+            "排查过程与经验库落地记录",
+            true,
+        )],
         "已关闭" => vec![
             file_check(
                 dir,

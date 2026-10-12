@@ -98,12 +98,16 @@ pub(crate) struct DispatchWindow {
 }
 
 pub(crate) fn parse_hh_mm(s: &str) -> Result<chrono::NaiveTime, String> {
-    chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M").map_err(|_| format!("invalid HH:MM time: {s:?}"))
+    chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M")
+        .map_err(|_| format!("invalid HH:MM time: {s:?}"))
 }
 
 /// 判定 now 是否在派发窗口内（start 含、end 排他；start > end = 跨午夜；start == end = 全天允许）。
 /// 窗口时间非法时返回 Err（调用方 fail-open 视为不限，避免配置错误停摆自动总结）。
-pub(crate) fn dispatch_window_allows(win: &DispatchWindow, now: chrono::NaiveTime) -> Result<bool, String> {
+pub(crate) fn dispatch_window_allows(
+    win: &DispatchWindow,
+    now: chrono::NaiveTime,
+) -> Result<bool, String> {
     let start = parse_hh_mm(&win.start)?;
     let end = parse_hh_mm(&win.end)?;
     if start == end {

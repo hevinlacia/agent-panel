@@ -8,6 +8,8 @@
     "start": "bun run build:dashboard && cargo run --release",
     "start:backend": "cargo run",
     "typecheck": "bun run typecheck:web && cargo check",
+    "fmt": "cargo fmt",
+    "fmt:check": "cargo fmt --check",
     "test": "cargo test",
     "build:dashboard": "vite build",
     "build:backend": "cargo build --release",

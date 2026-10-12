@@ -120,7 +120,9 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
     }
     // 整合需求发布分支登记校验：文件存在但解析失败报 problem；分支名为空/重复 id 也报 problem。
     if dir.join(RELEASE_BRANCHES_FILE).is_file() {
-        let raw = fs::read_to_string(dir.join(RELEASE_BRANCHES_FILE)).await.unwrap_or_default();
+        let raw = fs::read_to_string(dir.join(RELEASE_BRANCHES_FILE))
+            .await
+            .unwrap_or_default();
         match serde_json::from_str::<ReleaseBranchesFile>(&raw) {
             Ok(file) => {
                 let mut seen_ids = std::collections::HashSet::new();
@@ -133,7 +135,10 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
                         ));
                     }
                     if !seen_ids.insert(b.id.clone()) {
-                        problems.push(format!("release-branches.json: duplicate branch id {}", b.id));
+                        problems.push(format!(
+                            "release-branches.json: duplicate branch id {}",
+                            b.id
+                        ));
                     }
                     if !seen_names.insert(b.name.clone()) {
                         problems.push(format!(

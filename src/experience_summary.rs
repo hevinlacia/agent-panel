@@ -664,7 +664,11 @@ pub(crate) fn append_agent_context_markdown(out: &mut String, context: &Value) {
         push_value_bullet(out, "Startup Intent", phase.get("intent"));
         push_value_bullet(out, "Recommended Intent", phase.get("recommendedIntent"));
         push_value_bullet(out, "Fixed Prompt File", phase.get("fixedPhasePromptFile"));
-        push_value_bullet(out, "State Prompt File (startup)", phase.get("statePhasePromptFile"));
+        push_value_bullet(
+            out,
+            "State Prompt File (startup)",
+            phase.get("statePhasePromptFile"),
+        );
         if let Some(prompt) = phase.get("fixedPhasePrompt").and_then(Value::as_str) {
             let (excerpt, truncated) = truncate_chars(prompt.trim(), 1_400);
             out.push_str("\n### Fixed Lifecycle Prompt\n```text\n");

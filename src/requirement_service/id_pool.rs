@@ -135,13 +135,11 @@ pub(crate) fn normalize_create_id_template(
             let (_, suffix) = split_seq_template(v)?;
             return Ok(format!("{GROUP_ID_PREFIX}-{{seq}}{suffix}"));
         }
-        let valid = pool_lineage_prefixes(GROUP_ID_PREFIX)
-            .iter()
-            .any(|prefix| {
-                Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
-                    .expect("valid regex")
-                    .is_match(v)
-            });
+        let valid = pool_lineage_prefixes(GROUP_ID_PREFIX).iter().any(|prefix| {
+            Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
+                .expect("valid regex")
+                .is_match(v)
+        });
         if !valid {
             return Err(ApiError::bad_request(format!(
                 "需求组 reqId 必须使用 {GROUP_ID_PREFIX}-<序号> 独立编号（如 {GROUP_ID_PREFIX}-001-slug）；组是需求聚合视图，不占用主需求池"
@@ -178,13 +176,11 @@ pub(crate) fn normalize_create_id_template(
             let (_, suffix) = split_seq_template(v)?;
             return Ok(format!("{FIX_ID_PREFIX}-{{seq}}{suffix}"));
         }
-        let valid = pool_lineage_prefixes(FIX_ID_PREFIX)
-            .iter()
-            .any(|prefix| {
-                Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
-                    .expect("valid regex")
-                    .is_match(v)
-            });
+        let valid = pool_lineage_prefixes(FIX_ID_PREFIX).iter().any(|prefix| {
+            Regex::new(&format!("^{}-(\\d+)(-|$)", regex::escape(prefix)))
+                .expect("valid regex")
+                .is_match(v)
+        });
         if !valid {
             return Err(ApiError::bad_request(format!(
                 "修复需求 reqId 必须使用 {FIX_ID_PREFIX}-<序号> 独立编号（如 {FIX_ID_PREFIX}-001-slug）；绑定 issues 的记录是代码修复性质，不占用需求主池；不绑 issues 请去掉 issues 字段用 REQ 池"

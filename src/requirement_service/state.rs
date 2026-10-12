@@ -150,7 +150,9 @@ pub(crate) fn dev_loop_kind_from_state(state: &Value) -> DevLoopKind {
             let from = entry.get("from").and_then(Value::as_str);
             return match from {
                 Some("发布就绪") => DevLoopKind::ReleaseReady,
-                Some("人工核查") | Some("人工复测") | Some("测试中") => DevLoopKind::Rework,
+                Some("人工核查") | Some("人工复测") | Some("测试中") => {
+                    DevLoopKind::Rework
+                }
                 _ => DevLoopKind::None,
             };
         }

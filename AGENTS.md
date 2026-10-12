@@ -95,6 +95,8 @@ Commands:
 ```bash
 bun install
 bun run build:dashboard
+cargo fmt            # 格式化（rustfmt）
+cargo fmt --check    # 验证无格式漂移
 cargo check
 cargo test
 bun run typecheck
@@ -105,6 +107,7 @@ bun run start
 Before declaring code changes complete, run at least:
 
 ```bash
+cargo fmt --check
 bun run typecheck
 bun run build
 cargo test
