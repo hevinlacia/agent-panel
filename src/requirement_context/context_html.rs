@@ -5,6 +5,7 @@ pub(crate) async fn build_requirement_context(
     intent: &str,
     tokens: Vec<&'static str>,
     budget: usize,
+    full: bool,
 ) -> ApiResult<Value> {
     let dir = req_dir_path(req)?;
     let mut rows = Vec::new();
@@ -17,10 +18,17 @@ pub(crate) async fn build_requirement_context(
         };
         if canonical == "req.attachments" {
             let slots_left = total.saturating_sub(idx).max(1);
-            let per_file_budget = (remaining / slots_left).clamp(300, 3_000);
+            // full（HTML 阅读视图）不做预算截断：单独页面就是用来看全文的。
+            let per_file_budget = if full {
+                usize::MAX
+            } else {
+                (remaining / slots_left).clamp(300, 3_000)
+            };
             let content = render_requirement_attachments_context(&dir, per_file_budget).await;
             let chars = content.chars().count();
-            remaining = remaining.saturating_sub(chars);
+            if !full {
+                remaining = remaining.saturating_sub(chars);
+            }
             let path = dir.join(file);
             rows.push(json!({
                 "token": canonical,
@@ -39,7 +47,12 @@ pub(crate) async fn build_requirement_context(
         let exists = path.is_file();
         let bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
         let slots_left = total.saturating_sub(idx).max(1);
-        let per_file_budget = (remaining / slots_left).clamp(300, 3_000);
+        // full（HTML 阅读视图）不做预算截断：单独页面就是用来看全文的。
+        let per_file_budget = if full {
+            usize::MAX
+        } else {
+            (remaining / slots_left).clamp(300, 3_000)
+        };
         // notes 是追加型文档：最新内容在尾部，截断取尾（最新优先）；其余文档仍取头。
         let (content, truncated, chars) = if exists && remaining > 0 {
             let raw = fs::read_to_string(&path).await.unwrap_or_default();
@@ -49,7 +62,9 @@ pub(crate) async fn build_requirement_context(
                 truncate_chars(&raw, per_file_budget)
             };
             let chars = excerpt.chars().count();
-            remaining = remaining.saturating_sub(chars);
+            if !full {
+                remaining = remaining.saturating_sub(chars);
+            }
             (excerpt, truncated, chars)
         } else {
             (String::new(), false, 0)
@@ -75,6 +90,7 @@ pub(crate) async fn build_requirement_context(
         "intent": intent,
         "budget": budget,
         "remainingBudget": remaining,
+        "full": full,
         "tokens": rows,
         "editPlanUrl": format!("/api/requirement/edit-plan?id={}&intent={}", req.id, intent),
     }))
@@ -88,6 +104,17 @@ pub(crate) fn pretty_json(content: &str) -> Option<String> {
     serde_json::from_str::<Value>(content)
         .ok()
         .map(|v| serde_json::to_string_pretty(&v).unwrap_or_else(|_| content.to_string()))
+}
+
+/// 文件大小人性化展示（侧栏文件列表用）。
+fn format_bytes(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 /// Friendly table for req.branchScope (repos + branches), falls back to None.
@@ -193,9 +220,26 @@ const CONTEXT_PAGE_CSS: &str = r#"
     .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #f0a020; color: #161b22; }
     .badge-missing { background: #cf222e; color: #fff; }
     .badge-truncated { background: #9a6700; color: #fff; }
-    .page-main { max-width: 1020px; margin: 24px auto 64px; padding: 0 24px; }
+    .badge-full { background: transparent; border: 1px solid #f0a020; color: #f0a020; }
+    /* 两栏布局（仿代码差异页）：左侧文件列表 sticky，右侧全文；宽屏自动拉伸，上限与 diff 页一致。 */
+    .page-shell { display: grid; grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr); gap: 18px; align-items: start; max-width: 2360px; margin: 20px auto 0; padding: 0 clamp(16px, 2.4vw, 44px); }
+    .page-sidebar { position: sticky; top: 14px; display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 28px); overflow: auto; border: 1px solid #30363d; border-radius: 14px; background: linear-gradient(180deg, #151a22, #0e131a); padding: 12px; }
+    .side-cap { font-size: 11px; font-weight: 800; letter-spacing: .14em; color: #8b949e; }
+    .file-list { display: flex; flex-direction: column; gap: 6px; }
+    .file-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; width: 100%; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; background: transparent; color: #c9d1d9; text-align: left; cursor: pointer; font: inherit; line-height: 1.4; }
+    .file-item:hover { border-color: rgba(88,166,255,.4); background: rgba(88,166,255,.08); }
+    .file-item.active { border-color: rgba(240,160,32,.6); background: rgba(240,160,32,.12); color: #fff; }
+    .file-item span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .file-item strong { font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item small { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-item em { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; font-style: normal; color: #8b949e; white-space: nowrap; }
+    .file-item em.is-missing { color: #f85149; font-weight: 700; }
+    .side-json { font-size: 12px; color: #58a6ff; text-decoration: none; padding: 8px 2px 2px; border-top: 1px solid #21262d; }
+    .side-json:hover { text-decoration: underline; }
+    .page-main { min-width: 0; margin: 0 0 24px; }
     .intro { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 14px 18px; margin-bottom: 20px; color: #57606a; font-size: 13px; }
-    .token { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+    .token { display: none; background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+    .token.active { display: block; }
     .token-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-bottom: 1px solid #eef0f2; background: #fafbfc; }
     .token-head h2 { margin: 0; font-size: 16px; }
     .token-idx { font-size: 11px; color: #a0a8b0; }
@@ -241,6 +285,12 @@ const CONTEXT_PAGE_CSS: &str = r#"
     .token-body .meta-note { color: #6e7781; font-size: 12px; }
     .page-footer { text-align: center; padding: 8px 0 48px; font-size: 12px; color: #8b949e; }
     .page-footer a { color: #0969da; }
+    @media (max-width: 1000px) {
+      .page-shell { grid-template-columns: 1fr; }
+      .page-sidebar { position: static; max-height: none; }
+      .file-list { flex-direction: row; flex-wrap: wrap; }
+      .file-item { width: auto; }
+    }
     @media (prefers-color-scheme: dark) {
       body { background: #0d1117; color: #e6edf3; }
       .intro, .token { background: #161b22; border-color: #30363d; }
@@ -267,6 +317,23 @@ const CONTEXT_PAGE_CSS: &str = r#"
 const CONTEXT_PAGE_SCRIPT: &str = r#"
 <script>
 (function () {
+  // 左侧文件列表切换：一次只显示一个 token 全文，点击/锚点（#sec-N）均可定位。
+  var fileItems = Array.prototype.slice.call(document.querySelectorAll('.file-item'));
+  var tokenSections = Array.prototype.slice.call(document.querySelectorAll('.token'));
+  function activateFile(idx) {
+    fileItems.forEach(function (btn) { btn.classList.toggle('active', Number(btn.getAttribute('data-index')) === idx); });
+    tokenSections.forEach(function (sec, i) { sec.classList.toggle('active', i === idx); });
+  }
+  fileItems.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var idx = Number(btn.getAttribute('data-index')) || 0;
+      activateFile(idx);
+      if (history.replaceState) history.replaceState(null, '', '#sec-' + idx);
+    });
+  });
+  var hashMatch = (window.location.hash || '').match(/^#sec-(\d+)/);
+  activateFile(hashMatch ? Number(hashMatch[1]) : 0);
+
   function setCopyLabel(button, text) {
     const original = button.getAttribute('data-label') || button.textContent || '一键复制';
     if (!button.getAttribute('data-label')) button.setAttribute('data-label', original);
@@ -321,10 +388,12 @@ pub(crate) fn render_requirement_context_html(
         .get("remainingBudget")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let full = value.get("full").and_then(Value::as_bool).unwrap_or(false);
     let mut sections = String::new();
+    let mut nav_items: Vec<String> = Vec::new();
     let mut raw_tokens: Vec<String> = Vec::new();
     if let Some(tokens) = value.get("tokens").and_then(Value::as_array) {
-        for token in tokens.iter() {
+        for (idx, token) in tokens.iter().enumerate() {
             let t = token.get("token").and_then(Value::as_str).unwrap_or("");
             let file = token.get("file").and_then(Value::as_str).unwrap_or("");
             let path = token.get("path").and_then(Value::as_str).unwrap_or("");
@@ -360,10 +429,21 @@ pub(crate) fn render_requirement_context_html(
                 render_token_content_html(t, content)
             };
             sections.push_str(&format!(
-                "<section class=\"token\"><div class=\"token-head\"><h2>{label}</h2><div class=\"token-head-right\"><span class=\"token-idx\">{}</span></div></div><div class=\"token-meta\">{}<br/><code>{}</code></div><div class=\"token-body\">{body}</div></section>",
+                "<section class=\"token\" id=\"sec-{idx}\"><div class=\"token-head\"><h2>{label}</h2><div class=\"token-head-right\"><span class=\"token-idx\">{}</span></div></div><div class=\"token-meta\">{}<br/><code>{}</code></div><div class=\"token-body\">{body}</div></section>",
                 html_escape(path),
                 meta.join(" · "),
                 html_escape(path)
+            ));
+            let size_badge = if !exists {
+                "<em class=\"is-missing\">缺失</em>".to_string()
+            } else {
+                format!("<em>{}</em>", format_bytes(bytes))
+            };
+            nav_items.push(format!(
+                "<button type=\"button\" class=\"file-item\" data-index=\"{idx}\"><span><strong>{}</strong><small>{}</small></span>{}</button>",
+                html_escape(&label),
+                html_escape(file),
+                size_badge
             ));
         }
     }
@@ -381,7 +461,7 @@ pub(crate) fn render_requirement_context_html(
     html.push_str(&html_escape(intent));
     html.push_str(" · Agent Panel</title>\n<style>");
     html.push_str(CONTEXT_PAGE_CSS);
-    html.push_str("</style>\n</head>\n<body>\n<header class=\"page-header\"><div class=\"crumbs\">Agent Panel / 需求 / <a href=\"/requirement?id=");
+    html.push_str("</style>\n<noscript><style>.token { display: block !important; }</style></noscript>\n</head>\n<body>\n<header class=\"page-header\"><div class=\"crumbs\">Agent Panel / 需求 / <a href=\"/requirement?id=");
     html.push_str(&percent_encode(&req.id));
     html.push_str("\">");
     html.push_str(&html_escape(&req.id));
@@ -393,20 +473,37 @@ pub(crate) fn render_requirement_context_html(
     html.push_str(&html_escape(project));
     html.push_str("</span><span>意图：<code>");
     html.push_str(&html_escape(intent));
-    html.push_str("</code></span><span>预算：");
-    html.push_str(&budget.to_string());
-    html.push_str(" 字符（剩余 ");
-    html.push_str(&remaining.to_string());
+    if full {
+        html.push_str("</code></span><span class=\"badge badge-full\">全文模式 · 未截断</span></div></header>\n");
+    } else {
+        html.push_str("</code></span><span>预算：");
+        html.push_str(&budget.to_string());
+        html.push_str(" 字符（剩余 ");
+        html.push_str(&remaining.to_string());
+        html.push_str("）</span></div></header>\n");
+    }
     html.push_str(
-        "）</span></div></header>\n<main class=\"page-main\"><div class=\"intro\">以下为该需求「",
+        "<div class=\"page-shell\"><aside class=\"page-sidebar\"><div class=\"side-cap\">文件 · ",
     );
+    html.push_str(&nav_items.len().to_string());
+    html.push_str("</div><nav class=\"file-list\">");
+    html.push_str(&nav_items.join(""));
+    html.push_str("</nav><a class=\"side-json\" href=\"");
+    html.push_str(&raw_url);
+    html.push_str("\" rel=\"noreferrer\">查看原始 JSON</a></aside>\n<main class=\"page-main\"><div class=\"intro\">以下为该需求「");
     html.push_str(&html_escape(intent));
-    html.push_str("」的上下文汇总，按文档分节渲染，便于人工阅读。查看原始 JSON：<a href=\"");
+    if full {
+        html.push_str(
+            "」的上下文汇总，全文渲染不做截断；点击左侧文件切换查看。数据接口：<a href=\"",
+        );
+    } else {
+        html.push_str("」的上下文汇总，按文档分节渲染，便于人工阅读。查看原始 JSON：<a href=\"");
+    }
     html.push_str(&raw_url);
     html.push_str("\" rel=\"noreferrer\">原始数据</a></div>");
     html.push_str(&sections);
     html.push_str(CONTEXT_PAGE_SCRIPT);
-    html.push_str("</main>\n<footer class=\"page-footer\"><a href=\"");
+    html.push_str("</main></div>\n<footer class=\"page-footer\"><a href=\"");
     html.push_str(&raw_url);
     html.push_str(
         "\" rel=\"noreferrer\">查看原始 JSON 数据</a> · Agent Panel</footer>\n</body>\n</html>",
