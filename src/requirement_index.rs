@@ -35,7 +35,10 @@ pub(crate) struct Requirement {
     pub(crate) plan_release: Option<String>,
     /// 提测时间（meta.md frontmatter `submit-test-date`）：交付测试开始测试的日期 deadline；
     /// 到点时需求状态必须 ≥ 人工核查（开发侧工作全部完成）。unknown = 未登记。
+    /// 提测时间（实际）：排期面板容量评估用的实际提测日。
     pub(crate) submit_test_date: Option<String>,
+    /// 承诺提测时间：给产品/测试承诺的提测日，用户手设，判断紧急度用。
+    pub(crate) promise_submit_date: Option<String>,
     /// 最近一次进入「发布就绪」的时间（ms）；未登记提测时间时供排期页推定提测日。
     pub(crate) release_ready_at: Option<i64>,
     pub(crate) created_at: i64,
@@ -598,6 +601,11 @@ pub(crate) async fn load_requirement_from_dir(
         .get("submit-test-date")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let promise_submit_date = fm
+        .fields
+        .get("promise-submit-date")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
     let region = fm
         .fields
         .get("region")
@@ -684,6 +692,7 @@ pub(crate) async fn load_requirement_from_dir(
         issues,
         plan_release,
         submit_test_date,
+        promise_submit_date,
         release_ready_at,
         created_at,
         updated_at,
@@ -953,6 +962,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         issues: Vec::new(),
         plan_release: None,
         submit_test_date: None,
+        promise_submit_date: None,
         release_ready_at: None,
         created_at: now,
         updated_at: now,

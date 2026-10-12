@@ -558,6 +558,12 @@ pub(crate) async fn update_requirement(
         meta_next = update_meta_summary_line(&meta_next, "Submit test", &submit_test_date);
         changes.push("meta.submitTestDate".into());
     }
+    if let Some(promise_submit_date) = clean_optional(form.promise_submit_date.as_deref()) {
+        ensure_date_or_unknown(&promise_submit_date, "promiseSubmitDate")?;
+        meta_next = set_frontmatter_field(&meta_next, "promise-submit-date", &promise_submit_date);
+        meta_next = update_meta_summary_line(&meta_next, "Promise submit", &promise_submit_date);
+        changes.push("meta.promiseSubmitDate".into());
+    }
     if let Some(ones) = form.ones.as_deref() {
         let value = ones.trim().to_string();
         meta_next = set_frontmatter_field(&meta_next, "ones", &value);

@@ -1,8 +1,8 @@
 /**
- * Role: 需求详情页的排期信息卡 — ① 提测时间卡：登记/调整提测时间（PATCH meta）+ 提测倒计时；
+ * Role: 需求详情页的排期信息卡 — ① 提测时间卡：实际/承诺两个提测时间登记（PATCH meta）+ 承诺倒计时；
  * ② 工时评估卡：agent 预估展示 + 人工矫正输入（POST effort-estimate manualHours），排期统计优先人工矫正。
  * Public surface: SubmitTestCard, EffortEstimateCard — used by web/src/pages/requirement.tsx.
- * Constraints: 写仅 PATCH /api/requirement（submitTestDate）与 POST /api/requirement/effort-estimate（manualHours）。
+ * Constraints: 写仅 PATCH /api/requirement（submitTestDate / promiseSubmitDate）与 POST /api/requirement/effort-estimate（manualHours）。
  * Read-this-with: web/src/lib/schedule.ts（4h 单位口径）、web/src/features/requirements/ones-manhour-card.tsx（卡片风格）。
  */
 import { useState } from "react"
@@ -35,25 +35,34 @@ function countdown(deadline: string): { diff: number; text: string; cls: string 
 }
 
 export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: () => void }) {
-  const current = req.submitTestDate && req.submitTestDate !== "unknown" ? req.submitTestDate : ""
-  const [draft, setDraft] = useState(current)
-  const [saving, setSaving] = useState(false)
+  const valid = (v?: string | null) => (v && v !== "unknown" ? v : "")
+  const actual = valid(req.submitTestDate)
+  const promise = valid(req.promiseSubmitDate)
+  const [draftActual, setDraftActual] = useState(actual)
+  const [draftPromise, setDraftPromise] = useState(promise)
+  const [savingField, setSavingField] = useState<"actual" | "promise" | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const dirty = draft !== current
-  const cd = countdown(current)
+  // 倒计时 = 紧急度口径：优先承诺提测时间，未设回退实际提测时间
+  const cd = countdown(promise || actual)
 
-  async function save(date: string) {
-    setSaving(true)
+  async function save(field: "actual" | "promise", date: string) {
+    setSavingField(field)
     setErr(null)
     try {
-      await patchJson("/api/requirement", { reqId: req.id, submitTestDate: date || "unknown" })
+      const body = field === "actual" ? { reqId: req.id, submitTestDate: date || "unknown" } : { reqId: req.id, promiseSubmitDate: date || "unknown" }
+      await patchJson("/api/requirement", body)
       onSaved()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
-      setSaving(false)
+      setSavingField(null)
     }
   }
+
+  const rows = [
+    { key: "actual" as const, label: "实际提测", hint: "排期面板饱和度口径；进入「发布就绪」且未登记时自动补登当天", current: actual, draft: draftActual, setDraft: setDraftActual },
+    { key: "promise" as const, label: "承诺提测", hint: "给产品/测试承诺的提测日，判断需求紧急度；倒计时按此计算", current: promise, draft: draftPromise, setDraft: setDraftPromise },
+  ]
 
   return (
     <section className="react-panel react-sched-info-card">
@@ -62,30 +71,31 @@ export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: ()
         title="提测时间"
         chip={cd ? <span className={`react-sched-risk ${cd.cls}`}>{cd.text}</span> : <span className="react-muted">未登记</span>}
       />
-      <p className="react-muted">提测 = 交付测试开始测试；到这天需求状态必须 ≥ 人工核查。登记后进入需求排期的饱和度计算。</p>
-      <div className="react-sched-info-row">
-        <input
-          type="date"
-          value={draft}
-          disabled={saving}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        {dirty ? (
-          <button type="button" disabled={saving} onClick={() => save(draft)}>
-            {saving ? "保存中…" : "保存提测时间"}
-          </button>
-        ) : null}
-        {current && draft !== current ? (
-          <button type="button" className="react-ghost-btn" disabled={saving} onClick={() => setDraft(current)}>
-            撤销
-          </button>
-        ) : null}
-        {!dirty && current ? (
-          <button type="button" className="react-ghost-btn" disabled={saving} title="清除提测时间" onClick={() => save("")}>
-            清除
-          </button>
-        ) : null}
-      </div>
+      <p className="react-muted">实际 = 排期饱和度口径；承诺 = 给产品/测试的紧急度口径（倒计时按承诺，未设回退实际）。两者独立登记、互不覆盖。</p>
+      {rows.map((row) => {
+        const dirty = row.draft !== row.current
+        return (
+          <div key={row.key} className="react-sched-info-row">
+            <span className="react-sched-info-label" title={row.hint}>{row.label}</span>
+            <input
+              type="date"
+              value={row.draft}
+              disabled={savingField !== null}
+              onChange={(e) => row.setDraft(e.target.value)}
+            />
+            {dirty ? (
+              <button type="button" disabled={savingField !== null} onClick={() => save(row.key, row.draft)}>
+                {savingField === row.key ? "保存中…" : "保存"}
+              </button>
+            ) : null}
+            {!dirty && row.current ? (
+              <button type="button" className="react-ghost-btn" disabled={savingField !== null} title={`清除${row.label}`} onClick={() => save(row.key, "")}>
+                清除
+              </button>
+            ) : null}
+          </div>
+        )
+      })}
       {err ? <p className="react-effort-error">{err}</p> : null}
     </section>
   )

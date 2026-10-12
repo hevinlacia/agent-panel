@@ -285,6 +285,7 @@ async fn sub_requirement_create_flow_end_to_end() {
             start_date: None,
             plan_release: None,
             submit_test_date: None,
+            promise_submit_date: None,
             ones: Some("https://ones.example/issue".into()),
             issues: None,
             note: None,
