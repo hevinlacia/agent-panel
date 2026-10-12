@@ -3,14 +3,15 @@
  * 据此判断"能否接新需求 / 能接多大需求"。饱和度是容量占用账，不锁定每天具体做哪个需求（实际安排弹性）。
  * Public surface: SchedulePage used by web/src/App.tsx route /schedule.
  * Constraints: 读 /api/requirements + /api/ones/tasks；写仅 POST /api/requirement/effort-estimate（工时）
- *              与 PATCH /api/requirement（提测日期）；容量配置/手动工时覆盖存 localStorage。
+ *              与 PATCH /api/requirement（提测日期）；容量配置/默认排除状态存 localStorage。
  * Read-this-with: web/src/lib/schedule.ts（均摊算法）、web/src/pages/manhour.tsx（ONES logged 匹配）、
  *                 web/src/pages/release-plan.tsx（页面骨架模式）。
  */
-import { CalendarClock, CalendarRange, Gauge, ListOrdered, TriangleAlert, Wand2 } from "lucide-react"
+import { CalendarClock, CalendarRange, ChevronDown, Gauge, ListOrdered, TriangleAlert, Wand2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { OnesTasksResponse, Requirement } from "../types"
 import { patchJson, postJson, useFetch } from "../lib/api"
+import { SCHEDULE_FALLBACK_EXCLUDED_STATUSES, persistScheduleDefaultExcludedStatuses, readScheduleDefaultExcludedStatuses } from "../lib/preferences"
 import {
   DEFAULT_CONFIG,
   DEFAULT_HOURS,
@@ -21,6 +22,7 @@ import {
   type UtilResult,
   type AcceptCheck,
   type MaxAccept,
+  SCHEDULE_QUEUE_STATUSES,
   checkAcceptance,
   maxAcceptable,
   utilization,
@@ -35,10 +37,8 @@ const LS_CONFIG = "react-schedule-config"
 const VIEW_DAYS = 14
 /** 单位点选可选档位（1u=4h 真实工时，8u=两周量级封顶）。 */
 const UNIT_OPTIONS = [1, 2, 3, 4, 5, 6, 8]
-/** 队列门槛：开发工作未完成（状态 < 人工核查）的状态集合。 */
-const QUEUEABLE_STATUSES = new Set(["需求澄清", "需求创建", "开发中", "自测中", "测试中"])
-/** 永不进队列的状态（完成/发布/挂起/取消家族）。 */
-const EXCLUDED_STATUSES = new Set(["人工核查", "发布就绪", "经验总结", "已完成", "已发布", "已合入", "已关闭", "已取消", "挂起"])
+/** 队列门槛：可进排期计算的状态全集（流水状态 + 挂起）；是否剔除由页面「默认排除状态」控制，挂起默认排除。 */
+const QUEUEABLE_STATUSES = new Set(SCHEDULE_QUEUE_STATUSES)
 
 type PanelConfig = ScheduleConfig & { onesHoursFactor: number }
 /** ONES 登记 10h/天 ≈ 实际 8h/天：登记工时按 0.8 折算（历史验证 657.5h×0.8/63 天 ≈ 8.35h/天）。 */
@@ -103,9 +103,10 @@ function buildQueueReqs(
   reqs: Requirement[],
   loggedMap: Map<string, number>,
   onesFactor: number,
+  excludedStatuses: Set<string>,
 ): ScheduleReqInput[] {
   return reqs
-    .filter((r) => !EXCLUDED_STATUSES.has(r.status) && QUEUEABLE_STATUSES.has(r.status))
+    .filter((r) => QUEUEABLE_STATUSES.has(r.status) && !excludedStatuses.has(r.status))
     .map((r) => {
       const did = reqDisplayId(r)
       const logged = did ? loggedMap.get(did) ?? null : null
@@ -152,6 +153,11 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const [whatIfTitle, setWhatIfTitle] = useState("")
   const [whatIfDeadline, setWhatIfDeadline] = useState("")
   const [savingReq, setSavingReq] = useState<string | null>(null)
+  // 默认排除状态（模仿需求列表页）：勾选的状态不进饱和度计算；草稿式编辑，点「保存默认排除」才落盘并生效。
+  const [defaultExcludedStatuses, setDefaultExcludedStatusesState] = useState<string[]>(readScheduleDefaultExcludedStatuses)
+  const [excludedDraft, setExcludedDraft] = useState<string[]>(() => readScheduleDefaultExcludedStatuses())
+  const [excludedOpen, setExcludedOpen] = useState(false)
+  const [excludedJustSaved, setExcludedJustSaved] = useState(false)
 
   const loggedMap = useMemo(() => {
     const map = new Map<string, number>()
@@ -166,9 +172,17 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
     return project ? list.filter((r) => (r.projects || [r.project]).includes(project)) : list
   }, [data, project])
 
+  // 各状态需求计数（跟随项目筛选），供「默认排除状态」复选框展示。
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const r of allReqs) counts[r.status] = (counts[r.status] || 0) + 1
+    return counts
+  }, [allReqs])
+  const excludedStatusSet = useMemo(() => new Set(defaultExcludedStatuses), [defaultExcludedStatuses])
+
   const queueReqs = useMemo(
-    () => buildQueueReqs(allReqs, loggedMap, config.onesHoursFactor ?? 0.8),
-    [allReqs, loggedMap, config.onesHoursFactor],
+    () => buildQueueReqs(allReqs, loggedMap, config.onesHoursFactor ?? 0.8, excludedStatusSet),
+    [allReqs, loggedMap, config.onesHoursFactor, excludedStatusSet],
   )
   const util: UtilResult = useMemo(() => utilization(queueReqs, config), [queueReqs, config])
 
@@ -197,6 +211,26 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
     const next = { ...config, ...patch }
     setConfig(next)
     saveJson(LS_CONFIG, next)
+  }
+
+  const statusOrder = (list: string[]) => SCHEDULE_QUEUE_STATUSES.filter((s) => list.includes(s))
+  const excludedDirty = JSON.stringify(statusOrder(excludedDraft)) !== JSON.stringify(statusOrder(defaultExcludedStatuses))
+  const toggleExcludedOpen = () => {
+    if (!excludedOpen) setExcludedDraft(defaultExcludedStatuses) // 展开时以已保存值为草稿
+    setExcludedOpen(!excludedOpen)
+  }
+  // 仅显式动作（保存按钮 / 恢复默认）才写 localStorage；展开区勾选只改草稿。
+  const saveDefaultExcludedStatuses = (next: string[]) => {
+    const cleaned = next.filter((s, i, arr) => SCHEDULE_QUEUE_STATUSES.includes(s) && arr.indexOf(s) === i)
+    setDefaultExcludedStatusesState(cleaned)
+    setExcludedDraft(cleaned)
+    persistScheduleDefaultExcludedStatuses(cleaned)
+  }
+  const resetDefaultExcludedStatuses = () => saveDefaultExcludedStatuses(SCHEDULE_FALLBACK_EXCLUDED_STATUSES)
+  const saveExcludedDraft = () => {
+    saveDefaultExcludedStatuses(excludedDraft)
+    setExcludedJustSaved(true)
+    window.setTimeout(() => setExcludedJustSaved(false), 1600)
   }
 
   function setManualUnit(reqId: string, units: number) {
@@ -321,6 +355,49 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                 跳过周末
               </label>
             </div>
+            <button
+              type="button"
+              className={`react-filter-section-head react-collapse-head ${excludedOpen ? "open" : ""}`}
+              onClick={toggleExcludedOpen}
+              aria-expanded={excludedOpen}
+            >
+              <span>默认排除状态</span>
+              <em className="react-collapse-summary">
+                {excludedOpen
+                  ? "勾选的状态不进饱和度计算；勾选只改草稿，点「保存默认排除」才生效"
+                  : defaultExcludedStatuses.length
+                    ? `默认排除：${defaultExcludedStatuses.join(" / ")}`
+                    : "默认不排除任何状态"}
+                <ChevronDown size={14} className="react-collapse-chevron" />
+              </em>
+            </button>
+            {excludedOpen ? (
+              <div className="react-excluded-editor">
+                <div className="react-status-options react-excluded-status-options">
+                  {SCHEDULE_QUEUE_STATUSES.map((s) => (
+                    <label
+                      key={s}
+                      className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`}
+                      title={s === "挂起" ? "流水外标记状态：任何状态可挂起，恢复后回到原状态；默认不进饱和度计算" : undefined}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={excludedDraft.includes(s)}
+                        onChange={(e) => setExcludedDraft((cur) => (e.target.checked ? [...cur, s] : cur.filter((x) => x !== s)))}
+                      />
+                      <span>{s}</span>
+                      <strong>{statusCounts[s] || 0}</strong>
+                    </label>
+                  ))}
+                </div>
+                <div className="react-excluded-save-row">
+                  <button type="button" onClick={saveExcludedDraft} disabled={!excludedDirty}>{excludedJustSaved ? "已保存 ✓" : "保存默认排除"}</button>
+                  <button type="button" onClick={resetDefaultExcludedStatuses}>默认排除恢复默认</button>
+                  <em>{excludedDirty ? "有未保存的修改，保存后作用于排期计算并记住" : "与已保存一致"}</em>
+                </div>
+                <p className="react-muted">人工核查 / 发布就绪 / 已完成等完成态本就不进排期，无需在此排除；取消勾选「挂起」会把挂起需求重新计入饱和度。</p>
+              </div>
+            ) : null}
           </div>
 
           <div className="react-panel">

@@ -4,7 +4,7 @@
  * Public surface: HOUR_UNIT, utilization, checkAcceptance, maxAcceptable, workdaysBetweenInclusive, addWorkdays,
  *                 ScheduleConfig, UtilResult, UtilItem, UtilDay, AcceptCheck, MaxAccept, ScheduleReqInput.
  * Constraints: 无副作用、无 fetch；工时粒度 = 4h 单位（remainingHours 已在页面层向上取整）；
- *              队列只收「开发工作未完成」的需求（状态 < 人工核查门槛）；跳过周末可配。
+ *              队列只收「开发工作未完成」的需求（状态 < 人工核查门槛）；挂起为流水外标记状态，默认由页面层「默认排除状态」剔除；跳过周末可配。
  *              口径：所有工时均为真实工时（ONES 登记口径已在页面层按折算系数换算）。
  * Read-this-with: web/src/lib/requirements.ts（REQ_FLOW_STATUSES 状态序）、web/src/pages/schedule.tsx（数据组装）。
  */
@@ -31,6 +31,9 @@ export const DEFAULT_CONFIG: ScheduleConfig = {
   skipWeekends: true,
   defaultDailyPerReq: 4,
 }
+
+/** 可进入排期计算的状态全集（流水状态 + 挂起）；页面层「默认排除状态」可再剔除，挂起默认排除。 */
+export const SCHEDULE_QUEUE_STATUSES: string[] = ["需求澄清", "需求创建", "开发中", "自测中", "测试中", "挂起"]
 
 export type HoursSource = "manual" | "ones" | "estimate" | "default"
 
