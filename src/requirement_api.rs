@@ -233,7 +233,20 @@ pub(crate) async fn api_requirement_context(
         .map(parse_token_list)
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| intent_read_tokens(&intent));
-    let mut value = build_requirement_context(&req, &intent, tokens, budget).await?;
+    // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
+    // Programmatic callers (agents, curl) keep receiving JSON.
+    // HTML 阅读视图走 full 模式：单独页面就是用来看全文的，不做预算截断；JSON（agent 口径）仍按预算。
+    let wants_html = query
+        .format
+        .as_deref()
+        .map(|f| f.eq_ignore_ascii_case("html") || f.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
+        || headers
+            .get("accept")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_ascii_lowercase().contains("text/html"))
+            .unwrap_or(false);
+    let mut value = build_requirement_context(&req, &intent, tokens, budget, wants_html).await?;
     if let Some(group) = group_context_value(&req) {
         value["group"] = group;
     }
@@ -246,18 +259,6 @@ pub(crate) async fn api_requirement_context(
     if let Some(parts_ctx) = doc_parts_context_value(&req).await {
         value["docParts"] = parts_ctx;
     }
-    // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
-    // Programmatic callers (agents, curl) keep receiving JSON.
-    let wants_html = query
-        .format
-        .as_deref()
-        .map(|f| f.eq_ignore_ascii_case("html") || f.eq_ignore_ascii_case("md"))
-        .unwrap_or(false)
-        || headers
-            .get("accept")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_ascii_lowercase().contains("text/html"))
-            .unwrap_or(false);
     if wants_html {
         return Ok(Html(render_requirement_context_html(&req, &intent, &value)).into_response());
     }
