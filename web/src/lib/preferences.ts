@@ -1,5 +1,6 @@
 import type { ReqStatus } from "../types"
 import { ISSUE_STATUS_OPTIONS, REQ_LIST_STATUSES } from "./requirements"
+import { SCHEDULE_STATUS_OPTIONS } from "./schedule"
 
 export const PROJECT_FILTER_KEY = "agent-panel.project"
 export const PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.projects.defaultExcludedStatuses"
@@ -38,8 +39,8 @@ export function readScheduleDefaultExcludedStatuses(): string[] {
     if (!raw) return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
-    // 校验列表须与排期页复选框选项（REQ_LIST_STATUSES）一致，避免保存值在刷新读取时被静默丢弃（需求列表踩过的坑）。
-    return parsed.filter((s) => typeof s === "string" && REQ_LIST_STATUSES.includes(s as ReqStatus))
+    // 校验列表须与排期页复选框选项（SCHEDULE_STATUS_OPTIONS）一致，避免保存值在刷新读取时被静默丢弃（需求列表踩过的坑）。
+    return parsed.filter((s) => typeof s === "string" && SCHEDULE_STATUS_OPTIONS.includes(s))
   } catch {
     return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
   }

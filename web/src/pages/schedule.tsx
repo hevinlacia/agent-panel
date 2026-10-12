@@ -11,7 +11,6 @@ import { CalendarClock, CalendarRange, ChevronDown, Gauge, ListOrdered, Triangle
 import { useMemo, useState } from "react"
 import type { OnesTasksResponse, Requirement } from "../types"
 import { patchJson, postJson, useFetch } from "../lib/api"
-import { REQ_LIST_STATUSES } from "../lib/requirements"
 import { SCHEDULE_FALLBACK_EXCLUDED_STATUSES, persistScheduleDefaultExcludedStatuses, readScheduleDefaultExcludedStatuses } from "../lib/preferences"
 import {
   DEFAULT_CONFIG,
@@ -23,6 +22,7 @@ import {
   type UtilResult,
   type AcceptCheck,
   type MaxAccept,
+  SCHEDULE_STATUS_OPTIONS,
   checkAcceptance,
   maxAcceptable,
   utilization,
@@ -37,8 +37,8 @@ const LS_CONFIG = "react-schedule-config"
 const VIEW_DAYS = 14
 /** 单位点选可选档位（1u=4h 真实工时，8u=两周量级封顶）。 */
 const UNIT_OPTIONS = [1, 2, 3, 4, 5, 6, 8]
-/** 队列门槛：需求流水状态全集（含挂起，与需求列表页选项一致）；哪些状态计入由「默认排除状态」决定，完成态默认排除。 */
-const QUEUEABLE_STATUSES = new Set<string>(REQ_LIST_STATUSES)
+/** 队列门槛：排期页状态选项全集（需求流水 + 子需求「需求创建」+ 挂起）；哪些状态计入由「默认排除状态」决定，完成态默认排除。 */
+const QUEUEABLE_STATUSES = new Set<string>(SCHEDULE_STATUS_OPTIONS)
 
 type PanelConfig = ScheduleConfig & { onesHoursFactor: number }
 /** ONES 登记 10h/天 ≈ 实际 8h/天：登记工时按 0.8 折算（历史验证 657.5h×0.8/63 天 ≈ 8.35h/天）。 */
@@ -213,7 +213,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
     saveJson(LS_CONFIG, next)
   }
 
-  const statusOrder = (list: string[]) => (REQ_LIST_STATUSES as string[]).filter((s) => list.includes(s))
+  const statusOrder = (list: string[]) => SCHEDULE_STATUS_OPTIONS.filter((s) => list.includes(s))
   const excludedDirty = JSON.stringify(statusOrder(excludedDraft)) !== JSON.stringify(statusOrder(defaultExcludedStatuses))
   const toggleExcludedOpen = () => {
     if (!excludedOpen) setExcludedDraft(defaultExcludedStatuses) // 展开时以已保存值为草稿
@@ -221,7 +221,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   }
   // 仅显式动作（保存按钮 / 恢复默认）才写 localStorage；展开区勾选只改草稿。
   const saveDefaultExcludedStatuses = (next: string[]) => {
-    const cleaned = next.filter((s, i, arr) => (REQ_LIST_STATUSES as string[]).includes(s) && arr.indexOf(s) === i)
+    const cleaned = next.filter((s, i, arr) => SCHEDULE_STATUS_OPTIONS.includes(s) && arr.indexOf(s) === i)
     setDefaultExcludedStatusesState(cleaned)
     setExcludedDraft(cleaned)
     persistScheduleDefaultExcludedStatuses(cleaned)
@@ -374,11 +374,17 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
             {excludedOpen ? (
               <div className="react-excluded-editor">
                 <div className="react-status-options react-excluded-status-options">
-                  {REQ_LIST_STATUSES.map((s) => (
+                  {SCHEDULE_STATUS_OPTIONS.map((s) => (
                     <label
                       key={s}
                       className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`}
-                      title={s === "挂起" ? "流水外标记状态：任何状态可挂起，恢复后回到原状态；默认不进饱和度计算" : undefined}
+                      title={
+                        s === "挂起"
+                          ? "流水外标记状态：任何状态可挂起，恢复后回到原状态；默认不进饱和度计算"
+                          : s === "需求创建"
+                            ? "子需求初始状态（从父需求/整合需求拆出的 XXX-S1）；拆出即计入饱和度，默认不排除"
+                            : undefined
+                      }
                     >
                       <input
                         type="checkbox"
@@ -395,7 +401,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                   <button type="button" onClick={resetDefaultExcludedStatuses}>默认排除恢复默认</button>
                   <em>{excludedDirty ? "有未保存的修改，保存后作用于排期计算并记住" : "与已保存一致"}</em>
                 </div>
-                <p className="react-muted">全部需求状态可勾选/取消；完成态（人工核查及以上）与挂起默认不进排期，取消勾选即纳入饱和度计算；子需求从「开发中」起计入，线上问题类状态不进排期页。</p>
+                <p className="react-muted">全部需求状态可勾选/取消；完成态（人工核查及以上）与挂起默认不进排期，取消勾选即纳入饱和度计算；子需求含「需求创建」初始状态一并计入；线上问题类状态不进排期页。</p>
               </div>
             ) : null}
           </div>
