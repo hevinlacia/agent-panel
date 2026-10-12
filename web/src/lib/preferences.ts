@@ -1,6 +1,5 @@
 import type { ReqStatus } from "../types"
 import { ISSUE_STATUS_OPTIONS, REQ_LIST_STATUSES } from "./requirements"
-import { SCHEDULE_QUEUE_STATUSES } from "./schedule"
 
 export const PROJECT_FILTER_KEY = "agent-panel.project"
 export const PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.projects.defaultExcludedStatuses"
@@ -29,9 +28,9 @@ export function persistDefaultExcludedStatuses(statuses: string[]) {
   try { localStorage.setItem(PROJECT_DEFAULT_EXCLUDED_STATUSES_KEY, JSON.stringify(statuses)) } catch { /* ignore */ }
 }
 
-export const SCHEDULE_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.schedule.defaultExcludedStatuses"
-/** 排期默认排除：挂起（流水外标记状态）默认不进饱和度计算，与排期页既有行为一致；可在排期页调整。 */
-export const SCHEDULE_FALLBACK_EXCLUDED_STATUSES: string[] = ["挂起"]
+export const SCHEDULE_DEFAULT_EXCLUDED_STATUSES_KEY = "agent-panel.schedule.defaultExcludedStatuses.v2"
+/** 排期默认排除：完成态 + 挂起默认不进饱和度计算，与排期页既有口径一致；全量状态选项，其余由用户自行勾选。 */
+export const SCHEDULE_FALLBACK_EXCLUDED_STATUSES: string[] = ["人工核查", "发布就绪", "经验总结", "已完成", "挂起"]
 
 export function readScheduleDefaultExcludedStatuses(): string[] {
   try {
@@ -39,8 +38,8 @@ export function readScheduleDefaultExcludedStatuses(): string[] {
     if (!raw) return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
-    // 校验列表须与排期页复选框选项（SCHEDULE_QUEUE_STATUSES）一致，避免保存值在刷新读取时被静默丢弃（需求列表踩过的坑）。
-    return parsed.filter((s) => typeof s === "string" && SCHEDULE_QUEUE_STATUSES.includes(s))
+    // 校验列表须与排期页复选框选项（REQ_LIST_STATUSES）一致，避免保存值在刷新读取时被静默丢弃（需求列表踩过的坑）。
+    return parsed.filter((s) => typeof s === "string" && REQ_LIST_STATUSES.includes(s as ReqStatus))
   } catch {
     return SCHEDULE_FALLBACK_EXCLUDED_STATUSES
   }
