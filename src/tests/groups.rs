@@ -403,6 +403,7 @@ async fn group_status_is_locked_against_manual_status_writes() {
             start_date: None,
             plan_release: None,
             submit_test_date: None,
+            promise_submit_date: None,
             ones: None,
             issues: None,
             note: None,

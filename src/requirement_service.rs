@@ -203,9 +203,12 @@ pub(crate) struct RequirementPatchForm {
     pub(crate) start_date: Option<String>,
     #[serde(default)]
     pub(crate) plan_release: Option<String>,
-    /// 提测时间：交付测试开始测试的日期 deadline（unknown = 未登记；子需求可独立设置）。
+    /// 提测时间（实际）：排期面板容量评估用的实际提测日（unknown = 未登记；子需求可独立设置）。
     #[serde(default)]
     pub(crate) submit_test_date: Option<String>,
+    /// 承诺提测时间：给产品/测试承诺的提测日，用户手设，判断需求紧急度用。
+    #[serde(default)]
+    pub(crate) promise_submit_date: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
     /// 区域维度（仅 issue 家族）：Some(值) 设置、Some("") 清空、None 不动。

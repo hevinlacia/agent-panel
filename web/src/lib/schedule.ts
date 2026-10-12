@@ -53,6 +53,8 @@ export interface ScheduleReqInput {
   submitTestDate: string | null
   /** 提测日来源：registered=已登记；releaseReady=未登记，按进入「发布就绪」的日期推定。 */
   submitSource?: "registered" | "releaseReady"
+  /** 承诺提测时间（紧急度口径：promiseSubmitDate，未设回退 submitTestDate）；容量/饱和度不用它。 */
+  promiseDate: string | null
   /** 绑定线上问题 = 抢修，展示红旗（均摊模型下不加权，由用户判断挤占）。 */
   isHotfix: boolean
   /** 剩余工时（页面层已向上取整到 4h 倍数，>= HOUR_UNIT；已滤除 0）。 */

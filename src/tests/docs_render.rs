@@ -356,6 +356,7 @@ fn context_page_contains_sections_and_raw_link() {
         issues: Vec::new(),
         plan_release: None,
         submit_test_date: None,
+        promise_submit_date: None,
         release_ready_at: None,
         created_at: 0,
         updated_at: 0,

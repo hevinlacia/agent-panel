@@ -115,6 +115,9 @@ function buildQueueReqs(
       // 未登记提测时间时，按最近一次进入「发布就绪」的日期推定（后端状态历史）；仍无则交给均摊模型虚拟推算。
       const releaseReady = !registered && r.releaseReadyAt ? ymd(new Date(r.releaseReadyAt)) : null
       const submit = registered ?? releaseReady
+      // 紧急度口径：承诺提测时间优先，未设回退实际提测时间（容量/饱和度始终用 submit）
+      const promiseRaw = r.promiseSubmitDate && r.promiseSubmitDate !== "unknown" ? r.promiseSubmitDate : null
+      const promiseDate = promiseRaw ?? registered
       const submitSource: "registered" | "releaseReady" | undefined = registered ? "registered" : releaseReady ? "releaseReady" : undefined
       return {
         id: r.id,
@@ -123,6 +126,7 @@ function buildQueueReqs(
         startDate: msToYmd(r.createdAt),
         submitTestDate: submit,
         submitSource,
+        promiseDate,
         isHotfix: (r.issues?.length ?? 0) > 0,
         remainingHours: hours,
         hoursSource: source,
@@ -209,12 +213,14 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const dayDates = viewDays.map((d) => d.date)
   const firstDay = dayDates[0] ?? ""
   const overParallel = util.activeCount > config.parallelMax
+  // 紧急度看「承诺提测时间」（未设回退实际）；容量/饱和度始终用实际提测时间（it.effDeadline）
+  const todayStr = ymd(new Date())
   const dueIn7 = util.items.filter((it) => {
-    if (!it.effDeadline || it.virtualDeadline) return false
-    const diff = Math.round((new Date(`${it.effDeadline}T00:00:00`).getTime() - Date.now()) / (24 * 3600 * 1000))
+    if (!it.promiseDate) return false
+    const diff = Math.round((new Date(`${it.promiseDate}T00:00:00`).getTime() - Date.now()) / (24 * 3600 * 1000))
     return diff >= 0 && diff <= 7
   })
-  const overdueCount = util.items.filter((it) => it.overdue).length
+  const overdueCount = util.items.filter((it) => it.promiseDate != null && it.promiseDate < todayStr).length
 
   // what-if：模式 A 评估接单（工时 + 提测日）；模式 B 能接多大（仅提测日）。
   const accept: AcceptCheck | null = useMemo(() => {
@@ -305,9 +311,9 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
             />
             <SchedStat
               icon={<CalendarClock size={18} />}
-              label="7 天内提测"
+              label="7 天内承诺提测"
               value={`${dueIn7.length}`}
-              sub={overdueCount > 0 ? `${overdueCount} 个已逾期未清` : "按已登记的提测时间"}
+              sub={overdueCount > 0 ? `${overdueCount} 个承诺已逾期` : "按承诺提测时间（紧急度）"}
               tone={overdueCount > 0 ? "warn" : "violet"}
             />
             <SchedStat
@@ -517,7 +523,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                       <th>状态</th>
                       <th>剩余</th>
                       <th>每日摊派</th>
-                      <th>提测时间</th>
+                      <th>实际提测</th>
                       <th>剩余工作日</th>
                       <th>区间</th>
                       <th>改工时</th>
@@ -562,13 +568,14 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                               disabled={savingReq === it.id}
                               title={
                                 it.virtualDeadline
-                                  ? "未登记提测时间，当前为虚拟推算；点选日期即登记"
+                                  ? "实际提测：未登记且无发布就绪历史，当前为虚拟推算；点选日期即登记"
                                   : it.submitSource === "releaseReady"
-                                    ? "未登记提测时间，暂按进入「发布就绪」的日期推定；点选日期即登记覆盖"
-                                    : "登记/调整提测时间"
+                                    ? "实际提测：未登记，暂按进入「发布就绪」的日期推定；点选日期即登记覆盖"
+                                    : "实际提测（排期饱和度口径）：登记/调整"
                               }
                               onChange={(e) => setSubmitTestDate(it.id, e.target.value)}
                             />
+                            {it.promiseDate ? <span className="react-sched-promise" title="承诺提测时间（紧急度），详情页可改">承诺 {it.promiseDate}</span> : null}
                           </td>
                           <td>
                             {it.overdue ? (
