@@ -1,0 +1,25 @@
+src/requirement_api.rs
+  99be0fac85264ebf 238,249-261
+src/requirement_context/context_html.rs
+  99be0fac85264ebf 8,21-26,29-31,50-55,65-67,93,109-119,223-239,241-242,288-293,320-336,391,393,396,432,437-447,464,476-484,486,488-493,495-501,506
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7d4e7d4bf99b704fc2c088b3dc3d8c0534f3acf8",
+  "prompts": {
+    "99be0fac85264ebf": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a12dc4-6fdc-71b0-9922-11b3ac9622a0",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 125,
+      "overriden_lines": 0
+    }
+  }
+}
