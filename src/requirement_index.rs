@@ -36,6 +36,8 @@ pub(crate) struct Requirement {
     /// 提测时间（meta.md frontmatter `submit-test-date`）：交付测试开始测试的日期 deadline；
     /// 到点时需求状态必须 ≥ 人工核查（开发侧工作全部完成）。unknown = 未登记。
     pub(crate) submit_test_date: Option<String>,
+    /// 最近一次进入「发布就绪」的时间（ms）；未登记提测时间时供排期页推定提测日。
+    pub(crate) release_ready_at: Option<i64>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) completed_at: Option<i64>,
@@ -659,6 +661,7 @@ pub(crate) async fn load_requirement_from_dir(
         created_at = updated_at;
     }
     let completed_at = req_state.as_ref().and_then(extract_completed_at);
+    let release_ready_at = req_state.as_ref().and_then(release_ready_at_from_state);
     let effort = read_json_if_exists(&dir.join("effort-estimate.json")).await;
     let ones_manhour = read_json_if_exists(&dir.join("ones-manhour.json")).await;
     let project = projects
@@ -681,6 +684,7 @@ pub(crate) async fn load_requirement_from_dir(
         issues,
         plan_release,
         submit_test_date,
+        release_ready_at,
         created_at,
         updated_at,
         completed_at,
@@ -949,6 +953,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         issues: Vec::new(),
         plan_release: None,
         submit_test_date: None,
+        release_ready_at: None,
         created_at: now,
         updated_at: now,
         completed_at: None,

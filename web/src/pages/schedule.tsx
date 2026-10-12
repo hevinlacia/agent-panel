@@ -111,13 +111,18 @@ function buildQueueReqs(
       const did = reqDisplayId(r)
       const logged = did ? loggedMap.get(did) ?? null : null
       const { hours, source, unevaluated } = deriveHours(r, logged, onesFactor)
-      const submit = r.submitTestDate && r.submitTestDate !== "unknown" ? r.submitTestDate : null
+      const registered = r.submitTestDate && r.submitTestDate !== "unknown" ? r.submitTestDate : null
+      // 未登记提测时间时，按最近一次进入「发布就绪」的日期推定（后端状态历史）；仍无则交给均摊模型虚拟推算。
+      const releaseReady = !registered && r.releaseReadyAt ? ymd(new Date(r.releaseReadyAt)) : null
+      const submit = registered ?? releaseReady
+      const submitSource: "registered" | "releaseReady" | undefined = registered ? "registered" : releaseReady ? "releaseReady" : undefined
       return {
         id: r.id,
         title: r.title,
         status: r.status,
         startDate: msToYmd(r.createdAt),
         submitTestDate: submit,
+        submitSource,
         isHotfix: (r.issues?.length ?? 0) > 0,
         remainingHours: hours,
         hoursSource: source,
@@ -555,7 +560,13 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                               type="date"
                               value={it.virtualDeadline ? "" : it.effDeadline}
                               disabled={savingReq === it.id}
-                              title={it.virtualDeadline ? "未登记提测时间，当前为虚拟推算；点选日期即登记" : "登记/调整提测时间"}
+                              title={
+                                it.virtualDeadline
+                                  ? "未登记提测时间，当前为虚拟推算；点选日期即登记"
+                                  : it.submitSource === "releaseReady"
+                                    ? "未登记提测时间，暂按进入「发布就绪」的日期推定；点选日期即登记覆盖"
+                                    : "登记/调整提测时间"
+                              }
                               onChange={(e) => setSubmitTestDate(it.id, e.target.value)}
                             />
                           </td>
@@ -566,6 +577,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                               <>
                                 {it.spanDays} 天
                                 {it.virtualDeadline ? <span className="react-muted">（虚拟）</span> : null}
+                                {!it.virtualDeadline && it.submitSource === "releaseReady" ? <span className="react-muted">（发布就绪推定）</span> : null}
                               </>
                             )}
                           </td>

@@ -349,6 +349,8 @@ export interface Requirement {
   planRelease?: string
   /** 提测时间（meta.md submit-test-date）：交付测试开始测试的日期 deadline，到点状态须 ≥ 人工核查；unknown/缺省 = 未登记。 */
   submitTestDate?: string
+  /** 最近一次进入「发布就绪」的时间（ms，state.json 历史推定）：未登记提测时间时供排期页推定提测日。 */
+  releaseReadyAt?: number | null
   effortEstimate?: EffortEstimate
   /** 引用式需求组：本需求 group.json 的成员列表（非空 = 本需求是组）。 */
   groupMembers?: GroupMemberRef[]
