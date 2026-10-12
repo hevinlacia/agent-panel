@@ -314,3 +314,94 @@ async fn suspend_round_trip_keeps_flow_history_and_resume_target() {
     assert_eq!(resume_status_from_state(&json!({ "status": "挂起" })), None);
     trash_cleanup_rework_dir(&dir);
 }
+
+#[tokio::test]
+async fn entering_release_ready_backfills_submit_test_date() {
+    let dir = std::env::temp_dir().join(format!(
+        "agent-panel-submit-date-{}",
+        chrono_like_unique_suffix()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp req dir");
+    let meta = dir.join("meta.md");
+    // 未登记 submit-test-date：进入发布就绪自动补当天日期
+    std::fs::write(&meta, "---\nid: test-x\ntitle: t\n---\n\n# t\n").expect("write meta");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "开发中",
+        Some("start"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("initial transition");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "发布就绪",
+        Some("ready"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("forward transition");
+    let raw = std::fs::read_to_string(&meta).expect("read meta");
+    assert!(
+        raw.contains(&format!("submit-test-date: {}", today_ymd())),
+        "meta: {raw}"
+    );
+    // 显式日期：再次进入发布就绪不覆盖
+    std::fs::write(
+        &meta,
+        "---\nid: test-x\nsubmit-test-date: 2026-01-02\n---\n\n# t\n",
+    )
+    .expect("write meta");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "开发中",
+        Some("loop"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("release-ready loop");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "发布就绪",
+        Some("ready2"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("re-transition");
+    let raw = std::fs::read_to_string(&meta).expect("read meta");
+    assert!(raw.contains("submit-test-date: 2026-01-02"), "meta: {raw}");
+    // unknown 视为未登记：再次进入发布就绪补当天
+    std::fs::write(
+        &meta,
+        "---\nid: test-x\nsubmit-test-date: unknown\n---\n\n# t\n",
+    )
+    .expect("write meta");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "开发中",
+        Some("loop2"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("release-ready loop");
+    write_requirement_status_checked(
+        dir.to_str().unwrap(),
+        "发布就绪",
+        Some("ready3"),
+        GateCheckMode::Passed,
+    )
+    .await
+    .expect("re-transition");
+    let raw = std::fs::read_to_string(&meta).expect("read meta");
+    assert!(
+        raw.contains(&format!("submit-test-date: {}", today_ymd())),
+        "meta: {raw}"
+    );
+    // 状态历史可推定最近一次进入发布就绪的时间
+    let state = read_requirement_state(&dir)
+        .await
+        .expect("read state")
+        .expect("state exists");
+    assert!(release_ready_at_from_state(&state).is_some());
+    trash_cleanup_rework_dir(&dir);
+}

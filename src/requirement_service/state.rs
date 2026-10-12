@@ -381,7 +381,44 @@ pub(crate) async fn write_requirement_status_checked(
         "history": history
     });
     atomic_write_json(&path, &state).await?;
+    // 进入「发布就绪」且未登记提测时间时，自动以当天日期补登（显式日期不覆盖，后续仍可手动调整）。
+    if changed && new_status == "发布就绪" {
+        auto_fill_submit_test_date(&dir).await;
+    }
     Ok(state)
+}
+
+/// 最近一次进入「发布就绪」的时间（ms）；未登记提测时间时供排期页推定提测日。
+pub(crate) fn release_ready_at_from_state(state: &Value) -> Option<i64> {
+    state
+        .get("history")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|entry| entry.get("status").and_then(Value::as_str) == Some("发布就绪"))
+        .and_then(|entry| entry.get("at"))
+        .and_then(Value::as_i64)
+}
+
+/// 进入「发布就绪」时补登提测时间：submit-test-date 为空或 unknown 时写当天日期；已登记的显式日期不覆盖。
+async fn auto_fill_submit_test_date(dir: &Path) {
+    let path = dir.join("meta.md");
+    let Ok(raw) = fs::read_to_string(&path).await else {
+        return;
+    };
+    let normalized = raw.replace("\r\n", "\n");
+    let current = parse_frontmatter(&normalized)
+        .fields
+        .get("submit-test-date")
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    if !current.is_empty() && current != "unknown" {
+        return;
+    }
+    let today = today_ymd();
+    let next = set_frontmatter_field(&normalized, "submit-test-date", &today);
+    let next = update_meta_summary_line(&next, "Submit test", &today);
+    atomic_write_text(&path, &next).await;
 }
 
 pub(crate) async fn write_requirement_category(req_dir: &str, new_category: &str) -> Result<Value> {
