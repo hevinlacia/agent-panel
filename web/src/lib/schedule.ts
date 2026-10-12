@@ -6,8 +6,17 @@
  * Constraints: 无副作用、无 fetch；工时粒度 = 4h 单位（remainingHours 已在页面层向上取整）；
  *              队列只收「开发工作未完成」的需求（状态 < 人工核查门槛）；挂起为流水外标记状态，默认由页面层「默认排除状态」剔除；跳过周末可配。
  *              口径：所有工时均为真实工时（ONES 登记口径已在页面层按折算系数换算）。
- * Read-this-with: web/src/lib/requirements.ts（REQ_FLOW_STATUSES 状态序）、web/src/pages/schedule.tsx（数据组装）。
+ * Read-this-with: web/src/lib/requirements.ts（REQ_LIST_STATUSES 状态序）、web/src/pages/schedule.tsx（数据组装）。
  */
+
+import { REQ_LIST_STATUSES } from "./requirements"
+
+/** 排期页「默认排除状态」选项全集：需求流水状态 + 挂起（= REQ_LIST_STATUSES），另加子需求初始状态「需求创建」（子需求拆出即计入排期，默认不排除）。 */
+export const SCHEDULE_STATUS_OPTIONS: string[] = [
+  "需求澄清",
+  "需求创建",
+  ...REQ_LIST_STATUSES.filter((s) => s !== "需求澄清"),
+]
 
 /** 工时最小单位：4h（真实工时口径）。页面层录入/推导的剩余工时都取整到该单位。 */
 export const HOUR_UNIT = 4
