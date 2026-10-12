@@ -8,7 +8,7 @@
  *                 web/src/pages/release-plan.tsx（页面骨架模式）。
  */
 import { CalendarClock, CalendarRange, ChevronDown, Gauge, ListOrdered, TriangleAlert, Wand2 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import type { OnesTasksResponse, Requirement } from "../types"
 import { patchJson, postJson, useFetch } from "../lib/api"
 import { SCHEDULE_FALLBACK_EXCLUDED_STATUSES, persistScheduleDefaultExcludedStatuses, readScheduleDefaultExcludedStatuses } from "../lib/preferences"
@@ -29,7 +29,7 @@ import {
   ymd,
 } from "../lib/schedule"
 import { projectsOf, statusPill } from "../features/requirements/badges"
-import { EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
+import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
 
 const LS_CONFIG = "react-schedule-config"
@@ -142,6 +142,20 @@ function saturationTone(sat: number): { cls: string; label: string } {
 }
 
 const pctText = (v: number) => `${Math.round(v * 100)}%`
+
+/** 排期页平铺统计格：icon + label/sub 左侧，value 右侧（区别于通用 KpiCard 的纵向高卡片）。 */
+function SchedStat({ icon, label, value, sub, tone }: { icon: ReactNode; label: string; value: string | number; sub: string; tone: string }) {
+  return (
+    <div className={`react-sched-stat react-sched-stat-${tone}`}>
+      <div className="react-sched-stat-icon">{icon}</div>
+      <div className="react-sched-stat-text">
+        <span className="react-sched-stat-label">{label}</span>
+        <span className="react-sched-stat-sub">{sub}</span>
+      </div>
+      <strong className="react-sched-stat-value">{value}</strong>
+    </div>
+  )
+}
 
 export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const { data, error, loading, refresh } = RequirementsData()
@@ -269,29 +283,29 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
       {loading ? <LoadingCard /> : null}
       {!loading && !error ? (
         <>
-          <div className="react-kpis">
-            <KpiCard
+          <div className="react-sched-strip">
+            <SchedStat
               icon={<Gauge size={18} />}
               label="今日饱和度"
               value={pctText(util.todaySaturation)}
               sub={overParallel ? `${util.activeCount} 个在制，超并行上限 ${config.parallelMax}` : `${util.activeCount} 个在制需求 ÷ 每日 ${config.dailyHours}h`}
               tone={util.todaySaturation > 1 ? "rose" : util.todaySaturation >= 0.7 ? "warn" : "green"}
             />
-            <KpiCard
+            <SchedStat
               icon={<TriangleAlert size={18} />}
               label="未来峰值"
               value={pctText(util.peakSaturation)}
               sub={util.peakDate ? `峰值日 ${util.peakDate}；超载 ${util.overloadDays} 天` : "无排期数据"}
               tone={util.overloadDays > 0 ? "rose" : "active"}
             />
-            <KpiCard
+            <SchedStat
               icon={<CalendarClock size={18} />}
               label="7 天内提测"
               value={`${dueIn7.length}`}
               sub={overdueCount > 0 ? `${overdueCount} 个已逾期未清` : "按已登记的提测时间"}
               tone={overdueCount > 0 ? "warn" : "violet"}
             />
-            <KpiCard
+            <SchedStat
               icon={<ListOrdered size={18} />}
               label="剩余工作量"
               value={`${util.totalUnits}u`}
