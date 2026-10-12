@@ -10,10 +10,9 @@ pub(crate) async fn api_requirement_compliance(
     State(state): State<AppState>,
     Query(q): Query<ComplianceQuery>,
 ) -> ApiResult<Json<Value>> {
-    let id = q
-        .id
-        .or(q.req_id)
-        .ok_or_else(|| ApiError::bad_request("missing id"))?;
+    let id =
+        q.id.or(q.req_id)
+            .ok_or_else(|| ApiError::bad_request("missing id"))?;
     let req = get_real_requirement(&state, &id).await?;
     let dir = req_dir_path(&req)?;
     let state_json = read_requirement_state(&dir)
@@ -34,10 +33,7 @@ pub(crate) async fn api_requirement_compliance(
     let mut missed: Vec<String> = Vec::new();
     let mut gate_checks: HashMap<String, String> = HashMap::new();
     for item in &history {
-        let from = item
-            .get("from")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let from = item.get("from").and_then(Value::as_str).map(str::to_string);
         let to = item
             .get("status")
             .and_then(Value::as_str)
@@ -71,8 +67,7 @@ pub(crate) async fn api_requirement_compliance(
     let attachments = attachments_snapshot(&dir).await;
 
     // 3) gaps：可执行的缺失清单（按当前状态位置裁剪，避免对澄清阶段报 UAT 缺失）。
-    let flow_pos =
-        |s: &str| REQ_FLOW_STATUSES.iter().position(|x| *x == s);
+    let flow_pos = |s: &str| REQ_FLOW_STATUSES.iter().position(|x| *x == s);
     let cur = flow_pos(&req.status);
     let mut gaps: Vec<String> = Vec::new();
     for s in &missed {
@@ -85,13 +80,24 @@ pub(crate) async fn api_requirement_compliance(
             if !uat.problems.is_empty() {
                 gaps.push(format!(
                     "UAT 回归证据缺失：{}",
-                    uat.problems.iter().take(3).cloned().collect::<Vec<_>>().join("；")
+                    uat.problems
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("；")
                 ));
             }
             if !selftest.problems.is_empty() {
                 gaps.push(format!(
                     "自测清单当前不满足：{}",
-                    selftest.problems.iter().take(2).cloned().collect::<Vec<_>>().join("；")
+                    selftest
+                        .problems
+                        .iter()
+                        .take(2)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("；")
                 ));
             }
         }

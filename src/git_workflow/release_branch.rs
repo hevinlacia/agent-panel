@@ -176,20 +176,19 @@ pub(crate) async fn release_branch_diff_stat(
     .await;
     let base_ref = format!("origin/{base_branch}");
     let remote = format!("origin/{branch_name}");
-    let source_ref =
-        if git(
-            project_path,
-            &["rev-parse", "--verify", &format!("{remote}^{{commit}}")],
-            30_000,
-            COMMAND_OUTPUT_LIMIT,
-        )
-        .await
-        .ok
-        {
-            remote
-        } else {
-            branch_name.to_string()
-        };
+    let source_ref = if git(
+        project_path,
+        &["rev-parse", "--verify", &format!("{remote}^{{commit}}")],
+        30_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await
+    .ok
+    {
+        remote
+    } else {
+        branch_name.to_string()
+    };
     let range = format!("{base_ref}...{source_ref}");
     let numstat = git(
         project_path,

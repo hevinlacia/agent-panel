@@ -52,7 +52,10 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     );
     // 线上问题硬门禁迁移为默认规则。
     assert_eq!(gates_of("排查中", "已定位"), vec!["issue-root-cause"]);
-    assert_eq!(gates_of("已修复", "经验总结"), vec!["issue-troubleshooting"]);
+    assert_eq!(
+        gates_of("已修复", "经验总结"),
+        vec!["issue-troubleshooting"]
+    );
     // 2026-10 新增：需求澄清/需求创建 → 开发中 挂工时预估门禁（排期依赖，抢修豁免）。
     assert_eq!(gates_of("需求澄清", "开发中"), vec!["effort-estimate"]);
     assert_eq!(gates_of("需求创建", "开发中"), vec!["effort-estimate"]);
@@ -633,7 +636,10 @@ fn selftest_checklist_sections_parses_items_results_and_reasons() {
     let body = selftest_test_md_body();
     let sections = selftest_checklist_sections(&body).expect("section should be found");
     assert_eq!(sections.len(), 3);
-    let main = sections.iter().find(|s| s.category == "主流程测试").unwrap();
+    let main = sections
+        .iter()
+        .find(|s| s.category == "主流程测试")
+        .unwrap();
     assert_eq!(main.items.len(), 2);
     assert_eq!(main.items[0].no, 1);
     assert_eq!(main.items[0].item, "回退接口");
@@ -644,11 +650,17 @@ fn selftest_checklist_sections_parses_items_results_and_reasons() {
         main.items[1].reason.as_deref(),
         Some("test 环境 OMS 未订阅 topic，无法联调")
     );
-    let boundary = sections.iter().find(|s| s.category == "边界场景测试").unwrap();
+    let boundary = sections
+        .iter()
+        .find(|s| s.category == "边界场景测试")
+        .unwrap();
     assert_eq!(boundary.risk_analysis, vec!["已取消单重复回退".to_string()]);
     assert_eq!(boundary.items.len(), 1);
     assert_eq!(boundary.items[0].result, "pass");
-    let concurrency = sections.iter().find(|s| s.category == "高并发/大流量场景测试").unwrap();
+    let concurrency = sections
+        .iter()
+        .find(|s| s.category == "高并发/大流量场景测试")
+        .unwrap();
     assert_eq!(concurrency.items.len(), 0);
     assert_eq!(
         concurrency.not_applicable_reason.as_deref(),

@@ -29,7 +29,9 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
-use crate::{get_requirement, requirement_project_root, sessions, ApiError, ApiResult, AppState, IdQuery};
+use crate::{
+    get_requirement, requirement_project_root, sessions, ApiError, ApiResult, AppState, IdQuery,
+};
 use axum::Json;
 use serde_json::{json, Value};
 
@@ -61,7 +63,9 @@ impl PiRpcSession {
         let mut guard = self.stdin.lock().await;
         match guard.as_mut() {
             Some(stdin) => {
-                stdin.write_all(line.trim_end_matches(['\r', '\n']).as_bytes()).await?;
+                stdin
+                    .write_all(line.trim_end_matches(['\r', '\n']).as_bytes())
+                    .await?;
                 stdin.write_all(b"\n").await?;
                 stdin.flush().await?;
                 Ok(())
@@ -106,9 +110,12 @@ async fn spawn_pi_rpc(session_id: &str, cwd: &Path) -> Result<Arc<PiRpcSession>>
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("spawn pi --mode rpc (session {session_id}, cwd {})", cwd.display()))?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "spawn pi --mode rpc (session {session_id}, cwd {})",
+            cwd.display()
+        )
+    })?;
 
     let stdin = child.stdin.take().context("pi rpc stdin 未接管")?;
     let stdout = child.stdout.take().context("pi rpc stdout 未接管")?;
@@ -192,7 +199,8 @@ pub(crate) async fn api_pi_chat_open(
             let req = get_requirement(&state, req_id.trim())
                 .await?
                 .with_context(|| format!("需求不存在：{}", req_id.trim()))?;
-            let cwd = requirement_project_root(&req).unwrap_or_else(|| state.project_root.as_ref().clone());
+            let cwd = requirement_project_root(&req)
+                .unwrap_or_else(|| state.project_root.as_ref().clone());
 
             // 取关联 session 中最近更新且文件仍存在的一个（仅 pi harness 的需求走本接口）。
             let associated = req.session_ids.clone();
@@ -279,13 +287,21 @@ async fn pi_chat_socket(
         loop {
             match events.recv().await {
                 Ok(line) => {
-                    if ws_tx.send(axum::extract::ws::Message::Text(line)).await.is_err() {
+                    if ws_tx
+                        .send(axum::extract::ws::Message::Text(line))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     let note = json!({"type": "panel_lagged", "dropped": n}).to_string();
-                    if ws_tx.send(axum::extract::ws::Message::Text(note)).await.is_err() {
+                    if ws_tx
+                        .send(axum::extract::ws::Message::Text(note))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }

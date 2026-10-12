@@ -16,7 +16,15 @@ fn ensure_status_for_category_rejects_req_flow_status_for_issues() {
         );
     }
     // 常规需求流状态：拒绝
-    for status in ["需求澄清", "开发中", "自测中", "测试中", "人工核查", "发布就绪", "已完成"] {
+    for status in [
+        "需求澄清",
+        "开发中",
+        "自测中",
+        "测试中",
+        "人工核查",
+        "发布就绪",
+        "已完成",
+    ] {
         let err = ensure_status_for_category(Some("线上问题"), status)
             .expect_err(&format!("线上问题应拒绝 {status}"));
         assert!(err.message.contains(status));

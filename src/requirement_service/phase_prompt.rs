@@ -47,9 +47,7 @@ pub(crate) fn phase_prompt_file(status: &str) -> &'static str {
         "自测中" => "prompts/phase-selftest.md",
         "测试中" => "prompts/phase-testing.md",
         "人工核查" | "人工复测" => "prompts/phase-manual-check.md",
-        "排查中" | "已定位" | "已修复" | "已关闭" => {
-            "prompts/phase-online-issue.md"
-        }
+        "排查中" | "已定位" | "已修复" | "已关闭" => "prompts/phase-online-issue.md",
         "经验总结" | "待上线" => "prompts/phase-experience-summary.md",
         "发布就绪" => "prompts/phase-deploy.md",
         "已完成" => "prompts/phase-done.md",

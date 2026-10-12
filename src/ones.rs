@@ -386,7 +386,9 @@ fn merge_notices(map: &mut HashMap<String, OnesTaskCandidate>, data: &Value) {
             .and_then(Value::as_i64)
             .map(|us| us / 1_000)
             .unwrap_or(0);
-        merge_candidate(map, display_id, &name, &project, task_uuid, "notice", ts_ms, 0);
+        merge_candidate(
+            map, display_id, &name, &project, task_uuid, "notice", ts_ms, 0,
+        );
     }
 }
 

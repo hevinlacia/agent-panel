@@ -193,7 +193,15 @@ pub(crate) async fn merge_branch_pair(
     target_branch: &str,
     target_label: &str,
 ) -> Value {
-    merge_branch_pair_ex(repo, source_branch, target_branch, target_label, false, false).await
+    merge_branch_pair_ex(
+        repo,
+        source_branch,
+        target_branch,
+        target_label,
+        false,
+        false,
+    )
+    .await
 }
 
 /// `source_remote_first`：源分支用远端优先解析（适合生产分支等环境分支作源，本地分支常滞后）。
@@ -313,8 +321,7 @@ pub(crate) async fn merge_branch_pair_ex(
         resolve_branch_ref(&project_path, target_branch).await
     } else {
         resolve_branch_ref_local_first(&project_path, target_branch).await
-    })
-    else {
+    }) else {
         return failed("failed", format!("无法解析目标分支 {target_branch}"));
     };
     let source_ref = if source_remote_first {

@@ -167,11 +167,7 @@ pub(crate) fn intent_write_tokens(intent: &str) -> Vec<&'static str> {
         "config" => vec!["req.technicalPlan", "req.notes"],
         "clarification" | "design" => vec!["req.background", "req.technicalPlan", "req.notes"],
         "review" => vec!["req.review", "req.technicalPlan", "req.notes"],
-        "experience-summary" => vec![
-            "req.experienceSummary",
-            "req.technicalPlan",
-            "req.notes",
-        ],
+        "experience-summary" => vec!["req.experienceSummary", "req.technicalPlan", "req.notes"],
         _ => vec!["req.technicalPlan", "req.notes"],
     }
 }

@@ -4,7 +4,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use axum::{extract::{Query, State}, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -115,7 +118,11 @@ fn blame_date(unix_secs: &str) -> String {
         return String::new();
     }
     chrono::DateTime::from_timestamp(secs, 0)
-        .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string())
+        .map(|d| {
+            d.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d")
+                .to_string()
+        })
         .unwrap_or_default()
 }
 
@@ -137,7 +144,11 @@ mod tests {
     fn porcelain_header_detection_requires_sha_and_space() {
         let header = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2 12 15 4";
         let bytes = header.as_bytes();
-        assert!(bytes.len() >= 41 && bytes[..40].iter().all(|b| b.is_ascii_hexdigit()) && bytes[40] == b' ');
+        assert!(
+            bytes.len() >= 41
+                && bytes[..40].iter().all(|b| b.is_ascii_hexdigit())
+                && bytes[40] == b' '
+        );
         let meta = "author 张三";
         let mbytes = meta.as_bytes();
         assert!(!(mbytes.len() >= 41 && mbytes[..40].iter().all(|b| b.is_ascii_hexdigit())));

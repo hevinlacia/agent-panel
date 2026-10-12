@@ -176,7 +176,9 @@ fn normalize_create_id_template_splits_issue_pool() {
         normalize_create_id_template("INC-032-x", "线上问题", false, false, false).unwrap(),
         "INC-032-x"
     );
-    assert!(normalize_create_id_template("WMS-112-fix-x", "线上问题", false, false, false).is_err());
+    assert!(
+        normalize_create_id_template("WMS-112-fix-x", "线上问题", false, false, false).is_err()
+    );
     // 前缀分池：INC 序号独立于需求序号
     assert_eq!(
         compute_next_seq_from_ids(
@@ -204,14 +206,18 @@ fn normalize_create_id_template_splits_issue_pool() {
         "TST-{seq}-uat-bug"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-TST-{seq}-uat-bug", "测试问题", false, false, false).unwrap(),
+        normalize_create_id_template("WMS-TST-{seq}-uat-bug", "测试问题", false, false, false)
+            .unwrap(),
         "TST-{seq}-uat-bug"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题", false, false, false).unwrap(),
+        normalize_create_id_template("WMS-TST-005-uat-bug", "测试问题", false, false, false)
+            .unwrap(),
         "WMS-TST-005-uat-bug"
     );
-    assert!(normalize_create_id_template("WMS-INC-005-x", "测试问题", false, false, false).is_err());
+    assert!(
+        normalize_create_id_template("WMS-INC-005-x", "测试问题", false, false, false).is_err()
+    );
     assert!(normalize_create_id_template("WMS-005-x", "测试问题", false, false, false).is_err());
     // 需求主池不得占用其他池前缀（含新式与旧式别名，含修复池 FIX）
     assert!(normalize_create_id_template("WMS-TST-005-x", "需求", false, false, false).is_err());
@@ -242,8 +248,12 @@ fn normalize_create_id_template_splits_issue_pool() {
         "FIX-001-hanging-wave"
     );
     // is_fix 时非 FIX 具体 id 被拒（主池形态不属于修复池）
-    assert!(normalize_create_id_template("REQ-150-hanging-wave", "需求", false, false, true).is_err());
-    assert!(normalize_create_id_template("WMS-150-hanging-wave", "需求", false, false, true).is_err());
+    assert!(
+        normalize_create_id_template("REQ-150-hanging-wave", "需求", false, false, true).is_err()
+    );
+    assert!(
+        normalize_create_id_template("WMS-150-hanging-wave", "需求", false, false, true).is_err()
+    );
     // FIX 序号独立于 REQ/WMS/INC 池
     assert_eq!(
         compute_next_seq_from_ids(
@@ -260,7 +270,8 @@ fn normalize_create_id_template_splits_issue_pool() {
     );
     // 整合需求池：consolidated=true 强制 ROLLUP 前缀
     assert_eq!(
-        normalize_create_id_template("ROLLUP-{seq}-prod-log-fix", "需求", false, true, false).unwrap(),
+        normalize_create_id_template("ROLLUP-{seq}-prod-log-fix", "需求", false, true, false)
+            .unwrap(),
         "ROLLUP-{seq}-prod-log-fix"
     );
     assert_eq!(
@@ -288,7 +299,8 @@ fn normalize_create_id_template_enforces_group_pool() {
         "GRP-{seq}"
     );
     assert_eq!(
-        normalize_create_id_template("WMS-{seq}-combo-checkout", "需求", true, false, false).unwrap(),
+        normalize_create_id_template("WMS-{seq}-combo-checkout", "需求", true, false, false)
+            .unwrap(),
         "GRP-{seq}-combo-checkout"
     );
     assert_eq!(
@@ -438,7 +450,7 @@ fn issue_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         owner: None,
         start_date: None,
         plan_release: None,
-            submit_test_date: None,
+        submit_test_date: None,
         ones: None,
         issues: None,
         members: None,
@@ -489,11 +501,14 @@ async fn create_issue_rejects_category_prefix_mismatch() {
     assert!(err.message.contains("线上问题"), "{:?}", err);
 }
 
-
 #[test]
 fn pool_lineage_continues_legacy_seq() {
     // REQ 池延续 WMS 主池谱系：WMS-144 已存在 → REQ 下一个 145
-    let ids = vec!["WMS-143-a".to_string(), "WMS-144-b".to_string(), "WMS-INC-120-c".to_string()];
+    let ids = vec![
+        "WMS-143-a".to_string(),
+        "WMS-144-b".to_string(),
+        "WMS-INC-120-c".to_string(),
+    ];
     assert_eq!(compute_next_seq_from_ids_lineage(&ids, "REQ", None), 145);
     // 反向：WMS 模板也延续 REQ 已分配的序号
     let ids = vec!["REQ-145-a".to_string()];
@@ -510,9 +525,18 @@ fn pool_lineage_continues_legacy_seq() {
 
 #[test]
 fn extract_ticket_prefix_supports_new_pools() {
-    assert_eq!(extract_ticket_prefix("ROLLUP-001-prod-log-fix").unwrap(), "ROLLUP-001");
+    assert_eq!(
+        extract_ticket_prefix("ROLLUP-001-prod-log-fix").unwrap(),
+        "ROLLUP-001"
+    );
     assert_eq!(extract_ticket_prefix("REQ-145-fix-x").unwrap(), "REQ-145");
-    assert_eq!(extract_ticket_prefix("WMS-144-prod-log-fix-rollup").unwrap(), "WMS-144");
-    assert_eq!(extract_ticket_prefix("ROLLUP-001-S1-receipt").unwrap(), "ROLLUP-001");
+    assert_eq!(
+        extract_ticket_prefix("WMS-144-prod-log-fix-rollup").unwrap(),
+        "WMS-144"
+    );
+    assert_eq!(
+        extract_ticket_prefix("ROLLUP-001-S1-receipt").unwrap(),
+        "ROLLUP-001"
+    );
     assert!(extract_ticket_prefix("no-ticket-here").is_none());
 }

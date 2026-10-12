@@ -25,7 +25,10 @@ fn release_branch_prefix_derivation() {
         "teamx/rel"
     );
     // 无 / 的分支名回退 release
-    assert_eq!(derive_release_branch_prefix(&["feature-branch".to_string()], None), "release");
+    assert_eq!(
+        derive_release_branch_prefix(&["feature-branch".to_string()], None),
+        "release"
+    );
     // 空登记回退 release
     assert_eq!(derive_release_branch_prefix(&[], None), "release");
     // 非 feature 中段保留
@@ -117,8 +120,14 @@ fn release_branch_id_ref_resolution_defaults_to_active() {
     // 缺省取 active
     assert_eq!(release_branch_id_by_ref(&file, None).unwrap().id, "r2");
     // 显式 id / 完整分支名均可命中
-    assert_eq!(release_branch_id_by_ref(&file, Some("r1")).unwrap().id, "r1");
-    assert_eq!(release_branch_id_by_ref(&file, Some("b-r2")).unwrap().id, "r2");
+    assert_eq!(
+        release_branch_id_by_ref(&file, Some("r1")).unwrap().id,
+        "r1"
+    );
+    assert_eq!(
+        release_branch_id_by_ref(&file, Some("b-r2")).unwrap().id,
+        "r2"
+    );
     // 未命中报错
     assert!(release_branch_id_by_ref(&file, Some("r9")).is_err());
     // 空 registry 报错

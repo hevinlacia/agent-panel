@@ -365,8 +365,8 @@ pub(crate) struct RequirementEventTestCase {
     pub(crate) evidence: Option<String>,
 }
 
-mod create;
 mod compliance;
+mod create;
 mod doc;
 mod doc_parts;
 mod events;
@@ -380,8 +380,8 @@ mod templates;
 mod uat_regression_gate;
 mod validate;
 
-pub(crate) use create::*;
 pub(crate) use compliance::*;
+pub(crate) use create::*;
 pub(crate) use doc::*;
 pub(crate) use doc_parts::*;
 pub(crate) use events::*;

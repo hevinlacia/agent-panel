@@ -183,7 +183,10 @@ pub(crate) fn ensure_effort_estimate_allows_dev(req: &Requirement) -> ApiResult<
     match req.effort_estimate.as_ref() {
         Some(est) => {
             let model = est.get("model").and_then(Value::as_str).unwrap_or("");
-            let hours = est.get("estimatedHours").and_then(Value::as_f64).unwrap_or(0.0);
+            let hours = est
+                .get("estimatedHours")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
             if model != "manual-placeholder" && hours > 0.0 {
                 Ok(())
             } else {

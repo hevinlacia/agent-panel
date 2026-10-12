@@ -936,7 +936,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
     Requirement {
         id: DEFAULT_REQ_ID.into(),
         title: "默认需求".into(),
-            region: None,
+        region: None,
         status: "开发中".into(),
         projects: vec![DEFAULT_PROJECT_NAME.into()],
         project: DEFAULT_PROJECT_NAME.into(),

@@ -16,15 +16,27 @@ fn rework_transition_truth_table() {
 #[test]
 fn dev_loop_kind_truth_table() {
     // 发布就绪 → 开发中 = 发布就绪小循环
-    assert_eq!(dev_loop_kind(Some("发布就绪"), "开发中"), DevLoopKind::ReleaseReady);
+    assert_eq!(
+        dev_loop_kind(Some("发布就绪"), "开发中"),
+        DevLoopKind::ReleaseReady
+    );
     // 打回来源保持返工
     assert_eq!(dev_loop_kind(Some("测试中"), "开发中"), DevLoopKind::Rework);
-    assert_eq!(dev_loop_kind(Some("人工核查"), "开发中"), DevLoopKind::Rework);
+    assert_eq!(
+        dev_loop_kind(Some("人工核查"), "开发中"),
+        DevLoopKind::Rework
+    );
     // 其余回退/前向/目标非开发中都不是循环
     assert_eq!(dev_loop_kind(Some("自测中"), "开发中"), DevLoopKind::None);
-    assert_eq!(dev_loop_kind(Some("发布就绪"), "经验总结"), DevLoopKind::None);
+    assert_eq!(
+        dev_loop_kind(Some("发布就绪"), "经验总结"),
+        DevLoopKind::None
+    );
     assert_eq!(dev_loop_kind(None, "开发中"), DevLoopKind::None);
-    assert_eq!(dev_loop_kind(Some("发布就绪"), "发布就绪"), DevLoopKind::None);
+    assert_eq!(
+        dev_loop_kind(Some("发布就绪"), "发布就绪"),
+        DevLoopKind::None
+    );
 }
 
 #[test]
@@ -45,7 +57,10 @@ fn release_ready_round_count_derives_from_history_when_field_missing() {
     // 显式字段优先于派生值
     let explicit = json!({ "status": "发布就绪", "releaseReadyRounds": 3, "history": [] });
     assert_eq!(release_ready_round_count(&explicit), 3);
-    assert_eq!(release_ready_round_count(&json!({ "status": "发布就绪" })), 0);
+    assert_eq!(
+        release_ready_round_count(&json!({ "status": "发布就绪" })),
+        0
+    );
 }
 
 #[test]
@@ -62,7 +77,10 @@ fn dev_loop_kind_from_state_uses_latest_entry_into_dev() {
             { "status": "开发中", "from": "发布就绪" }
         ]
     });
-    assert_eq!(dev_loop_kind_from_state(&fast_fix_last), DevLoopKind::ReleaseReady);
+    assert_eq!(
+        dev_loop_kind_from_state(&fast_fix_last),
+        DevLoopKind::ReleaseReady
+    );
     // 最近一次进入开发中来自测试中 → 返工语境（小循环之后正常打回不拿错变体）
     let rework_last = json!({
         "status": "开发中",
@@ -81,7 +99,10 @@ fn dev_loop_kind_from_state_uses_latest_entry_into_dev() {
         dev_loop_kind_from_state(&json!({ "status": "开发中", "reworkRounds": 2 })),
         DevLoopKind::Rework
     );
-    assert_eq!(dev_loop_kind_from_state(&json!({ "status": "开发中" })), DevLoopKind::None);
+    assert_eq!(
+        dev_loop_kind_from_state(&json!({ "status": "开发中" })),
+        DevLoopKind::None
+    );
 }
 
 #[tokio::test]
@@ -257,7 +278,10 @@ async fn suspend_round_trip_keeps_flow_history_and_resume_target() {
     assert_eq!(suspended["lastTransition"]["from"], json!("开发中"));
     assert_eq!(suspended["lastTransition"]["skippedStatuses"], json!([]));
     // 恢复目标：状态历史里最近一次非挂起状态 = 开发中
-    assert_eq!(resume_status_from_state(&suspended), Some("开发中".to_string()));
+    assert_eq!(
+        resume_status_from_state(&suspended),
+        Some("开发中".to_string())
+    );
     // 恢复到挂起前状态，再走流水不丢失挂起痕迹
     let resumed = write_requirement_status_checked(
         dir.to_str().unwrap(),
@@ -278,7 +302,10 @@ async fn suspend_round_trip_keeps_flow_history_and_resume_target() {
     )
     .await
     .expect("second suspend");
-    assert_eq!(resume_status_from_state(&suspended_again), Some("测试中".to_string()));
+    assert_eq!(
+        resume_status_from_state(&suspended_again),
+        Some("测试中".to_string())
+    );
     // 历史缺失时兜底 previousStatus（非挂起才可用）
     assert_eq!(
         resume_status_from_state(&json!({ "status": "挂起", "previousStatus": "开发中" })),

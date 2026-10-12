@@ -3,7 +3,10 @@
 
 use std::path::Path;
 
-use axum::{extract::{Query, State}, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -66,7 +69,13 @@ pub(crate) async fn api_git_file_lines(
     }
 
     let spec = format!("{commit_sha}:{}", unescape_repo_path(file_path));
-    let shown = git(repo_dir, &["show", spec.as_str()], 30_000, FILE_LINES_OUTPUT_LIMIT).await;
+    let shown = git(
+        repo_dir,
+        &["show", spec.as_str()],
+        30_000,
+        FILE_LINES_OUTPUT_LIMIT,
+    )
+    .await;
     if !shown.ok {
         return Err(ApiError::bad_request(short_err(&shown)));
     }

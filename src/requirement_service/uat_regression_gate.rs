@@ -113,7 +113,9 @@ pub(crate) async fn uat_regression_detail(req: &Requirement) -> Value {
 /// 纯函数校验：返回（问题+警示，整节不适用原因，条目详情）。
 /// problems 非空 = 不放行（缺小节/缺表列/缺结果/存在失败/通过但证据不可采）；
 /// warnings 非空 = 放行但警示（无法测试结果未知 / 整节不适用）。
-pub(crate) fn validate_uat_regression(body: &str) -> (UatRegressionEval, Option<String>, Vec<UatItemDetail>) {
+pub(crate) fn validate_uat_regression(
+    body: &str,
+) -> (UatRegressionEval, Option<String>, Vec<UatItemDetail>) {
     let mut eval = UatRegressionEval::default();
     let Some(section) = extract_uat_section(body) else {
         eval.problems.push(format!(
@@ -123,8 +125,9 @@ pub(crate) fn validate_uat_regression(body: &str) -> (UatRegressionEval, Option<
     };
     // 整节不适用：写 `不适用：<原因>` 即放行，但警示留痕。
     if let Some(reason) = uat_na_reason(&section) {
-        eval.warnings
-            .push(format!("UAT 回归整节标注不适用：{reason}——请确认该结论仍符合当前改动范围"));
+        eval.warnings.push(format!(
+            "UAT 回归整节标注不适用：{reason}——请确认该结论仍符合当前改动范围"
+        ));
         return (eval, Some(reason), Vec::new());
     }
     let rows = parse_table_rows(&section);
@@ -172,36 +175,34 @@ pub(crate) fn validate_uat_regression(body: &str) -> (UatRegressionEval, Option<
             || has_inline_reason(&result_text);
         let evidence = meaningful_reason(&evidence_text);
         match classify_result_str(&result_text) {
-            "pass" => {
-                match evidence {
-                    Some(ev) => {
-                        if let Some(marker) = evidence_plan_marker(&ev) {
-                            eval.problems.push(format!(
+            "pass" => match evidence {
+                Some(ev) => {
+                    if let Some(marker) = evidence_plan_marker(&ev) {
+                        eval.problems.push(format!(
                                 "「{label}」证据是计划/流程动作（含「{marker}」），不是已发生的回归证据：状态流转、计划、推断都不算证据；请先在 UAT 真实执行并记录结果，或把该项改为「未执行/无法测试」并写明原因"
                             ));
-                        }
-                        items.push(UatItemDetail {
-                            no: count,
-                            item: scenario,
-                            result: "pass",
-                            result_text: result_text.trim().to_string(),
-                            evidence: Some(ev),
-                        });
                     }
-                    None => {
-                        eval.problems.push(format!(
+                    items.push(UatItemDetail {
+                        no: count,
+                        item: scenario,
+                        result: "pass",
+                        result_text: result_text.trim().to_string(),
+                        evidence: Some(ev),
+                    });
+                }
+                None => {
+                    eval.problems.push(format!(
                             "「{label}」结果为通过但证据列为空/占位：通过必须有已发生的可核对证据（tid/日志关键字/接口返回/DB 前后值），不能只写「-」或留空"
                         ));
-                        items.push(UatItemDetail {
-                            no: count,
-                            item: scenario,
-                            result: "pass",
-                            result_text: result_text.trim().to_string(),
-                            evidence: None,
-                        });
-                    }
+                    items.push(UatItemDetail {
+                        no: count,
+                        item: scenario,
+                        result: "pass",
+                        result_text: result_text.trim().to_string(),
+                        evidence: None,
+                    });
                 }
-            }
+            },
             "fail" => {
                 if !has_reason_after {
                     eval.problems.push(format!(
@@ -246,7 +247,11 @@ pub(crate) fn validate_uat_regression(body: &str) -> (UatRegressionEval, Option<
                         "「{label}」结果为「未执行」：先在 UAT 执行并记录证据后改为「通过」；确实无需 UAT 回归时整节写 `不适用：<原因>`"
                     ));
                 } else {
-                    let shown = if result_text.trim().is_empty() { "空" } else { result_text.trim() };
+                    let shown = if result_text.trim().is_empty() {
+                        "空"
+                    } else {
+                        result_text.trim()
+                    };
                     eval.problems.push(format!(
                         "「{label}」缺少回归结果（当前：{shown}）；每项必须填写 通过/失败/无法测试/未执行"
                     ));
@@ -271,7 +276,9 @@ pub(crate) fn validate_uat_regression(body: &str) -> (UatRegressionEval, Option<
 
 /// 「通过」行的证据里命中计划/流程动作标记词时返回该标记。
 fn evidence_plan_marker(evidence: &str) -> Option<String> {
-    let hit = EVIDENCE_PLAN_MARKERS.iter().find(|m| evidence.contains(**m))?;
+    let hit = EVIDENCE_PLAN_MARKERS
+        .iter()
+        .find(|m| evidence.contains(**m))?;
     Some((*hit).to_string())
 }
 

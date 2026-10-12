@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio::{fs, sync::Mutex, task::JoinHandle};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
-mod attachments;
 mod api_catalog;
+mod attachments;
 mod browser_auth;
 mod cainiao_mock;
 mod capability;
@@ -32,8 +32,8 @@ mod markdown;
 mod ones;
 mod ones_manhour;
 mod paths;
-mod pi_rpc;
 mod pi_config;
+mod pi_rpc;
 mod requirement_api;
 mod requirement_context;
 mod requirement_index;
@@ -43,8 +43,8 @@ mod requirement_sub;
 mod sessions;
 mod util;
 
-use attachments::*;
 use api_catalog::*;
+use attachments::*;
 use browser_auth::*;
 use cainiao_mock::*;
 use capability::*;
@@ -60,8 +60,8 @@ use knowledge::*;
 use markdown::*;
 use ones::*;
 use ones_manhour::*;
-use pi_rpc::*;
 use pi_config::*;
+use pi_rpc::*;
 use requirement_api::*;
 use requirement_context::*;
 use requirement_index::*;
@@ -167,7 +167,14 @@ static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "经�
 /// ② 整合发布模型：需求创建 → 开发中 →（自测中/测试中/发布就绪可跳级）→ 已合入（合入整合发布分支）
 /// → 已发布（随发布分支生产 MR 合入封版）；发布进度由子需求独立跟踪。
 static SUB_REQ_STATUSES: &[&str] = &[
-    "需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消",
+    "需求创建",
+    "开发中",
+    "自测中",
+    "测试中",
+    "发布就绪",
+    "已合入",
+    "已发布",
+    "已取消",
 ];
 /// 仅子需求可用的状态（“开发中/自测中/测试中/发布就绪”与需求流共用）；普通需求/issue 设置这些状态会被拒。
 static SUB_ONLY_STATUSES: &[&str] = &["需求创建", "已合入", "已发布", "已取消"];
