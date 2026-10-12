@@ -32,9 +32,6 @@ export const DEFAULT_CONFIG: ScheduleConfig = {
   defaultDailyPerReq: 4,
 }
 
-/** 可进入排期计算的状态全集（流水状态 + 挂起）；页面层「默认排除状态」可再剔除，挂起默认排除。 */
-export const SCHEDULE_QUEUE_STATUSES: string[] = ["需求澄清", "需求创建", "开发中", "自测中", "测试中", "挂起"]
-
 export type HoursSource = "manual" | "ones" | "estimate" | "default"
 
 export interface ScheduleReqInput {
