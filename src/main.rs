@@ -241,6 +241,8 @@ struct IdQuery {
     kind: Option<String>,
     q: Option<String>,
     domain: Option<String>,
+    /// 知识列表/agent 知识查询：按 tags 精确过滤（trim + 大小写不敏感匹配任一 tag，如「线上问题修复」）。
+    tag: Option<String>,
     project: Option<String>,
     scope: Option<String>,
     /// 分支登记轮次（diff-snapshots / branch-rounds 等）：1 = 原始 branches.json。

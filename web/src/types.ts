@@ -729,6 +729,7 @@ export interface KnowledgeItem {
   scope?: string
   status?: string
   confidence?: string
+  category?: string
   tags?: string[]
   triggerTerms?: string[]
   relatedSkills?: string[]

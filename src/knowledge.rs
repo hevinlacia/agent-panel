@@ -36,6 +36,8 @@ pub(crate) struct KnowledgeAgentQuery {
     #[serde(default)]
     domain: Option<String>,
     #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
     project: Option<String>,
     #[serde(default)]
     scope: Option<String>,
@@ -116,6 +118,7 @@ struct KnowledgeQueryFilter {
     kind: Option<String>,
     query: Option<String>,
     domain: Option<String>,
+    tag: Option<String>,
     project: Option<String>,
     scope: Option<String>,
     status: Option<String>,
@@ -144,6 +147,7 @@ pub(crate) async fn api_knowledge_list(
         query: clean_optional(query.q.as_deref())
             .or_else(|| clean_optional(query.intent.as_deref())),
         domain: clean_optional(query.domain.as_deref()),
+        tag: clean_optional(query.tag.as_deref()),
         project: clean_optional(query.project.as_deref()),
         scope: clean_optional(query.scope.as_deref()),
         status: clean_optional(query.status.as_deref()),
@@ -179,6 +183,7 @@ pub(crate) async fn api_agent_knowledge_query(
         query: clean_optional(payload.intent.as_deref())
             .or_else(|| clean_optional(payload.query.as_deref())),
         domain: clean_optional(payload.domain.as_deref()),
+        tag: clean_optional(payload.tag.as_deref()),
         project: clean_optional(payload.project.as_deref()),
         scope: clean_optional(payload.scope.as_deref()),
         status: clean_optional(payload.status.as_deref()),
@@ -450,6 +455,7 @@ async fn query_knowledge_items(
 
 fn knowledge_item_matches(item: &Value, filter: &KnowledgeQueryFilter) -> bool {
     value_filter_matches(item, "domain", filter.domain.as_deref())
+        && knowledge_tag_matches(item, filter.tag.as_deref())
         && value_filter_matches(item, "project", filter.project.as_deref())
         && value_filter_matches(item, "scope", filter.scope.as_deref())
         && value_filter_matches(item, "status", filter.status.as_deref())
@@ -524,6 +530,22 @@ fn value_filter_matches(item: &Value, key: &str, filter: Option<&str>) -> bool {
     value
         .to_ascii_lowercase()
         .contains(&filter.to_ascii_lowercase())
+}
+
+/// tags 数组精确过滤（trim + 大小写不敏感匹配任一元素）：filter 非空时要求条目 tags 包含该值。
+/// 用于「线上问题修复」这类接口标识的结构化筛选，区别于 q 的全文评分搜索。
+fn knowledge_tag_matches(item: &Value, filter: Option<&str>) -> bool {
+    let Some(filter) = filter.map(str::trim).filter(|v| !v.is_empty()) else {
+        return true;
+    };
+    item.get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(Value::as_str)
+                .any(|tag| tag.trim().eq_ignore_ascii_case(filter))
+        })
+        .unwrap_or(false)
 }
 
 async fn get_knowledge_item(
