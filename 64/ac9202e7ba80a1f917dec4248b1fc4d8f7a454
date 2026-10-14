@@ -1,0 +1,23 @@
+web/src/features/requirements/sub-req-panels.tsx
+  262660ba4a87947a 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "64ac9202e7ba80a1f917dec4248b1fc4d8f7a454",
+  "prompts": {
+    "262660ba4a87947a": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a134dc-faf4-71b2-b2ca-00a74502ba92",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
