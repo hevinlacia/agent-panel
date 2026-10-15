@@ -46,9 +46,9 @@ export function MergeBranchPanel({ req }: { req: Requirement }) {
   const latestAt = Math.max(0, ...payloads.map((item) => item.generatedAt || 0))
   const chip = payloads.length ? payloads.map((item) => item.status).join(" / ") : "选择环境分支"
   const selectBranch = (kind: MergeRepoKind, value: string, onChange: (v: string) => void, options?: MergeKindOptions) => <label className="react-merge-select"><span>{kind === "frontend" ? "前端分支" : "后端分支"}</span><select value={value} onChange={(e) => onChange(e.target.value)} disabled={loading || optionData.loading || !options?.options?.length}><option value="">不合并</option>{(options?.options || []).map((item) => <option key={`${kind}-${item.value}`} value={item.value}>{item.label}</option>)}</select></label>
-  const isIssue = req.category === "线上问题" || req.category === "测试问题"
+  const isIssue = req.category === "线上问题" || req.category === "测试问题" || req.category === "性能问题"
   return <section className="react-panel react-merge-panel"><PanelHead kicker="Branch Merge" title="合并到测试 / UAT" chip={chip} />
-    <p className="react-muted">选择要合并的环境分支后执行；未选择的前端/后端不会合并。自测中默认选 test，测试中默认选 UAT 分支，其他状态默认不选择。{isIssue ? "线上问题/测试问题：排查/复现代码仅允许合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被后端拦截；正式生产修复请用状态面板的「创建修复需求」。" : "生产分支合入走下方「生产 MR」，由 GitLab 审批后手动合入。"}</p>
+    <p className="react-muted">选择要合并的环境分支后执行；未选择的前端/后端不会合并。自测中默认选 test，测试中默认选 UAT 分支，其他状态默认不选择。{isIssue ? "线上问题/测试问题/性能问题：排查/复现代码仅允许合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被后端拦截；正式生产修复请用状态面板的「创建修复需求」。" : "生产分支合入走下方「生产 MR」，由 GitLab 审批后手动合入。"}</p>
     {optionData.error ? <p className="react-effort-error">分支选项加载失败：{optionData.error}</p> : null}
     <div className="react-merge-select-grid">{selectBranch("frontend", frontendBranch, setFrontendBranch, optionData.data?.options.frontend)}{selectBranch("backend", backendBranch, setBackendBranch, optionData.data?.options.backend)}</div>
     <div className="react-actions"><button onClick={runMerge} disabled={loading || optionData.loading || (!frontendBranch && !backendBranch)}><GitMerge size={15} />{loading ? "合并中…" : "合并所选分支"}</button><a href={`/requirement-merge?id=${encodeURIComponent(req.id)}`}><AlertTriangle size={15} />查看冲突 / 合并状态</a>{latestAt ? <span className="react-muted">更新 {formatDateTime(latestAt)}</span> : null}</div>

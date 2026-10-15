@@ -6,7 +6,7 @@
  */
 
 export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已关闭" | "需求创建" | "已合入" | "已发布" | "已取消" | "挂起"
-export type ReqCategory = "需求" | "线上问题" | "测试问题"
+export type ReqCategory = "需求" | "线上问题" | "测试问题" | "性能问题"
 
 export interface EffortEstimate {
   coefficient: number
@@ -342,7 +342,7 @@ export interface Requirement {
   region?: string | null
   /** 需求工时档案（ones-manhour.json）：人工预估 / agent 实际 / 录入历史。 */
   onesManhour?: OnesManhourFileValue
-  /** 绑定的线上问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
+  /** 绑定的线上问题/性能问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
   issues?: string[]
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
   testScenarioPath?: string

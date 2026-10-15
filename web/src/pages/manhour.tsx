@@ -198,7 +198,7 @@ export function ManhourPage({ globalProject }: { globalProject?: string }) {
           <label>关键字 <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="标题 / req id" /></label>
           <label className="react-manhour-check"><input type="checkbox" checked={remainingOnly} onChange={(e) => setRemainingOnly(e.target.checked)} />仅剩剩余工时</label>
           <label className="react-manhour-check"><input type="checkbox" checked={boundOnly} onChange={(e) => setBoundOnly(e.target.checked)} />仅已绑 ONES</label>
-          <label className="react-manhour-check"><input type="checkbox" checked={issueIncluded} onChange={(e) => setIssueIncluded(e.target.checked)} />含线上/测试问题</label>
+          <label className="react-manhour-check"><input type="checkbox" checked={issueIncluded} onChange={(e) => setIssueIncluded(e.target.checked)} />含线上/测试/性能问题</label>
           <button type="button" className="react-ghost-btn" onClick={() => { refresh(); ones.refresh() }}><RefreshCw size={13} />刷新</button>
         </div>
         <details className="react-manhour-status-filter"><summary className="react-muted">按状态筛选（{statuses.length ? `已选 ${statuses.length}` : "不限"}）</summary><div className="react-card-meta">{REQ_FLOW_STATUSES.map((s) => <label key={s} className="react-manhour-check react-linked-issue-chip"><input type="checkbox" checked={statuses.includes(s)} onChange={() => setStatuses((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))} />{s}</label>)}</div></details>

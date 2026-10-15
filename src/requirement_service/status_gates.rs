@@ -203,7 +203,8 @@ const EFFORT_ESTIMATE_HINT: &str = "进入开发前必须先完成工时预估�
 /// （root-cause.md：根因 + 可复核证据链 + 修复路径决策），
 /// 存量兼容：历史问题已写 technical-plan.md 且内容成型时同样放行。仅对 category=线上问题 生效。
 pub(crate) async fn ensure_issue_root_cause_allows_transition(req: &Requirement) -> ApiResult<()> {
-    if req.category.as_deref() != Some("线上问题") {
+    // 线上问题/性能问题强制；测试问题轻门禁（建议按需维护）。
+    if !matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         return Ok(());
     }
     let dir = req_dir_path(req)?;
@@ -231,7 +232,8 @@ pub(crate) async fn ensure_issue_root_cause_allows_transition(req: &Requirement)
 pub(crate) async fn ensure_issue_troubleshooting_allows_transition(
     req: &Requirement,
 ) -> ApiResult<()> {
-    if req.category.as_deref() != Some("线上问题") {
+    // 线上问题/性能问题强制；测试问题轻门禁（建议按需沉淀）。
+    if !matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         return Ok(());
     }
     let dir = req_dir_path(req)?;

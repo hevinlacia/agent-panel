@@ -15,7 +15,7 @@ export function LinkedIssuesPanel({ req, issues, onSaved }: { req: Requirement; 
   const add = async () => {
     const id = input.trim()
     if (saving || !id) return
-    if (bound.includes(id)) { setFeedback("该线上问题已绑定"); return }
+    if (bound.includes(id)) { setFeedback("该问题已绑定"); return }
     setSaving(true)
     setFeedback(null)
     try {
@@ -43,7 +43,7 @@ export function LinkedIssuesPanel({ req, issues, onSaved }: { req: Requirement; 
       setSaving(false)
     }
   }
-  return <section id="linked-issues" className="react-panel"><PanelHead kicker="Linked Issues" title="关联线上问题" chip={`${bound.length}`} /><p className="react-muted">绑定由本需求修复的线上问题（category=线上问题，支持多个）；需求进入 经验总结 及之后状态时，系统自动把仍处于排查中/已定位的关联线上问题推进到已修复。若需求尚未进入经验总结，优先先推进需求，不要手动改关联问题状态。</p><div className="react-inline-form"><input value={input} onChange={(e) => { setInput(e.target.value); setFeedback(null) }} placeholder="线上问题 req id（如 WMS-088-fix-xxx）" onKeyDown={(e) => { if (e.key === "Enter") add() }} /><button onClick={add} disabled={saving || !input.trim()}>{saving ? "保存中…" : "绑定"}</button></div>{bound.length ? <div className="react-card-meta">{boundReqs.map((issue) => <span key={issue.id} className="react-linked-issue-chip"><a href={`/requirement?id=${encodeURIComponent(issue.id)}`}>{issue.id}</a>{statusPill(issue.status)}<button type="button" className="react-copy-link-btn" onClick={() => remove(issue.id)} title="解除绑定">✕</button></span>)}{bound.filter((id) => !issues.some((r) => r.id === id)).map((id) => <span key={id} className="react-linked-issue-chip"><code>{id}</code><em className="react-muted">未找到</em><button type="button" className="react-copy-link-btn" onClick={() => remove(id)}>✕</button></span>)}</div> : <p className="react-muted">暂未绑定线上问题。</p>}{feedback ? <p className={feedback.startsWith("绑定失败") || feedback.startsWith("解绑失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</section>
+  return <section id="linked-issues" className="react-panel"><PanelHead kicker="Linked Issues" title="关联线上/性能问题" chip={`${bound.length}`} /><p className="react-muted">绑定由本需求修复/优化的线上问题或性能问题（支持多个）；需求进入 经验总结 及之后状态时，系统自动把仍处于排查中/已定位的关联问题推进到已修复。若需求尚未进入经验总结，优先先推进需求，不要手动改关联问题状态。</p><div className="react-inline-form"><input value={input} onChange={(e) => { setInput(e.target.value); setFeedback(null) }} placeholder="问题 req id（如 INC-001-slug / PERF-001-slug）" onKeyDown={(e) => { if (e.key === "Enter") add() }} /><button onClick={add} disabled={saving || !input.trim()}>{saving ? "保存中…" : "绑定"}</button></div>{bound.length ? <div className="react-card-meta">{boundReqs.map((issue) => <span key={issue.id} className="react-linked-issue-chip"><a href={`/requirement?id=${encodeURIComponent(issue.id)}`}>{issue.id}</a>{statusPill(issue.status)}<button type="button" className="react-copy-link-btn" onClick={() => remove(issue.id)} title="解除绑定">✕</button></span>)}{bound.filter((id) => !issues.some((r) => r.id === id)).map((id) => <span key={id} className="react-linked-issue-chip"><code>{id}</code><em className="react-muted">未找到</em><button type="button" className="react-copy-link-btn" onClick={() => remove(id)}>✕</button></span>)}</div> : <p className="react-muted">暂未绑定线上/性能问题。</p>}{feedback ? <p className={feedback.startsWith("绑定失败") || feedback.startsWith("解绑失败") ? "react-effort-error" : "react-save-hint"}>{feedback}</p> : null}</section>
 }
 
 export function GroupMembersPanel({ req }: { req: Requirement }) {

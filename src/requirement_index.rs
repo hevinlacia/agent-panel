@@ -177,7 +177,7 @@ pub(crate) fn sub_req_seq(req_id: &str) -> Option<u64> {
 
 pub(crate) const GROUP_RELEASE_POLICIES: &[&str] = &["together", "independent"];
 
-/// 需求流状态序数（越小越早）；线上问题/测试问题轻流程状态不参与聚合。
+/// 需求流状态序数（越小越早）；线上问题/测试问题/性能问题轻流程状态不参与聚合。
 pub(crate) fn requirement_flow_status_rank(status: &str) -> Option<usize> {
     REQ_FLOW_STATUSES.iter().position(|s| *s == status)
 }

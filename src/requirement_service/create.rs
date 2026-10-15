@@ -5,7 +5,7 @@ pub(crate) async fn create_requirement(
     form: RequirementCreateForm,
 ) -> ApiResult<Value> {
     let title = clean_required(&form.title, "title")?;
-    // 类别推导：reqId 模板带问题编号池前缀（WMS-INC-/WMS-TST-）时按前缀推导类别。
+    // 类别推导：reqId 模板带问题编号池前缀（WMS-INC-/WMS-TST-/PERF-）时按前缀推导类别。
     // 用户约定：登记问题未强调测试环境的默认线上问题；显式 category 与前缀冲突时拒绝。
     let id_template_raw = form.req_id.trim();
     let derived_category = derive_category_from_id_template(id_template_raw);
@@ -19,7 +19,7 @@ pub(crate) async fn create_requirement(
             if let Some(derived) = derived_category {
                 if explicit != derived {
                     return Err(ApiError::bad_request(format!(
-                        "reqId 使用问题编号池前缀（{derived} 对应 WMS-INC-/WMS-TST-），category 应为「{derived}」（未强调测试环境的问题默认线上问题），当前为「{explicit}」"
+                        "reqId 使用问题编号池前缀（{derived} 对应 WMS-INC-/WMS-TST-/PERF-），category 应为「{derived}」（未强调测试环境的问题默认线上问题），当前为「{explicit}」"
                     )));
                 }
             }
@@ -56,7 +56,7 @@ pub(crate) async fn create_requirement(
     let is_group = form.members.as_ref().is_some_and(|m| !m.is_empty());
     if is_group && is_issue_category(&category) {
         return Err(ApiError::bad_request(
-            "需求组（members 非空）只能使用 category=需求；线上问题/测试问题不支持组",
+            "需求组（members 非空）只能使用 category=需求；线上问题/测试问题/性能问题不支持组",
         ));
     }
     // 整合需求（consolidated=true）：ROLLUP 独立编号池，仅 category=需求，与需求组互斥。
@@ -97,7 +97,7 @@ pub(crate) async fn create_requirement(
         Some(raw) => {
             if !is_issue_category(&category) {
                 return Err(ApiError::bad_request(
-                    "只有线上问题/测试问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+                    "只有线上问题/测试问题/性能问题支持 region 区域属性（cn=中国 / sea=东南亚）",
                 ));
             }
             raw.to_lowercase()
@@ -129,12 +129,12 @@ pub(crate) async fn create_requirement(
         clean_optional(form.submit_test_date.as_deref()).unwrap_or_else(|| "unknown".to_string());
     ensure_date_or_unknown(&submit_test_date, "submitTestDate")?;
     let ones = clean_optional(form.ones.as_deref()).unwrap_or_default();
-    // 创建时绑定线上问题：仅 category=需求 时允许，且每个 id 必须是真实存在的线上问题。
+    // 创建时绑定线上/性能问题：仅 category=需求 时允许，且每个 id 必须是真实存在的同族问题。
     let mut issues: Vec<String> = Vec::new();
     if let Some(raw_issues) = form.issues.as_ref() {
         if category != "需求" {
             return Err(ApiError::bad_request(
-                "只有 category=需求 的记录可以绑定线上问题（issues）",
+                "只有 category=需求 的记录可以绑定线上问题/性能问题（issues）",
             ));
         }
         issues = unique_strings(raw_issues.clone());
@@ -142,9 +142,12 @@ pub(crate) async fn create_requirement(
             let issue = get_real_requirement(state, id)
                 .await
                 .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
-            if issue.category.as_deref() != Some("线上问题") {
+            if !matches!(
+                issue.category.as_deref(),
+                Some("线上问题") | Some("性能问题")
+            ) {
                 return Err(ApiError::bad_request(format!(
-                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    "{} 不是线上问题/性能问题（category={}），只能绑定 category=线上问题/性能问题 的记录",
                     id,
                     issue.category.unwrap_or_else(|| "需求".into())
                 )));
@@ -573,7 +576,7 @@ pub(crate) async fn update_requirement(
         // 区域维度仅 issue 家族支持；空字符串 = 清除（set_frontmatter_field 空值即移除字段）。
         if !is_issue_category(req.category.as_deref().unwrap_or("需求")) {
             return Err(ApiError::bad_request(
-                "只有线上问题/测试问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+                "只有线上问题/测试问题/性能问题支持 region 区域属性（cn=中国 / sea=东南亚）",
             ));
         }
         let value = region.trim().to_lowercase();
@@ -599,9 +602,12 @@ pub(crate) async fn update_requirement(
             let issue = get_real_requirement(state, id)
                 .await
                 .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
-            if issue.category.as_deref() != Some("线上问题") {
+            if !matches!(
+                issue.category.as_deref(),
+                Some("线上问题") | Some("性能问题")
+            ) {
                 return Err(ApiError::bad_request(format!(
-                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    "{} 不是线上问题/性能问题（category={}），只能绑定 category=线上问题/性能问题 的记录",
                     id,
                     issue.category.unwrap_or_else(|| "需求".into())
                 )));
@@ -851,7 +857,7 @@ pub(crate) fn requirement_section_form_to_edit(
 
 pub(crate) fn requirement_section_default_doc_type(section: &str) -> Option<&'static str> {
     let s = normalize_section_key(section);
-    // issue 家族（线上问题/测试问题文档集）：incident.md / root-cause.md 必须是独立落点，
+    // issue 家族（线上问题/测试问题/性能问题文档集）：incident.md / root-cause.md 必须是独立落点，
     // 不得再回退到 impact.md（历史 bug：rootcause 被旧别名映射进 impact，静默写错文件）。
     if matches!(s.as_str(), "rootcause") {
         Some("root-cause")

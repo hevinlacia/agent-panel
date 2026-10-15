@@ -440,7 +440,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
     Ok(report)
 }
 
-/// 经验总结自动派发触发条件（2026-10 统一）：需求与问题家族（线上问题/测试问题）
+/// 经验总结自动派发触发条件（2026-10 统一）：需求与问题家族（线上问题/测试问题/性能问题）
 /// 进入「经验总结」即触发（问题旧「已复盘」状态经别名映射归一到经验总结）；
 /// 实际派发仍受 experienceSummaryDispatchWindow 时间窗口限制。
 pub(crate) fn experience_summary_triggered(req: &Requirement) -> bool {
@@ -455,14 +455,14 @@ pub(crate) fn experience_summary_prompt(
 ) -> String {
     let req_id = &req.id;
     let title = &req.title;
-    if req.category.as_deref() == Some("线上问题") {
+    if matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         let dir = report_path
             .parent()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let report = report_path.display();
         return format!(
-            "自动经验沉淀任务（线上问题第二遍独立复核）。{req_id} - {title}
+            "自动经验沉淀任务（问题第二遍独立复核）。{req_id} - {title}
 
              背景：排查 agent 已在 troubleshooting.md 记录 怎么排查/怎么修复/根因/复用清单；你的职责是验证并补齐经验库落地，供下次排查参考，不是重写排查过程。
 
@@ -471,7 +471,7 @@ pub(crate) fn experience_summary_prompt(
              - {dir}/troubleshooting.md（怎么排查 + 怎么修复 + 根因 + 复用清单）
              - {dir}/incident.md 与 {dir}/root-cause.md（如存在）
 
-             价值判定基线：线上问题经验默认有价值——除非与经验库已有条目重复（相同现象/根因/触发词已覆盖），或确认为误报/环境问题/纯一次性操作，否则都应落一条 experiences 条目。
+             价值判定基线：问题经验默认有价值——除非与经验库已有条目重复（相同现象/根因/触发词已覆盖），或确认为误报/环境问题/纯一次性操作，否则都应落一条 experiences 条目。
              防重复执行：复用清单/改进点里可能有一部分已经在排查或修复过程中落地了（证据：root-cause.md 修复决策、events 进展事件、需求分支 git log、对应 skill/配置文件的现状）。逐项核对，已落地的在 experience-summary.md 标「已落地（<证据线索>）」，不要重复实施、不要再登记为待办；只对未落地的做沉淀或登记。
              查重：POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
 
@@ -482,7 +482,7 @@ pub(crate) fn experience_summary_prompt(
              - 回填 {dir}/troubleshooting.md「复用清单」：已落地条目 id/链接；重复或无价值的写明原因
              - 写 experience-summary.md（路径：{report}）：已落地条目清单、跳过项及原因
 
-             完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"线上问题经验沉淀完成\"}}。
+             完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"线上问题/性能问题经验沉淀完成\"}}。
              无法完成时把原因写入 notes.md 或通过 /api/requirement/events 记录。",
             req_id = req_id,
             title = title,

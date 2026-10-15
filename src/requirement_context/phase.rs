@@ -421,9 +421,9 @@ pub(crate) fn any_file_check(dir: &Path, files: &[&str], label: &str, required: 
     })
 }
 
-pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&'static str> {
-    if is_online_issue {
-        // 线上问题专用文档集：不注入需求开发文档（technical-plan/config-changes 等）；
+pub(crate) fn agent_context_tokens(intent: &str, is_issue_family: bool) -> Vec<&'static str> {
+    if is_issue_family {
+        // issue 家族（线上问题/测试问题/性能问题）专用文档集：不注入需求开发文档（technical-plan/config-changes 等）；
         // 复现/验证代码允许登记分支，注入 req.branchScope 供 diff/merge 使用。
         return match intent {
             "progress" | "status" => vec![

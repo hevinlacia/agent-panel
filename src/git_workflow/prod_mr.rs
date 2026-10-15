@@ -416,7 +416,7 @@ pub(crate) fn detect_prod_target_branch(repo: &BranchRepo) -> String {
 }
 
 /// 判断目标分支是否属于生产分支：后端 master、前端 production。
-/// issue 家族（线上问题/测试问题）的排查/复现代码只允许合入 test/UAT 环境分支，
+/// issue 家族（线上问题/测试问题/性能问题）的排查/复现代码只允许合入 test/UAT 环境分支，
 /// 该函数用于在 merge 时拦截生产分支（包括 branches.json uat_target_branch 显式覆盖的场景）。
 pub(crate) fn is_production_target_branch(repo: &BranchRepo, target_branch: &str) -> bool {
     if is_pda_client_repo(repo) {

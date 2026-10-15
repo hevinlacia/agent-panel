@@ -726,7 +726,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
             };
             json!({
                 "category": req.category,
-                "applicable": req.category.as_deref() == Some("线上问题"),
+                "applicable": matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")),
                 "rootCauseFilled": root_cause,
                 "legacyPlanFilled": legacy,
             })
@@ -742,7 +742,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
             };
             json!({
                 "category": req.category,
-                "applicable": req.category.as_deref() == Some("线上问题"),
+                "applicable": matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")),
                 "filled": filled,
             })
         }
@@ -976,7 +976,7 @@ pub(crate) async fn api_requirement_category(
     let st = write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), &body.category)
         .await?;
     let mut status_state = Value::Null;
-    // issue 家族（线上问题/测试问题）共用轻量状态机：从需求流程切入时进入排查中；切回需求流程时回需求澄清。
+    // issue 家族（线上问题/测试问题/性能问题）共用轻量状态机：从需求流程切入时进入排查中；切回需求流程时回需求澄清。
     if is_issue_category(&body.category) && !ISSUE_STATUSES.contains(&req.status.as_str()) {
         status_state = write_requirement_status(
             req.req_dir.as_deref().unwrap_or_default(),
@@ -1003,13 +1003,17 @@ pub(crate) async fn api_requirement_convert_issue(
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let issue = get_real_requirement(&state, &body.req_id).await?;
-    if issue.category.as_deref() != Some("线上问题") {
+    // 性能问题与线上问题同样承接「代码修复需求」（优化型修复）；测试问题不走此路径。
+    if !matches!(
+        issue.category.as_deref(),
+        Some("线上问题") | Some("性能问题")
+    ) {
         return Err(ApiError::bad_request(format!(
-            "{} 不是线上问题，无需转换",
+            "{} 不是线上问题/性能问题，无需转换",
             issue.id
         )));
     }
-    // 代码修复路径：创建独立的普通需求承接修复，线上问题保持 category=线上问题 不变，
+    // 代码修复路径：创建独立的普通需求承接修复，原问题保持 category 不变，
     // 绑定在新需求的 meta.md issues 字段；需求进入 >= 经验总结 时自动把问题推进到已修复。
     let created = create_requirement(
         &state,
@@ -1035,7 +1039,8 @@ pub(crate) async fn api_requirement_convert_issue(
             release_policy: None,
             consolidated: None,
             summary: Some(format!(
-                "由线上问题 {} 转出的代码修复需求；排查过程见原问题。",
+                "由{} {} 转出的代码修复需求；排查过程见原问题。",
+                issue.category.as_deref().unwrap_or("线上问题"),
                 issue.id
             )),
             background: None,
@@ -2256,7 +2261,7 @@ pub(crate) async fn api_requirement_merge_branch(
         ))
     })?;
     let merge_request = normalize_merge_request(&body)?;
-    // issue 家族（线上问题/测试问题）允许登记分支写复现/测试代码，但禁止合入生产分支。
+    // issue 家族（线上问题/测试问题/性能问题）允许登记分支写复现/测试代码，但禁止合入生产分支。
     let block_prod_branches = req
         .category
         .as_deref()
@@ -2333,7 +2338,7 @@ pub(crate) async fn api_requirement_prod_mrs(
         .unwrap_or(false)
     {
         return Err(ApiError::bad_request(
-            "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
+            "线上问题/测试问题/性能问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
         ));
     }
     // 合并 MR 不再校验门禁状态：MR 生成只是创建合并请求，不会自动合入；

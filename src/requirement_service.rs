@@ -157,7 +157,7 @@ pub(crate) struct RequirementCreateForm {
     #[serde(default)]
     pub(crate) ones: Option<String>,
     /// 区域维度（仅 issue 家族：cn=中国 / sea=东南亚，可扩展更多国家/区域）；
-    /// 仅线上问题/测试问题可设置，普通需求传入报 400。
+    /// 仅线上问题/测试问题/性能问题可设置，普通需求传入报 400。
     #[serde(default)]
     pub(crate) region: Option<String>,
     /// 创建时绑定的线上问题 req id 列表（仅 category=需求 时有意义）。
