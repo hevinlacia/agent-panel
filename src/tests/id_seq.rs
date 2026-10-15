@@ -287,6 +287,49 @@ fn normalize_create_id_template_splits_issue_pool() {
 }
 
 #[test]
+fn normalize_create_id_template_perf_pool() {
+    // 性能问题独立编号池：默认 PERF-{seq}，{seq} 模板强制 PERF 前缀，具体 id 接受 PERF 形态
+    assert_eq!(
+        normalize_create_id_template("", "性能问题", false, false, false).unwrap(),
+        "PERF-{seq}"
+    );
+    assert_eq!(
+        normalize_create_id_template("PERF-{seq}-slow-sql", "性能问题", false, false, false)
+            .unwrap(),
+        "PERF-{seq}-slow-sql"
+    );
+    assert_eq!(
+        normalize_create_id_template("WMS-{seq}-slow-sql", "性能问题", false, false, false)
+            .unwrap(),
+        "PERF-{seq}-slow-sql"
+    );
+    assert_eq!(
+        normalize_create_id_template("PERF-001-slow-sql", "性能问题", false, false, false).unwrap(),
+        "PERF-001-slow-sql"
+    );
+    // 跨池拒绝：INC/TST/主池具体 id 不能落到 PERF 池，反之 PERF 也不能进主池/INC/TST 池
+    assert!(normalize_create_id_template("INC-005-x", "性能问题", false, false, false).is_err());
+    assert!(normalize_create_id_template("TST-005-x", "性能问题", false, false, false).is_err());
+    assert!(normalize_create_id_template("WMS-005-x", "性能问题", false, false, false).is_err());
+    assert!(normalize_create_id_template("PERF-005-x", "线上问题", false, false, false).is_err());
+    assert!(normalize_create_id_template("PERF-005-x", "需求", false, false, false).is_err());
+    assert!(normalize_create_id_template("PERF-{seq}-x", "需求", false, false, false).is_err());
+    // PERF 序号独立于 REQ/INC/TST 池
+    assert_eq!(
+        compute_next_seq_from_ids(
+            &[
+                "PERF-003-a".to_string(),
+                "INC-004-d".to_string(),
+                "REQ-150-b".to_string(),
+            ],
+            "PERF",
+            None
+        ),
+        4
+    );
+}
+
+#[test]
 fn normalize_create_id_template_enforces_group_pool() {
     // 空模板：需求组默认 GRP-{seq} 独立编号池（新式前缀）
     assert_eq!(
@@ -414,6 +457,14 @@ fn derive_category_from_id_template_prefixes() {
     assert_eq!(
         derive_category_from_id_template("WMS-TST-003-cn-uat-x"),
         Some("测试问题")
+    );
+    assert_eq!(
+        derive_category_from_id_template("PERF-{seq}"),
+        Some("性能问题")
+    );
+    assert_eq!(
+        derive_category_from_id_template("PERF-001-slow-sql"),
+        Some("性能问题")
     );
     assert_eq!(derive_category_from_id_template("WMS-{seq}"), None);
     assert_eq!(derive_category_from_id_template(""), None);

@@ -1,4 +1,4 @@
-/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题），平铺列表 + 状态筛选（排查中→已定位→已修复→经验总结/已关闭）。
+/** Role: 线上问题页 — 统计问题类记录（category=线上问题/测试问题/性能问题），平铺列表 + 状态筛选（排查中→已定位→已修复→经验总结/已关闭）。
  * Public surface: IssuesPage used by web/src/App.tsx route /issues.
  * Constraints: read-only view over /api/requirements; 排查经验沉淀状态以 troubleshooting.md 是否存在判定；测试问题（WMS-TST-）承接 UAT 测试反馈中不属于常规需求的轻量问题。
  * Read-this-with: web/src/pages/ones-missing.tsx for page patterns and prompts/phase-online-issue.md for the state machine.
@@ -61,14 +61,14 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     window.setTimeout(() => setExcludedJustSaved(false), 1600)
   }
   const urlType = urlParams.get("type")
-  const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" ? urlType : "")
+  const [typeFilter, setTypeFilter] = useState<"" | ReqCategory>(urlType === "线上问题" || urlType === "测试问题" || urlType === "性能问题" ? urlType : "")
   // 区域筛选：__none__ = 未登记；其它值为 meta.md region 字段（cn/sea，后续可扩展更多国家/区域）。
   const urlRegion = urlParams.get("region") || ""
   const [regionFilter, setRegionFilter] = useState(urlRegion)
   const reqs = data?.requirements || []
 
-  // issue 家族：线上问题 + 测试问题（WMS-TST-，承接 UAT 测试反馈中不属于常规需求的轻量问题），共用轻量状态机；平铺列表按更新时间倒序。
-  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题").sort((a, b) => b.updatedAt - a.updatedAt), [reqs])
+  // issue 家族：线上问题 + 测试问题（WMS-TST-）+ 性能问题（PERF-，代码/业务正确仅性能不达标），共用轻量状态机；平铺列表按更新时间倒序。
+  const issues = useMemo(() => reqs.filter((r) => r.category === "线上问题" || r.category === "测试问题" || r.category === "性能问题").sort((a, b) => b.updatedAt - a.updatedAt), [reqs])
   const typedIssues = useMemo(() => (typeFilter ? issues.filter((r) => r.category === typeFilter) : issues), [issues, typeFilter])
   /** 区域选项：从现有数据 distinct 动态生成（含未登记），新增国家/区域零代码扩展。 */
   const regionValues = useMemo(() => [...new Set(issues.map((r) => r.region ?? ""))].filter(Boolean).sort(), [issues])
@@ -128,10 +128,10 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const matchBase = useMemo(() => {
     const tokens = keyword.trim().toLowerCase().split(/\s+/).filter(Boolean)
     const kw = tokens.length === 1 ? tokens[0] : ""
-    // 精确编号查找：关键词形如问题 ID（wms-inc-112 / wms-tst-003 / inc-112 / tst-3）或纯数字序号（112）时，
+    // 精确编号查找：关键词形如问题 ID（wms-inc-112 / wms-tst-003 / inc-112 / tst-3 / perf-1）或纯数字序号（112）时，
     // 直接按 ID 命中（全等 / 前缀 / 序号段匹配），无视项目筛选；精确命中为空时回退到模糊查找。
     if (kw) {
-      const exact = /^[a-z]+-((inc|tst)-)?\d+/.test(kw)
+      const exact = /^[a-z]+-((inc|tst|perf)-)?\d+/.test(kw)
         ? regionIssues.filter((r) => r.id.toLowerCase() === kw || r.id.toLowerCase().startsWith(`${kw}-`))
         : /^\d+$/.test(kw)
           ? regionIssues.filter((r) => r.id.toLowerCase().split("-").includes(kw))
@@ -176,7 +176,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
   const troubleshootingCount = matchBase.filter(hasTroubleshootingDoc).length
   const pendingExperience = matchBase.filter((r) => EXPERIENCE_REQUIRED.includes(r.status) && !hasTroubleshootingDoc(r)).length
 
-  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题），平铺列表展示，状态可用复选框筛选：排查中 → 已定位 → 已修复 → 经验总结。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻。排查/复现需要改代码时可直接登记 branches.json 在需求分支开发，合入 test/UAT 环境分支验证，禁止合入生产分支；已定位→已修复 双路径：数据修复直接推进；正式生产修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
+  return <PageChrome icon={<Siren size={15} />} eyebrow="Online Issues" title="线上问题" description="统计问题类记录（线上问题 + 测试问题 + 性能问题），平铺列表展示，状态可用复选框筛选：排查中 → 已定位 → 已修复 → 经验总结。测试问题（WMS-TST- 编号池）承接 UAT 测试反馈中不属于常规需求的轻量问题，门禁更轻；性能问题（PERF- 编号池）承接代码/业务逻辑正确、仅性能不达标（慢接口/慢 SQL/高负载）的优化型问题。排查/复现需要改代码时可直接登记 branches.json 在需求分支开发，合入 test/UAT 环境分支验证，禁止合入生产分支；已定位→已修复 双路径：数据修复直接推进；正式生产修复创建普通需求并绑定本问题，需求进入经验总结后自动推进。有价值的问题沉淀排查经验（troubleshooting.md：怎么排查 + 怎么修复），无价值的直接已关闭。">
     <section className="react-kpi-grid-5">
       <KpiCard icon={<Siren size={20} />} label={typeFilter || "问题总数"} value={matchBase.length} sub={typeFilter ? `${typeFilter} · 全部状态` : "全部状态"} tone="total" />
       <KpiCard icon={<Siren size={20} />} label="排查中" value={countBy("排查中")} sub="收集证据验证假设" tone="avg" />
@@ -186,7 +186,7 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
     </section>
     {globalProject ? null : <section className="react-panel react-filter-panel">
       <div className="react-filter-grid">
-        <label>类型<select value={typeFilter} onChange={(e) => changeType(e.target.value as "" | ReqCategory)}><option value="">全部（含测试问题）</option><option value="线上问题">线上问题</option><option value="测试问题">测试问题</option></select></label>
+        <label>类型<select value={typeFilter} onChange={(e) => changeType(e.target.value as "" | ReqCategory)}><option value="">全部（含测试/性能问题）</option><option value="线上问题">线上问题</option><option value="测试问题">测试问题</option><option value="性能问题">性能问题</option></select></label>
         <label>区域<select value={regionFilter} onChange={(e) => changeRegion(e.target.value)}><option value="">全部区域</option>{regionValues.map((r) => <option key={r} value={r}>{REGION_LABELS[r] ?? r}</option>)}{hasUnregisteredRegion ? <option value="__none__">未登记</option> : null}</select></label>
         <label>项目<select value={project} onChange={(e) => setProject(e.target.value)}><option value="">全部项目</option>{projects.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
         <label>创建开始<input type="date" value={createdFrom} onChange={(e) => changeCreatedFrom(e.target.value)} /></label>
@@ -197,9 +197,9 @@ export function IssuesPage({ globalProject }: { globalProject?: string }) {
       <div className="react-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option ${statuses.includes(s) ? "active" : ""}`}><input type="checkbox" checked={statuses.includes(s)} onChange={() => toggleStatus(s)} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div>
       <button type="button" className={`react-filter-section-head react-collapse-head ${excludedOpen ? "open" : ""}`} onClick={toggleExcludedOpen} aria-expanded={excludedOpen}><span>默认排除状态</span><em className="react-collapse-summary">{excludedOpen ? "未勾选上方状态筛选时自动生效；勾选只改草稿，点「保存默认排除」才生效" : (issuesDefaultExcluded.length ? `默认排除：${issuesDefaultExcluded.join(" / ")}` : "默认不排除任何状态")}<ChevronDown size={14} className="react-collapse-chevron" /></em></button>
       {excludedOpen ? <div className="react-excluded-editor"><div className="react-status-options react-excluded-status-options">{STATUS_OPTIONS.map((s) => <label key={s} className={`react-status-option react-excluded-status-option ${excludedDraft.includes(s) ? "active" : ""}`}><input type="checkbox" checked={excludedDraft.includes(s)} onChange={(e) => setExcludedDraft((cur) => e.target.checked ? [...cur, s] : cur.filter((x) => x !== s))} /><span>{s}</span><strong>{counts[s] || 0}</strong></label>)}</div><div className="react-excluded-save-row"><button type="button" onClick={saveExcludedDraft} disabled={!excludedDirty}>{excludedJustSaved ? "已保存 ✓" : "保存默认排除"}</button><button type="button" onClick={() => saveIssuesDefaultExcluded(ISSUES_FALLBACK_EXCLUDED_STATUSES)} disabled={!excludedDirty && issuesDefaultExcluded.join() === ISSUES_FALLBACK_EXCLUDED_STATUSES.join()}>恢复默认</button><em>{excludedDirty ? "有未保存的修改，保存后作用于列表并记住" : "与已保存一致"}</em></div></div> : null}
-      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题，未强调测试环境的问题默认线上问题）；列表按更新时间倒序平铺展示。排查经验在需求详情页「排查经验」面板维护，线上问题进入经验总结前必须先填写（测试问题门禁更轻）。</span></div>
+      <div className="react-actions"><span className="react-muted">统计范围：全部状态下问题类记录（category=线上问题/测试问题/性能问题，未强调测试环境的问题默认线上问题）；列表按更新时间倒序平铺展示。排查经验在需求详情页「排查经验」面板维护，线上问题进入经验总结前必须先填写（测试/性能问题门禁更轻）。</span></div>
     </section>}
-    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : filtered.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : statuses.length ? "选中状态下没有问题，取消部分状态勾选试试。" : matchBase.length ? "当前默认排除设置下没有可见问题，可展开「默认排除状态」调整。" : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）或「测试问题」（UAT 测试反馈）即可进入本流程。"}</EmptyCard> : <section className="react-panel">
+    {error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : filtered.length === 0 ? <EmptyCard>{keyword.trim() ? `没有匹配「${keyword.trim()}」的问题，试试其他关键字或完整编号。` : statuses.length ? "选中状态下没有问题，取消部分状态勾选试试。" : matchBase.length ? "当前默认排除设置下没有可见问题，可展开「默认排除状态」调整。" : "没有问题记录。创建时选择类别「线上问题」（未强调测试环境默认）、「测试问题」（UAT 测试反馈）或「性能问题」（性能不达标优化）即可进入本流程。"}</EmptyCard> : <section className="react-panel">
       <PanelHead kicker="Online Issues" title="问题列表" chip={`${filtered.length} 条`} />
       <div className="react-card-list">{filtered.map((req, index) => <IssueCard key={req.id} req={req} index={index} fixReq={fixReqOf.get(req.id)} showType={!typeFilter} />)}</div>
     </section>}
@@ -227,7 +227,9 @@ function IssueCard({ req, index, fixReq, showType }: { req: Requirement; index: 
       {req.region ? <span className="react-status-pill" title={`区域：${REGION_LABELS[req.region] ?? req.region}`} style={{ color: "#60a5fa", background: "rgba(96, 165, 250, 0.12)", borderColor: "rgba(96, 165, 250, 0.4)" }}>{REGION_LABELS[req.region] ?? req.region}</span> : null}
       {showType ? (req.category === "测试问题"
         ? <span className="react-status-pill" title="测试问题：UAT 测试反馈中不属于常规需求的轻量问题（WMS-TST- 编号池）" style={{ color: "#fbbf24", background: "rgba(251, 191, 36, 0.12)", borderColor: "rgba(251, 191, 36, 0.4)" }}>测试问题</span>
-        : <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span>) : null}
+        : req.category === "性能问题"
+          ? <span className="react-status-pill" title="性能问题：代码/业务逻辑正确，仅性能不达标（慢接口/慢 SQL/高负载）的优化型问题（PERF- 编号池）" style={{ color: "#a78bfa", background: "rgba(167, 139, 250, 0.12)", borderColor: "rgba(167, 139, 250, 0.4)" }}>性能问题</span>
+          : <span className="react-status-pill" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.14)", borderColor: "rgba(239, 68, 68, 0.4)" }}>线上问题</span>) : null}
       {statusPill(req.status)}
     </div>
   </motion.article>

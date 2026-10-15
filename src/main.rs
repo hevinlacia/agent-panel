@@ -192,7 +192,7 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     // 存量兼容：问题家族旧终态「已复盘」并入统一经验总结环节（读路径自动升级）。
     ("已复盘", "经验总结"),
 ];
-static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题"];
+static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题", "性能问题"];
 /// 需求推动方：产品推动（默认）可问产品要测试范围；开发推动必须先沉淀测试场景文档才能进入测试中。
 static REQ_SOURCES: &[&str] = &["产品推动", "开发推动"];
 /// 流水外标记状态：不进 REQ_STATUSES/REQ_FLOW_STATUSES 流水序列（不影响组聚合序数、

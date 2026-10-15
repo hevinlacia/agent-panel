@@ -10,6 +10,9 @@ use super::*;
 pub(crate) const ISSUE_ID_PREFIX: &str = "INC";
 /// 测试问题独立编号池：承接 UAT 测试反馈中不属于常规需求的轻量问题。
 pub(crate) const TEST_ISSUE_ID_PREFIX: &str = "TST";
+/// 性能问题独立编号池：代码/业务逻辑正确，仅性能不达标（慢接口/慢 SQL/高负载）的优化型问题，
+/// 与故障类问题分开计数；复用问题家族轻量状态机与文档集。
+pub(crate) const PERF_ID_PREFIX: &str = "PERF";
 /// 需求组（引用式需求组，group.json）独立编号池：组是需求聚合视图，不占用主需求池。
 pub(crate) const GROUP_ID_PREFIX: &str = "GRP";
 /// 普通需求主池（新建默认；旧 WMS- 前缀谱系延续）。
@@ -24,15 +27,16 @@ pub(crate) const FIX_ID_PREFIX: &str = "FIX";
 /// 不占用主需求池；子需求 id = `<父票号>-S<n>[-slug]` 继承父前缀。
 pub(crate) const ROLLUP_ID_PREFIX: &str = "ROLLUP";
 
-/// issue 家族类别（共用轻量状态机与 incident.md 文档集）：线上问题 / 测试问题。
+/// issue 家族类别（共用轻量状态机与 incident.md 文档集）：线上问题 / 测试问题 / 性能问题。
 pub(crate) fn is_issue_category(category: &str) -> bool {
-    matches!(category, "线上问题" | "测试问题")
+    matches!(category, "线上问题" | "测试问题" | "性能问题")
 }
 
 fn issue_id_prefix(category: &str) -> Option<&'static str> {
     match category {
         "线上问题" => Some(ISSUE_ID_PREFIX),
         "测试问题" => Some(TEST_ISSUE_ID_PREFIX),
+        "性能问题" => Some(PERF_ID_PREFIX),
         _ => None,
     }
 }
@@ -49,6 +53,9 @@ pub(crate) fn pool_lineage_prefixes(prefix: &str) -> Vec<String> {
         }
         TEST_ISSUE_ID_PREFIX | "WMS-TST" => {
             vec![TEST_ISSUE_ID_PREFIX.to_string(), "WMS-TST".to_string()]
+        }
+        PERF_ID_PREFIX => {
+            vec![PERF_ID_PREFIX.to_string()]
         }
         GROUP_ID_PREFIX | "WMS-GRP" => {
             vec![GROUP_ID_PREFIX.to_string(), "WMS-GRP".to_string()]
@@ -68,6 +75,7 @@ fn is_reserved_non_main_pool_prefix(prefix: &str) -> bool {
             | "WMS-INC"
             | TEST_ISSUE_ID_PREFIX
             | "WMS-TST"
+            | PERF_ID_PREFIX
             | GROUP_ID_PREFIX
             | "WMS-GRP"
             | FIX_ID_PREFIX
@@ -82,6 +90,7 @@ fn concrete_id_uses_reserved_pool_prefix(id: &str) -> bool {
         "WMS-INC",
         TEST_ISSUE_ID_PREFIX,
         "WMS-TST",
+        PERF_ID_PREFIX,
         GROUP_ID_PREFIX,
         "WMS-GRP",
         FIX_ID_PREFIX,
@@ -95,7 +104,8 @@ fn concrete_id_uses_reserved_pool_prefix(id: &str) -> bool {
     })
 }
 
-/// 从 reqId 模板前缀推导问题类别（纯函数）：INC-/WMS-INC- → 线上问题，TST-/WMS-TST- → 测试问题。
+/// 从 reqId 模板前缀推导问题类别（纯函数）：INC-/WMS-INC- → 线上问题，TST-/WMS-TST- → 测试问题，
+/// PERF- → 性能问题。
 /// 用户约定：登记问题时未强调测试环境的默认线上问题。
 pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str> {
     let v = raw.trim();
@@ -104,6 +114,7 @@ pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str
         ("WMS-INC", "线上问题"),
         (TEST_ISSUE_ID_PREFIX, "测试问题"),
         ("WMS-TST", "测试问题"),
+        (PERF_ID_PREFIX, "性能问题"),
     ] {
         if v.starts_with(&format!("{prefix}-")) {
             return Some(category);
@@ -116,7 +127,8 @@ pub(crate) fn derive_category_from_id_template(raw: &str) -> Option<&'static str
 /// - 需求组（members 非空）强制使用 `GRP-{seq}` 独立编号池（旧 WMS-GRP 具体 id 继续有效）；
 /// - 整合需求（consolidated=true）强制使用 `ROLLUP-{seq}` 独立编号池；
 /// - 修复需求（is_fix：category=需求 且绑定 issues）强制使用 `FIX-{seq}` 独立编号池；
-/// - 空模板给类别默认池：需求 `REQ-{seq}`、修复 `FIX-{seq}`、线上问题 `INC-{seq}`、测试问题 `TST-{seq}`；
+/// - 空模板给类别默认池：需求 `REQ-{seq}`、修复 `FIX-{seq}`、线上问题 `INC-{seq}`、测试问题 `TST-{seq}`、
+///   性能问题 `PERF-{seq}`；
 /// - issue/组/整合/修复池模板带 {seq} 时改写为对应池前缀保留 suffix；具体 id 校验形态；
 /// - 需求主池模板透传（旧 WMS-{seq} 兼容），但不得占用其他池前缀。
 pub(crate) fn normalize_create_id_template(
@@ -150,7 +162,7 @@ pub(crate) fn normalize_create_id_template(
     if is_consolidated {
         if is_issue_category(category) {
             return Err(ApiError::bad_request(
-                "整合需求（consolidated=true）只能使用 category=需求，不能用于线上问题/测试问题",
+                "整合需求（consolidated=true）只能使用 category=需求，不能用于线上问题/测试问题/性能问题",
             ));
         }
         if v.is_empty() {
@@ -203,7 +215,7 @@ pub(crate) fn normalize_create_id_template(
         }
         if concrete_id_uses_reserved_pool_prefix(v) {
             return Err(ApiError::bad_request(
-                "需求主池 reqId 不能占用其他编号池前缀（INC/TST/GRP/FIX/ROLLUP 及其旧式 WMS-xxx 别名）；整合需求请传 consolidated=true，组/问题/修复请用对应类别或绑定 issues",
+                "需求主池 reqId 不能占用其他编号池前缀（INC/TST/PERF/GRP/FIX/ROLLUP 及其旧式 WMS-xxx 别名）；整合需求请传 consolidated=true，组/问题/修复请用对应类别或绑定 issues",
             ));
         }
         return Ok(v.to_string());

@@ -13,7 +13,7 @@ export const REGION_LABELS: Record<string, string> = { cn: "中国", sea: "东�
 /** 子需求状态机：父集成模型（需求创建→开发中→已合入）或整合发布模型（…→发布就绪→已合入→已发布，独立发布进度）。 */
 export const SUB_REQ_STATUSES: ReqStatus[] = ["需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消"]
 export const REQ_STATUSES: ReqStatus[] = [...REQ_FLOW_STATUSES, ...ISSUE_STATUSES]
-export const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题", "测试问题"]
+export const REQ_CATEGORIES: ReqCategory[] = ["需求", "线上问题", "测试问题", "性能问题"]
 export const REQ_SOURCES = ["产品推动", "开发推动"] as const
 export type ReqSource = (typeof REQ_SOURCES)[number]
 

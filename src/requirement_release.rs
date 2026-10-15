@@ -854,7 +854,7 @@ pub(crate) async fn api_release_branch_prod_mr(
         .unwrap_or(false)
     {
         return Err(ApiError::bad_request(
-            "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR",
+            "线上问题/测试问题/性能问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR",
         ));
     }
     let dir = req_dir_path(&parent)?;

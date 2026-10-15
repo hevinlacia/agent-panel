@@ -235,7 +235,11 @@ pub(crate) async fn auto_advance_linked_issues(
         let Ok(issue) = get_real_requirement(state, issue_id).await else {
             continue;
         };
-        if issue.category.as_deref() != Some("线上问题") {
+        // 仅线上问题/性能问题参与自动推进（与 issues 绑定白名单一致；测试问题不可绑定）。
+        if !matches!(
+            issue.category.as_deref(),
+            Some("线上问题") | Some("性能问题")
+        ) {
             continue;
         }
         if matches!(issue.status.as_str(), "已修复" | "经验总结" | "已关闭") {

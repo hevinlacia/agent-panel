@@ -77,3 +77,46 @@ async fn region_absent_means_none_and_patch_clear_removes_field() {
     // 再写回仍有效（可反复修正）。
     assert!(set_frontmatter_field(&cleared, "region", "sea").contains("region: sea"));
 }
+
+/// 性能问题（PERF）同样属于 issue 家族：region 写入读取与类别识别 roundtrip。
+#[tokio::test]
+async fn perf_issue_region_and_category_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("PERF-001-slow-sql");
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = build_meta_doc(
+        "PERF-001-slow-sql",
+        "慢 SQL 优化",
+        "排查中",
+        "WMS",
+        &["WMS".to_string()],
+        "性能问题",
+        "产品推动",
+        "hevin",
+        "2026-01-01",
+        "unknown",
+        "unknown",
+        "",
+        &[],
+        "示例",
+        None,
+        None,
+    );
+    std::fs::write(dir.join("meta.md"), &meta).unwrap();
+    std::fs::write(
+        dir.join("meta.md"),
+        set_frontmatter_field(&meta, "region", "cn"),
+    )
+    .unwrap();
+
+    let req = load_requirement_from_dir(&dir, "PERF-001-slow-sql", &["WMS".to_string()], &[])
+        .await
+        .unwrap()
+        .expect("requirement loads");
+    assert_eq!(req.region.as_deref(), Some("cn"));
+    assert_eq!(req.category.as_deref(), Some("性能问题"));
+    // issue 家族判定：性能问题参与轻流程状态机与 region 支持。
+    assert!(is_issue_category("性能问题"));
+    assert!(ensure_status_for_category(Some("性能问题"), "排查中").is_ok());
+    assert!(ensure_status_for_category(Some("性能问题"), "开发中").is_err());
+}
