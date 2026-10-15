@@ -92,9 +92,11 @@ pub(crate) async fn compute_prod_diff_stat(
 pub(crate) async fn generate_prod_mrs(
     req: &Requirement,
     scope: &BranchScope,
-) -> Result<Vec<Value>> {
-    let token = gitlab_api_token()?;
+    auth_cfg: &BrowserAuthConfig,
+) -> Result<(Vec<Value>, &'static str)> {
     let api_base = env::var("GITLAB_API_URL").unwrap_or_else(|_| DEFAULT_GITLAB_API_URL.into());
+    // 三步式认证链：Chrome 登录态 → 账号密码登录 → GITLAB_TOKEN，全部未命中时报聚合错误。
+    let auth_ctx = resolve_gitlab_auth(&api_base, auth_cfg).await?;
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -198,7 +200,7 @@ pub(crate) async fn generate_prod_mrs(
             let mut v = create_or_reuse_gitlab_mr(
                 &client,
                 &api_base,
-                &token,
+                &auth_ctx.auth,
                 req,
                 repo,
                 &project_namespace,
@@ -215,13 +217,13 @@ pub(crate) async fn generate_prod_mrs(
             results.push(v);
         }
     }
-    Ok(results)
+    Ok((results, auth_ctx.source))
 }
 
 pub(crate) async fn create_or_reuse_gitlab_mr(
     client: &Client,
     api_base: &str,
-    token: &str,
+    auth: &GitLabAuth,
     req: &Requirement,
     repo: &BranchRepo,
     project_namespace: &str,
@@ -247,7 +249,7 @@ pub(crate) async fn create_or_reuse_gitlab_mr(
         api_base.trim_end_matches('/'),
         project_key
     );
-    match find_existing_gitlab_mr(client, token, &url, source_branch, target_branch).await {
+    match find_existing_gitlab_mr(client, auth, &url, source_branch, target_branch).await {
         Ok(Some(mr)) => {
             return prod_mr_result(
                 repo,
@@ -288,12 +290,7 @@ pub(crate) async fn create_or_reuse_gitlab_mr(
         ("description", description.as_str()),
         ("remove_source_branch", "false"),
     ];
-    let response = client
-        .post(&url)
-        .header("PRIVATE-TOKEN", token)
-        .form(&form)
-        .send()
-        .await;
+    let response = auth.apply(client.post(&url)).form(&form).send().await;
     let response = match response {
         Ok(response) => response,
         Err(err) => {
@@ -312,7 +309,7 @@ pub(crate) async fn create_or_reuse_gitlab_mr(
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
         if let Ok(Some(mr)) =
-            find_existing_gitlab_mr(client, token, &url, source_branch, target_branch).await
+            find_existing_gitlab_mr(client, auth, &url, source_branch, target_branch).await
         {
             return prod_mr_result(
                 repo,
@@ -353,14 +350,13 @@ pub(crate) async fn create_or_reuse_gitlab_mr(
 
 pub(crate) async fn find_existing_gitlab_mr(
     client: &Client,
-    token: &str,
+    auth: &GitLabAuth,
     url: &str,
     source_branch: &str,
     target_branch: &str,
 ) -> std::result::Result<Option<Value>, String> {
-    let response = client
-        .get(url)
-        .header("PRIVATE-TOKEN", token)
+    let response = auth
+        .apply(client.get(url))
         .query(&[
             ("state", "opened"),
             ("source_branch", source_branch),
@@ -433,6 +429,8 @@ pub(crate) fn is_production_target_branch(repo: &BranchRepo, target_branch: &str
     }
 }
 
+/// Step 3 兕底：读 GITLAB_TOKEN / GL_TOKEN / panel 运行目录 .env.agent。
+/// 由 [`resolve_gitlab_auth`] 在 Chrome 登录态、账号密码登录之后调用。
 pub(crate) fn gitlab_api_token() -> Result<String> {
     let token = env::var("GITLAB_TOKEN")
         .or_else(|_| env::var("GL_TOKEN"))

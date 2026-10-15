@@ -882,7 +882,10 @@ pub(crate) async fn api_release_branch_prod_mr(
         fallback: false,
         round: 1,
     };
-    let results = generate_prod_mrs(&parent, &scope).await?;
+    // 三步式 GitLab 认证链需要 browser_auth 配置（Chrome 登录态读取等）。
+    let cfg = read_config(&state).await?;
+    let auth_cfg = normalize_browser_auth_config(cfg.browser_auth);
+    let (results, auth_source) = generate_prod_mrs(&parent, &scope, &auth_cfg).await?;
     let mr_urls: Vec<String> = results
         .iter()
         .filter_map(|r| r.get("webUrl").and_then(Value::as_str).map(str::to_string))
@@ -910,6 +913,7 @@ pub(crate) async fn api_release_branch_prod_mr(
         "branch": entry.name,
         "branchId": entry.id,
         "generatedAt": now_ms(),
+        "authSource": auth_source,
         "results": results,
     })))
 }
