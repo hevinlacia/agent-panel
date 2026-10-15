@@ -1,0 +1,35 @@
+src/git_workflow/prod_mr.rs
+  cc3e593ad9c80b40 95-96,98-99,203,220,226,252,293,312,353,358-359,432-433
+src/browser_auth.rs
+  cc3e593ad9c80b40 406,411-420,424
+src/requirement_release.rs
+  cc3e593ad9c80b40 885-888,916
+src/requirement_api.rs
+  cc3e593ad9c80b40 2352-2355,2361
+src/git_workflow.rs
+  cc3e593ad9c80b40 133,145
+src/git_workflow/gitlab_auth.rs
+  cc3e593ad9c80b40 1-451
+AGENTS.md
+  cc3e593ad9c80b40 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7d3c33c1f44c18be825f1a988de1ce40b5c12299",
+  "prompts": {
+    "cc3e593ad9c80b40": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a13a3a-e56d-770c-8564-9305f3bca687",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 478,
+      "total_deletions": 23,
+      "accepted_lines": 482,
+      "overriden_lines": 0
+    }
+  }
+}
