@@ -2349,12 +2349,16 @@ pub(crate) async fn api_requirement_prod_mrs(
                 "missing {scope_file}; register the round's branches first"
             ))
         })?;
-    let results = generate_prod_mrs(&req, &branch_scope).await?;
+    // 三步式 GitLab 认证链需要 browser_auth 配置（Chrome 登录态读取等）。
+    let cfg = read_config(&state).await?;
+    let auth_cfg = normalize_browser_auth_config(cfg.browser_auth);
+    let (results, auth_source) = generate_prod_mrs(&req, &branch_scope, &auth_cfg).await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
         "generatedAt": now_ms(),
         "round": round,
+        "authSource": auth_source,
         "branchScope": branch_scope,
         "results": results,
     })))
