@@ -1,0 +1,45 @@
+src/requirement_context/context_html.rs
+  0f346e9f08be6ad8 589
+prompts/phase-online-issue.md
+  0f346e9f08be6ad8 21,32,59,67,77,97,105
+src/requirement_context/schema.rs
+  0f346e9f08be6ad8 197-203
+web/src/features/requirements/req-files-panels.tsx
+  0f346e9f08be6ad8 87
+web/src/types.ts
+  0f346e9f08be6ad8 338
+web/src/pages/requirement.tsx
+  0f346e9f08be6ad8 154
+src/requirement_service/templates.rs
+  0f346e9f08be6ad8 203-206,249,282
+src/requirement_index.rs
+  0f346e9f08be6ad8 70,723,991
+web/src/pages/requirement-doc.tsx
+  0f346e9f08be6ad8 15
+src/tests/docs_render.rs
+  0f346e9f08be6ad8 383
+src/requirement_service/create.rs
+  0f346e9f08be6ad8 866-867,901
+src/requirement_context/phase.rs
+  0f346e9f08be6ad8 311-316,437,445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3ad681d57b7c42352c337287c24f99e47c53cbc5",
+  "prompts": {
+    "0f346e9f08be6ad8": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a13fbf-6fe7-752c-b00a-5f96db593b7f",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 4,
+      "accepted_lines": 41,
+      "overriden_lines": 0
+    }
+  }
+}
