@@ -586,7 +586,7 @@ pub(crate) async fn build_requirement_agent_context(
     }
     if matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         rules.push(
-            "线上问题/性能问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。允许维护 branches.json（req-branches-update 登记）并在需求分支写复现/验证代码，但只能合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被合并接口拦截；不生成生产 MR。性能问题的证据链用可复核的性能数据（慢日志时间范围+SQL/接口+耗时前后值、压测报告、监控数据源+时间窗口）。",
+            "线上问题/性能问题文档集：incident.md（现象/影响/时间线）、root-cause.md（根因+可复核证据链+修复决策）、reproduce.md（复现文档：前置条件+复现步骤+预期判定；必要时附复现代码，复现代码必须带开关控制，默认关闭，只有打开开关才触发故障复现）、troubleshooting.md（复盘经验）、notes.md（过程流水）；不维护 technical-plan.md/branch.md/config-changes.md/test.md。允许维护 branches.json（req-branches-update 登记）并在需求分支写复现/验证代码，但只能合入 test/UAT 环境分支，后端 master、前端 production 等生产分支会被合并接口拦截；不生成生产 MR。性能问题的证据链用可复核的性能数据（慢日志时间范围+SQL/接口+耗时前后值、压测报告、监控数据源+时间窗口）。",
         );
         rules.push(
             "每条证据必须附用户可独立复核的验证线索：日志=带时区时间范围+tid/唯一关键字；DB=验证 SQL（表/条件/预期结果）；代码=应用+文件+可搜关键字片段；配置=环境+namespace/key。agent 知道≠证据成立。",

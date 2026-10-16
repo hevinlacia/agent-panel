@@ -194,6 +194,14 @@ fn requirement_token_specs_json() -> Vec<Value> {
             vec!["writeDoc", "upsertSection"],
         ),
         token_spec(
+            "req.reproduce",
+            "reproduce.md",
+            Some("reproduce"),
+            "online-issue reproduction guide (produced at 已定位): preconditions, reproduction steps, expected-symptom criteria; optional reproduction code that must be switch-gated (default off, fault only reproduces with switch on)",
+            true,
+            vec!["writeDoc", "upsertSection"],
+        ),
+        token_spec(
             "req.impact",
             "impact.md",
             Some("impact"),

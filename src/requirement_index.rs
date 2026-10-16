@@ -67,6 +67,7 @@ pub(crate) struct Requirement {
     pub(crate) troubleshooting_path: Option<String>,
     pub(crate) incident_path: Option<String>,
     pub(crate) root_cause_path: Option<String>,
+    pub(crate) reproduce_path: Option<String>,
     pub(crate) test_scenario_path: Option<String>,
     pub(crate) experience_summary_job: Option<Value>,
     pub(crate) alignment_path: Option<String>,
@@ -719,6 +720,7 @@ pub(crate) async fn load_requirement_from_dir(
         troubleshooting_path: path_if_exists(dir.join("troubleshooting.md")),
         incident_path: path_if_exists(dir.join("incident.md")),
         root_cause_path: path_if_exists(dir.join("root-cause.md")),
+        reproduce_path: path_if_exists(dir.join("reproduce.md")),
         test_scenario_path: path_if_exists(dir.join("test-scenario.md")),
         experience_summary_job: normalize_experience_summary_job_value(
             &id,
@@ -986,6 +988,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         troubleshooting_path: None,
         incident_path: None,
         root_cause_path: None,
+        reproduce_path: None,
         test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,

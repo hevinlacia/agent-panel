@@ -863,6 +863,8 @@ pub(crate) fn requirement_section_default_doc_type(section: &str) -> Option<&'st
         Some("root-cause")
     } else if matches!(s.as_str(), "incident" | "issue") {
         Some("incident")
+    } else if matches!(s.as_str(), "reproduce") {
+        Some("reproduce")
     } else if matches!(
         s.as_str(),
         "test" | "tests" | "selftest" | "uat" | "testcase" | "testcases"
@@ -896,6 +898,7 @@ pub(crate) fn requirement_section_default_heading(section: &str) -> &str {
     match s.as_str() {
         "boxcodeissue" => "boxCode 问题",
         "rootcause" => "根因分析",
+        "reproduce" => "复现",
         "test" | "tests" | "testcase" | "testcases" => "测试场景",
         "selftest" => "自测证据",
         "uat" => "UAT 验证",

@@ -308,6 +308,12 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path, is_issue: bool) -> Ve
                 "根因、可复核证据链和修复路径决策（存量问题可用 technical-plan.md 兼容）",
                 true,
             ),
+            file_check(
+                dir,
+                "reproduce.md",
+                "复现文档：复现步骤 + 预期判定；必要时附带开关控制的复现代码（默认关闭，打开才复现）",
+                true,
+            ),
         ],
         "已修复" => vec![
             file_check(dir, "notes.md", "排查与修复过程可追溯", true),
@@ -428,6 +434,7 @@ pub(crate) fn agent_context_tokens(intent: &str, is_issue_family: bool) -> Vec<&
         return match intent {
             "progress" | "status" => vec![
                 "req.rootCause",
+                "req.reproduce",
                 "req.branchScope",
                 "req.memory",
                 "req.notes",
@@ -435,6 +442,7 @@ pub(crate) fn agent_context_tokens(intent: &str, is_issue_family: bool) -> Vec<&
             _ => vec![
                 "req.incident",
                 "req.rootCause",
+                "req.reproduce",
                 "req.branchScope",
                 "req.memory",
                 "req.notes",

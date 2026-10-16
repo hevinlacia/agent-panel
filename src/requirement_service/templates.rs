@@ -200,6 +200,10 @@ pub(crate) fn template_root_cause(req_id: &str) -> String {
     format!("# {req_id} 根因与修复决策\n\n> 用途：回答「为什么」和「怎么办」。每条证据必须附用户可独立复核的验证线索：日志证据=时间范围+tid/关键字；DB 证据=验证 SQL；代码证据=应用+文件+可搜关键字；配置证据=环境+key。推进到「已定位」前必须填完根因、证据链和修复路径决策。\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 证据链（每条必须可复核）\n- 日志证据：待补充（环境/索引/应用 + tid 或唯一关键字 + 带时区绝对时间范围）\n- DB 证据：待补充（验证 SQL：表、条件、预期结果；必要时附查询结果摘要）\n- 代码证据：待补充（应用名 + 文件路径 + 可全局搜索的关键字片段：日志文本/方法名/常量）\n- 配置证据：待补充（Apollo/Nacos namespace + key + 环境，如有）\n\n## 影响面\n- 待补充（哪些业务对象/数据受影响，与 incident.md 影响范围呼应）\n\n## 修复路径决策\n- 结论：待补充（数据修复直接推进已修复 / 代码修复转普通需求（需求 id）/ 复现代码已验证但仅测试环境使用（分支 id，不合入生产）/ 不修复）\n- 临时处置：待补充（应急 SQL 及影响行数、应急配置回滚，如有）\n- 回滚方案：待补充\n\n## 验证方式\n- 待补充（如何确认修复生效，附可复核的查询/日志线索）\n")
 }
 
+pub(crate) fn template_reproduce(req_id: &str) -> String {
+    format!("# {req_id} 复现文档\n\n> 用途：回答「怎么把这个问题复现出来」。已定位阶段产出，让后来人（测试/开发/接管 agent）照文档就能复现同一故障；证据线索规范同 root-cause.md。需要复现代码时，复现代码必须有开关控制（Apollo/Nacos 配置或环境变量，默认关闭），只有打开开关才触发故障，防止污染正常逻辑。\n\n## 复现结论\n- 可否稳定复现：待补充（稳定复现 / 概率复现（概率+条件）/ 无法复现（记录当时条件））\n- 复现环境：待补充（test / cn-uat / sea-uat；复现代码只允许部署测试环境）\n- 复现前置条件：待补充（数据/配置/时间窗口/依赖服务状态）\n\n## 复现步骤\n- 待补充（按顺序列操作步骤：入口/接口/MQ 消息/数据构造，每步带可复核线索：请求样例、tid、单号）\n\n## 预期现象与判定标准\n- 待补充（复现成功时应该看到什么：报错日志关键字、指标异常、数据状态，附验证 SQL/日志查询条件）\n\n## 复现代码（如有）\n- 是否需要复现代码：待补充（不需要：纯操作步骤即可触达故障，写明原因 / 需要：故障路径无法靠纯操作触达）\n- 开关控制：待补充（Apollo/Nacos 配置 key 或环境变量，默认关闭；开关关闭时代码行为与线上完全一致，只有打开开关才触发故障复现；说明打开/关闭开关的行为差异与验证方法）\n- 代码位置：待补充（应用 + 需求分支 + 文件路径/类/方法）\n- 清理方式：待补充（问题修复后如何移除复现代码或保持开关永久关闭）\n")
+}
+
 pub(crate) fn template_experience_summary(req_id: &str) -> String {
     format!("# {req_id} 经验总结\n\n## 本次需求结论\n- 待补充\n\n## 新发现的业务知识\n| 发现 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/business-knowledge/ | - |\n\n## 新发现的经验 / 踩坑\n| 经验 | 是否已落地 | 目标位置 | 备注 |\n| --- | --- | --- | --- |\n| 待补充 | 否 | .agents/experiences/ | - |\n\n## Skill 改进机会\n| Skill | 问题 / 机会 | 动作 | 状态 |\n| --- | --- | --- | --- |\n| 待补充 | 待补充 | 新增/优化/不处理 | 待落地 |\n\n## 流程改进\n- 待补充\n\n## 已落地清单\n- [ ] 待补充\n\n## 待落地清单\n- [ ] 待补充\n")
 }
@@ -242,6 +246,7 @@ pub(crate) fn requirement_doc_template(req: &Requirement, doc_file: &str) -> Str
         "troubleshooting.md" => template_troubleshooting(&req.id),
         "incident.md" => template_incident(&req.id),
         "root-cause.md" => template_root_cause(&req.id),
+        "reproduce.md" => template_reproduce(&req.id),
         "test-scenario.md" => template_test_scenario(&req.id),
         "notes.md" => template_notes(&req.id),
         _ => String::new(),
@@ -274,6 +279,7 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         }
         "incident" | "incident.md" | "现象" => Ok("incident.md"),
         "root-cause" | "rootcause" | "root-cause.md" | "根因" => Ok("root-cause.md"),
+        "reproduce" | "reproduce.md" | "复现" | "复现文档" => Ok("reproduce.md"),
         "test-scenario" | "testscenario" | "test-scenario.md" | "测试场景" => {
             Ok("test-scenario.md")
         }

@@ -335,6 +335,7 @@ export interface Requirement {
   troubleshootingPath?: string
   incidentPath?: string
   rootCausePath?: string
+  reproducePath?: string
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string

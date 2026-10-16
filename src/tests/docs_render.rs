@@ -380,6 +380,7 @@ fn context_page_contains_sections_and_raw_link() {
         troubleshooting_path: None,
         incident_path: None,
         root_cause_path: None,
+        reproduce_path: None,
         test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,
