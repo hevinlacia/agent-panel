@@ -17,3 +17,10 @@ if (root) {
     </React.StrictMode>,
   )
 }
+
+// PWA service worker：仅在 https / localhost 安全上下文注册；失败静默（公司内网 http 降级为普通网页）。
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => { /* ignore */ })
+  })
+}

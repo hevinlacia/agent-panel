@@ -29,9 +29,7 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
-use crate::{
-    get_requirement, requirement_project_root, sessions, ApiError, ApiResult, AppState, IdQuery,
-};
+use crate::{get_requirement, requirement_project_root, sessions, ApiError, ApiResult, AppState};
 use axum::Json;
 use serde_json::{json, Value};
 
@@ -175,18 +173,34 @@ async fn spawn_pi_rpc(session_id: &str, cwd: &Path) -> Result<Arc<PiRpcSession>>
     Ok(sess)
 }
 
+/// `/api/pi-chat/open` 专用 query：reqId / sessionId 二选一；force=true 时无视现有关联，
+/// 直接生成新 session 并绑定需求（对齐「复制命令」的强制换新语义）。
+#[derive(Debug, Deserialize)]
+pub(crate) struct PiChatOpenQuery {
+    #[serde(alias = "reqId")]
+    req_id: Option<String>,
+    #[serde(alias = "sessionId")]
+    session_id: Option<String>,
+    force: Option<String>,
+}
+
+fn query_flag_true(value: &Option<String>) -> bool {
+    matches!(value.as_deref(), Some("true") | Some("1"))
+}
+
 /// 解析「在 Panel 中打开 pi 会话」的默认 session 与工作目录。
 ///
-/// - 显式 `sessionId` 优先（仅校验 UUID 格式）；
+/// - 显式 `sessionId` 优先（仅校验 UUID 格式；`force` 对显式 session 无意义，忽略）；
 /// - `reqId`：取该需求关联 session 中最近更新且文件仍存在的一个；
-///   无绑定或全部丢失时生成新 UUID 并绑定到需求（复用需求 ↔ session 关联体系）；
+///   无绑定、全部丢失或 `force=true` 时生成新 UUID 并绑定到需求（复用需求 ↔ session 关联体系）；
 /// - cwd 与经验总结派发一致：需求所在项目根（无需求上下文时用 panel 启动目录）。
 pub(crate) async fn api_pi_chat_open(
     State(state): State<AppState>,
-    Query(query): Query<IdQuery>,
+    Query(query): Query<PiChatOpenQuery>,
 ) -> ApiResult<Json<Value>> {
     let req_id = query.req_id.clone().unwrap_or_default();
     let explicit_session = query.session_id.clone().filter(|s| !s.trim().is_empty());
+    let force = query_flag_true(&query.force);
 
     let (session_id, is_new, title, cwd): (String, bool, Option<String>, PathBuf) =
         if let Some(sid) = explicit_session {
@@ -202,20 +216,23 @@ pub(crate) async fn api_pi_chat_open(
             let cwd = requirement_project_root(&req)
                 .unwrap_or_else(|| state.project_root.as_ref().clone());
 
-            // 取关联 session 中最近更新且文件仍存在的一个（仅 pi harness 的需求走本接口）。
-            let associated = req.session_ids.clone();
+            // force=true：跳过复用逻辑，直接新建并绑定；
+            // 否则取关联 session 中最近更新且文件仍存在的一个（仅 pi harness 的需求走本接口）。
             let mut latest: Option<sessions::SessionInfo> = None;
-            if !associated.is_empty() {
-                let all = sessions::scan_pi_sessions(&state, None).await?;
-                latest = all
-                    .into_iter()
-                    .filter(|s| associated.iter().any(|a| a == &s.id))
-                    .max_by_key(|s| s.updated);
+            if !force {
+                let associated = req.session_ids.clone();
+                if !associated.is_empty() {
+                    let all = sessions::scan_pi_sessions(&state, None).await?;
+                    latest = all
+                        .into_iter()
+                        .filter(|s| associated.iter().any(|a| a == &s.id))
+                        .max_by_key(|s| s.updated);
+                }
             }
             match latest {
                 Some(s) => (s.id, false, Some(s.title), cwd),
                 None => {
-                    // 无绑定或关联 session 已被清理：新建并绑定。
+                    // 无绑定、关联 session 已被清理或 force：新建并绑定。
                     let sid = Uuid::new_v4().to_string();
                     crate::associate_session(&state, req.id.trim(), &sid).await?;
                     (sid, true, None, cwd)

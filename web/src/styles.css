@@ -1384,3 +1384,59 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-file-hover-actions button { display: inline-flex; gap: 4px; align-items: center; background: rgba(34, 211, 238, .1); border: 1px solid var(--react-border-strong); border-radius: 7px; color: var(--react-cyan); font: 800 .7rem var(--react-mono); padding: 4px 10px; cursor: pointer; }
 .react-file-hover-actions button:hover { background: rgba(34, 211, 238, .18); }
 .react-file-hover-actions em { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; }
+
+/* ===== Connect page（多服务器连接管理，移动优先） ===== */
+.react-connect-toolbar { margin-bottom: 12px; }
+.react-connect-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.react-connect-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--react-border); background: rgba(255, 255, 255, .02); }
+.react-connect-card.active { border-color: var(--react-border-strong); background: rgba(34, 211, 238, .06); }
+.react-connect-card-head { display: flex; align-items: center; gap: 8px; }
+.react-connect-card-head strong { font: 800 .92rem var(--react-mono); }
+.react-connect-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--react-faint); flex: none; }
+.react-connect-dot.on { background: var(--react-cyan); box-shadow: 0 0 8px rgba(34, 211, 238, .7); }
+.react-connect-badge { margin-left: auto; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--react-border-strong); color: var(--react-cyan); font: 800 .62rem var(--react-mono); font-style: normal; letter-spacing: .08em; text-transform: uppercase; }
+.react-connect-badge.muted { border-color: var(--react-border); color: var(--react-muted); }
+.react-connect-url { color: var(--react-muted); font: .74rem/1.5 var(--react-mono); word-break: break-all; }
+.react-connect-meta { display: flex; gap: 14px; align-items: center; color: var(--react-faint); font: .7rem var(--react-mono); }
+.react-connect-testing, .react-connect-ok, .react-connect-fail { display: inline-flex; gap: 5px; align-items: center; }
+.react-connect-ok { color: var(--react-green); }
+.react-connect-fail { color: var(--react-amber); }
+.react-spin { animation: react-spin 1s linear infinite; }
+@keyframes react-spin { to { transform: rotate(360deg); } }
+.react-connect-card .react-connect-actions { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--react-border); }
+.react-connect-card .react-connect-actions .danger { color: #f87171; border-color: rgba(248, 113, 113, .3); }
+.react-connect-form { margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px; }
+.react-connect-form .react-panel-head { margin-bottom: 0; }
+.react-connect-field { display: flex; flex-direction: column; gap: 6px; }
+.react-connect-field > span { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-connect-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--react-border); background: rgba(0, 0, 0, .25); color: var(--react-text); font: .82rem var(--react-mono); min-height: 42px; }
+.react-connect-field input:focus { outline: none; border-color: var(--react-border-strong); }
+.react-connect-token-row { display: flex; gap: 8px; align-items: center; }
+.react-connect-token-row input { flex: 1; }
+
+/* ===== Pi-chat 移动布局（脱离 shell 的全屏聊天视口） ===== */
+.react-pichat-mobile { display: flex; flex-direction: column; height: 100dvh; background: var(--react-bg); overflow: hidden; }
+.react-pichat-mobile-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; padding-top: calc(10px + env(safe-area-inset-top)); border-bottom: 1px solid var(--react-border); background: var(--react-panel-strong); flex: none; }
+.react-pichat-mobile-back { display: inline-flex; padding: 8px; border-radius: 10px; border: 1px solid var(--react-border); color: var(--react-text); flex: none; }
+.react-pichat-mobile-back:active { background: rgba(255, 255, 255, .06); }
+.react-pichat-mobile-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.react-pichat-mobile-title strong { font: 800 .9rem var(--react-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.react-pichat-mobile-title span { display: inline-flex; gap: 6px; align-items: center; color: var(--react-muted); font: .68rem var(--react-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.react-pichat-mobile-head .react-ghost-btn { flex: none; }
+.react-pichat-mobile .react-pichat-stream { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 6px; }
+.react-pichat-mobile .react-pichat-msg { max-width: 100%; }
+.react-pichat-mobile .react-pichat-input { position: sticky; bottom: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--react-border); background: var(--react-panel-strong); flex: none; }
+.react-pichat-mobile .react-pichat-input textarea { width: 100%; resize: none; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--react-border); background: rgba(0, 0, 0, .3); color: var(--react-text); font: .9rem/1.45 var(--react-mono); }
+.react-pichat-mobile .react-pichat-input textarea:focus { outline: none; border-color: var(--react-border-strong); }
+.react-pichat-mobile .react-pichat-input-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.react-pichat-mobile .react-pichat-input-actions button { min-height: 40px; padding: 8px 16px; }
+.react-pichat-mobile .react-pichat-exit, .react-pichat-mobile .react-pichat-note { flex: none; margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(245, 158, 11, .35); color: var(--react-amber); font: .74rem/1.5 var(--react-mono); }
+.react-pichat-mobile .react-pichat-exit pre { max-height: 120px; overflow: auto; margin: 6px 0 0; font-size: .66rem; white-space: pre-wrap; word-break: break-all; }
+
+/* ===== 移动端全局微调（safe-area / 触摸目标） ===== */
+@media (max-width: 980px) {
+  .react-topbar { padding-top: env(safe-area-inset-top); }
+  .react-main { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+  .react-sidebar-link { padding-top: 9px; padding-bottom: 9px; }
+  .react-topbar-actions button, .react-topbar-actions a { min-height: 36px; }
+}

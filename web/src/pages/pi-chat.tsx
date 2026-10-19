@@ -2,6 +2,8 @@ import { motion } from "framer-motion"
 import { ArrowLeft, Bot, OctagonX, CornerDownLeft, Zap } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { fetchJson } from "../lib/api"
+import { buildWsUrl } from "../lib/connection"
+import { useIsMobile } from "../lib/use-is-mobile"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome } from "../components/ui"
 
 /**
@@ -26,6 +28,7 @@ export function PiChatPage() {
   const params = new URLSearchParams(window.location.search)
   const reqId = params.get("req") || params.get("reqId") || ""
   const explicitSession = params.get("session") || params.get("sessionId") || ""
+  const isMobile = useIsMobile()
 
   const [open, setOpen] = useState<ApiOpen | null>(null)
   const [openError, setOpenError] = useState("")
@@ -115,8 +118,7 @@ export function PiChatPage() {
   useEffect(() => {
     if (!open) return
     let closedByUs = false
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/pi-chat?session=${encodeURIComponent(open.sessionId)}&cwd=${encodeURIComponent(open.cwd)}`)
+    const ws = new WebSocket(buildWsUrl(`/ws/pi-chat?session=${encodeURIComponent(open.sessionId)}&cwd=${encodeURIComponent(open.cwd)}`))
     wsRef.current = ws
     setStatus("connecting")
 
@@ -219,14 +221,91 @@ export function PiChatPage() {
   if (!open) return <PageChrome icon={<Bot size={15} />} eyebrow="Pi Agent" title="Pi 会话"><LoadingCard label="正在解析会话…" /></PageChrome>
 
   const statusChip = status === "live" ? (busy ? "运行中" : "空闲") : status === "connecting" ? "连接中" : status === "exited" ? "进程退出" : "连接断开"
+  const chatTitle = open.title || `会话 ${open.sessionId.slice(0, 8)}`
+  const backHref = reqId ? `/requirement?id=${encodeURIComponent(reqId)}` : "/sessions"
+
+  // ---- 共享渲染单元：桌面 / 移动两种布局壳复用同一份消息流与输入逻辑。 ----
+  const exitBanner = status === "exited" ? (
+    <div className="react-pichat-exit">
+      <p>pi 进程已退出（exit code: {exitInfo?.code ?? "unknown"}）。关闭本页后重新打开会自动用同一会话重启进程，上下文不丢失。</p>
+      {exitInfo?.stderrTail?.length ? <pre>{exitInfo.stderrTail.join("\n")}</pre> : null}
+    </div>
+  ) : null
+  const closedBanner = status === "closed" ? <p className="react-pichat-note">与后端连接断开，刷新页面重新接入（pi 进程仍在后台运行）。</p> : null
+
+  const streamNode = (
+    <div className="react-pichat-stream">
+      {messages.length === 0 && status === "live" ? <EmptyCard>会话为空，输入第一条消息开始。</EmptyCard> : null}
+      {messages.map((m, i) => (
+        <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={`react-pichat-msg ${m.role}`}>
+          <span className="react-pichat-role">{m.role === "user" ? "你" : "pi"}</span>
+          <div className="react-pichat-body">
+            {m.blocks.map((b, j) => {
+              if (b.kind === "text") return <p key={j} className="react-pichat-text">{b.text}</p>
+              if (b.kind === "thinking") return <details key={j} className="react-pichat-thinking"><summary>thinking</summary><pre>{b.text}</pre></details>
+              return (
+                <details key={j} className={`react-pichat-tool ${b.status}`} open={b.status !== "done"}>
+                  <summary>⚙ {b.name} {b.status === "running" ? "…" : ""}</summary>
+                  {b.args ? <pre>{b.args}</pre> : null}
+                </details>
+              )
+            })}
+            {m.streaming && !m.blocks.length ? <p className="react-pichat-text react-pichat-typing">…</p> : null}
+          </div>
+        </motion.div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  )
+
+  const inputNode = (
+    <div className="react-pichat-input">
+      <textarea
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          // 移动端 Enter 换行（软键盘回车不发送），发送靠按钮；桌面保持 Enter 发送。
+          if (!isMobile && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
+        }}
+        placeholder={busy ? "pi 正在运行；输入内容将排队（followUp）…" : "输入消息"}
+        rows={2}
+      />
+      <div className="react-pichat-input-actions">
+        {busy ? <button type="button" className="react-ghost-btn" onClick={abort}><OctagonX size={15} />停止</button> : null}
+        <button type="button" onClick={send} disabled={!input.trim() || status !== "live"}>
+          {busy ? <><CornerDownLeft size={15} />排队发送</> : <><Zap size={15} />发送</>}
+        </button>
+      </div>
+    </div>
+  )
+
+  // ---- 移动布局：脱离 shell 的全屏聊天视口（100dvh 随软键盘收缩），顶栏 + 消息流 + 底部输入栏。 ----
+  if (isMobile) {
+    return (
+      <div className="react-pichat-mobile">
+        <header className="react-pichat-mobile-head">
+          <a className="react-pichat-mobile-back" href={backHref} aria-label="返回"><ArrowLeft size={18} /></a>
+          <div className="react-pichat-mobile-title">
+            <strong>{chatTitle}</strong>
+            <span><span className={`react-pichat-dot ${status === "live" ? "on" : ""}`} /> {statusChip}{modelLabel ? ` · ${modelLabel}` : ""}</span>
+          </div>
+          {busy ? <button type="button" className="react-ghost-btn" onClick={abort}><OctagonX size={16} />停止</button> : null}
+        </header>
+        {exitBanner}
+        {closedBanner}
+        {streamNode}
+        {inputNode}
+      </div>
+    )
+  }
 
   return (
     <PageChrome
       icon={<Bot size={15} />}
       eyebrow="Pi Agent"
-      title={open.title || `会话 ${open.sessionId.slice(0, 8)}`}
+      title={chatTitle}
       description={`${open.isNew ? "已新建会话并绑定" : "最近使用的会话"} · cwd ${open.cwd}${reqId ? ` · 需求 ${reqId}` : ""}`}
-      actions={<a className="react-ghost-btn" href={reqId ? `/requirement?id=${encodeURIComponent(reqId)}` : "/sessions"}><ArrowLeft size={15} />返回</a>}
+      actions={<a className="react-ghost-btn" href={backHref}><ArrowLeft size={15} />返回</a>}
     >
       <section className="react-panel react-pichat-panel">
         <div className="react-pichat-status">
@@ -236,54 +315,11 @@ export function PiChatPage() {
           <em>进程运行于 agent-panel 服务内，关闭页面 / SSH 断开不影响执行；重新打开本页继续同一会话。</em>
         </div>
 
-        {status === "exited" ? (
-          <div className="react-pichat-exit">
-            <p>pi 进程已退出（exit code: {exitInfo?.code ?? "unknown"}）。关闭本页后重新打开会自动用同一会话重启进程，上下文不丢失。</p>
-            {exitInfo?.stderrTail?.length ? <pre>{exitInfo.stderrTail.join("\n")}</pre> : null}
-          </div>
-        ) : null}
-        {status === "closed" ? <p className="react-pichat-note">与后端连接断开，刷新页面重新接入（pi 进程仍在后台运行）。</p> : null}
+        {exitBanner}
+        {closedBanner}
 
-        <div className="react-pichat-stream">
-          {messages.length === 0 && status === "live" ? <EmptyCard>会话为空，输入第一条消息开始。</EmptyCard> : null}
-          {messages.map((m, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={`react-pichat-msg ${m.role}`}>
-              <span className="react-pichat-role">{m.role === "user" ? "你" : "pi"}</span>
-              <div className="react-pichat-body">
-                {m.blocks.map((b, j) => {
-                  if (b.kind === "text") return <p key={j} className="react-pichat-text">{b.text}</p>
-                  if (b.kind === "thinking") return <details key={j} className="react-pichat-thinking"><summary>thinking</summary><pre>{b.text}</pre></details>
-                  return (
-                    <details key={j} className={`react-pichat-tool ${b.status}`} open={b.status !== "done"}>
-                      <summary>⚙ {b.name} {b.status === "running" ? "…" : ""}</summary>
-                      {b.args ? <pre>{b.args}</pre> : null}
-                    </details>
-                  )
-                })}
-                {m.streaming && !m.blocks.length ? <p className="react-pichat-text react-pichat-typing">…</p> : null}
-              </div>
-            </motion.div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
-
-        <div className="react-pichat-input">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() }
-            }}
-            placeholder={busy ? "pi 正在运行；输入内容将排队（followUp）…" : "输入消息，Enter 发送，Shift+Enter 换行"}
-            rows={2}
-          />
-          <div className="react-pichat-input-actions">
-            {busy ? <button type="button" className="react-ghost-btn" onClick={abort}><OctagonX size={15} />停止</button> : null}
-            <button type="button" onClick={send} disabled={!input.trim() || status !== "live"}>
-              {busy ? <><CornerDownLeft size={15} />排队发送</> : <><Zap size={15} />发送</>}
-            </button>
-          </div>
-        </div>
+        {streamNode}
+        {inputNode}
       </section>
     </PageChrome>
   )
