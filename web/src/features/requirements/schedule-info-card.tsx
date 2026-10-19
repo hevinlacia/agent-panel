@@ -60,7 +60,7 @@ export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: ()
   }
 
   const rows = [
-    { key: "actual" as const, label: "实际提测", hint: "排期面板饱和度口径；进入「发布就绪」且未登记时自动补登当天", current: actual, draft: draftActual, setDraft: setDraftActual },
+    { key: "actual" as const, label: "实际提测", hint: "排期面板饱和度口径；进入「发布就绪」时自动刷新为当天（覆盖式）", current: actual, draft: draftActual, setDraft: setDraftActual },
     { key: "promise" as const, label: "承诺提测", hint: "给产品/测试承诺的提测日，判断需求紧急度；倒计时按此计算", current: promise, draft: draftPromise, setDraft: setDraftPromise },
   ]
 
