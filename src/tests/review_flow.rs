@@ -582,3 +582,55 @@ fn classify_round_heading_and_conclusion_tokens() {
     assert_eq!(review_gate_conclusion_token("- 修复了幂等缺陷"), None);
     assert_eq!(review_gate_conclusion_token("结论：尚无明确结论"), None);
 }
+
+#[tokio::test]
+async fn resolve_base_ref_prefers_remote_ref_and_falls_back_to_local_branch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "master"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    git(&["commit", "--allow-empty", "-q", "-m", "init"]);
+
+    let base_info = parse_base_ref("origin/master");
+
+    // 无远端跟踪引用：回退本地 master，并给出回退警告。
+    let (used, warning) = resolve_base_ref(dir, &base_info).await;
+    assert_eq!(used, "master");
+    let warning = warning.expect("fallback warning");
+    assert!(warning.contains("回退"), "unexpected warning: {warning}");
+
+    // 补上远端跟踪引用后：优先 origin/master，无警告。
+    git(&["update-ref", "refs/remotes/origin/master", "HEAD"]);
+    let (used, warning) = resolve_base_ref(dir, &base_info).await;
+    assert_eq!(used, "origin/master");
+    assert!(warning.is_none());
+
+    // 空仓库（连本地分支都不存在）：保留原 ref 并给出无法验证警告，不 panic。
+    let empty = tempfile::tempdir().expect("tempdir");
+    let out = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(empty.path())
+        .output()
+        .expect("run git init");
+    assert!(out.status.success());
+    let (used, warning) = resolve_base_ref(empty.path(), &parse_base_ref("origin/master")).await;
+    assert_eq!(used, "origin/master");
+    let warning = warning.expect("unverifiable warning");
+    assert!(
+        warning.contains("无法验证"),
+        "unexpected warning: {warning}"
+    );
+}
