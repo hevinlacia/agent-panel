@@ -370,7 +370,7 @@ export interface Requirement {
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
   testScenarioPath?: string
   planRelease?: string
-  /** 提测时间（实际，meta.md submit-test-date）：排期面板饱和度口径；进入「发布就绪」自动补登，可手动调整；unknown/缺省 = 未登记。 */
+  /** 提测时间（实际，meta.md submit-test-date）：排期面板饱和度口径；进入「发布就绪」自动刷新为当天（覆盖式），可手动调整。 */
   submitTestDate?: string
   /** 承诺提测时间（meta.md promise-submit-date）：给产品/测试承诺的提测日，用户手设，判断需求紧急度用。 */
   promiseSubmitDate?: string

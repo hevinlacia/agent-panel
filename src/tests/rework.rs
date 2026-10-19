@@ -346,7 +346,7 @@ async fn entering_release_ready_backfills_submit_test_date() {
         raw.contains(&format!("submit-test-date: {}", today_ymd())),
         "meta: {raw}"
     );
-    // 显式日期：再次进入发布就绪不覆盖
+    // 显式日期：再次进入发布就绪覆盖为当天（最新提测日口径）
     std::fs::write(
         &meta,
         "---\nid: test-x\nsubmit-test-date: 2026-01-02\n---\n\n# t\n",
@@ -369,7 +369,10 @@ async fn entering_release_ready_backfills_submit_test_date() {
     .await
     .expect("re-transition");
     let raw = std::fs::read_to_string(&meta).expect("read meta");
-    assert!(raw.contains("submit-test-date: 2026-01-02"), "meta: {raw}");
+    assert!(
+        raw.contains(&format!("submit-test-date: {}", today_ymd())),
+        "meta: {raw}"
+    );
     // unknown 视为未登记：再次进入发布就绪补当天
     std::fs::write(
         &meta,
