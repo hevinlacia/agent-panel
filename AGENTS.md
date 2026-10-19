@@ -121,6 +121,7 @@ For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY refer
 - Associations: `~/.local/share/agent-panel/associations.json`
 - Generated pi context: `~/.local/share/agent-panel/ctx/*.md`
 - Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`
+- Service: user 级 systemd 单元（unit 文件 `~/.config/systemd/user/agent-panel.service`），重启用 `systemctl --user restart agent-panel`，无需 sudo——root 的 systemctl 看不到 user 单元，会报 Unit not found
 
 ## Personal Project Hooks
 
