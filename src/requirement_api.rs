@@ -1454,20 +1454,46 @@ pub(crate) async fn api_requirement_master_diff(
     })?);
     let round = body.round.unwrap_or(1).max(1);
     let scope_file = branch_scope_file_for_round(round);
-    let branch_scope = read_branch_scope_round(&req_dir, round)
-        .await?
-        .ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "missing {scope_file}; register the round's branches first"
-            ))
-        })?;
     let base_ref = body
         .base_ref
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
-    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    // 登记文件存在但无任何仓库登记（如零代码需求：仅配置/SQL 变更，无需求分支）不按错误处理，
+    // 改为生成空差异快照，并把登记 note 透传给页面说明原因；只有文件缺失才报错引导登记。
+    let (branch_scope, empty_scope_note) = match read_branch_scope_round(&req_dir, round).await? {
+        Some(scope) => (scope, None),
+        None => {
+            let Some(raw) = read_json_if_exists(&req_dir.join(&scope_file)).await else {
+                return Err(ApiError::bad_request(format!(
+                    "missing {scope_file}; register the round's branches first"
+                )));
+            };
+            let note = raw
+                .get("note")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            (
+                BranchScope {
+                    round,
+                    ..Default::default()
+                },
+                note,
+            )
+        }
+    };
+    let mut review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    if branch_scope.repos.is_empty() {
+        let reason =
+            empty_scope_note.unwrap_or_else(|| "分支登记为空：无需求分支、无代码差异".to_string());
+        if let Some(obj) = review.as_object_mut() {
+            obj.insert("emptyScope".to_string(), json!(true));
+            obj.insert("emptyScopeNote".to_string(), json!(reason));
+        }
+    }
     // 自动清理：某应用全部登记分支均无文件差异（且 diff 读取无失败/截断）时，
     // 把它从本轮次登记文件移除，避免已合入/未开发的分支残留登记。
     let (pruned_repos, pruned_written) =
@@ -1475,8 +1501,16 @@ pub(crate) async fn api_requirement_master_diff(
     // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
     let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
+    let notice = if branch_scope.repos.is_empty() {
+        Some(format!(
+            "分支登记为空（零代码需求），无代码差异可展示；审查对象见登记文件 {} 的 note 说明",
+            scope_file
+        ))
+    } else {
+        None
+    };
     Ok(Json(
-        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots, "notice": notice }),
     ))
 }
 
