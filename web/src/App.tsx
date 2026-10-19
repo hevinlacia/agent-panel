@@ -23,6 +23,7 @@ import {
   List,
   ListChecks,
   CalendarRange,
+  MonitorSmartphone,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
@@ -86,6 +87,8 @@ import { experienceSummaryPill, experienceSummaryStageLabel, onesBadge, projects
 import { cardVariants, EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "./components/ui"
 import { ErrorBoundary } from "./components/error-boundary"
 import { PROJECT_FILTER_KEY, readProjectFilter, readSidebarCollapsed, persistSidebarCollapsed } from "./lib/preferences"
+import { getActiveConnection } from "./lib/connection"
+import { useIsMobile } from "./lib/use-is-mobile"
 import { HarnessSwitcher } from "./features/harness/harness-switcher"
 import { RequirementsData } from "./pages/projects"
 import { TestdataPage } from "./pages/testdata"
@@ -103,6 +106,7 @@ import { SessionPage, SessionsPage } from "./pages/sessions"
 import { SettingsPage } from "./pages/settings"
 import { SchedulersPage } from "./pages/schedulers"
 import { AuthSitesPage } from "./pages/auth-sites"
+import { ConnectPage } from "./pages/connect"
 import { RequirementPage } from "./pages/requirement"
 import { RequirementDocPage } from "./pages/requirement-doc"
 import { RequirementDiffPage } from "./pages/requirement-diff"
@@ -137,6 +141,7 @@ const navItems = [
   { href: "/business-knowledge", label: "业务知识", short: "BK", icon: <Library size={16} /> },
   { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
+  { href: "/connect", label: "连接", short: "CN", icon: <MonitorSmartphone size={16} /> },
   { href: "/schedulers", label: "Schedulers", short: "SC", icon: <Activity size={16} /> },
   { href: "/auth-sites", label: "登录态", short: "AU", icon: <KeyRound size={16} /> },
   { href: "/testdata", label: "接口测试", short: "IT", icon: <FlaskConical size={16} /> },
@@ -177,6 +182,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/pi-chat") return { eyebrow: "Pi Agent", title: "Pi 会话" }
+  if (path === "/connect") return { eyebrow: "Connection", title: "服务器连接" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
@@ -189,7 +195,8 @@ function AppShell({ path, children, project, onProjectChange }: { path: string; 
   const meta = titleForPath(path)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const toggleSidebar = () => setSidebarCollapsed((v) => { persistSidebarCollapsed(!v); return !v })
-  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><span>RUST BACKEND</span><strong>localhost:7331</strong><em>PTY removed</em></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions"><HarnessSwitcher /><label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
+  const activeConn = getActiveConnection()
+  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><a href="/connect" title="管理服务器连接" style={{ display: "contents" }}><span>CONNECTION</span><strong>{activeConn.url ? activeConn.name : `${activeConn.name}（同源）`}</strong><em>{activeConn.url || "localhost"}</em></a></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions"><HarnessSwitcher /><label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
 }
 
 function useLocationKey() {
@@ -212,6 +219,7 @@ export function App({ apiPath }: AppProps) {
   const key = useLocationKey()
   const path = window.location.pathname
   const { project, setProject } = useProjectFilter()
+  const isMobile = useIsMobile()
   const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
     : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
@@ -230,12 +238,18 @@ export function App({ apiPath }: AppProps) {
     : path === "/requirement-merge" ? <RequirementMergePage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/auth-sites" ? <AuthSitesPage />
+    : path === "/connect" ? <ConnectPage />
     : path === "/testdata" ? <TestdataPage />
     : path === "/testdata/api" ? <TestdataApiDetailPage />
     : path === "/settings" ? <SettingsPage />
     : path === "/reports" || path === "/report" ? <RemovedPage title="Experience Reports 已移除" detail="OpenCode 经验报告、confirm/reject 和 auto-summary 链路不再保留。" />
     : path === "/env-vars" ? <RemovedPage title="Env Vars 已移除" detail="Rust 版暂未恢复浏览器环境变量编辑。" />
     : <NotFoundPage />
+
+  // pi-chat 移动版脱离 shell：全屏 100dvh 聊天视口（shell 侧边栏会挤压会话流）。
+  if (path === "/pi-chat" && isMobile) {
+    return <ErrorBoundary key={key}>{page}</ErrorBoundary>
+  }
 
   return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
 }

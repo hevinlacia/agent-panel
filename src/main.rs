@@ -15,6 +15,7 @@ use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 mod api_catalog;
 mod attachments;
+mod auth;
 mod browser_auth;
 mod cainiao_mock;
 mod capability;
@@ -584,8 +585,15 @@ async fn main() -> Result<()> {
             "/assets",
             ServeDir::new(public_dir.join("dashboard-react/assets")),
         )
+        .nest_service(
+            "/icons",
+            ServeDir::new(public_dir.join("dashboard-react/icons")),
+        )
+        .route("/manifest.webmanifest", get(serve_pwa_root_file))
+        .route("/sw.js", get(serve_pwa_root_file))
         .nest_service("/static", ServeDir::new(public_dir.clone()))
         .fallback(get(spa_fallback))
+        .layer(axum::middleware::from_fn(auth::require_auth))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -594,11 +602,48 @@ async fn main() -> Result<()> {
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(DEFAULT_PORT);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // 默认仅回环（本地个人使用安全默认）；远程访问（局域网/Tailscale）设 PANEL_BIND_HOST=0.0.0.0。
+    let bind_host = env::var("PANEL_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr: SocketAddr = format!("{bind_host}:{port}")
+        .parse()
+        .with_context(|| format!("非法 PANEL_BIND_HOST：{bind_host}"))?;
     tracing::info!(%addr, "Agent Panel running");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// PWA 根路径静态文件（manifest / sw.js）：白名单文件名防路径穿越，从 vite 构建产物读取。
+/// 路径基于 AppState.project_root（与 spa_fallback 同源），不依赖进程 cwd。
+async fn serve_pwa_root_file(State(state): State<AppState>, uri: Uri) -> Response {
+    use axum::http::header;
+    let name = uri.path().trim_start_matches('/');
+    let (allowed, mime) = match name {
+        "manifest.webmanifest" => (true, "application/manifest+json"),
+        "sw.js" => (true, "application/javascript"),
+        _ => (false, ""),
+    };
+    if !allowed {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let path = state
+        .project_root
+        .join(format!("public/dashboard-react/{name}"));
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, mime.to_string()),
+                // sw.js 需要根 scope；Service-Worker-Allowed 放宽默认目录 scope。
+                (
+                    header::HeaderName::from_static("service-worker-allowed"),
+                    "/".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> Response {
