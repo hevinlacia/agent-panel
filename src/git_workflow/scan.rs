@@ -97,8 +97,34 @@ pub(crate) async fn scan_repo_branch_with_base(
     )
     .await;
 
-    let commit_range = format!("{}..{}", base_info.base_ref, target_ref);
-    let diff_range = format!("{}...{}", base_info.base_ref, target_ref);
+    // fetch base 的远端分支,保证 origin/master 等远端跟踪引用反映最新远端状态
+    // (离线等 fetch 失败不阻塞扫描);随后解析 base:优先远端跟踪引用,
+    // 缺失时回退本地分支(与 resolve_target_ref 的回退链对称)。
+    let base_fetch = git(
+        &project_path,
+        &[
+            "fetch",
+            base_info.remote.as_str(),
+            base_info.remote_branch.as_str(),
+        ],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    let (base_used, base_warning) = resolve_base_ref(&project_path, &base_info).await;
+    // fetch 失败但仍用远端跟踪引用时提示可能过期;回退本地分支的场景已有回退警告,不再叠加。
+    if !base_fetch.ok && base_warning.is_none() {
+        warnings.push(format!(
+            "fetch {} {} 失败,基线 {} 可能不是最新远端状态",
+            base_info.remote, base_info.remote_branch, base_used
+        ));
+    }
+    if let Some(warning) = base_warning {
+        warnings.push(warning);
+    }
+
+    let commit_range = format!("{}..{}", base_used, target_ref);
+    let diff_range = format!("{}...{}", base_used, target_ref);
     let commits = git(
         &project_path,
         &[
@@ -155,6 +181,7 @@ pub(crate) async fn scan_repo_branch_with_base(
     }
 
     let files = merge_file_stats(&name_status.stdout, &numstat.stdout);
+    let base_commit = resolve_commit(&project_path, &base_used).await;
     let additions: i64 = files.iter().map(|f| f.additions).sum();
     let deletions: i64 = files.iter().map(|f| f.deletions).sum();
     let risk_tags = aggregate_risk_tags(&files);
@@ -165,11 +192,11 @@ pub(crate) async fn scan_repo_branch_with_base(
         "branch": branch,
         "resolvedTargetRef": target_ref,
         "targetCommit": resolve_commit(&project_path, &target_ref).await,
-        "baseRef": base_info.base_ref,
-        "baseCommit": resolve_commit(&project_path, &base_info.base_ref).await,
+        "baseRef": base_used,
+        "baseCommit": base_commit,
         "currentBranch": current_branch.ok.then(|| current_branch.stdout.trim().to_string()),
         "dirty": dirty_state.ok && !dirty_state.stdout.trim().is_empty(),
-        "baseUpdate": read_only_base_update(&base_info),
+        "baseUpdate": base_update_info(&base_info, &base_used),
         "commits": if commits.ok { commits.stdout.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect::<Vec<_>>() } else { Vec::<String>::new() },
         "files": files,
         "additions": additions,
@@ -251,6 +278,56 @@ pub(crate) fn parse_base_ref(input: &str) -> BaseRefInfo {
             local_branch: base_ref,
         }
     }
+}
+
+/// base 解析:优先远端跟踪引用(如 origin/master,扫描前已 fetch 刷新),
+/// 缺失时回退本地分支(如 master)。返回实际可用的 ref 与可选警告。
+pub(crate) async fn resolve_base_ref(
+    repo_path: &Path,
+    base_info: &BaseRefInfo,
+) -> (String, Option<String>) {
+    if resolve_commit(repo_path, &base_info.base_ref)
+        .await
+        .is_string()
+    {
+        return (base_info.base_ref.clone(), None);
+    }
+    if base_info.local_branch != base_info.base_ref
+        && resolve_commit(repo_path, &base_info.local_branch)
+            .await
+            .is_string()
+    {
+        return (
+            base_info.local_branch.clone(),
+            Some(format!(
+                "远端引用 {} 不存在,已回退本地分支 {}",
+                base_info.base_ref, base_info.local_branch
+            )),
+        );
+    }
+    (
+        base_info.base_ref.clone(),
+        Some(format!("无法验证基线 {},diff 可能失败", base_info.base_ref)),
+    )
+}
+
+/// 成功扫描路径的 baseUpdate:已 fetch 远端分支并解析出实际使用的 base ref。
+pub(crate) fn base_update_info(info: &BaseRefInfo, resolved_base_ref: &str) -> Value {
+    json!({
+        "ok": true,
+        "remote": info.remote,
+        "remoteBranch": info.remote_branch,
+        "localBranch": info.local_branch,
+        "resolvedBaseRef": resolved_base_ref,
+        "steps": [{
+            "label": "fetch remote branch then resolve base ref",
+            "command": format!(
+                "git fetch {} {} && git rev-parse --verify {}^{{commit}}",
+                info.remote, info.remote_branch, resolved_base_ref
+            ),
+            "ok": true,
+        }],
+    })
 }
 
 pub(crate) fn read_only_base_update(info: &BaseRefInfo) -> Value {
