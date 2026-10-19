@@ -52,6 +52,13 @@ impl ApiError {
             message: message.into(),
         }
     }
+
+    pub(crate) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+        }
+    }
 }
 
 impl<E> From<E> for ApiError
