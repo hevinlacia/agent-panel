@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha1::{Digest, Sha1};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -1454,20 +1455,46 @@ pub(crate) async fn api_requirement_master_diff(
     })?);
     let round = body.round.unwrap_or(1).max(1);
     let scope_file = branch_scope_file_for_round(round);
-    let branch_scope = read_branch_scope_round(&req_dir, round)
-        .await?
-        .ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "missing {scope_file}; register the round's branches first"
-            ))
-        })?;
     let base_ref = body
         .base_ref
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
-    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    // 登记文件存在但无任何仓库登记（如零代码需求：仅配置/SQL 变更，无需求分支）不按错误处理，
+    // 改为生成空差异快照，并把登记 note 透传给页面说明原因；只有文件缺失才报错引导登记。
+    let (branch_scope, empty_scope_note) = match read_branch_scope_round(&req_dir, round).await? {
+        Some(scope) => (scope, None),
+        None => {
+            let Some(raw) = read_json_if_exists(&req_dir.join(&scope_file)).await else {
+                return Err(ApiError::bad_request(format!(
+                    "missing {scope_file}; register the round's branches first"
+                )));
+            };
+            let note = raw
+                .get("note")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            (
+                BranchScope {
+                    round,
+                    ..Default::default()
+                },
+                note,
+            )
+        }
+    };
+    let mut review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    if branch_scope.repos.is_empty() {
+        let reason =
+            empty_scope_note.unwrap_or_else(|| "分支登记为空：无需求分支、无代码差异".to_string());
+        if let Some(obj) = review.as_object_mut() {
+            obj.insert("emptyScope".to_string(), json!(true));
+            obj.insert("emptyScopeNote".to_string(), json!(reason));
+        }
+    }
     // 自动清理：某应用全部登记分支均无文件差异（且 diff 读取无失败/截断）时，
     // 把它从本轮次登记文件移除，避免已合入/未开发的分支残留登记。
     let (pruned_repos, pruned_written) =
@@ -1475,8 +1502,16 @@ pub(crate) async fn api_requirement_master_diff(
     // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
     let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
+    let notice = if branch_scope.repos.is_empty() {
+        Some(format!(
+            "分支登记为空（零代码需求），无代码差异可展示；审查对象见登记文件 {} 的 note 说明",
+            scope_file
+        ))
+    } else {
+        None
+    };
     Ok(Json(
-        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots, "notice": notice }),
     ))
 }
 
@@ -2496,4 +2531,155 @@ pub(crate) async fn api_effort_estimate(
         atomic_write_json(&path, &estimate).await?;
     }
     Ok(Json(json!({ "ok": true, "estimate": estimate })))
+}
+
+// ---- Agent 远程文件编辑（容器 hub 阶段一：本机挂载只读 + hub API 写的配套端点）----
+//
+// 定位：覆盖现有结构化 API（doc/doc-part/section/status/annotations…）没覆盖的边角
+// 文档编辑（如 manual-check.md、临时分析文档）。结构化数据（state.json、编号池、
+// branches.json 等）一律不走本端点，仍由对应 API 写入，避免读改写序列冲突。
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentFileReadQuery {
+    id: Option<String>,
+    #[serde(alias = "reqId")]
+    req_id: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentFileWriteForm {
+    id: Option<String>,
+    #[serde(alias = "reqId")]
+    req_id: Option<String>,
+    path: String,
+    content: String,
+    /// GET 返回的内容 sha1（乐观锁）。空 = 仅允许新建（文件已存在则 409）。
+    base_sha: Option<String>,
+}
+
+/// agent 可编辑文件的相对路径白名单：
+/// - 顶层单段 `.md` 文件（test.md / manual-check.md / 自建分析文档等；meta.md 除外——
+///   frontmatter 结构化字段由专门 API 维护，裸编辑会破坏索引）
+/// - `docs/<base>/<file>.md` 分册两层路径
+/// 拒绝：绝对路径、`..` 穿越、空段、非 `.md`、超过两层。
+pub(crate) fn resolve_agent_editable_rel_path(input: &str) -> ApiResult<String> {
+    let v = input.trim().trim_start_matches("./");
+    if v.is_empty() || v.starts_with('/') || v.split('/').any(|s| s == ".." || s.is_empty()) {
+        return Err(ApiError::bad_request(format!(
+            "非法文件路径：{input}（只允许需求目录内相对 .md 路径）"
+        )));
+    }
+    let segs: Vec<&str> = v.split('/').collect();
+    match segs.len() {
+        1 => {
+            let file = segs[0];
+            if !file.ends_with(".md") || file == ".md" {
+                return Err(ApiError::bad_request(format!(
+                    "只允许编辑 .md 文件：{input}"
+                )));
+            }
+            if file == "meta.md" {
+                return Err(ApiError::bad_request(
+                    "meta.md 由专门 API 维护（status/category/ones/effort-estimate 等），不接受裸编辑",
+                ));
+            }
+            ensure_safe_segment(file.trim_end_matches(".md"), "文档名")?;
+            Ok(v.to_string())
+        }
+        3 if segs[0] == "docs" => resolve_doc_part_rel_path(v),
+        _ => Err(ApiError::bad_request(format!(
+            "只允许顶层 .md 或 docs/<base>/<file>.md 分册路径：{input}"
+        ))),
+    }
+}
+
+pub(crate) fn sha1_hex(s: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(s.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// GET /api/requirement/file?id=&path=：读需求目录内白名单文件，返回内容 + sha 乐观锁版本。
+pub(crate) async fn api_requirement_file_get(
+    State(state): State<AppState>,
+    Query(query): Query<AgentFileReadQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_agent_editable_rel_path(query.path.as_deref().unwrap_or_default())?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let (exists, content) = match fs::read_to_string(&path).await {
+        Ok(text) => (true, text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, String::new()),
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    Ok(Json(json!({
+        "id": req.id,
+        "path": rel,
+        "exists": exists,
+        "content": content,
+        "sha": sha1_hex(&content),
+        "size": content.len(),
+    })))
+}
+
+/// PUT /api/requirement/file：带 sha 乐观锁写回。baseSha 与当前内容不符返回 409（重新 GET 再写）。
+pub(crate) async fn api_requirement_file_put(
+    State(state): State<AppState>,
+    form: FormOrJson<AgentFileWriteForm>,
+) -> ApiResult<Json<Value>> {
+    let form = form.0;
+    let req_id = form.id.or(form.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_agent_editable_rel_path(&form.path)?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let current = match fs::read_to_string(&path).await {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    let current_sha = current.as_deref().map(sha1_hex);
+    let base_sha = form
+        .base_sha
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase());
+    match (&current_sha, &base_sha) {
+        (Some(cur), Some(base)) if cur != base => {
+            return Err(ApiError::conflict(format!(
+                "文件已被修改（当前 sha {cur}，请求基于 {base}）；重新 GET /api/requirement/file 获取最新内容与 sha 后再写"
+            )));
+        }
+        (Some(_), None) => {
+            return Err(ApiError::conflict(
+                "文件已存在：更新必须携带 GET 返回的 baseSha；如需覆盖请先 GET",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::conflict(
+                "文件不存在（可能已被删除）：新建请省略 baseSha",
+            ));
+        }
+        _ => {}
+    }
+    atomic_write_text(&path, &form.content).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "id": req.id,
+        "path": rel,
+        "sha": sha1_hex(&form.content),
+        "size": form.content.len(),
+        "created": current.is_none(),
+    })))
 }

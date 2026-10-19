@@ -385,9 +385,10 @@ pub(crate) async fn write_requirement_status_checked(
         "history": history
     });
     atomic_write_json(&path, &state).await?;
-    // 进入「发布就绪」且未登记提测时间时，自动以当天日期补登（显式日期不覆盖，后续仍可手动调整）。
+    // 进入「发布就绪」时，把当天日期刷新为提测时间（覆盖式：已登记的旧日期一并更新为最新提测日；
+    // 发布就绪小循环再次进入时同样刷新，保证排期口径的提测日=最近一次实际交付测试的日期）。
     if changed && new_status == "发布就绪" {
-        auto_fill_submit_test_date(&dir).await;
+        refresh_submit_test_date_today(&dir).await;
     }
     Ok(state)
 }
@@ -404,21 +405,14 @@ pub(crate) fn release_ready_at_from_state(state: &Value) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
-/// 进入「发布就绪」时补登提测时间：submit-test-date 为空或 unknown 时写当天日期；已登记的显式日期不覆盖。
-async fn auto_fill_submit_test_date(dir: &Path) {
+/// 进入「发布就绪」时把提测时间刷新为当天（覆盖式）：submit-test-date 无论是否已登记都更新为当天日期；
+/// 手动仍可通过排期页/需求页随时改回。承诺口径用 promise-submit-date，不受此刷新影响。
+async fn refresh_submit_test_date_today(dir: &Path) {
     let path = dir.join("meta.md");
     let Ok(raw) = fs::read_to_string(&path).await else {
         return;
     };
     let normalized = raw.replace("\r\n", "\n");
-    let current = parse_frontmatter(&normalized)
-        .fields
-        .get("submit-test-date")
-        .map(|v| v.trim().to_string())
-        .unwrap_or_default();
-    if !current.is_empty() && current != "unknown" {
-        return;
-    }
     let today = today_ymd();
     let next = set_frontmatter_field(&normalized, "submit-test-date", &today);
     let next = update_meta_summary_line(&next, "Submit test", &today);

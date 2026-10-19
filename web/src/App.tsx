@@ -79,7 +79,7 @@ import type {
   TestdataRunPayload,
 } from "./types"
 import { Markdown } from "./markdown"
-import { fetchJson, postForm, postJson, useFetch } from "./lib/api"
+import { fetchJson, postForm, postJson, setPanelToken, setUnauthorizedHandler, useFetch } from "./lib/api"
 import { formatDate, formatDateTime, formatDuration, joinList, parseOnesRef, relAge, splitCsvText } from "./lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_STATUSES, statusMeta } from "./lib/requirements"
 import { experienceSummaryPill, experienceSummaryStageLabel, onesBadge, projectsOf, statusPill } from "./features/requirements/badges"
@@ -89,6 +89,7 @@ import { PROJECT_FILTER_KEY, readProjectFilter, readSidebarCollapsed, persistSid
 import { HarnessSwitcher } from "./features/harness/harness-switcher"
 import { RequirementsData } from "./pages/projects"
 import { TestdataPage } from "./pages/testdata"
+import { TestdataApiDetailPage } from "./pages/testdata-api-detail"
 import { DashboardPage } from "./pages/dashboard"
 import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
@@ -154,7 +155,7 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/auth-sites") return path === "/auth-sites"
-  if (href === "/testdata") return path === "/testdata"
+  if (href === "/testdata") return path === "/testdata" || path.startsWith("/testdata/")
   return path === href
 }
 
@@ -179,15 +180,17 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
-  if (path === "/testdata") return { eyebrow: "Test Data", title: "测试造数" }
+  if (path === "/testdata") return { eyebrow: "Test Data", title: "接口测试" }
+  if (path === "/testdata/api") return { eyebrow: "Test Data", title: "接口详情" }
   return { eyebrow: "Agent Panel", title: "React + Rust" }
 }
 
-function AppShell({ path, children, project, onProjectChange }: { path: string; children: React.ReactNode; project: string; onProjectChange: (v: string) => void }) {
+function AppShell({ path, children, project, onProjectChange, docsMode }: { path: string; children: React.ReactNode; project: string; onProjectChange: (v: string) => void; docsMode: boolean }) {
   const meta = titleForPath(path)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const toggleSidebar = () => setSidebarCollapsed((v) => { persistSidebarCollapsed(!v); return !v })
-  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><span>RUST BACKEND</span><strong>localhost:7331</strong><em>PTY removed</em></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions"><HarnessSwitcher /><label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
+  const visibleNav = docsMode ? navItems.filter((item) => !WORKER_ONLY_HREFS.has(item.href)) : navItems
+  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{visibleNav.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><span>{docsMode ? "HUB (DOCS) MODE" : "RUST BACKEND"}</span><strong>{docsMode ? "requirements & knowledge" : "localhost:7331"}</strong><em>{docsMode ? "workers via tailscale" : "PTY removed"}</em></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions">{!docsMode && <HarnessSwitcher />}<label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
 }
 
 function useLocationKey() {
@@ -206,10 +209,35 @@ function RemovedPage({ title, detail }: { title: string; detail: string }) {
 
 function NotFoundPage() { return <PageChrome icon={<Search size={15} />} eyebrow="Not Found" title="页面不存在"><EmptyCard>当前路由没有匹配的 React 页面。</EmptyCard></PageChrome> }
 
+/// docs 模式下 worker 类页面的占位提示（阶段二 worker 代理后恢复）。
+function WorkerOnlyPage({ title }: { title: string }) {
+  return <PageChrome icon={<AlertTriangle size={15} />} eyebrow="Worker" title={title} description="该能力属于本机执行类页面，容器 docs 模式暂不提供。"><EmptyCard>请在本地全功能面板中使用，或等待阶段二 worker 代理上线后恢复。</EmptyCard></PageChrome>
+}
+
+/// worker 类页面路由：docs 模式下导航隐藏且路由降级。
+const WORKER_ONLY_HREFS = new Set(["/sessions", "/schedulers", "/auth-sites", "/testdata", "/testdata/api"])
+
 export function App({ apiPath }: AppProps) {
   const key = useLocationKey()
   const path = window.location.pathname
   const { project, setProject } = useProjectFilter()
+  const [mode, setMode] = useState<"local" | "docs">("local")
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      const token = window.prompt("需要访问 token（即服务端 PANEL_AUTH_TOKEN）")
+      if (token && token.trim()) {
+        setPanelToken(token.trim())
+        window.location.reload()
+      }
+    })
+    fetch("/api/mode", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((v: { mode?: string }) => { if (v?.mode === "docs") setMode("docs") })
+      .catch(() => { /* 探测失败按 local 处理 */ })
+    return () => setUnauthorizedHandler(null)
+  }, [])
+  const docsMode = mode === "docs"
+  const workerPage = (title: string) => <WorkerOnlyPage title={title} />
   const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
     : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
@@ -219,6 +247,11 @@ export function App({ apiPath }: AppProps) {
     : path === "/issues" ? <IssuesPage globalProject={project} />
     : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
     : path === "/experiences" ? <KnowledgePage kind="experience" />
+    : docsMode && path === "/sessions" ? workerPage("Sessions")
+    : docsMode && path === "/session" ? workerPage("Session 详情")
+    : docsMode && path === "/schedulers" ? workerPage("Schedulers")
+    : docsMode && path === "/auth-sites" ? workerPage("Chrome 登录态复用")
+    : docsMode && (path === "/testdata" || path === "/testdata/api") ? workerPage("接口测试")
     : path === "/sessions" ? <SessionsPage />
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
@@ -229,10 +262,11 @@ export function App({ apiPath }: AppProps) {
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/auth-sites" ? <AuthSitesPage />
     : path === "/testdata" ? <TestdataPage />
+    : path === "/testdata/api" ? <TestdataApiDetailPage />
     : path === "/settings" ? <SettingsPage />
     : path === "/reports" || path === "/report" ? <RemovedPage title="Experience Reports 已移除" detail="OpenCode 经验报告、confirm/reject 和 auto-summary 链路不再保留。" />
     : path === "/env-vars" ? <RemovedPage title="Env Vars 已移除" detail="Rust 版暂未恢复浏览器环境变量编辑。" />
     : <NotFoundPage />
 
-  return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
+  return <AppShell path={path} project={project} onProjectChange={setProject} docsMode={docsMode}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
 }
