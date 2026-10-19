@@ -89,6 +89,7 @@ import { PROJECT_FILTER_KEY, readProjectFilter, readSidebarCollapsed, persistSid
 import { HarnessSwitcher } from "./features/harness/harness-switcher"
 import { RequirementsData } from "./pages/projects"
 import { TestdataPage } from "./pages/testdata"
+import { TestdataApiDetailPage } from "./pages/testdata-api-detail"
 import { DashboardPage } from "./pages/dashboard"
 import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
@@ -154,7 +155,7 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/auth-sites") return path === "/auth-sites"
-  if (href === "/testdata") return path === "/testdata"
+  if (href === "/testdata") return path === "/testdata" || path.startsWith("/testdata/")
   return path === href
 }
 
@@ -179,7 +180,8 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
   if (path === "/auth-sites") return { eyebrow: "Browser Auth", title: "Chrome 登录态复用" }
   if (path === "/settings") return { eyebrow: "Settings", title: "Settings" }
-  if (path === "/testdata") return { eyebrow: "Test Data", title: "测试造数" }
+  if (path === "/testdata") return { eyebrow: "Test Data", title: "接口测试" }
+  if (path === "/testdata/api") return { eyebrow: "Test Data", title: "接口详情" }
   return { eyebrow: "Agent Panel", title: "React + Rust" }
 }
 
@@ -229,6 +231,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/auth-sites" ? <AuthSitesPage />
     : path === "/testdata" ? <TestdataPage />
+    : path === "/testdata/api" ? <TestdataApiDetailPage />
     : path === "/settings" ? <SettingsPage />
     : path === "/reports" || path === "/report" ? <RemovedPage title="Experience Reports 已移除" detail="OpenCode 经验报告、confirm/reject 和 auto-summary 链路不再保留。" />
     : path === "/env-vars" ? <RemovedPage title="Env Vars 已移除" detail="Rust 版暂未恢复浏览器环境变量编辑。" />
