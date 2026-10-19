@@ -543,6 +543,7 @@ async fn main() -> Result<()> {
         .route("/api/apitest/apis", get(api_apitest_apis))
         .route("/api/apitest/api", get(api_apitest_api))
         .route("/api/apitest/trigger", post(api_apitest_trigger))
+        .route("/api/apitest/curl-import", post(api_apitest_curl_import))
         .route(
             "/api/agent/capabilities/query",
             get(api_testdata_capabilities),
