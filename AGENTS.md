@@ -12,7 +12,7 @@ Current architecture:
 - `src/util.rs` — Cross-module utility helpers for time, string cleanup, status/category normalization, JSON/text atomic writes, path/list conversion, ONES parsing, and shell quoting.
 - `src/markdown.rs` — Markdown/frontmatter parsing and HTML rendering helpers.
 - `src/capability.rs` — Capability/testdata pack APIs（造数脚本能力索引/详情，dry-run 与执行 dispatch：`POST /api/testdata/run` 默认 dry-run，execute=true 且 dryRun=false 才真实执行，env 白名单 test/uat-cn/uat-sea）。
-- `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取，vars 映射缺失时 camelCase→WMS_UPPER_SNAKE 启发式；kind 造数/测试标记，catalog 显式 kind 字段优先）+ 消费 `api/profiles.yaml` 环境契约（网关域名/必需头/x_params 构造，缺失时内置 fallback）；`GET /api/apitest/apis|api`、`POST /api/apitest/trigger`（dry_run=true 返回脱敏构造预览；登录态 login.mjs 自动获取；三环境实测：test/uat-cn/uat-sea，SEA UAT 按路径前缀双域名，X-PDA-Version 派生，token 不回显不落盘）。
+- `src/api_catalog.rs` — WMS 接口测试联动：解析 testdata pack 的 api/catalog.yaml + .bru 模板（占位符提取，vars 映射缺失时 camelCase→WMS_UPPER_SNAKE 启发式；kind 造数/测试/线上修数据标记，catalog 显式 kind 字段优先，prod_fix 仅显式）+ 消费 `api/profiles.yaml` 环境契约（网关域名/必需头/x_params 构造，缺失时内置 fallback）；`GET /api/apitest/apis|api`、`POST /api/apitest/trigger`（dry_run=true 返回脱敏构造预览；登录态 login.mjs 自动获取；三环境实测：test/uat-cn/uat-sea，SEA UAT 按路径前缀双域名，X-PDA-Version 派生，token 不回显不落盘；支持 curl=粘贴真实环境 curl 凭证/域名直接发起（线上修数，仅显式 X-Token，不携带 x-env/Cookie）、headerOverrides=请求头临时改值/停用）、`POST /api/apitest/curl-import`（解析粘贴 curl，凭证值脱敏回显，原文不落盘）。
 - `src/cainiao_mock.rs` — Cainiao print WebSocket mock lifecycle and status API.
 - `src/pi_config.rs` — Pi settings/model/agent config inspection and safe settings edits.
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`gitlab_auth`（GitLab 三步式认证链：Chrome 登录态 → 账号密码登录 → GITLAB_TOKEN 兕底；会话态走 Cookie+CSRF，令牌走 PRIVATE-TOKEN）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器，超限输出按行边界截断）。
@@ -52,7 +52,7 @@ Current architecture:
 - `web/src/features/requirements/diff-file-card.tsx` — Diff 页单文件卡片：未修改区间可展开标记（短文件 ≤2000 行自动全展开、长文件分块按需展开）、import 区块默认折叠、行级点击选中/多选（选中态与 hunk 解耦）；备注锚定仍用解析后 diff 行下标，gap/折叠行仅是渲染层插入。
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
-- `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试标记 + 关键字筛选 + 详情触发，test/UAT 切换、入参临时修改不写回模板）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
+- `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试/线上修数据标记 + 关键字筛选 + 卡片点击自动滚动展开详情，占位符入参/模板请求头/请求体临时编辑不写回模板，test/UAT 切换，粘贴真实环境 curl 凭证发起线上修数请求）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
 - `web/src/pages/schedule.tsx` — 需求排期页（路由 /schedule，侧边栏「需求排期」）：并行均摊模型（投入→提测区间摊派）的每日饱和度、接单评估（能不能接/能接多大）、行内快改工时与提测日；ONES 登记工时按折算系数换算真实口径。
 - `web/src/lib/schedule.ts` — 排期算法纯函数：4h 单位制、均摊饱和度（utilization）、接单评估（checkAcceptance）、反算容量（maxAcceptable）；饱和度是容量账不锁定每日日程。
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.

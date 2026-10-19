@@ -2,11 +2,14 @@
 //! 提供接口目录查询（含造数/测试标记与关键字过滤）与直接触发（login.mjs 会话注入 +
 //! reqwest 代理发送，临时入参修改不写回模板）。
 //! Public surface: api_apitest_apis（GET /api/apitest/apis）、api_apitest_api
-//! （GET /api/apitest/api）、api_apitest_trigger（POST /api/apitest/trigger）、
-//! parse_bru_template / derive_api_kind（含单测）。
+//! （GET /api/apitest/api）、api_apitest_trigger（POST /api/apitest/trigger，
+//! 支持 curl 真实环境凭证与 headerOverrides 临时覆盖）、api_apitest_curl_import
+//! （POST /api/apitest/curl-import，粘贴 curl 解析，凭证值脱敏）、
+//! parse_bru_template / parse_curl_command / derive_api_kind（含单测）。
 //! Constraints: 只面向 testdata pack 内已登记模板；登录态经 wms-auth-auto-login
 //! login.mjs 子进程获取（Chrome 登录态优先，全自动），token/client 只存在于后端
-//! 发出的请求头，不回显、不落盘、不进日志；响应体截断保护（256KB）。
+//! 发出的请求头，不回显、不落盘、不进日志；粘贴 curl 场景凭证同样只在单次请求
+//! 内存中使用（curl 原文由前端保存，后端不落盘）；响应体截断保护（256KB）。
 //! Read-this-with: src/capability.rs（testdata pack 路径）、src/paths.rs、
 //! wms-test-api-call SKILL.md（网关域名与 header 规则）、wms-auth-auto-login/login.mjs
 //! （session JSON 结构与 ENV_PROFILES）。
@@ -452,12 +455,15 @@ fn heuristic_env_name(raw: &str) -> String {
     }
 }
 
-/// 造数/测试标记启发式：catalog `kind` 字段优先；否则按 id/purpose 词表判定，
-/// 查询词先命中判测试，创建词命中判造数，默认造数（WMS catalog 以写操作为主）。
+/// 造数/测试/线上修数标记启发式：catalog `kind` 字段优先（create/test/prod_fix）；
+/// 否则按 id/purpose 词表判定，查询词先命中判测试，创建词命中判造数，
+/// 默认造数（WMS catalog 以写操作为主）。prod_fix 仅支持显式标记（线上修数
+/// 接口与业务语义强相关，不做词表猜测）。
 pub(crate) fn derive_api_kind(api: &CatalogApi) -> &'static str {
     if let Some(k) = api.kind.as_deref() {
         return match k {
             "test" => "test",
+            "prod_fix" => "prod_fix",
             _ => "create",
         };
     }
@@ -544,7 +550,7 @@ pub(crate) struct ApitestListQuery {
     pub(crate) q: Option<String>,
     #[serde(default)]
     pub(crate) domain: Option<String>,
-    /// create / test / all（默认 all）。
+    /// create / test / prod_fix / all（默认 all）。
     #[serde(default)]
     pub(crate) kind: Option<String>,
     #[serde(default)]
@@ -697,6 +703,319 @@ pub(crate) async fn api_apitest_api(Query(q): Query<ApitestDetailQuery>) -> ApiR
 }
 
 // ---------------------------------------------------------------------------
+// 粘贴 curl 解析（真实环境凭证导入，线上修数场景）
+// ---------------------------------------------------------------------------
+
+/// 粘贴 curl 解析结果。headers 保留原始头名大小写与出现顺序；
+/// 预览/回显时凭证头值由调用方脱敏，原始值只在触发请求内存中使用。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ParsedCurl {
+    pub(crate) method: String,
+    pub(crate) url: String,
+    /// URL origin（scheme://host[:port]），作为真实环境网关。
+    pub(crate) origin: String,
+    /// (头名, 原始值) 按出现顺序。
+    pub(crate) headers: Vec<(String, String)>,
+    /// body 原文（--data/-d/--data-raw 等），仅供预览参考。
+    pub(crate) body: Option<String>,
+}
+
+/// 将粘贴的 curl 命令拆分为参数列表：支持 `\` 续行、单/双引号（含反斜杠转义）、
+/// `$'...'` ANSI-C 引用（按转义处理）。不执行任何 shell 语义，仅分词。
+fn tokenize_shellish(input: &str) -> Vec<String> {
+    let joined = input.replace("\\\n", " ");
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut has_cur = false;
+    let mut chars = joined.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' | '\t' | '\n' | '\r' => {
+                if has_cur {
+                    args.push(std::mem::take(&mut cur));
+                    has_cur = false;
+                }
+            }
+            '\'' => {
+                has_cur = true;
+                for c2 in chars.by_ref() {
+                    if c2 == '\'' {
+                        break;
+                    }
+                    cur.push(c2);
+                }
+            }
+            '"' => {
+                has_cur = true;
+                while let Some(c2) = chars.next() {
+                    match c2 {
+                        '"' => break,
+                        '\\' => {
+                            if let Some(c3) = chars.next() {
+                                // 双引号内仅 \$ \` \" \\ 是特殊转义，其余保留反斜杠
+                                if matches!(c3, '$' | '`' | '"' | '\\') {
+                                    cur.push(c3);
+                                } else {
+                                    cur.push('\\');
+                                    cur.push(c3);
+                                }
+                            }
+                        }
+                        _ => cur.push(c2),
+                    }
+                }
+            }
+            '$' if chars.peek() == Some(&'\'') => {
+                chars.next();
+                has_cur = true;
+                while let Some(c2) = chars.next() {
+                    if c2 == '\'' {
+                        break;
+                    }
+                    if c2 == '\\' {
+                        if let Some(c3) = chars.next() {
+                            cur.push(c3);
+                        }
+                        continue;
+                    }
+                    cur.push(c2);
+                }
+            }
+            '\\' => {
+                has_cur = true;
+                if let Some(c2) = chars.next() {
+                    cur.push(c2);
+                }
+            }
+            _ => {
+                has_cur = true;
+                cur.push(c);
+            }
+        }
+    }
+    if has_cur {
+        args.push(cur);
+    }
+    args
+}
+
+/// 解析粘贴的 curl 命令：提取 method/url/headers/body。不支持的开关直接忽略；
+/// URL 缺失或非 http(s) 时报错。多值开关（-H 可重复）全部保留。
+pub(crate) fn parse_curl_command(input: &str) -> ApiResult<ParsedCurl> {
+    let args = tokenize_shellish(input);
+    let mut method: Option<String> = None;
+    let mut url = String::new();
+    let mut body: Option<String> = None;
+    let mut headers: Vec<(String, String)> = Vec::new();
+    let mut i = 0usize;
+    // 跳过程序名（curl / curl.exe / /usr/bin/curl）。
+    if let Some(first) = args.first() {
+        let base = first
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(first)
+            .to_lowercase();
+        if base == "curl" || base == "curl.exe" {
+            i = 1;
+        }
+    }
+    while i < args.len() {
+        let arg = args[i].clone();
+        let next = args.get(i + 1).cloned();
+        let take_next =
+            |names: &[&str]| -> bool { names.contains(&arg.as_str()) && next.is_some() };
+        if take_next(&["--header", "-H"]) {
+            if let Some(v) = next {
+                if let Some((name, value)) = v.split_once(':') {
+                    headers.push((name.trim().to_string(), value.trim().to_string()));
+                }
+            }
+            i += 2;
+        } else if take_next(&["--request", "-X"]) {
+            method = next.map(|v| v.trim().to_uppercase());
+            i += 2;
+        } else if take_next(&[
+            "--data",
+            "--data-raw",
+            "--data-binary",
+            "--data-ascii",
+            "--data-urlencode",
+            "-d",
+        ]) {
+            body = Some(next.unwrap_or_default());
+            i += 2;
+        } else if take_next(&["--url"]) {
+            url = next.unwrap_or_default();
+            i += 2;
+        } else if arg.starts_with("--data") {
+            // --data-raw='{...}' 等等号内联形式。
+            if let Some((_, v)) = arg.split_once('=') {
+                body = Some(v.to_string());
+            }
+            i += 1;
+        } else if arg.starts_with('-') {
+            // 其它开关（-s/-L/--compressed/--location 等）不影响提取，跳过。
+            i += 1;
+        } else {
+            if url.is_empty() {
+                url = arg;
+            }
+            i += 1;
+        }
+    }
+    let origin_re = Regex::new(r#"(?i)^https?://[^/\s]+"#).expect("origin regex");
+    let origin = origin_re
+        .find(url.trim())
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_default();
+    if url.trim().is_empty() || origin.is_empty() {
+        return Err(ApiError::bad_request(
+            "无法从 curl 中解析出 http(s) URL，请确认粘贴的是完整请求（含 URL 行）",
+        ));
+    }
+    let method = method.unwrap_or_else(|| {
+        if body.is_some() {
+            "POST".into()
+        } else {
+            "GET".into()
+        }
+    });
+    Ok(ParsedCurl {
+        method,
+        url: url.trim().to_string(),
+        origin,
+        headers,
+        body,
+    })
+}
+
+/// 从粘贴 curl 构造会话与运行时环境：域名/凭证全部来自 curl 本身。
+/// 仅搬运会话相关头（X-Token/X-Client/x-params/X-User/X-DB/x-area/X-Locale/
+/// langType/timezone/X-Authentication-Switch），不携带 x-env（避免真实环境
+/// 请求被环境路由头干扰）与 Cookie；缺少 X-Token 时报错。
+fn resolve_env_from_curl(parsed: &ParsedCurl) -> ApiResult<(ResolvedEnv, LoginSession)> {
+    let find_header = |name: &str| -> Option<(String, String)> {
+        parsed
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(n, v)| (n.clone(), v.trim().to_string()))
+            .filter(|(_, v)| !v.is_empty())
+    };
+    let token = find_header("X-Token").map(|(_, v)| v).ok_or_else(|| {
+        ApiError::bad_request(
+            "curl 中未找到 X-Token 头，无法构造真实环境会话；请复制登录后的页面请求 curl",
+        )
+    })?;
+    let session = LoginSession {
+        token,
+        client: find_header("X-Client").map(|(_, v)| v).unwrap_or_default(),
+        user: find_header("X-User").map(|(_, v)| v).unwrap_or_default(),
+        db: find_header("X-DB").map(|(_, v)| v).unwrap_or_default(),
+        params: Value::Null,
+    };
+    let origin = parsed.origin.clone();
+    let mut base_headers: Vec<(String, String)> = vec![
+        ("Accept".into(), "application/json, text/plain, */*".into()),
+        ("User-Agent".into(), "Mozilla/5.0".into()),
+        ("Origin".into(), origin.clone()),
+        ("Referer".into(), format!("{origin}/")),
+    ];
+    for name in [
+        "X-Token",
+        "X-Client",
+        "x-params",
+        "X-User",
+        "X-DB",
+        "x-area",
+        "X-Locale",
+        "langType",
+        "timezone",
+        "X-Authentication-Switch",
+    ] {
+        if let Some((_, v)) = find_header(name) {
+            base_headers.push((name.to_string(), v));
+        }
+    }
+    Ok((
+        ResolvedEnv {
+            gateway: origin,
+            pda_gateway: None,
+            base_headers,
+        },
+        session,
+    ))
+}
+
+/// 触发时的请求头临时覆盖：按头名大小写不敏感替换/新增；value 为空或 null
+/// 表示从最终请求中移除该头。覆盖值仍走占位符替换（如保留 {{xToken}}）。
+fn apply_header_overrides(
+    headers: &mut Vec<(String, String)>,
+    overrides: &[HeaderOverride],
+    substitute: &dyn Fn(&str) -> String,
+) {
+    for ov in overrides {
+        let name = ov.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        // 替换既有头时保留其原始大小写；新增头使用用户给的写法。
+        let existing = headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(n, _)| n.clone());
+        headers.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+        if let Some(v) = ov.value.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+            headers.push((existing.unwrap_or_else(|| name.to_string()), substitute(v)));
+        }
+    }
+}
+
+/// POST /api/apitest/curl-import — 解析粘贴的真实环境 curl，返回脱敏预览。
+/// 只做解析与校验：后端不保存原文；凭证值只回显长度，前端留存原文用于触发。
+#[derive(Deserialize)]
+pub(crate) struct ApitestCurlImportForm {
+    pub(crate) curl: String,
+}
+
+pub(crate) async fn api_apitest_curl_import(
+    form: FormOrJson<ApitestCurlImportForm>,
+) -> ApiResult<Json<Value>> {
+    let parsed = parse_curl_command(&form.0.curl)?;
+    let headers: Vec<(String, String)> = parsed
+        .headers
+        .iter()
+        .map(|(n, v)| (n.clone(), redact_header(n, v)))
+        .collect();
+    let credential_headers: Vec<String> = parsed
+        .headers
+        .iter()
+        .map(|(n, _)| n.clone())
+        .filter(|n| is_credential_header(n))
+        .collect();
+    let has_token = parsed
+        .headers
+        .iter()
+        .any(|(n, v)| n.eq_ignore_ascii_case("X-Token") && !v.trim().is_empty());
+    Ok(Json(json!({
+        "ok": true,
+        "method": parsed.method,
+        "url": parsed.url,
+        "origin": parsed.origin,
+        "headers": headers,
+        "credentialHeaders": credential_headers,
+        "hasToken": has_token,
+        "bodyPreview": parsed.body.as_ref().map(|b| b.chars().take(2000).collect::<String>()),
+        "note": if has_token {
+            "已识别真实环境凭证：触发时将使用该 curl 的域名与登录态（仅本次会话内存，不落盘）。"
+        } else {
+            "未在 curl 中找到 X-Token 头，无法构造真实环境会话；请从已登录页面复制接口请求。"
+        },
+    })))
+}
+
+// ---------------------------------------------------------------------------
 // 触发
 // ---------------------------------------------------------------------------
 
@@ -704,7 +1023,7 @@ pub(crate) async fn api_apitest_api(Query(q): Query<ApitestDetailQuery>) -> ApiR
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ApitestTriggerForm {
     pub(crate) id: String,
-    /// test / uat-cn / uat-sea。
+    /// test / uat-cn / uat-sea（curl 凭证模式下忽略）。
     #[serde(default = "default_env")]
     pub(crate) env: String,
     /// 占位符取值（canonical 名 → 值），覆盖默认与会话派生值。
@@ -713,9 +1032,23 @@ pub(crate) struct ApitestTriggerForm {
     /// body 覆盖（临时修改入参；保留 {{占位符}} 也会被替换）。
     #[serde(default)]
     pub(crate) body_override: Option<String>,
+    /// 请求头临时覆盖（模板头/运行时头之上）；value=null 移除该头。
+    #[serde(default)]
+    pub(crate) header_overrides: Option<Vec<HeaderOverride>>,
+    /// 粘贴的真实环境 curl：非空时以其域名+登录态发起（跳过 login.mjs），
+    /// 用于线上修数据场景；curl 原文只在本次请求内存中解析，不落盘。
+    #[serde(default)]
+    pub(crate) curl: Option<String>,
     /// true 时只返回构造后的请求（凭证头脱敏），不发送。
     #[serde(default)]
     pub(crate) dry_run: Option<bool>,
+}
+
+/// 单条请求头覆盖：value=null/空 → 移除；Some → 替换/新增。
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct HeaderOverride {
+    pub(crate) name: String,
+    pub(crate) value: Option<String>,
 }
 
 fn default_env() -> String {
@@ -806,7 +1139,7 @@ fn resolve_placeholder(
     env_name: &str,
     user_vars: &BTreeMap<String, String>,
     session: &LoginSession,
-    spec: &ProfileSpec,
+    gateway: &str,
     x_params: &str,
     warehouse: &str,
 ) -> Option<String> {
@@ -822,7 +1155,7 @@ fn resolve_placeholder(
         return Some(v);
     }
     let derived = match env_name {
-        "WMS_BASE_URL" => Some(spec.gateway.clone()),
+        "WMS_BASE_URL" => Some(gateway.to_string()),
         "WMS_X_TOKEN" => Some(session.token.clone()),
         "WMS_X_CLIENT" => Some(session.client.clone()),
         "WMS_X_USER" => (!session.user.is_empty()).then(|| session.user.clone()),
@@ -872,10 +1205,18 @@ fn resolve_base_url<'a>(env: &'a ResolvedEnv, path: &str) -> &'a str {
     &env.gateway
 }
 
-/// 响应头值脱敏：凭证类头只回显长度（dry-run 展示用）。
-fn redact_header(name: &str, value: &str) -> String {
+/// 凭证类 header（import 预览与 dry-run 一律脱敏）。
+fn is_credential_header(name: &str) -> bool {
     let n = name.to_lowercase();
-    if n == "x-token" || n == "x-client" {
+    matches!(
+        n.as_str(),
+        "x-token" | "x-client" | "cookie" | "authorization"
+    )
+}
+
+/// 响应头值脱敏：凭证类头只回显长度（dry-run / curl-import 展示用）。
+fn redact_header(name: &str, value: &str) -> String {
+    if is_credential_header(name) {
         format!("***redacted(len={})", value.len())
     } else {
         value.to_string()
@@ -889,22 +1230,44 @@ pub(crate) async fn api_apitest_trigger(
     let body = form.0;
     let dry_run = body.dry_run.unwrap_or(false);
     let root = testdata_root();
-    let spec = load_profile_spec(&root, &body.env)?;
     let api = load_catalog(&root)?
         .into_iter()
         .find(|a| a.id == body.id)
         .ok_or_else(|| ApiError::bad_request(format!("接口不存在: {}", body.id)))?;
     let bru = load_bru(&root, &api)?;
-    let session = fetch_login_session(&body.env).await?;
 
-    let warehouse = body
-        .vars
-        .get("warehouseCode")
-        .or_else(|| body.vars.get("WMS_WAREHOUSE_CODE"))
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| spec.x_params.warehouse_default.clone());
-    let env = resolve_env(&spec, &session, &warehouse);
+    // 凭证来源：粘贴 curl（真实环境凭证/域名，线上修数场景）优先；
+    // 否则 login.mjs 自动登录（test/UAT）。
+    let curl_text = body
+        .curl
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from);
+    let (env, session, warehouse, credential_source) = if let Some(text) = &curl_text {
+        let parsed = parse_curl_command(text)?;
+        let (env, session) = resolve_env_from_curl(&parsed)?;
+        let warehouse = body
+            .vars
+            .get("warehouseCode")
+            .or_else(|| body.vars.get("WMS_WAREHOUSE_CODE"))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| DEFAULT_WAREHOUSE.to_string());
+        (env, session, warehouse, "curl")
+    } else {
+        let spec = load_profile_spec(&root, &body.env)?;
+        let session = fetch_login_session(&body.env).await?;
+        let warehouse = body
+            .vars
+            .get("warehouseCode")
+            .or_else(|| body.vars.get("WMS_WAREHOUSE_CODE"))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| spec.x_params.warehouse_default.clone());
+        let env = resolve_env(&spec, &session, &warehouse);
+        (env, session, warehouse, "auto-login")
+    };
 
     // 收集全部占位符（url + headers + body）。
     let mut text = format!(
@@ -932,7 +1295,7 @@ pub(crate) async fn api_apitest_trigger(
             env_name,
             &body.vars,
             &session,
-            &spec,
+            &env.gateway,
             &env.base_headers
                 .iter()
                 .find(|(n, _)| n == "x-params")
@@ -985,6 +1348,10 @@ pub(crate) async fn api_apitest_trigger(
     for (name, value) in &bru.headers {
         headers.push((name.clone(), substitute(value)));
     }
+    // 用户请求头临时覆盖（本次触发生效；value=null/空移除该头）。
+    if let Some(overrides) = &body.header_overrides {
+        apply_header_overrides(&mut headers, overrides, &substitute);
+    }
 
     // dry-run：返回构造后的请求（凭证头脱敏），不发送。
     if dry_run {
@@ -992,13 +1359,18 @@ pub(crate) async fn api_apitest_trigger(
             "ok": true,
             "dryRun": true,
             "env": body.env,
+            "credentialSource": credential_source,
             "apiId": api.id,
             "method": bru.method,
             "url": url,
             "headers": headers.iter().map(|(n, v)| (n.clone(), redact_header(n, v))).collect::<Vec<_>>(),
             "body": effective_body.as_ref().map(|b| substitute(b)),
             "tests": bru.tests,
-            "note": "dry-run 构造预览：凭证头已脱敏；确认无误后去掉 dryRun 真正发送。",
+            "note": if credential_source == "curl" {
+                "curl 凭证模式：请求将发往粘贴 curl 的真实环境域名；凭证头已脱敏，确认无误后去掉 dryRun 真正发送。"
+            } else {
+                "dry-run 构造预览：凭证头已脱敏；确认无误后去掉 dryRun 真正发送。"
+            },
         })));
     }
 
@@ -1053,10 +1425,15 @@ pub(crate) async fn api_apitest_trigger(
         "bodyJson": body_json,
         "truncated": truncated,
         "env": body.env,
+        "credentialSource": credential_source,
         "apiId": api.id,
         "kind": derive_api_kind(&api),
         "tests": bru.tests,
-        "note": "会话由 login.mjs 自动获取（Chrome 优先）；响应不含请求头，token 不回显。",
+        "note": if credential_source == "curl" {
+            "curl 凭证模式：会话来自粘贴的真实环境 curl，token 不回显不落盘。"
+        } else {
+            "会话由 login.mjs 自动获取（Chrome 优先）；响应不含请求头，token 不回显。"
+        },
     })))
 }
 
@@ -1330,7 +1707,146 @@ environments:
     fn redact_header_masks_credentials() {
         assert_eq!(redact_header("X-Token", "abcdef"), "***redacted(len=6)");
         assert_eq!(redact_header("x-client", "ab"), "***redacted(len=2)");
+        assert_eq!(redact_header("Cookie", "sid=1"), "***redacted(len=5)");
         assert_eq!(redact_header("X-User", "u1"), "u1");
+    }
+
+    #[test]
+    fn derive_kind_supports_prod_fix() {
+        let mut fix = api("x/fix-data", "修数");
+        fix.kind = Some("prod_fix".into());
+        assert_eq!(derive_api_kind(&fix), "prod_fix");
+        // 未知 kind 仍回落造数；无 kind 走词表。
+        let mut unknown = api("x/y", "z");
+        unknown.kind = Some("whatever".into());
+        assert_eq!(derive_api_kind(&unknown), "create");
+    }
+
+    const SAMPLE_CURL: &str = r#"curl 'https://wms.example.com/wms-web/inbound/receipt/page' \
+  -H 'Accept: application/json' \
+  -H 'X-Token: tok123' \
+  -H "X-Client: web" \
+  -H 'x-params: {"warehouse":"SH"}' \
+  --data-raw '{"page":1,"code":"R1"}' \
+  --compressed
+"#;
+
+    #[test]
+    fn parse_curl_extracts_request_facts() {
+        let p = parse_curl_command(SAMPLE_CURL).unwrap();
+        assert_eq!(p.method, "POST"); // --data 存在且无 -X → POST
+        assert_eq!(
+            p.url,
+            "https://wms.example.com/wms-web/inbound/receipt/page"
+        );
+        assert_eq!(p.origin, "https://wms.example.com");
+        assert_eq!(
+            p.headers
+                .iter()
+                .find(|(n, _)| n == "X-Token")
+                .map(|(_, v)| v.as_str()),
+            Some("tok123")
+        );
+        assert!(p
+            .headers
+            .iter()
+            .any(|(n, v)| n == "x-params" && v.contains("\"warehouse\"")));
+        assert!(p.body.as_deref().unwrap().contains("\"page\":1"));
+    }
+
+    #[test]
+    fn parse_curl_prefers_explicit_method_and_skips_flags() {
+        let p = parse_curl_command(
+            "curl -sSL -X GET 'https://a.example.com/api/x?page=1' -H 'X-Token: t' --location",
+        )
+        .unwrap();
+        assert_eq!(p.method, "GET");
+        assert_eq!(p.origin, "https://a.example.com");
+        assert_eq!(p.headers.len(), 1);
+    }
+
+    #[test]
+    fn parse_curl_requires_url() {
+        assert!(parse_curl_command("curl -H 'X-Token: t'").is_err());
+        assert!(parse_curl_command("curl ftp://x.com/f").is_err());
+    }
+
+    #[test]
+    fn curl_env_requires_token_and_lifts_session_headers() {
+        let p = parse_curl_command(
+            "curl 'https://prod.example.com/api/x' -H 'Accept: application/json'",
+        )
+        .unwrap();
+        assert!(resolve_env_from_curl(&p).is_err());
+        let p = parse_curl_command(
+            "curl 'https://prod.example.com/api/x' -H 'x-token: tk' -H 'X-User: 0166' -H 'x-env: test'",
+        )
+        .unwrap();
+        let (env, session) = resolve_env_from_curl(&p).unwrap();
+        assert_eq!(env.gateway, "https://prod.example.com");
+        assert!(env.pda_gateway.is_none());
+        assert_eq!(session.token, "tk");
+        assert_eq!(session.user, "0166");
+        // x-env 不被搬运（真实环境不应带环境路由头）。
+        assert!(!env.base_headers.iter().any(|(n, _)| n == "x-env"));
+        assert!(env
+            .base_headers
+            .iter()
+            .any(|(n, v)| n == "X-Token" && v == "tk"));
+        assert!(env
+            .base_headers
+            .iter()
+            .any(|(n, _)| n == "x-params" || n == "X-User" || n == "Referer"));
+    }
+
+    #[test]
+    fn header_overrides_set_remove_and_substitute() {
+        let mut resolved = BTreeMap::new();
+        resolved.insert("xToken".to_string(), "TOK".to_string());
+        let substitute = |text: &str| -> String {
+            let mut out = text.to_string();
+            for (k, v) in &resolved {
+                out = out.replace(&format!("{{{{{}}}}}", k), v);
+            }
+            out
+        };
+        let mut headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("X-Token".to_string(), "old".to_string()),
+            ("X-Debug".to_string(), "1".to_string()),
+        ];
+        apply_header_overrides(
+            &mut headers,
+            &[
+                HeaderOverride {
+                    name: "x-token".into(),
+                    value: Some("{{xToken}}".into()),
+                },
+                HeaderOverride {
+                    name: "X-Debug".into(),
+                    value: None,
+                },
+                HeaderOverride {
+                    name: "X-Extra".into(),
+                    value: Some("e1".into()),
+                },
+                HeaderOverride {
+                    name: "   ".into(),
+                    value: Some("ignored".into()),
+                },
+            ],
+            &substitute,
+        );
+        assert_eq!(
+            headers
+                .iter()
+                .find(|(n, _)| n == "X-Token")
+                .map(|(_, v)| v.as_str()),
+            Some("TOK")
+        );
+        assert!(!headers.iter().any(|(n, _)| n == "X-Debug"));
+        assert!(headers.iter().any(|(n, v)| n == "X-Extra" && v == "e1"));
+        assert_eq!(headers.len(), 3);
     }
 
     #[test]

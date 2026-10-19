@@ -1186,6 +1186,12 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-apitest-body { width: 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--react-border); border-radius: 12px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .78rem/1.55 var(--react-mono); resize: vertical; }
 .react-apitest-json { max-height: 420px; overflow: auto; margin: 10px 0 0; padding: 12px; border: 1px solid rgba(148,163,184,.14); border-radius: 12px; background: rgba(0,0,0,.28); color: #cbd5f5; font: .74rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
 .react-apitest-result { margin-top: 14px; }
+.react-apitest-header-list { display: flex; flex-direction: column; gap: 6px; }
+.react-apitest-header-row { display: grid; grid-template-columns: auto minmax(120px, 200px) 1fr; gap: 8px; align-items: center; }
+.react-apitest-header-row > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #93a4bc; font: .72rem var(--react-mono); }
+.react-apitest-header-row > input:not([type="checkbox"]) { padding: 6px 10px; border: 1px solid var(--react-border); border-radius: 9px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .74rem var(--react-mono); }
+.react-curl-textarea { min-height: 96px; font-size: .72rem; }
+@media (max-width: 680px) { .react-apitest-header-row { grid-template-columns: auto 1fr; } .react-apitest-header-row > input:not([type="checkbox"]) { grid-column: 1 / -1; } }
 
 /* Settings — Skill 路径映射 */
 .react-skill-row { border: 1px solid var(--react-border); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }

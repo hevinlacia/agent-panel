@@ -50,7 +50,8 @@ export interface ApitestApiItem {
   method: string
   url: string
   status: string
-  kind: "create" | "test" | string
+  /** create 造数 / test 测试 / prod_fix 线上修数据。 */
+  kind: "create" | "test" | "prod_fix" | string
   tags: string[]
   envSupport: Record<string, string>
   notes?: string
@@ -82,10 +83,31 @@ export interface ApitestDetailPayload {
   responseSchemaPath?: string | null
 }
 
+/** 触发请求头临时覆盖：value=null 表示移除该头。 */
+export interface ApitestHeaderOverrideInput {
+  name: string
+  value: string | null
+}
+
+/** POST /api/apitest/curl-import 响应：粘贴 curl 解析预览（凭证值已脱敏）。 */
+export interface ApitestCurlImportPayload {
+  ok: boolean
+  method: string
+  url: string
+  origin: string
+  headers: [string, string][]
+  credentialHeaders: string[]
+  hasToken: boolean
+  bodyPreview?: string | null
+  note?: string
+}
+
 /** POST /api/apitest/trigger 响应。 */
 export interface ApitestTriggerPayload {
   ok: boolean
   dryRun?: boolean
+  /** 凭证来源：auto-login（login.mjs）/ curl（粘贴真实环境 curl）。 */
+  credentialSource?: "auto-login" | "curl" | string
   status?: number
   durationMs?: number
   contentType?: string | null
