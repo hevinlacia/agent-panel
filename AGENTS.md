@@ -126,7 +126,10 @@ For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY refer
 - Associations: `~/.local/share/agent-panel/associations.json`
 - Generated pi context: `~/.local/share/agent-panel/ctx/*.md`
 - Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`（docs 模式 session root 为空 → 会话关联功能自然降级）
-- Service: user 级 systemd 单元（unit 文件 `~/.config/systemd/user/agent-panel.service`），重启用 `systemctl --user restart agent-panel`，无需 sudo——root 的 systemctl 看不到 user 单元，会报 Unit not found
+- Service topology（2026-10-20 分离架构落地）：
+  - **hub**：远端 LXC 容器 `agent-panel.tail260d93.ts.net:8788`（`/etc/systemd/system/agent-panel.service`，PANEL_DATA_DIR=/srv/agent-panel/state，数据仓库 /srv/agent-panel/data = workspace-meta clone）。数据自动快照：`hub-data-autocommit.timer`（15min，pull --rebase + commit + push，依赖容器 GitHub deploy key）。
+  - **worker**：本机 systemd user 单元 `panel-worker.service`（:7332，PANEL_HUB_URL 指向容器 hub）。hub→worker 回程当前走 ssh 反向隧道 `panel-worker-tunnel.service`（tailnet ACL 未放行 hub→dev 方向；ACL 放行后可改 callbackBase 为 tailscale IP 直连并撤隧道）。
+  - **agent 调用面**：`http://agent-panel.tail260d93.ts.net:8788`（pi extensions/scripts/skill docs 已切换，`AGENT_PANEL_URL` 可覆盖）；本机 `agent-panel.service`（:7331）已退役。
 
 ## Personal Project Hooks
 
