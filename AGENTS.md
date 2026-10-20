@@ -6,7 +6,9 @@
 
 Current architecture:
 
-- `src/main.rs` — Rust/Axum backend bootstrap, central router, shared `AppState` / query DTOs, SPA fallback, and dashboard stats endpoint.
+- `src/main.rs` — Rust/Axum backend bootstrap, central router, shared `AppState` / query DTOs, SPA fallback, and dashboard stats endpoint. Runs in two modes（分离式架构，local 全功能模式已退役）: default `docs`（hub：文档/状态 SSOT + agent 文档 API + worker 代理，默认绑定 0.0.0.0:8788）and `worker`（`--mode worker` / `PANEL_MODE=worker`，本机执行节点全量路由，默认 127.0.0.1:7332，向 hub 注册心跳）。worker 类请求由 hub 代理转发到在线 worker（无在线 worker 落回 503 stub）；同机部署下 worker 与 hub 共享数据目录，worker 直接写 SSOT。拆分方案见 `docs/split-plan.md`，部署见 `docs/hub-deploy.md`。
+- `src/workers.rs` — Worker 注册表与代理：worker 每 30s 向 hub `POST /api/worker/register`（幂等 upsert 兼心跳，`data_dir/workers.json` 原子写，90s 无心跳判 offline）；hub 侧 `GET /api/workers` 观测 + `worker_proxy_middleware` 按 `WORKER_PROXY_PATHS` 白名单转发（`/api/auth-sites/*` 前缀匹配），转发头 `X-Worker-Token`（`PANEL_WORKER_TOKEN` 优先回落 `PANEL_AUTH_TOKEN`）；worker 侧 `spawn_worker_heartbeat`（hub 不可达仅告警本地服务继续）。WS（/ws/pi-chat）暂不代理。
+- `src/auth.rs` — token 鉴权中间件（所有模式统一挂载）：`PANEL_AUTH_TOKEN` 配置后启用，`Authorization: Bearer` / `X-Panel-Token` / `?token=`（支持 percent-encoding）任一匹配，常量时间比较；豁免 `/health`、`/api/mode` 与静态资源；未配置时中间件不拦截。
 - `src/config.rs` — Runtime config DTOs, `/api/config` handlers（含 availableStatusGates/effectiveStatusGates 注入）, scan-root normalization, status-gate rules（StatusGateRule/内置默认/严格与宽容归一化）, and config persistence.
 - `src/http.rs` — Shared HTTP infrastructure: `ApiError`, `ApiResult`, `FormOrJson`, health/notification stubs, and contextual API error help.
 - `src/util.rs` — Cross-module utility helpers for time, string cleanup, status/category normalization, JSON/text atomic writes, path/list conversion, ONES parsing, and shell quoting.
@@ -18,7 +20,7 @@ Current architecture:
 - `src/git_workflow.rs` — Module root: shared branch-scope/review forms and repo types; submodules under `src/git_workflow/`: `branch_scope`（分支登记轮次）、`code_review`（审查扫描/材料准备/漂移检测/风险标签）、`sync_base`（基线同步）、`prod_mr`（GitLab MR 与环境变量）、`gitlab_auth`（GitLab 三步式认证链：Chrome 登录态 → 账号密码登录 → GITLAB_TOKEN 兕底；会话态走 Cookie+CSRF，令牌走 PRIVATE-TOKEN）、`merge_options`（合并选项规范化）、`merge_exec`（合并执行/检查/worktree）、`release_branch`（整合需求发布分支 git 操作：建分支/推表、远端存在性检查、相对生产分支 diff 统计）、`scan`（分支快照/base-ref 解析）、`git_cmd`（git 命令执行器，超限输出按行边界截断）。
 - `src/git_file_lines.rs` — Diff 页展开上下文用的文件行切片 API：`GET /api/git/file-lines`（projectPath+commit+path 校验后 `git show`，返回 totalLines/binary/行切片，单次最多 2500 行），供前端展开 diff 中被折叠的未修改区间。
 - `src/git_blame.rs` — Diff 页行级 blame API：`GET /api/git/blame`（projectPath+commit+path 校验后 `git blame --line-porcelain`，返回每行 author/date），供 diff 文件卡「行信息」按钮展示/收起。
-- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save; effort-estimate API 为 read-modify-write：estimatedHours（agent 评估）与 manualHours（人工矫正）共存，排期统计取 manual ?? estimate。
+- `src/requirement_api.rs` — Requirement HTTP handlers and route-facing orchestration, including code-annotations read/save; effort-estimate API 为 read-modify-write：estimatedHours（agent 评估）与 manualHours（人工矫正）共存，排期统计取 manual ?? estimate。另含 **agent 远程文件编辑 API**（`GET/PUT /api/requirement/file`，容器 hub 挂载只读 + API 写的配套端点）：路径白名单（顶层 .md + docs/<base>/<file>.md 分册，meta.md/state.json 排除）+ sha1 乐观锁（409 冲突时重新 GET）。
 - `src/requirement_index.rs` — Requirement directory scanning, session associations, lookup, and dashboard stats.
 - `src/requirement_release.rs` — 整合需求发布分支（consolidated release branches）：登记文件 `release-branches.json` 读写与 API（create/list/merge-sub/sync-prod/prod-mr/mark-released）；发布分支以各仓生产分支为 base，子需求分支合入预集成，发布走发布分支 → 生产分支 MR，封版时把覆盖子需求推进「已发布」。
 - `src/requirement_service.rs` — Module root: requirement API form DTOs; submodules under `src/requirement_service/`: `create`（创建/更新/备注/事件）、`events`（事件渲染与规范化）、`doc`（文档写入/编辑/章节）、`doc_parts`（文档分册：主文档索引化 + docs/<doc>/ 分册 + 40KB 拆分阈值告警）、`validate`（需求校验）、`paths`（路径安全与可写根解析）、`id_pool`（编号池/序号分配：REQ/WMS 主池、INC 线上问题、TST 测试问题、PERF 性能问题、GRP 组（退役）、FIX 修复需求（category=需求 且绑定 issues 自动路由，独立编号）、ROLLUP 整合需求）、`templates`（建单文件与文档模板）、`state`（状态写入/自动推进，含回到开发中的两类循环轮次：打回返工 reworkRounds（人工核查/测试中 → 开发中，history 标 rework/reworkRound/loop=rework）与发布就绪小循环 releaseReadyRounds（发布就绪 → 开发中，history 标 loop=release-ready/loopRound）；变体判定 dev_loop_kind_from_state 按最近一次进入开发中的来源）、`phase_prompt`（阶段 prompt 加载；开发中按循环语境加载变体：来源=打回 → phase-dev-rework.md 返工变体，来源=发布就绪 → phase-dev-release-ready.md 快速修复变体）、`status_gates`（状态流转门禁注册表与分发：agent API 推进强校验，via=ui 人工改状态跳过；evaluate_status_gate 供状态流转卡片只读评估三态；需求澄清/创建 → 开发中挂 effort-estimate 工时预估门禁，抢修需求豁免）、`selftest_gate`（自测清单门禁：test.md 自测清单三分类（主流程/边界/高并发大流量）逐项结果解析，边界与并发流量类强制先风险场景分析再列清单；放行语义：全部通过放行、存在无法测试/跳过（有原因）放行但警示、存在失败不放行）。
@@ -119,10 +121,12 @@ For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY refer
 
 ## Runtime Data
 
-- Config: `~/.local/share/agent-panel/config.json`
+- Config: `~/.local/share/agent-panel/config.json`（docs 模式可 `PANEL_DATA_DIR` 覆盖，容器部署指向数据卷）
+- Worker registry: `<data_dir>/workers.json`（hub 持有；worker 注册/心跳 upsert）
 - Associations: `~/.local/share/agent-panel/associations.json`
 - Generated pi context: `~/.local/share/agent-panel/ctx/*.md`
-- Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`
+- Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`（docs 模式 session root 为空 → 会话关联功能自然降级）
+- Service: user 级 systemd 单元（unit 文件 `~/.config/systemd/user/agent-panel.service`），重启用 `systemctl --user restart agent-panel`，无需 sudo——root 的 systemctl 看不到 user 单元，会报 Unit not found
 
 ## Personal Project Hooks
 

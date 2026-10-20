@@ -370,7 +370,7 @@ export interface Requirement {
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
   testScenarioPath?: string
   planRelease?: string
-  /** 提测时间（实际，meta.md submit-test-date）：排期面板饱和度口径；进入「发布就绪」自动补登，可手动调整；unknown/缺省 = 未登记。 */
+  /** 提测时间（实际，meta.md submit-test-date）：排期面板饱和度口径；进入「发布就绪」自动刷新为当天（覆盖式），可手动调整。 */
   submitTestDate?: string
   /** 承诺提测时间（meta.md promise-submit-date）：给产品/测试承诺的提测日，用户手设，判断需求紧急度用。 */
   promiseSubmitDate?: string
@@ -811,13 +811,13 @@ export interface CodeReviewRepoSnapshot {
   warnings?: string[]
   error?: string | null
 }
-export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; repos: CodeReviewRepoSnapshot[] }
+export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; /** 空登记快照（零代码需求）：登记文件存在但无仓库登记，无代码差异可展示 */ emptyScope?: boolean; emptyScopeNote?: string; repos: CodeReviewRepoSnapshot[] }
 export interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null; incrementalReview?: CodeReviewSnapshot | null }
 export interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
 export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[]; warnings?: string[]; annotations?: { present?: boolean; stale?: boolean; reason?: string } | null } }
 export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number; round?: number }
 export interface DiffSnapshotsPayload { ok: boolean; round?: number; snapshots: CodeDiffSnapshot[] }
-export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; prunedRepos?: string[]; prunedWritten?: boolean; snapshots: CodeDiffSnapshot[] }
+export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; prunedRepos?: string[]; prunedWritten?: boolean; notice?: string | null; snapshots: CodeDiffSnapshot[] }
 /** 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次文件 branches-round-<n>.json */
 export interface BranchRoundInfo { round: number; file: string; updatedAt: number; repoCount: number; branchCount: number; sealed: boolean }
 export interface BranchRoundsPayload { ok: boolean; reqId: string; rounds: BranchRoundInfo[]; latest: number }

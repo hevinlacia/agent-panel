@@ -1,8 +1,68 @@
 import { useEffect, useState } from "react"
+import { getApiBase, getAuthHeaders } from "./connection"
+
+/** 相对路径拼接当前连接的 baseURL；绝对地址（如 dsh url）原样返回。 */
+export function fullUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url
+  return `${getApiBase()}${url}`
+}
+
+function mergeHeaders(init?: RequestInit): Record<string, string> {
+  const merged: Record<string, string> = { ...getAuthHeaders() }
+  const extra = init?.headers
+  if (!extra) return merged
+  if (extra instanceof Headers) {
+    extra.forEach((value, key) => { merged[key] = value })
+  } else if (Array.isArray(extra)) {
+    for (const [key, value] of extra) merged[key] = value
+  } else {
+    Object.assign(merged, extra)
+  }
+  return merged
+}
+
+// ---- 访问 token（docs 模式容器 hub 必需；local 模式后端不启用鉴权，token 被忽略） ----
+const TOKEN_STORAGE_KEY = "panelToken"
+
+export function getPanelToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+export function setPanelToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, token)
+  } catch {
+    /* localStorage 不可用时忽略（如隐私模式） */
+  }
+}
+
+let unauthorizedHandler: (() => void) | null = null
+
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  unauthorizedHandler = fn
+}
+
+async function fetchWithToken(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  const token = getPanelToken()
+  if (token) headers.set("X-Panel-Token", token)
+  const withToken: RequestInit = { cache: "no-store", ...init, headers }
+  // 连接层 baseURL + 连接级 Bearer（getAuthHeaders）与全局 X-Panel-Token 合并；显式 headers 优先。
+  const res = await fetch(fullUrl(url), { ...withToken, headers: mergeHeaders(withToken) })
+  if (res.status === 401) unauthorizedHandler?.()
+  return res
+}
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { cache: "no-store", ...init })
+  const res = await fetchWithToken(url, init)
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error("认证失败 (401)：token 无效或缺失，请在「连接」页检查当前服务器的 token 配置")
+    }
     const text = await res.text().catch(() => "")
     throw new Error(text || `HTTP ${res.status}`)
   }

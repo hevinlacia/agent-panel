@@ -2,6 +2,7 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 // 按业务域拆分的测试子模块（verbatim 移动，不改断言）。
+mod agent_file;
 mod branch_registration;
 mod branch_scope_prune;
 mod cainiao_mock;
