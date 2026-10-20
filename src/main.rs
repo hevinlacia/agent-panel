@@ -411,6 +411,7 @@ fn build_router(state: AppState, mode: PanelMode, auth_token: Option<String>) ->
 fn local_router(public_dir: PathBuf) -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
+        .route("/api/mode", get(api_mode))
         .route("/api/dashboard/stats", get(api_dashboard_stats))
         .route(
             "/api/requirements",
