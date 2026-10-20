@@ -132,3 +132,21 @@ knowledge 目录通过 `PANEL_DATA_DIR` 同级约定或 config 对应字段指�
 - [ ] agent 通过 API 创建测试需求成功，容器内 15 分钟内出现 auto snapshot commit
 - [ ] worker 类端点（如 `/api/sessions`）返回 503 `requires local worker`
 - [ ] 本机 `git -C ~/Developer pull` 能拉到容器提交的数据变更
+
+## 9. 本地兜底（hub 不可达时）
+
+分离式架构下本地部署与混合部署共用同一套代码路径；本机 local 模式（systemd user unit
+`agent-panel`，`PORT=7331`）作为 hub 不可达（Tailscale 断、容器停机、网络故障）时的兜底：
+
+- **服务常开**：本机 agent-panel local 模式持续运行（`systemctl --user status agent-panel`），
+  数据指向本机 workspace-meta 仓库，不依赖 tailnet/容器。
+- **agent 切回本机调用面**：把 skills/脚本的 agent-panel base 从
+  `http://agent-panel-hub.<tailnet>.ts.net:8788` 切回 `http://localhost:7331`
+  （本机 local 模式默认不启用鉴权，无需 token）；前端「连接」页切回「本机」条目。
+- **数据一致性**：本机仓库是 SSOT 的 git clone。兜底期间本机 panel/agent 的写入只落本地，
+  网络恢复后 `git -C ~/Developer pull --rebase && git push` 追平；容器 hub 的 auto-commit
+  与本机 push 由 git 合并语义协调，避免人工改文件。
+- **注意**：兜底期间容器若同时在线并 auto-commit，两边会产生并行提交——恢复网络后先
+  rebase 再 push；长时间双向写入才需要人工协调。
+- **恢复混合模式**：tailnet 恢复后把 agent 调用面切回 hub 地址即可，本机 local 模式保持
+  运行不关闭（它同时是日常开发的前端入口）。
