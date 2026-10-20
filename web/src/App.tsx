@@ -80,7 +80,7 @@ import type {
   TestdataRunPayload,
 } from "./types"
 import { Markdown } from "./markdown"
-import { fetchJson, postForm, postJson, useFetch } from "./lib/api"
+import { fetchJson, fullUrl, postForm, postJson, setPanelToken, setUnauthorizedHandler, useFetch } from "./lib/api"
 import { formatDate, formatDateTime, formatDuration, joinList, parseOnesRef, relAge, splitCsvText } from "./lib/format"
 import { ISSUE_STATUSES, REQ_CATEGORIES, REQ_FLOW_STATUSES, REQ_STATUSES, statusMeta } from "./lib/requirements"
 import { experienceSummaryPill, experienceSummaryStageLabel, onesBadge, projectsOf, statusPill } from "./features/requirements/badges"
@@ -191,12 +191,14 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   return { eyebrow: "Agent Panel", title: "React + Rust" }
 }
 
-function AppShell({ path, children, project, onProjectChange }: { path: string; children: React.ReactNode; project: string; onProjectChange: (v: string) => void }) {
+function AppShell({ path, children, project, onProjectChange, docsMode }: { path: string; children: React.ReactNode; project: string; onProjectChange: (v: string) => void; docsMode: boolean }) {
   const meta = titleForPath(path)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed)
   const toggleSidebar = () => setSidebarCollapsed((v) => { persistSidebarCollapsed(!v); return !v })
   const activeConn = getActiveConnection()
-  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{navItems.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><a href="/connect" title="管理服务器连接" style={{ display: "contents" }}><span>CONNECTION</span><strong>{activeConn.url ? activeConn.name : `${activeConn.name}（同源）`}</strong><em>{activeConn.url || "localhost"}</em></a></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions"><HarnessSwitcher /><label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
+  const visibleNav = docsMode ? navItems.filter((item) => !WORKER_ONLY_HREFS.has(item.href)) : navItems
+  // 融合说明：连接层卡片（mobile-pwa）+ docs 模式导航裁剪（hub-worker-split）。
+  return <div className={`react-shell ${sidebarCollapsed ? "collapsed" : ""}`}><aside className="react-sidebar"><a className="react-brand" href="/dashboard" aria-label="Agent Panel home"><span className="react-brand-mark">AP</span><span className="react-brand-copy"><strong>Agent</strong><em>Panel</em></span></a><nav className="react-sidebar-nav" aria-label="Primary navigation">{visibleNav.map((item) => <a key={item.href} href={item.href} className={`react-sidebar-link ${isActiveNav(path, item.href) ? "active" : ""}`} title={sidebarCollapsed ? item.label : undefined}><span className="react-sidebar-icon">{item.icon}</span><span>{item.label}</span><small>{item.short}</small></a>)}</nav><div className="react-sidebar-card"><a href="/connect" title="管理服务器连接" style={{ display: "contents" }}><span>{docsMode ? "HUB (DOCS) MODE" : "CONNECTION"}</span><strong>{activeConn.url ? activeConn.name : `${activeConn.name}（同源）`}</strong><em>{activeConn.url || "localhost"}</em></a></div></aside><div className="react-content-shell"><header className="react-topbar"><div className="react-topbar-title"><button type="button" className="react-topbar-collapse" onClick={toggleSidebar} aria-label={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"} title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}>{sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button><div className="react-topbar-heading"><span>{meta.eyebrow}</span><strong>{meta.title}</strong></div></div><div className="react-topbar-actions">{!docsMode && <HarnessSwitcher />}<label className="react-project-select">项目<select value={project} onChange={(e) => onProjectChange(e.target.value)}>{PROJECT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label><a href="/dashboard">Home</a><button type="button" onClick={() => window.location.reload()}>Refresh</button></div></header><main className="react-main">{children}</main></div></div>
 }
 
 function useLocationKey() {
@@ -215,11 +217,37 @@ function RemovedPage({ title, detail }: { title: string; detail: string }) {
 
 function NotFoundPage() { return <PageChrome icon={<Search size={15} />} eyebrow="Not Found" title="页面不存在"><EmptyCard>当前路由没有匹配的 React 页面。</EmptyCard></PageChrome> }
 
+/// docs 模式下 worker 类页面的占位提示（阶段二 worker 代理后恢复）。
+function WorkerOnlyPage({ title }: { title: string }) {
+  return <PageChrome icon={<AlertTriangle size={15} />} eyebrow="Worker" title={title} description="该能力属于 worker 执行类页面，当前连接的 hub 不提供。"><EmptyCard>请切换到具备 worker 能力的面板连接，或等待阶段二 worker 代理上线后恢复。</EmptyCard></PageChrome>
+}
+
+/// worker 类页面路由：docs 模式下导航隐藏且路由降级。
+const WORKER_ONLY_HREFS = new Set(["/sessions", "/schedulers", "/auth-sites", "/testdata", "/testdata/api"])
+
 export function App({ apiPath }: AppProps) {
   const key = useLocationKey()
   const path = window.location.pathname
   const { project, setProject } = useProjectFilter()
   const isMobile = useIsMobile()
+  const [mode, setMode] = useState<"local" | "docs">("local")
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      const token = window.prompt("需要访问 token（即服务端 PANEL_AUTH_TOKEN）")
+      if (token && token.trim()) {
+        setPanelToken(token.trim())
+        window.location.reload()
+      }
+    })
+    // mode 探测跟随当前连接（连接层切换后指向对应服务器，而非 SPA 同源）。
+    fetch(fullUrl("/api/mode"), { cache: "no-store" })
+      .then((r) => r.json())
+      .then((v: { mode?: string }) => { if (v?.mode === "docs") setMode("docs") })
+      .catch(() => { /* 探测失败按 local 处理 */ })
+    return () => setUnauthorizedHandler(null)
+  }, [])
+  const docsMode = mode === "docs"
+  const workerPage = (title: string) => <WorkerOnlyPage title={title} />
   const page = path === "/" || path === "/dashboard" ? <DashboardPage apiPath={apiPath} project={project} />
     : path === "/projects" || path === "/requirements" ? <ProjectsPage globalProject={project} />
     : path === "/release-plan" ? <ReleasePlanPage globalProject={project} />
@@ -229,6 +257,11 @@ export function App({ apiPath }: AppProps) {
     : path === "/issues" ? <IssuesPage globalProject={project} />
     : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
     : path === "/experiences" ? <KnowledgePage kind="experience" />
+    : docsMode && path === "/sessions" ? workerPage("Sessions")
+    : docsMode && path === "/session" ? workerPage("Session 详情")
+    : docsMode && path === "/schedulers" ? workerPage("Schedulers")
+    : docsMode && path === "/auth-sites" ? workerPage("Chrome 登录态复用")
+    : docsMode && (path === "/testdata" || path === "/testdata/api") ? workerPage("接口测试")
     : path === "/sessions" ? <SessionsPage />
     : path === "/session" ? <SessionPage />
     : path === "/requirement" ? <RequirementPage />
@@ -251,5 +284,5 @@ export function App({ apiPath }: AppProps) {
     return <ErrorBoundary key={key}>{page}</ErrorBoundary>
   }
 
-  return <AppShell path={path} project={project} onProjectChange={setProject}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
+  return <AppShell path={path} project={project} onProjectChange={setProject} docsMode={docsMode}><AnimatePresence mode="wait"><motion.div key={key} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22 }}><ErrorBoundary key={key}>{page}</ErrorBoundary></motion.div></AnimatePresence></AppShell>
 }

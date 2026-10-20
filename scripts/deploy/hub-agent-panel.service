@@ -1,0 +1,23 @@
+[Unit]
+Description=Agent Panel hub (docs mode) — requirement/knowledge SSOT + agent docs API
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-panel
+# 必改：PANEL_AUTH_TOKEN 换成随机 token（openssl rand -hex 24）
+Environment=PANEL_MODE=docs
+# 可选：设置后启用 token 鉴权（如需暴露到更开放网络时再加回）
+# Environment=PANEL_AUTH_TOKEN=__SET_ME__
+Environment=PANEL_DATA_DIR=/srv/agent-panel/state
+Environment=PANEL_PORT=8788
+Environment=RUST_LOG=info
+ExecStart=/opt/agent-panel/agent-panel
+Restart=on-failure
+RestartSec=3
+# hub 无凭证、无执行能力；仅数据目录写权限。
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
