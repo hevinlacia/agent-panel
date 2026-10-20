@@ -2290,6 +2290,225 @@ pub(crate) async fn api_requirement_merge_status(
     })))
 }
 
+/// 解析合并冲突页上下文：按 reqId + repo 定位仓库、源/目标分支与 merge worktree。
+/// 冲突解决页是无状态的：冲突详情每次从 worktree index 三方版本重算。
+struct MergeConflictContext {
+    req_id: String,
+    repo: BranchRepo,
+    source_branch: String,
+    target: String,
+    target_branch: String,
+    project_path: PathBuf,
+    worktree_path: PathBuf,
+}
+
+async fn resolve_merge_conflict_context(
+    state: &AppState,
+    req_id: &str,
+    repo_name: &str,
+    target_raw: Option<&str>,
+    branch: Option<&str>,
+) -> ApiResult<MergeConflictContext> {
+    if repo_name.trim().is_empty() {
+        return Err(ApiError::bad_request("repo is required"));
+    }
+    let req = get_real_requirement(state, req_id).await?;
+    let req_dir = PathBuf::from(req.req_dir.as_deref().unwrap_or_default());
+    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
+        ))
+    })?;
+    let repo = branch_scope
+        .repos
+        .iter()
+        .find(|r| r.repo_name.eq_ignore_ascii_case(repo_name.trim()))
+        .cloned()
+        .ok_or_else(|| ApiError::bad_request(format!("branches.json 中未找到仓库 {repo_name}")))?;
+    let source_branch = branch
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| repo.branches.first().cloned())
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| ApiError::bad_request("branches.json 缺少需求分支"))?;
+    let target = normalize_merge_target(target_raw.unwrap_or("test"))?;
+    let project_path =
+        resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name).ok_or_else(|| {
+            ApiError::bad_request(format!("branches.json 缺少 path：{}", repo.repo_name))
+        })?;
+    let target_branch = merge_target_branch_for_repo(&repo, &target, &project_path)
+        .await
+        .ok_or_else(|| {
+            ApiError::bad_request("当前仓库不适用该环境分支合并；请在合并时选择具体分支")
+        })?;
+    let worktree_path = merge_worktree_path(&project_path, &target, &source_branch, &target_branch);
+    if !worktree_path.exists() {
+        return Err(ApiError::bad_request(format!(
+            "未找到合并 worktree（可能已完成或已清理）：{}",
+            worktree_path.to_string_lossy()
+        )));
+    }
+    Ok(MergeConflictContext {
+        req_id: req.id,
+        repo,
+        source_branch,
+        target,
+        target_branch,
+        project_path,
+        worktree_path,
+    })
+}
+
+/// 合并冲突解决页详情：文件列表 + 每文件结构化 segments（plain 已自动合并 / conflict 真冲突）
+pub(crate) async fn api_requirement_merge_conflict_detail(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let ctx = resolve_merge_conflict_context(
+        &state,
+        &id,
+        query.repo.as_deref().unwrap_or_default(),
+        query.target.as_deref(),
+        query.branch.as_deref(),
+    )
+    .await?;
+    let detail = build_conflict_detail(&ctx.worktree_path)
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    let mut payload = detail;
+    payload["ok"] = json!(true);
+    payload["reqId"] = json!(ctx.req_id);
+    payload["repoName"] = json!(ctx.repo.repo_name);
+    payload["role"] = json!(ctx.repo.role);
+    payload["projectPath"] = json!(ctx.project_path.to_string_lossy());
+    payload["sourceBranch"] = json!(ctx.source_branch);
+    payload["target"] = json!(ctx.target);
+    payload["targetBranch"] = json!(ctx.target_branch);
+    payload["worktreePath"] = json!(ctx.worktree_path.to_string_lossy());
+    Ok(Json(payload))
+}
+
+/// 提交单个文件的人工解决结果：content=完整文件内容 / keep-ours / keep-theirs / accept-delete
+pub(crate) async fn api_requirement_merge_conflict_resolve(
+    State(state): State<AppState>,
+    form: FormOrJson<MergeConflictActionForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let ctx = resolve_merge_conflict_context(
+        &state,
+        &body.req_id,
+        &body.repo,
+        body.target.as_deref(),
+        body.branch.as_deref(),
+    )
+    .await?;
+    let path = body
+        .path
+        .clone()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| ApiError::bad_request("path is required"))?;
+    // 路径安全：只允许 worktree 内相对路径，禁止绝对路径与 .. 逃逸
+    if std::path::Path::new(&path).is_absolute()
+        || path.split('/').any(|seg| seg == "..")
+        || path.split('\\').any(|seg| seg == "..")
+    {
+        return Err(ApiError::bad_request(format!("非法 path：{path}")));
+    }
+    let action = resolve_action_from_str(body.action.as_deref(), body.content.clone())
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    apply_resolution(&ctx.worktree_path, &path, action)
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    let remaining = unmerged_paths(&ctx.worktree_path).await;
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": ctx.req_id,
+        "repoName": ctx.repo.repo_name,
+        "path": path,
+        "remainingFiles": remaining.len(),
+        "remaining": remaining,
+    })))
+}
+
+/// 完成合并：全部冲突解决后 commit + push，并清理 merge worktree/临时分支
+pub(crate) async fn api_requirement_merge_conflict_complete(
+    State(state): State<AppState>,
+    form: FormOrJson<MergeConflictActionForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let ctx = resolve_merge_conflict_context(
+        &state,
+        &body.req_id,
+        &body.repo,
+        body.target.as_deref(),
+        body.branch.as_deref(),
+    )
+    .await?;
+    let message = complete_merge(&ctx.worktree_path, &ctx.target_branch)
+        .await
+        .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
+    let temp_branch = merge_temp_branch(&ctx.target, &ctx.source_branch, &ctx.target_branch);
+    let cleanup =
+        cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
+    let cleanup_warnings: Vec<String> = cleanup
+        .iter()
+        .filter(|c| c.contains(" failed:"))
+        .cloned()
+        .collect();
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": ctx.req_id,
+        "repoName": ctx.repo.repo_name,
+        "targetBranch": ctx.target_branch,
+        "message": message,
+        "cleanupWarnings": cleanup_warnings,
+    })))
+}
+
+/// 放弃合并：merge --abort + 清理 worktree/临时分支
+pub(crate) async fn api_requirement_merge_conflict_abort(
+    State(state): State<AppState>,
+    form: FormOrJson<MergeConflictActionForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let ctx = resolve_merge_conflict_context(
+        &state,
+        &body.req_id,
+        &body.repo,
+        body.target.as_deref(),
+        body.branch.as_deref(),
+    )
+    .await?;
+    let mut warnings = Vec::new();
+    let abort = git(
+        &ctx.worktree_path,
+        &["merge", "--abort"],
+        60_000,
+        COMMAND_OUTPUT_LIMIT,
+    )
+    .await;
+    if !abort.ok {
+        warnings.push(format!(
+            "git merge --abort 失败（可能不在合并中）：{}",
+            short_err(&abort)
+        ));
+    }
+    let temp_branch = merge_temp_branch(&ctx.target, &ctx.source_branch, &ctx.target_branch);
+    let cleanup =
+        cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
+    warnings.extend(cleanup.iter().filter(|c| c.contains(" failed:")).cloned());
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": ctx.req_id,
+        "repoName": ctx.repo.repo_name,
+        "message": "已放弃本次合并并清理 merge worktree",
+        "warnings": warnings,
+    })))
+}
+
 pub(crate) async fn api_requirement_prod_mrs(
     State(state): State<AppState>,
     form: FormOrJson<ProdMrForm>,

@@ -789,8 +789,16 @@ export type MergeRepoKind = "frontend" | "backend"
 export interface MergeOption { value: string; label: string; target: MergeTarget | string }
 export interface MergeKindOptions { repoKind: MergeRepoKind | string; options: MergeOption[]; defaultValue?: string | null }
 export interface MergeOptionsPayload { ok: boolean; reqId: string; status: ReqStatus | string; generatedAt: number; branchScope?: BranchScope | null; options: { frontend: MergeKindOptions; backend: MergeKindOptions } }
-export interface MergeBranchResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: MergeTarget | string; targetBranch?: string | null; status: "merged" | "upToDate" | "conflict" | "failed" | "skipped" | "idle" | "pending" | string; message?: string | null; conflictFiles?: string[]; worktreePath?: string | null; warnings?: string[]; commands?: string[] }
+export interface MergeBranchResult { repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: MergeTarget | string; targetBranch?: string | null; status: "merged" | "upToDate" | "conflict" | "failed" | "skipped" | "idle" | "pending" | string; message?: string | null; conflictFiles?: string[]; worktreePath?: string | null; warnings?: string[]; commands?: string[]; conflictSummary?: MergeConflictSummary | null }
 export interface MergeBranchPayload { ok: boolean; reqId: string; target?: MergeTarget | string; targetBranch?: string | null; repoKind?: MergeRepoKind | string | null; status: string; generatedAt: number; branchScope?: BranchScope | null; results: MergeBranchResult[] }
+
+// ---- 合并冲突自动分流 + 冲突解决页（/requirement-merge-conflict）----
+export interface MergeConflictSummary { files: number; conflicts: number; autoResolvedFiles?: number; autoHunks?: number; unresolvableFiles?: number }
+export interface MergeConflictHunk { index: number; kind: "content" | "insert-race"; base: string[]; ours: string[]; theirs: string[]; oursStart: number; oursEnd: number; theirsStart: number; theirsEnd: number }
+export interface MergeConflictSegment { type: "plain" | "conflict"; lines?: string[]; index?: number; kind?: string; base?: string[]; ours?: string[]; theirs?: string[]; oursStart?: number; oursEnd?: number; theirsStart?: number; theirsEnd?: number }
+export interface MergeConflictFile { path: string; status: "partial" | "unresolvable" | "binary"; reason?: string | null; autoHunks: number; conflictCount: number; hasOurs: boolean; hasTheirs: boolean; oursText: string; theirsText: string; segments: MergeConflictSegment[] }
+export interface MergeConflictDetailPayload { ok: boolean; reqId: string; repoName: string; role?: string | null; projectPath?: string | null; sourceBranch: string; target: string; targetBranch: string; worktreePath: string; mergeState: "conflicts" | "readyToCommit" | "readyToPush"; summary: MergeConflictSummary; files: MergeConflictFile[] }
+export type MergeConflictResolution = { type: "ours" } | { type: "theirs" } | { type: "custom"; lines: string[] }
 
 export interface TestdataTarget {
   name: string

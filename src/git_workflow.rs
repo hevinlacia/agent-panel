@@ -62,6 +62,25 @@ pub(crate) struct MergeBranchForm {
     pub(crate) repo_kind: Option<String>,
 }
 
+/// 合并冲突解决页操作表单：resolve-file / complete / abort 共用
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MergeConflictActionForm {
+    pub(crate) req_id: String,
+    pub(crate) repo: String,
+    #[serde(default)]
+    pub(crate) target: Option<String>,
+    #[serde(default)]
+    pub(crate) branch: Option<String>,
+    #[serde(default)]
+    pub(crate) path: Option<String>,
+    #[serde(default)]
+    pub(crate) content: Option<String>,
+    /// keep-ours | keep-theirs | accept-delete | content（默认 content）
+    #[serde(default)]
+    pub(crate) action: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BranchScope {
@@ -130,6 +149,7 @@ pub(crate) struct BaseRefInfo {
 mod branch_scope;
 mod code_review;
 mod git_cmd;
+mod merge_conflict;
 mod merge_exec;
 mod merge_options;
 mod prod_mr;
@@ -141,6 +161,7 @@ mod sync_base;
 pub(crate) use branch_scope::*;
 pub(crate) use code_review::*;
 pub(crate) use git_cmd::*;
+pub(crate) use merge_conflict::*;
 pub(crate) use merge_exec::*;
 pub(crate) use merge_options::*;
 pub(crate) use prod_mr::*;

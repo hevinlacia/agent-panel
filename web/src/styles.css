@@ -1184,3 +1184,83 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-gate-item-name { flex: 1 1 240px; }
 .react-gate-item-result { white-space: nowrap; }
 .react-gate-risk ul { margin: 4px 0 8px; padding-left: 20px; }
+
+/* ===================== 合并冲突解决页（/requirement-merge-conflict，IDEA 风格三栏） ===================== */
+.react-cfl-panel { position: relative; }
+.react-cfl-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.react-cfl-stat { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--react-border); border-radius: 999px; padding: 6px 11px; color: var(--react-amber); font: 800 .72rem var(--react-mono); background: rgba(245, 158, 11, 0.08); }
+.react-cfl-stat.auto { color: var(--react-green); border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.08); }
+.react-cfl-worktree { margin-left: auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--react-faint); font: .68rem var(--react-mono); }
+.react-cfl-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 14px; }
+.react-cfl-files { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--react-border); border-radius: 14px; padding: 12px; background: rgba(0, 0, 0, 0.16); align-self: start; max-height: 66vh; overflow: auto; }
+.react-cfl-group h4 { margin: 0 0 8px; color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.react-cfl-file { display: flex; align-items: center; gap: 8px; width: 100%; border: 1px solid transparent; border-radius: 10px; padding: 8px 10px; background: transparent; color: var(--react-text); cursor: pointer; text-align: left; }
+.react-cfl-file:hover { background: rgba(255, 255, 255, 0.05); }
+.react-cfl-file.active { border-color: var(--react-border-strong); background: rgba(34, 211, 238, 0.08); }
+.react-cfl-file-icon { color: var(--react-amber); font-size: 0.7rem; }
+.react-cfl-file-icon.warn { color: var(--react-purple); }
+.react-cfl-file.ready .react-cfl-file-icon { color: var(--react-green); }
+.react-cfl-file-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .72rem var(--react-mono); }
+.react-cfl-file em { color: var(--react-muted); font: 700 .66rem var(--react-mono); font-style: normal; white-space: nowrap; }
+.react-cfl-file.ready em { color: var(--react-green); }
+.react-cfl-none { margin: 0; color: var(--react-faint); font: .72rem var(--react-mono); }
+.react-cfl-editor { min-width: 0; }
+.react-cfl-filebar { display: flex; align-items: center; gap: 12px; border: 1px solid var(--react-border); border-bottom: none; border-radius: 14px 14px 0 0; padding: 10px 14px; background: var(--react-panel-strong); }
+.react-cfl-filebar strong { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 .78rem var(--react-mono); color: var(--react-cyan); }
+.react-cfl-filebar span { color: var(--react-muted); font: 700 .7rem var(--react-mono); white-space: nowrap; }
+.react-cfl-filebar button { white-space: nowrap; }
+.react-cfl-hint { margin: 10px 0 0; color: var(--react-muted); font: .72rem/1.6 var(--react-mono); }
+.react-cfl-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); gap: 1px; border: 1px solid var(--react-border); border-radius: 0 0 14px 14px; background: var(--react-border); overflow: hidden; }
+.react-cfl-pane { display: flex; flex-direction: column; min-width: 0; background: #0a0f17; }
+.react-cfl-pane-head { display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--react-border); padding: 9px 12px; background: rgba(255, 255, 255, 0.03); }
+.react-cfl-pane-head strong { font: 800 .72rem var(--react-mono); }
+.react-cfl-pane-head span { color: var(--react-muted); font: 700 .66rem var(--react-mono); }
+.react-cfl-pane-head.result strong { color: var(--react-amber); }
+.react-cfl-code { flex: 1; max-height: 58vh; overflow: auto; font: .72rem/1.55 var(--react-mono); }
+.react-cline { display: flex; align-items: flex-start; }
+.react-cline-ln { flex: none; width: 46px; padding-right: 10px; text-align: right; color: var(--react-faint); font-size: 0.66rem; user-select: none; }
+.react-cline-tx { flex: 1; white-space: pre; word-break: break-all; }
+.react-cline.hit-ours { background: rgba(34, 211, 238, 0.12); box-shadow: inset 2px 0 0 rgba(34, 211, 238, 0.55); }
+.react-cline.hit-theirs { background: rgba(34, 197, 94, 0.12); box-shadow: inset 2px 0 0 rgba(34, 197, 94, 0.55); }
+/* 冲突块 */
+.react-cfl-block { margin: 8px; border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 10px; background: rgba(245, 158, 11, 0.05); overflow: hidden; }
+.react-cfl-block.resolved { border-color: rgba(34, 197, 94, 0.35); background: rgba(34, 197, 94, 0.04); }
+.react-cfl-block-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(245, 158, 11, 0.1); cursor: pointer; }
+.react-cfl-block.resolved .react-cfl-block-bar { background: rgba(34, 197, 94, 0.08); }
+.react-cfl-block-tag { color: var(--react-amber); font: 800 .66rem var(--react-mono); white-space: nowrap; }
+.react-cfl-block.resolved .react-cfl-block-tag { color: var(--react-green); }
+.react-cfl-block-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.react-cfl-block-btns .pick { border: 1px solid var(--react-border); border-radius: 8px; padding: 4px 9px; background: rgba(255, 255, 255, 0.04); color: var(--react-text); font: 700 .66rem var(--react-mono); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.react-cfl-block-btns .pick:hover { background: rgba(255, 255, 255, 0.1); }
+.react-cfl-block-btns .pick.ours { color: var(--react-cyan); border-color: rgba(34, 211, 238, 0.4); }
+.react-cfl-block-btns .pick.theirs { color: var(--react-green); border-color: rgba(34, 197, 94, 0.4); }
+.react-cfl-block-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: rgba(245, 158, 11, 0.25); }
+.react-cfl-block pre.side { margin: 0; padding: 8px 10px; overflow: auto; max-height: 22vh; white-space: pre; font: .7rem/1.5 var(--react-mono); }
+.react-cfl-block pre.side.ours { background: rgba(34, 211, 238, 0.07); color: #a5e6f5; }
+.react-cfl-block pre.side.theirs { background: rgba(34, 197, 94, 0.07); color: #a9e8bb; }
+.react-cfl-block pre.side.chosen.ours { background: rgba(34, 211, 238, 0.12); }
+.react-cfl-block pre.side.chosen.theirs { background: rgba(34, 197, 94, 0.12); }
+.react-cfl-custom { display: block; width: 100%; border: none; border-top: 1px solid var(--react-border); padding: 8px 10px; background: rgba(0, 0, 0, 0.35); color: var(--react-text); font: .72rem/1.55 var(--react-mono); resize: vertical; outline: none; }
+/* 需人工决策的文件 */
+.react-cfl-decision { border: 1px solid var(--react-border); border-radius: 14px; padding: 18px; background: rgba(0, 0, 0, 0.16); }
+.react-cfl-decision h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; color: var(--react-purple); font: 800 .86rem var(--react-mono); word-break: break-all; }
+.react-cfl-reason { margin: 0 0 14px; color: var(--react-muted); font: .76rem/1.6 var(--react-mono); }
+.react-cfl-blob { margin-top: 12px; border: 1px solid var(--react-border); border-radius: 12px; padding: 10px 12px; background: #080c13; }
+.react-cfl-blob summary { cursor: pointer; color: var(--react-cyan); font: 800 .72rem var(--react-mono); }
+.react-cfl-blob pre { max-height: 30vh; overflow: auto; margin: 10px 0 0; white-space: pre; color: var(--react-text); font: .7rem/1.5 var(--react-mono); }
+/* 卡片/结果表入口 */
+.react-cfl-links { display: inline-flex; align-items: center; gap: 10px; }
+.react-cfl-resolve-link { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 999px; padding: 6px 12px; color: var(--react-amber); background: rgba(245, 158, 11, 0.1); font: 800 .72rem var(--react-mono); }
+.react-cfl-resolve-link:hover { background: rgba(245, 158, 11, 0.2); }
+.react-cfl-card-actions { margin-top: 12px; align-items: center; }
+.react-cfl-complete { color: #052e16 !important; background: rgba(34, 197, 94, 0.85) !important; border-color: rgba(34, 197, 94, 0.6) !important; }
+.react-cfl-abort { color: #7f1d1d; }
+/* 完成态 */
+.react-cfl-done-panel { border-color: rgba(34, 197, 94, 0.4); }
+.react-cfl-done { display: flex; flex-direction: column; gap: 8px; color: var(--react-green); }
+.react-cfl-done strong { font: 800 1rem var(--react-mono); }
+.react-cfl-done p { margin: 0; color: var(--react-text); font: .8rem/1.6 var(--react-mono); }
+.react-cfl-done span { color: var(--react-muted); font: .72rem var(--react-mono); }
+.react-cfl-done + .react-actions { margin-top: 16px; }
+/* 提示浮层 */
+.react-cfl-toast { position: fixed; right: 22px; bottom: 22px; z-index: 60; max-width: 420px; border: 1px solid var(--react-border-strong); border-radius: 12px; padding: 12px 16px; background: var(--react-panel-strong); color: var(--react-text); font: .74rem/1.6 var(--react-mono); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45); }

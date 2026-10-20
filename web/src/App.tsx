@@ -104,6 +104,7 @@ import { RequirementPage } from "./pages/requirement"
 import { RequirementDocPage } from "./pages/requirement-doc"
 import { RequirementDiffPage } from "./pages/requirement-diff"
 import { RequirementMergePage } from "./pages/requirement-merge"
+import { RequirementMergeConflictPage } from "./pages/requirement-merge-conflict"
 import { RequirementGatePage } from "./pages/requirement-gate"
 
 
@@ -141,7 +142,7 @@ const navItems = [
 
 function isActiveNav(path: string, href: string): boolean {
   if (href === "/dashboard") return path === "/" || path === "/dashboard"
-  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-doc" || path === "/requirement-gate"
+  if (href === "/projects") return path === "/projects" || path === "/requirements" || path === "/requirement" || path === "/requirement-diff" || path === "/requirement-merge" || path === "/requirement-merge-conflict" || path === "/requirement-doc" || path === "/requirement-gate"
   if (href === "/release-plan") return path === "/release-plan"
   if (href === "/ones-missing") return path === "/ones-missing"
   if (href === "/manhour") return path === "/manhour"
@@ -168,6 +169,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/requirement-gate") return { eyebrow: "Gate", title: "门禁详情" }
   if (path === "/requirement-diff") return { eyebrow: "Diff", title: "分支差异" }
   if (path === "/requirement-merge") return { eyebrow: "Merge", title: "分支合并" }
+  if (path === "/requirement-merge-conflict") return { eyebrow: "Merge Conflicts", title: "解决合并冲突" }
   if (path === "/sessions") return { eyebrow: "Pi Sessions", title: "Sessions" }
   if (path === "/session") return { eyebrow: "Session", title: "Session 详情" }
   if (path === "/schedulers") return { eyebrow: "Schedulers", title: "定时任务" }
@@ -219,6 +221,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/requirement-gate" ? <RequirementGatePage />
     : path === "/requirement-diff" ? <RequirementDiffPage />
     : path === "/requirement-merge" ? <RequirementMergePage />
+    : path === "/requirement-merge-conflict" ? <RequirementMergeConflictPage />
     : path === "/schedulers" ? <SchedulersPage />
     : path === "/auth-sites" ? <AuthSitesPage />
     : path === "/testdata" ? <TestdataPage />

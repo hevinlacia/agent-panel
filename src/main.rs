@@ -223,6 +223,10 @@ struct IdQuery {
     scope: Option<String>,
     /// 分支登记轮次（diff-snapshots / branch-rounds 等）：1 = 原始 branches.json。
     round: Option<u32>,
+    /// 合并冲突页：仓库名（branches.json repoName）
+    repo: Option<String>,
+    /// 合并冲突页：需求分支（缺省取 branches.json 第一条）
+    branch: Option<String>,
     status: Option<String>,
     limit: Option<usize>,
     cursor: Option<usize>,
@@ -422,6 +426,22 @@ async fn main() -> Result<()> {
         .route(
             "/api/requirement/merge-status",
             get(api_requirement_merge_status),
+        )
+        .route(
+            "/api/requirement/merge-conflict",
+            get(api_requirement_merge_conflict_detail),
+        )
+        .route(
+            "/api/requirement/merge-conflict/resolve-file",
+            post(api_requirement_merge_conflict_resolve),
+        )
+        .route(
+            "/api/requirement/merge-conflict/complete",
+            post(api_requirement_merge_conflict_complete),
+        )
+        .route(
+            "/api/requirement/merge-conflict/abort",
+            post(api_requirement_merge_conflict_abort),
         )
         .route("/api/requirement/prod-mrs", post(api_requirement_prod_mrs))
         .route(

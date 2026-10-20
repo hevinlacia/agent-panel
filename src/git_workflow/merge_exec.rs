@@ -328,6 +328,96 @@ pub(crate) async fn merge_repo_branch(
     .await;
     if !merge.ok {
         let conflicts = conflicted_files(&worktree_path).await;
+        if !conflicts.is_empty() {
+            // 细粒度三方合并自动分流：无歧义差异段自动解决，真冲突留给冲突解决页
+            match auto_resolve_worktree_conflicts(&worktree_path, true).await {
+                Ok(report) => {
+                    if report.all_resolved() {
+                        // 全部自动解决：直接提交并推送
+                        match complete_merge(&worktree_path, &target_branch).await {
+                            Ok(done_msg) => {
+                                let cleanup =
+                                    cleanup_merge_worktree(&project_path, &worktree_path, &temp_branch)
+                                        .await;
+                                let mut commands = vec![add.command.clone(), merge.command.clone()];
+                                commands.extend(cleanup);
+                                return merge_result(
+                                    repo,
+                                    source_branch,
+                                    target,
+                                    Some(&target_branch),
+                                    "merged",
+                                    &format!(
+                                        "合并冲突已自动解决（{} 处差异）：{done_msg}",
+                                        report.auto_hunks
+                                    ),
+                                    Some(&project_path),
+                                    Vec::new(),
+                                    warnings,
+                                    commands,
+                                );
+                            }
+                            Err(err) => {
+                                // 冲突已全部解决但 commit/push 失败：保留 worktree，冲突页可重试完成
+                                let mut result = merge_result(
+                                    repo,
+                                    source_branch,
+                                    target,
+                                    Some(&target_branch),
+                                    "pending",
+                                    &format!(
+                                        "冲突已全部自动解决（{} 处差异），但完成合并失败：{err}；可在冲突解决页重试「完成合并」",
+                                        report.auto_hunks
+                                    ),
+                                    Some(&project_path),
+                                    Vec::new(),
+                                    warnings,
+                                    vec![add.command.clone(), merge.command.clone()],
+                                );
+                                result["conflictSummary"] = json!({
+                                    "autoResolvedHunks": report.auto_hunks,
+                                    "autoResolvedFiles": report.auto_resolved_files,
+                                    "remainingHunks": 0,
+                                    "remainingFiles": 0,
+                                    "unresolvableFiles": 0,
+                                });
+                                return result;
+                            }
+                        }
+                    }
+                    let remaining = conflicted_files(&worktree_path).await;
+                    let unresolved_total = report.remaining_files + report.unresolvable_files;
+                    let mut result = merge_result(
+                        repo,
+                        source_branch,
+                        target,
+                        Some(&target_branch),
+                        "conflict",
+                        &format!(
+                            "合并冲突：已自动解决 {} 处差异，剩余 {} 处真冲突分布在 {} 个文件，需人工处理；可点击「解决冲突」在面板内处理",
+                            report.auto_hunks,
+                            report.remaining_hunks + report.unresolvable_files,
+                            unresolved_total,
+                        ),
+                        Some(&project_path),
+                        remaining,
+                        warnings,
+                        vec![add.command.clone(), merge.command.clone()],
+                    );
+                    result["conflictSummary"] = json!({
+                        "autoResolvedHunks": report.auto_hunks,
+                        "autoResolvedFiles": report.auto_resolved_files,
+                        "remainingHunks": report.remaining_hunks,
+                        "remainingFiles": report.remaining_files,
+                        "unresolvableFiles": report.unresolvable_files,
+                    });
+                    return result;
+                }
+                Err(err) => {
+                    warnings.push(format!("自动解决冲突失败，保留 git 原始冲突状态：{err}"));
+                }
+            }
+        }
         let mut commands = vec![add.command.clone(), merge.command.clone()];
         let status = if conflicts.is_empty() {
             "failed"
