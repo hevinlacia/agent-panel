@@ -44,6 +44,7 @@ mod requirement_service;
 mod requirement_sub;
 mod sessions;
 mod util;
+mod workers;
 
 use api_catalog::*;
 use attachments::*;
@@ -74,6 +75,8 @@ use sessions::*;
 use util::*;
 
 const DEFAULT_PORT: u16 = 7331;
+/// worker 模式默认端口（本机执行节点；PORT 可覆盖）。
+const WORKER_DEFAULT_PORT: u16 = 7332;
 /// docs 模式（容器 hub）默认端口。
 const HUB_DEFAULT_PORT: u16 = 8788;
 const ENV_PANEL_MODE: &str = "PANEL_MODE";
@@ -82,6 +85,10 @@ const ENV_PANEL_DATA_DIR: &str = "PANEL_DATA_DIR";
 const ENV_PANEL_PORT: &str = "PANEL_PORT";
 /// 绑定地址覆盖：docs 默认 0.0.0.0、local 默认 127.0.0.1；手机/局域网/Tailscale 远程访问时设 0.0.0.0。
 const ENV_PANEL_BIND_HOST: &str = "PANEL_BIND_HOST";
+/// worker → hub 注册地址（worker 模式用）。
+const ENV_PANEL_HUB_URL: &str = "PANEL_HUB_URL";
+/// worker 对外回调地址（hub 代理转发的目标，worker 模式用）。
+const ENV_PANEL_CALLBACK_BASE: &str = "PANEL_CALLBACK_BASE";
 const DEFAULT_PROJECT_NAME: &str = "默认项目";
 const DEFAULT_REQ_ID: &str = "__default__";
 const STATE_FILE: &str = "state.json";
@@ -274,33 +281,40 @@ struct IdQuery {
     include_subs: Option<bool>,
 }
 
-/// 运行模式：local = 全功能本机版（默认）；docs = 容器 hub（文档/状态 SSOT + agent 文档 API）。
+/// 运行模式：docs = hub（文档/状态 SSOT + agent 文档 API，默认，调用方唯一入口）；
+/// worker = 本机执行节点（git/会话/造数/Chrome 登录态）+ 向 hub 注册心跳。
+/// 分离式架构：worker 类请求由 hub 代理转发，调用方不直接感知 worker 地址。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PanelMode {
-    Local,
     Docs,
+    Worker,
 }
 
 impl PanelMode {
     fn resolve() -> Self {
         let args: Vec<String> = env::args().skip(1).collect();
-        let env_docs = env::var(ENV_PANEL_MODE)
+        let env_mode = env::var(ENV_PANEL_MODE)
             .ok()
-            .map(|v| v.trim().eq_ignore_ascii_case("docs"))
-            .unwrap_or(false);
-        let flag_docs = args.windows(2).any(|w| w[0] == "--mode" && w[1] == "docs")
-            || args.iter().any(|a| a == "--mode=docs");
-        if env_docs || flag_docs {
-            PanelMode::Docs
-        } else {
-            PanelMode::Local
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let flag_mode = args
+            .windows(2)
+            .find(|w| w[0] == "--mode")
+            .map(|w| w[1].to_ascii_lowercase())
+            .or_else(|| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix("--mode=").map(|v| v.to_ascii_lowercase()))
+            });
+        match flag_mode.or(Some(env_mode)).as_deref() {
+            Some("worker") => PanelMode::Worker,
+            _ => PanelMode::Docs,
         }
     }
 
     fn as_str(self) -> &'static str {
         match self {
-            PanelMode::Local => "local",
             PanelMode::Docs => "docs",
+            PanelMode::Worker => "worker",
         }
     }
 }
@@ -317,7 +331,7 @@ async fn main() -> Result<()> {
     let data_dir = match mode {
         // 容器部署用 PANEL_DATA_DIR 指向数据卷。
         PanelMode::Docs => env::var(ENV_PANEL_DATA_DIR).ok().map(PathBuf::from),
-        PanelMode::Local => None,
+        PanelMode::Worker => None,
     }
     .unwrap_or_else(|| home.join(".local/share/agent-panel"));
     let pi_session_root = home.join(".pi/agent/sessions");
@@ -328,6 +342,9 @@ async fn main() -> Result<()> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    if mode == PanelMode::Docs {
+        workers::init_worker_token();
+    }
     if mode == PanelMode::Docs && auth_token.is_none() {
         // token 可选（内网/tailnet 场景用户可选择不启用鉴权）；配置后则全部 API 强制校验。
         tracing::warn!(
@@ -348,13 +365,25 @@ async fn main() -> Result<()> {
     };
 
     match mode {
-        PanelMode::Local => {
+        PanelMode::Worker => {
             // Start the cainiao print mock server on boot if enabled in config.
             sync_cainiao_mock(&state).await;
 
             // Background: dispatch automatic experience-summary agents, then auto-advance stale summaries as a fallback.
             tokio::spawn(experience_summary_dispatch_loop(state.clone()));
             tokio::spawn(expire_stale_experience_summary_loop(state.clone()));
+
+            // 向 hub 注册并周期心跳（失败仅告警，本地服务继续——hub 恢复后自动重注册）。
+            let hub_url = env::var(ENV_PANEL_HUB_URL)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| format!("http://127.0.0.1:{HUB_DEFAULT_PORT}"));
+            let callback_base = env::var(ENV_PANEL_CALLBACK_BASE)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| format!("http://127.0.0.1:{WORKER_DEFAULT_PORT}"));
+            workers::spawn_worker_heartbeat(hub_url, callback_base, workers::worker_machine_id())
+                .await;
         }
         // 容器 hub 无本机执行环境：不启动 cainiao mock，不派发经验总结 agent。
         PanelMode::Docs => {}
@@ -367,10 +396,10 @@ async fn main() -> Result<()> {
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(HUB_DEFAULT_PORT),
-        PanelMode::Local => env::var("PORT")
+        PanelMode::Worker => env::var("PORT")
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_PORT),
+            .unwrap_or(WORKER_DEFAULT_PORT),
     };
     // 绑定地址：docs 模式默认 0.0.0.0（容器/tailnet 场景）；local 模式默认仅回环（本地个人使用
     // 安全默认）；两种模式都可用 PANEL_BIND_HOST 覆盖（远程访问局域网/Tailscale 时设 0.0.0.0）。
@@ -379,7 +408,7 @@ async fn main() -> Result<()> {
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| match mode {
             PanelMode::Docs => "0.0.0.0".to_string(),
-            PanelMode::Local => "127.0.0.1".to_string(),
+            PanelMode::Worker => "127.0.0.1".to_string(),
         });
     let addr: SocketAddr = host
         .parse::<std::net::IpAddr>()
@@ -391,13 +420,22 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// 组装路由：local = 全功能本机版；docs = hub 子集 + worker 类端点 503。
+/// 组装路由：docs = hub 子集 + worker 代理 + worker 类端点 503 stub 兼底；
+/// worker = 本机执行节点全量路由（原 local 模式路由，local 已退役）。
 /// 两种模式统一挂 token 鉴权（未配置 PANEL_AUTH_TOKEN 时不拦截，行为与历史一致）。
 fn build_router(state: AppState, mode: PanelMode, auth_token: Option<String>) -> Router {
     let public_dir = state.project_root.join("public");
     let router = match mode {
-        PanelMode::Local => local_router(public_dir),
+        PanelMode::Worker => worker_router(public_dir),
         PanelMode::Docs => docs_router(public_dir),
+    };
+    let router = match mode {
+        // hub：worker 类请求代理转发到在线 worker（无在线 worker 时落回 503 stub）。
+        PanelMode::Docs => router.layer(middleware::from_fn_with_state(
+            state.clone(),
+            workers::worker_proxy_middleware,
+        )),
+        PanelMode::Worker => router,
     };
     router
         .layer(middleware::from_fn_with_state(
@@ -407,8 +445,8 @@ fn build_router(state: AppState, mode: PanelMode, auth_token: Option<String>) ->
         .with_state(state)
 }
 
-/// 全功能本机模式路由（分离式部署下由同机 worker 承接执行类能力）。
-fn local_router(public_dir: PathBuf) -> Router<AppState> {
+/// 本机执行节点全量路由（原 local 模式路由；同机部署下数据与 hub 同源，worker 直接写 SSOT）。
+fn worker_router(public_dir: PathBuf) -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/api/mode", get(api_mode))
@@ -731,6 +769,7 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/api/mode", get(api_mode))
+        .route("/api/workers", get(workers::api_workers))
         .route("/api/dashboard/stats", get(api_dashboard_stats))
         .route(
             "/api/requirements",

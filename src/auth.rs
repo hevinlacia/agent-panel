@@ -45,6 +45,12 @@ fn extract_token(req: &Request<Body>) -> Option<String> {
             return Some(s.trim().to_string());
         }
     }
+    // hub → worker 代理转发专用头（worker 节点用 PANEL_WORKER_TOKEN/PANEL_AUTH_TOKEN 校验）。
+    if let Some(v) = req.headers().get("X-Worker-Token") {
+        if let Ok(s) = v.to_str() {
+            return Some(s.trim().to_string());
+        }
+    }
     // 查询参数兜底：?token=xxx（供 WebSocket/EventSource 等场景）。
     req.uri().query().and_then(|q| {
         q.split('&').find_map(|pair| {

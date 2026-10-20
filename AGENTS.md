@@ -6,7 +6,8 @@
 
 Current architecture:
 
-- `src/main.rs` — Rust/Axum backend bootstrap, central router, shared `AppState` / query DTOs, SPA fallback, and dashboard stats endpoint. Runs in two modes: default `local`（全功能，127.0.0.1）and `docs`（容器 hub：`--mode docs` / `PANEL_MODE=docs`，0.0.0.0:8788，token 可选（配置 PANEL_AUTH_TOKEN 才启用），WORKER 类端点 503 stub，不 spawn 本机后台任务）。拆分方案见 `docs/split-plan.md`，部署见 `docs/hub-deploy.md`。
+- `src/main.rs` — Rust/Axum backend bootstrap, central router, shared `AppState` / query DTOs, SPA fallback, and dashboard stats endpoint. Runs in two modes（分离式架构，local 全功能模式已退役）: default `docs`（hub：文档/状态 SSOT + agent 文档 API + worker 代理，默认绑定 0.0.0.0:8788）and `worker`（`--mode worker` / `PANEL_MODE=worker`，本机执行节点全量路由，默认 127.0.0.1:7332，向 hub 注册心跳）。worker 类请求由 hub 代理转发到在线 worker（无在线 worker 落回 503 stub）；同机部署下 worker 与 hub 共享数据目录，worker 直接写 SSOT。拆分方案见 `docs/split-plan.md`，部署见 `docs/hub-deploy.md`。
+- `src/workers.rs` — Worker 注册表与代理：worker 每 30s 向 hub `POST /api/worker/register`（幂等 upsert 兼心跳，`data_dir/workers.json` 原子写，90s 无心跳判 offline）；hub 侧 `GET /api/workers` 观测 + `worker_proxy_middleware` 按 `WORKER_PROXY_PATHS` 白名单转发（`/api/auth-sites/*` 前缀匹配），转发头 `X-Worker-Token`（`PANEL_WORKER_TOKEN` 优先回落 `PANEL_AUTH_TOKEN`）；worker 侧 `spawn_worker_heartbeat`（hub 不可达仅告警本地服务继续）。WS（/ws/pi-chat）暂不代理。
 - `src/auth.rs` — token 鉴权中间件（所有模式统一挂载）：`PANEL_AUTH_TOKEN` 配置后启用，`Authorization: Bearer` / `X-Panel-Token` / `?token=`（支持 percent-encoding）任一匹配，常量时间比较；豁免 `/health`、`/api/mode` 与静态资源；未配置时中间件不拦截。
 - `src/config.rs` — Runtime config DTOs, `/api/config` handlers（含 availableStatusGates/effectiveStatusGates 注入）, scan-root normalization, status-gate rules（StatusGateRule/内置默认/严格与宽容归一化）, and config persistence.
 - `src/http.rs` — Shared HTTP infrastructure: `ApiError`, `ApiResult`, `FormOrJson`, health/notification stubs, and contextual API error help.
@@ -119,6 +120,7 @@ For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY refer
 ## Runtime Data
 
 - Config: `~/.local/share/agent-panel/config.json`（docs 模式可 `PANEL_DATA_DIR` 覆盖，容器部署指向数据卷）
+- Worker registry: `<data_dir>/workers.json`（hub 持有；worker 注册/心跳 upsert）
 - Associations: `~/.local/share/agent-panel/associations.json`
 - Generated pi context: `~/.local/share/agent-panel/ctx/*.md`
 - Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`（docs 模式 session root 为空 → 会话关联功能自然降级）

@@ -80,14 +80,15 @@
 - 数据：容器 clone workspace-meta 仓库（req/knowledge 路径天然在仓库内），hub `PANEL_DATA_DIR` 与 scan roots 指向容器内路径；容器内定时 commit + push（数据变更自动提交，本机定期 pull 作为只读镜像）。
 - 本机 agent 调用点：req/knowledge skills 与脚本从 `localhost:PORT` 切到 `http://<hub-name>.<tailnet>.ts.net:8788` + token。
 
-## 阶段二实施步骤
+## 阶段二实施步骤（2026-10 已落地：单二进制 `--mode worker`，非独立 bin）
 
-1. `src/bin/panel_worker.rs`：挂 WORKER 路由 + 注册/心跳：
-   - 启动向 hub `POST /api/worker/register`（machineId、capabilities、callbackBase=MagicDNS 地址、tags），30s 心跳续期。
-   - hub 新增 `src/workers.rs`：注册表持久化（data_dir/workers.json）+ `GET /api/workers` + 执行路由（查在线 worker → 直调 callbackBase → 任务记录落盘 `data_dir/tasks/`）。
-2. hub 的 WORKER 类端点改为代理：转发到注册表中提供该能力的在线 worker；无在线 worker 返回 503。前端页面（sessions/testdata/diff/merge）不改，走代理即恢复。
-3. 本机全功能 `main` 退役删除；systemd user service 托管 worker。
-4. 端到端验证：review 材料生成（hub 收请求 → worker 跑 git → 材料落 req 目录）、造数执行、session 浏览、Chrome 登录态代理。
+1. ~~`src/bin/panel_worker.rs`~~ → **`--mode worker` / `PANEL_MODE=worker`**（同二进制多模式，共享全部符号）：worker 挂全量路由（原 local 模式路由，local 退役）+ 注册/心跳：
+   - 启动向 hub `POST /api/worker/register`（machineId、callbackBase、tags），30s 心跳续期（幂等 upsert，注册即心跳）。
+   - hub 新增 `src/workers.rs`：注册表持久化（data_dir/workers.json）+ `GET /api/workers` + worker 代理中间件（`WORKER_PROXY_PATHS` 白名单 + `/api/auth-sites/*` 前缀，转发到最近心跳的在线 worker，失败 502，无在线 worker 落回 503 stub）。
+2. hub 的 WORKER 类端点改为代理：白名单路径命中且有在线 worker → reqwest 原样转发（method/path/query/body/Content-Type，300s 超时）；无在线 worker → 503 stub。前端页面（sessions/testdata/diff/merge）不改，走代理即恢复。
+3. 本机全功能 `local` 模式退役删除；systemd user service 托管 hub（docs）与 worker 两个进程（物料 `scripts/deploy/panel-worker.service`）。
+4. 端到端验证：同机 hub(7331) + worker(7332)：注册落盘 workers.json、经 hub 代理调 sessions/review 类端点、需求 API 走 hub 本地处理。
+5. 已知边界（阶段 2.5）：远端 hub 场景 worker 产物的写回（worker 只写本地 req 目录）需走 hub file API 回传；WS（/ws/pi-chat）不代理。
 
 ## 安全
 
