@@ -36,6 +36,8 @@ pub(crate) struct KnowledgeAgentQuery {
     #[serde(default)]
     domain: Option<String>,
     #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
     tag: Option<String>,
     #[serde(default)]
     project: Option<String>,
@@ -57,6 +59,30 @@ pub(crate) struct KnowledgeAgentQuery {
     include_outline: Option<bool>,
     #[serde(default)]
     outline: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct KnowledgeIndexQuery {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    q: Option<String>,
+    /// verbose=true/1 时附带 triggerTerms / related_* / 全量 summary（条目更多，token 更高）。
+    #[serde(default)]
+    verbose: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -118,6 +144,7 @@ struct KnowledgeQueryFilter {
     kind: Option<String>,
     query: Option<String>,
     domain: Option<String>,
+    category: Option<String>,
     tag: Option<String>,
     project: Option<String>,
     scope: Option<String>,
@@ -147,6 +174,7 @@ pub(crate) async fn api_knowledge_list(
         query: clean_optional(query.q.as_deref())
             .or_else(|| clean_optional(query.intent.as_deref())),
         domain: clean_optional(query.domain.as_deref()),
+        category: clean_optional(query.category.as_deref()),
         tag: clean_optional(query.tag.as_deref()),
         project: clean_optional(query.project.as_deref()),
         scope: clean_optional(query.scope.as_deref()),
@@ -183,6 +211,7 @@ pub(crate) async fn api_agent_knowledge_query(
         query: clean_optional(payload.intent.as_deref())
             .or_else(|| clean_optional(payload.query.as_deref())),
         domain: clean_optional(payload.domain.as_deref()),
+        category: clean_optional(payload.category.as_deref()),
         tag: clean_optional(payload.tag.as_deref()),
         project: clean_optional(payload.project.as_deref()),
         scope: clean_optional(payload.scope.as_deref()),
@@ -277,6 +306,201 @@ pub(crate) async fn api_knowledge_delete(
         "deleted": true,
         "metaPath": meta_path.to_string_lossy().to_string()
     })))
+}
+
+/// 知识库索引：面向 agent 的轻量全量列表（不受 query 端点的 budget/limit 钔制），
+/// 附 facets 计数便于先看分布再决定下一步筛选；坏 meta 文件跳过不拖垮整个索引。
+pub(crate) async fn api_knowledge_index(
+    State(state): State<AppState>,
+    Query(query): Query<KnowledgeIndexQuery>,
+) -> ApiResult<Json<Value>> {
+    let verbose = matches!(
+        query
+            .verbose
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    );
+    let cap = query.limit.unwrap_or(500).clamp(1, 2000);
+    let q_lc = clean_optional(query.q.as_deref()).map(|v| v.to_lowercase());
+    let filter = KnowledgeQueryFilter {
+        kind: normalize_knowledge_kind(query.kind.as_deref()).ok(),
+        query: None,
+        domain: clean_optional(query.domain.as_deref()),
+        category: clean_optional(query.category.as_deref()),
+        tag: clean_optional(query.tag.as_deref()),
+        project: None,
+        scope: clean_optional(query.scope.as_deref()),
+        status: clean_optional(query.status.as_deref()),
+        observed_after: None,
+        observed_before: None,
+        limit: Some(cap),
+        include_full: false,
+        include_outline: false,
+        budget: Some(60_000),
+    };
+    let roots = knowledge_storage_roots(&state, filter.kind.as_deref()).await?;
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut skipped_corrupt = 0usize;
+    let mut rows: Vec<Value> = Vec::new();
+    for root in &roots {
+        let meta_dir = root.path.join("meta");
+        if !meta_dir.is_dir() {
+            continue;
+        }
+        for entry in WalkDir::new(&meta_dir)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !is_knowledge_meta_file(path) {
+                continue;
+            }
+            // 索引定位是“全量可浏览”：单个坏文件只跳过并计数，不让整个索引 500。
+            let Ok(item) =
+                read_knowledge_item_file(root, path, false, Some(60_000), None, false).await
+            else {
+                skipped_corrupt += 1;
+                continue;
+            };
+            let Some(id) = item.get("id").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            if !seen_ids.insert(id) {
+                continue;
+            }
+            if !knowledge_item_matches(&item, &filter) {
+                continue;
+            }
+            if !knowledge_index_q_matches(&item, q_lc.as_deref()) {
+                continue;
+            }
+            rows.push(item);
+        }
+    }
+    rows.sort_by(|a, b| {
+        let ka = b.get("updatedAt").and_then(Value::as_str).unwrap_or("");
+        let kb = a.get("updatedAt").and_then(Value::as_str).unwrap_or("");
+        ka.cmp(kb).then_with(|| {
+            let ia = a.get("id").and_then(Value::as_str).unwrap_or("");
+            let ib = b.get("id").and_then(Value::as_str).unwrap_or("");
+            ia.cmp(ib)
+        })
+    });
+    let total = rows.len();
+    let mut kinds: HashMap<String, usize> = HashMap::new();
+    let mut categories: HashMap<String, usize> = HashMap::new();
+    let mut domains: HashMap<String, usize> = HashMap::new();
+    let mut scopes: HashMap<String, usize> = HashMap::new();
+    let entries: Vec<Value> = rows
+        .iter()
+        .map(|item| {
+            for (map, key) in [
+                (&mut kinds, "kind"),
+                (&mut categories, "category"),
+                (&mut domains, "domain"),
+                (&mut scopes, "scope"),
+            ] {
+                let value = item
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or("-")
+                    .to_string();
+                *map.entry(value).or_insert(0) += 1;
+            }
+            knowledge_index_entry(item, verbose)
+        })
+        .collect();
+    Ok(Json(json!({
+        "generatedAt": now_ms(),
+        "total": total,
+        "skippedCorrupt": skipped_corrupt,
+        "counts": {
+            "kinds": kinds,
+            "categories": categories,
+            "domains": domains,
+            "scopes": scopes,
+        },
+        "entries": entries,
+        "usage": "Agent index for the knowledge base. Browse with filters kind/category/domain/tag/scope/status/q; verbose=true adds triggerTerms/related fields and full summary. Read one item via GET /api/knowledge/item?id= or /api/agent/items/full?id=; edit via POST /api/knowledge with the same id (omit details to keep the body) or PATCH /api/knowledge/item?id=; delete via DELETE /api/knowledge?id=.",
+    })))
+}
+
+/// 索引 q 过滤：id/title/summary/category/domain 及 tags 任一命中即通过（大小写不敏感子串）；q 为空时全通过。
+fn knowledge_index_q_matches(item: &Value, q: Option<&str>) -> bool {
+    let Some(q) = q.map(str::trim).filter(|v| !v.is_empty()) else {
+        return true;
+    };
+    let contains = |value: &str| value.to_ascii_lowercase().contains(q);
+    if ["id", "title", "summary", "category", "domain"]
+        .iter()
+        .any(|key| {
+            item.get(key)
+                .and_then(Value::as_str)
+                .map(contains)
+                .unwrap_or(false)
+        })
+    {
+        return true;
+    }
+    item.get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| tags.iter().filter_map(Value::as_str).any(contains))
+        .unwrap_or(false)
+}
+
+/// 索引条目裁剪：只留检索/定位字段；verbose 时附带 triggerTerms 与 related_*。
+fn knowledge_index_entry(item: &Value, verbose: bool) -> Value {
+    let summary_raw = item
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (summary, _truncated) = if verbose {
+        (summary_raw.to_string(), false)
+    } else {
+        truncate_chars(summary_raw, 160)
+    };
+    let mut entry = json!({
+        "id": item.get("id"),
+        "kind": item.get("kind"),
+        "category": item.get("category"),
+        "domain": item.get("domain"),
+        "scope": item.get("scope"),
+        "project": item.get("project"),
+        "title": item.get("title"),
+        "summary": summary,
+        "status": item.get("status"),
+        "confidence": item.get("confidence"),
+        "updatedAt": item.get("updatedAt"),
+        "observedAt": item.get("observedAt"),
+        "infoAgeDays": item.get("infoAgeDays"),
+        "stale": item.get("stale"),
+        "tags": item.get("tags").cloned().unwrap_or(json!([])),
+        "sourcePath": item.get("sourcePath"),
+        "metaPath": item.get("metaPath"),
+    });
+    if verbose {
+        if let Some(obj) = entry.as_object_mut() {
+            for key in [
+                "triggerTerms",
+                "relatedSkills",
+                "relatedRepos",
+                "relatedTables",
+                "relatedApis",
+            ] {
+                if let Some(v) = item.get(key) {
+                    obj.insert(key.to_string(), v.clone());
+                }
+            }
+        }
+    }
+    entry
 }
 
 fn all_knowledge_kinds() -> Vec<String> {
@@ -398,6 +622,8 @@ async fn query_knowledge_items(
         .unwrap_or_else(|| default_knowledge_limit_for_budget(Some(budget)).unwrap_or(5));
     let effective_limit = requested_limit.clamp(1, max_knowledge_limit_for_budget(budget));
     let mut rows: Vec<(i64, String, Value)> = Vec::new();
+    // 同一 id 可能经多个发现根重复扫到（如 global home 软链与 data 扫描根指向同一目录），按 id 去重保首见。
+    let mut seen_ids: HashSet<String> = HashSet::new();
     for root in roots {
         let meta_dir = root.path.join("meta");
         if !meta_dir.is_dir() {
@@ -423,6 +649,14 @@ async fn query_knowledge_items(
             )
             .await?;
             if !knowledge_item_matches(&item, filter) {
+                continue;
+            }
+            let entry_id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if !seen_ids.insert(entry_id) {
                 continue;
             }
             let search = knowledge_search_score(&item, filter.query.as_deref());
@@ -455,6 +689,7 @@ async fn query_knowledge_items(
 
 fn knowledge_item_matches(item: &Value, filter: &KnowledgeQueryFilter) -> bool {
     value_filter_matches(item, "domain", filter.domain.as_deref())
+        && value_filter_matches(item, "category", filter.category.as_deref())
         && knowledge_tag_matches(item, filter.tag.as_deref())
         && value_filter_matches(item, "project", filter.project.as_deref())
         && value_filter_matches(item, "scope", filter.scope.as_deref())

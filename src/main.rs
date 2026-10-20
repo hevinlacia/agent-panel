@@ -258,6 +258,8 @@ struct IdQuery {
     kind: Option<String>,
     q: Option<String>,
     domain: Option<String>,
+    /// 知识列表/索引：按 category 过滤（大小写不敏感 contains）。
+    category: Option<String>,
     /// 知识列表/agent 知识查询：按 tags 精确过滤（trim + 大小写不敏感匹配任一 tag，如「线上问题修复」）。
     tag: Option<String>,
     project: Option<String>,
@@ -696,6 +698,11 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
             "/api/knowledge/item",
             get(api_knowledge_item).patch(api_knowledge_save),
         )
+        .route("/api/knowledge/index", get(crate::api_knowledge_index))
+        .route(
+            "/api/agent/knowledge/index",
+            get(crate::api_knowledge_index),
+        )
         .route(
             "/api/agent/knowledge/query",
             post(api_agent_knowledge_query),
@@ -985,6 +992,11 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route(
             "/api/knowledge/item",
             get(api_knowledge_item).patch(api_knowledge_save),
+        )
+        .route("/api/knowledge/index", get(crate::api_knowledge_index))
+        .route(
+            "/api/agent/knowledge/index",
+            get(crate::api_knowledge_index),
         )
         .route(
             "/api/agent/knowledge/query",
