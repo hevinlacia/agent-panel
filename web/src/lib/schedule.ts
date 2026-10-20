@@ -2,10 +2,12 @@
  * Role: 需求排期算法（纯函数）— 并行均摊模型：需求的排期区间 = 投入日 → 提测日，剩余工时均摊到区间内
  * 每个工作日，得到每日工作饱和度；据此评估"能否接新需求 / 能接多大需求"。
  * Public surface: HOUR_UNIT, utilization, checkAcceptance, maxAcceptable, workdaysBetweenInclusive, addWorkdays,
- *                 ScheduleConfig, UtilResult, UtilItem, UtilDay, AcceptCheck, MaxAccept, ScheduleReqInput.
+ *                 addWorkdaysAfter, recommendSummary, ScheduleConfig, UtilResult, UtilItem, UtilDay, AcceptCheck, MaxAccept, ScheduleReqInput.
  * Constraints: 无副作用、无 fetch；工时粒度 = 4h 单位（remainingHours 已在页面层向上取整）；
  *              队列只收「开发工作未完成」的需求（状态 < 人工核查门槛）；挂起为流水外标记状态，默认由页面层「默认排除状态」剔除；跳过周末可配。
- *              口径：所有工时均为真实工时（ONES 登记口径已在页面层按折算系数换算）。
+ *              口径：所有工时均为虚拟工时（排期口径，人工矫正 > agent 预估 > ONES 剩余折算）。
+ *              未登记提测时间的需求由容量填充推算推荐提测日（开发完成日 + submitBufferDays 个工作日预留），
+ *              默认排期即按推荐提测日参与饱和度计算；用户登记后以登记值为准。
  * Read-this-with: web/src/lib/requirements.ts（REQ_LIST_STATUSES 状态序）、web/src/pages/schedule.tsx（数据组装）。
  */
 
@@ -30,8 +32,10 @@ export interface ScheduleConfig {
   parallelMax: number
   /** 跳过周六周日（默认 true）。 */
   skipWeekends: boolean
-  /** 未登记提测时间的需求，假设每天投入该小时数推进（默认 4h）→ 虚拟提测日 = 今天起第 ceil(hours/该值) 个工作日。 */
+  /** 多个未登记提测需求之间分配容量时，未轮到推荐的需求按该小时数临时均摊占位（默认 4h）。 */
   defaultDailyPerReq: number
+  /** 推荐提测的预留工作日数（默认 2）：开发完成日之后的缓冲，覆盖代码审查 / 测试反馈问题修复 / 上线前准备。 */
+  submitBufferDays: number
 }
 
 export const DEFAULT_CONFIG: ScheduleConfig = {
@@ -39,6 +43,7 @@ export const DEFAULT_CONFIG: ScheduleConfig = {
   parallelMax: 3,
   skipWeekends: true,
   defaultDailyPerReq: 4,
+  submitBufferDays: 2,
 }
 
 export type HoursSource = "manual" | "ones" | "estimate" | "default"
@@ -65,17 +70,21 @@ export interface ScheduleReqInput {
 }
 
 export interface UtilItem extends ScheduleReqInput {
-  /** 有效提测日（实际或虚拟）。 */
+  /** 有效提测日（已登记 = 登记值；未登记 = 推荐提测日）。 */
   effDeadline: string
-  /** 提测日为虚拟推算（未登记提测时间）。 */
+  /** 提测日为推荐推算（未登记提测时间）。 */
   virtualDeadline: boolean
+  /** 推荐提测日（仅未登记时有值，= effDeadline）：开发完成日 + submitBufferDays 个工作日预留。 */
+  recommendedDeadline: string | null
+  /** 推荐口径的开发完成日（净剩余容量填满剩余工时的工作日，仅未登记时有值）。 */
+  devFinishDate: string | null
   /** 提测日早于今天（逾期未清）。 */
   overdue: boolean
   /** 投入日（今天与 startDate 的较晚者，ymd）。 */
   startPoint: string
   /** 投入日 → 提测日的工作日数（含两端）；逾期 = 0。 */
   spanDays: number
-  /** 每日摊派（真实小时）= remainingHours / max(spanDays, 1)；逾期需求全额压今天。 */
+  /** 每日摊派（虚拟小时）= remainingHours / max(spanDays, 1)；逾期需求全额压今天。 */
   dailyLoad: number
 }
 
@@ -153,9 +162,85 @@ export function addWorkdays(from: Date, n: number, skipWeekends: boolean): strin
   return workdayList(from, Math.max(1, n), skipWeekends)[Math.max(1, n) - 1]
 }
 
+/** from（不含）起第 n 个工作日的 ymd（n >= 1）：即完成日之后的第 n 个工作日（跨周末顺延）。 */
+export function addWorkdaysAfter(from: string, n: number, skipWeekends: boolean): string {
+  const d = parseYmd(from)
+  d.setDate(d.getDate() + 1)
+  return workdayList(d, Math.max(1, n), skipWeekends)[Math.max(1, n) - 1]
+}
+
+/**
+ * 推荐提测日：未登记提测时间的需求，按「净剩余容量」（每日容量 − 其他在制需求在该日的均摊摊派）
+ * 从投入日起逐工作日填充剩余工时 → 开发完成日；再加 submitBufferDays 个工作日预留
+ * （代码审查 / 测试反馈问题修复 / 上线前准备）= 推荐提测日，同时作为该需求的有效提测日参与饱和度计算。
+ * 多个未登记需求按投入日 → 工时降序贪心依次分配：先推荐的需求负载立即按新区间生效，后续需求在其之上扣除容量；
+ * 未轮到的需求暂按 defaultDailyPerReq 临时均摊占位，保证互相看见。
+ */
+function recommendSubmitDates(items: UtilItem[], config: ScheduleConfig, today: Date): void {
+  const capacity = Math.max(0.5, config.dailyHours)
+  const bufferDays = Math.max(0, Math.floor(config.submitBufferDays))
+  const todayStr = ymd(today)
+  const pending = items.filter((it) => it.virtualDeadline)
+  pending.sort((a, b) => {
+    if (a.startPoint !== b.startPoint) return a.startPoint < b.startPoint ? -1 : 1
+    if (a.remainingHours !== b.remainingHours) return b.remainingHours - a.remainingHours
+    return a.id < b.id ? -1 : 1
+  })
+  /** 指定日期上除 self 外全部需求的均摊负载（逾期需求全额压今天）；
+   *  尚未轮到推荐的未登记需求不参与挤压（它们的提测日同样由推荐引擎决定），
+   *  已推荐的需求负载已按新区间生效，正常参与。 */
+  const waiting = new Set(pending)
+  const othersLoadOn = (self: UtilItem, d: string): number => {
+    let load = 0
+    for (const it of items) {
+      if (it === self || it.remainingHours <= 0 || waiting.has(it)) continue
+      if (it.overdue) {
+        if (d === todayStr) load += it.remainingHours
+      } else if (d >= it.startPoint && d <= it.effDeadline && isWorkday(parseYmd(d), config.skipWeekends)) {
+        load += it.dailyLoad
+      }
+    }
+    return load
+  }
+  for (const it of pending) {
+    waiting.delete(it)
+    let remaining = it.remainingHours
+    const cursor = parseYmd(it.startPoint)
+    let finish = ""
+    // 防御上限（约 2 年工作日）：容量被长期占满时避免死循环；超限按游标处截断。
+    for (let n = 0; n < 520 && !finish; n += 1) {
+      const ds = ymd(cursor)
+      if (isWorkday(cursor, config.skipWeekends)) {
+        const avail = Math.max(0, capacity - othersLoadOn(it, ds))
+        if (avail > 0) {
+          remaining -= avail
+          if (remaining <= 0) finish = ds
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    if (!finish) finish = ymd(cursor)
+    it.devFinishDate = finish
+    it.recommendedDeadline = bufferDays > 0 ? addWorkdaysAfter(finish, bufferDays, config.skipWeekends) : finish
+    it.effDeadline = it.recommendedDeadline
+    it.overdue = it.effDeadline < todayStr
+    it.spanDays = it.overdue ? 0 : workdaysBetweenInclusive(it.startPoint, it.effDeadline, config.skipWeekends)
+    it.dailyLoad = it.overdue ? it.remainingHours : it.remainingHours / Math.max(1, it.spanDays)
+  }
+}
+
+/** 推荐提测摘要（一句话，供排期页 tooltip / 详情页展示）；非推荐推算的需求返回 null。 */
+export function recommendSummary(it: UtilItem, config: ScheduleConfig): string | null {
+  if (!it.recommendedDeadline || !it.devFinishDate) return null
+  const units = Math.round(it.remainingHours / HOUR_UNIT)
+  const buffer = Math.max(0, Math.floor(config.submitBufferDays))
+  const bufferNote = buffer > 0 ? `，预留 ${buffer} 个工作日（代码审查 / 测试反馈修复 / 上线准备）` : ""
+  return `按当前容量（每日 ${config.dailyHours}h，扣除在制摊派）预计 ${it.devFinishDate} 完成开发${bufferNote}，推荐 ${it.recommendedDeadline} 提测（${units}u 虚拟工时）`
+}
+
 /**
  * 并行均摊：每个未完成需求的剩余工时均摊到 [投入日, 提测日] 的每个工作日；
- * 未登记提测时间的按 defaultDailyPerReq 推进推算虚拟提测日；
+ * 未登记提测时间的按「净剩余容量填充」推算推荐提测日（含 submitBufferDays 预留），并作为有效提测日参与计算；
  * 逾期（提测日 < 今天）的需求剩余工时全额压今天。
  * 注意：均摊是容量占用账（回答“这天还剩多少容量”），不锁定每天具体做哪个需求。
  */
@@ -168,6 +253,8 @@ export function utilization(reqs: ScheduleReqInput[], config: ScheduleConfig, to
     let effDeadline = r.submitTestDate ?? ""
     let virtualDeadline = false
     if (!effDeadline) {
+      // 初始临时负载：按 defaultDailyPerReq 推算占位提测日，供推荐贪心中未轮到的需求互相看见；
+      // 推荐阶段会重写 virtual 需求的 effDeadline。
       const span = Math.max(1, Math.ceil(r.remainingHours / Math.max(0.5, config.defaultDailyPerReq)))
       effDeadline = addWorkdays(today, span, config.skipWeekends)
       virtualDeadline = true
@@ -179,12 +266,15 @@ export function utilization(reqs: ScheduleReqInput[], config: ScheduleConfig, to
       ...r,
       effDeadline,
       virtualDeadline,
+      recommendedDeadline: null,
+      devFinishDate: null,
       overdue,
       startPoint,
       spanDays,
       dailyLoad,
     })
   }
+  recommendSubmitDates(items, config, today)
   // 展示排序：逾期最前 → 提测日升序 → 工时降序 → id 稳定。
   items.sort((a, b) => {
     if (a.overdue !== b.overdue) return a.overdue ? -1 : 1
@@ -193,10 +283,10 @@ export function utilization(reqs: ScheduleReqInput[], config: ScheduleConfig, to
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
   })
 
-  // 工作日序列：覆盖到最远提测日与默认视图窗口（14 个工作日）的较大者（上限 60），首日 = 今天。
+  // 工作日序列：覆盖到最远提测日与默认视图窗口（14 个工作日）的较大者（上限 120，推荐推算可能更远），首日 = 今天。
   const lastDeadline = items.reduce((m, it) => (it.effDeadline > m ? it.effDeadline : m), todayStr)
   const horizon = Math.min(
-    60,
+    120,
     Math.max(
       workdaysBetweenInclusive(todayStr, lastDeadline > todayStr ? lastDeadline : todayStr, config.skipWeekends),
       DEFAULT_VIEW_DAYS,

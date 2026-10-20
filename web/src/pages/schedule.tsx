@@ -1,11 +1,12 @@
 /**
  * Role: 需求排期页 — 并行均摊模型：每个在制需求的剩余工时均摊到「投入 → 提测」区间，得到每日工作饱和度；
  * 据此判断"能否接新需求 / 能接多大需求"。饱和度是容量占用账，不锁定每天具体做哪个需求（实际安排弹性）。
+ * 未登记提测时间的需求由容量填充推算推荐提测日（开发完成日 + 预留工作日），默认排期即按推荐值计算。
  * Public surface: SchedulePage used by web/src/App.tsx route /schedule.
  * Constraints: 读 /api/requirements + /api/ones/tasks；写仅 POST /api/requirement/effort-estimate（工时）
  *              与 PATCH /api/requirement（提测日期）；容量配置/默认排除状态存 localStorage。
- * Read-this-with: web/src/lib/schedule.ts（均摊算法）、web/src/pages/manhour.tsx（ONES logged 匹配）、
- *                 web/src/pages/release-plan.tsx（页面骨架模式）。
+ * Read-this-with: web/src/lib/schedule.ts（均摊 + 推荐提测算法）、web/src/lib/schedule-input.ts（输入组装）、
+ *                 web/src/pages/manhour.tsx（ONES logged 匹配）、web/src/pages/release-plan.tsx（页面骨架模式）。
  */
 import { CalendarClock, CalendarRange, ChevronDown, Gauge, ListOrdered, TriangleAlert, Wand2 } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
@@ -13,128 +14,35 @@ import type { OnesTasksResponse, Requirement } from "../types"
 import { patchJson, postJson, useFetch } from "../lib/api"
 import { SCHEDULE_FALLBACK_EXCLUDED_STATUSES, persistScheduleDefaultExcludedStatuses, readScheduleDefaultExcludedStatuses } from "../lib/preferences"
 import {
-  DEFAULT_CONFIG,
-  DEFAULT_HOURS,
   HOUR_UNIT,
   type HoursSource,
-  type ScheduleConfig,
-  type ScheduleReqInput,
   type UtilResult,
   type AcceptCheck,
   type MaxAccept,
   SCHEDULE_STATUS_OPTIONS,
   checkAcceptance,
   maxAcceptable,
+  recommendSummary,
   utilization,
   ymd,
 } from "../lib/schedule"
+import {
+  type PanelConfig,
+  DEFAULT_PANEL_CONFIG,
+  QUEUEABLE_STATUSES,
+  buildQueueReqs,
+  loggedHoursMap,
+  readPanelConfig,
+  savePanelConfig,
+} from "../lib/schedule-input"
 import { projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
 
-const LS_CONFIG = "react-schedule-config"
 /** 饱和度视图展示前 14 个工作日。 */
 const VIEW_DAYS = 14
-/** 单位点选可选档位（1u=4h 真实工时，8u=两周量级封顶）。 */
+/** 单位点选可选档位（1u=4h 虚拟工时，8u=两周量级封顶）。 */
 const UNIT_OPTIONS = [1, 2, 3, 4, 5, 6, 8]
-/** 队列门槛：排期页状态选项全集（需求流水 + 子需求「需求创建」+ 挂起）；哪些状态计入由「默认排除状态」决定，完成态默认排除。 */
-const QUEUEABLE_STATUSES = new Set<string>(SCHEDULE_STATUS_OPTIONS)
-
-type PanelConfig = ScheduleConfig & { onesHoursFactor: number }
-/** ONES 登记 10h/天 ≈ 实际 8h/天：登记工时按 0.8 折算（历史验证 657.5h×0.8/63 天 ≈ 8.35h/天）。 */
-const DEFAULT_PANEL_CONFIG: PanelConfig = { ...DEFAULT_CONFIG, onesHoursFactor: 0.8 }
-
-function loadJson<T extends object>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? ({ ...fallback, ...JSON.parse(raw) } as T) : fallback
-  } catch {
-    return fallback
-  }
-}
-
-function saveJson(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    /* 存储不可用时静默降级为会话内状态 */
-  }
-}
-
-/** 与 manhour 页一致：从 ones 字段提取任务编号（后续用大写匹配 ONES 候选）。 */
-function reqDisplayId(req: Requirement): string | null {
-  const m = (req.ones || "").match(/[A-Za-z][A-Za-z0-9_]*-\d+/)
-  return m ? m[0].toUpperCase() : null
-}
-
-/** 向上取整到 4h 单位（保守估计）。 */
-function ceilUnit(hours: number): number {
-  return Math.max(1, Math.ceil(hours / HOUR_UNIT)) * HOUR_UNIT
-}
-
-/** 后端未暴露 start-date 原文，但 created_at 即 start-date 的 ms（UTC 零点，本地 +08 转换同日）；异常时 null。 */
-function msToYmd(ms: number): string | null {
-  if (!Number.isFinite(ms) || ms <= 0) return null
-  return ymd(new Date(ms))
-}
-
-/** 剩余工时推导：人工矫正 > agent 预估 > ONES 剩余(登记口径×factor 折算真实) > 默认 8h。 */
-function deriveHours(
-  req: Requirement,
-  logged: number | null,
-  onesFactor: number,
-): { hours: number; source: HoursSource; unevaluated: boolean } {
-  const est = req.effortEstimate
-  const manualH = est?.manualHours ?? null
-  if (manualH != null && manualH > 0) return { hours: ceilUnit(manualH), source: "manual", unevaluated: false }
-  const estH = est?.estimatedHours ?? null
-  if (estH != null && estH > 0) return { hours: ceilUnit(estH), source: "estimate", unevaluated: false }
-  const manualTotal = req.onesManhour?.manualHours ?? null
-  if (manualTotal != null && manualTotal > 0) {
-    // 登记口径统一折算成真实口径后再相减
-    const remain = Math.max(0, manualTotal * onesFactor - (logged ?? 0) * onesFactor)
-    if (remain > 0) return { hours: ceilUnit(remain), source: "ones", unevaluated: false }
-    return { hours: 0, source: "ones", unevaluated: false }
-  }
-  return { hours: DEFAULT_HOURS, source: "default", unevaluated: true }
-}
-
-function buildQueueReqs(
-  reqs: Requirement[],
-  loggedMap: Map<string, number>,
-  onesFactor: number,
-  excludedStatuses: Set<string>,
-): ScheduleReqInput[] {
-  return reqs
-    .filter((r) => QUEUEABLE_STATUSES.has(r.status) && !excludedStatuses.has(r.status))
-    .map((r) => {
-      const did = reqDisplayId(r)
-      const logged = did ? loggedMap.get(did) ?? null : null
-      const { hours, source, unevaluated } = deriveHours(r, logged, onesFactor)
-      const registered = r.submitTestDate && r.submitTestDate !== "unknown" ? r.submitTestDate : null
-      // 未登记提测时间时，按最近一次进入「发布就绪」的日期推定（后端状态历史）；仍无则交给均摊模型虚拟推算。
-      const releaseReady = !registered && r.releaseReadyAt ? ymd(new Date(r.releaseReadyAt)) : null
-      const submit = registered ?? releaseReady
-      // 紧急度口径：承诺提测时间优先，未设回退实际提测时间（容量/饱和度始终用 submit）
-      const promiseRaw = r.promiseSubmitDate && r.promiseSubmitDate !== "unknown" ? r.promiseSubmitDate : null
-      const promiseDate = promiseRaw ?? registered
-      const submitSource: "registered" | "releaseReady" | undefined = registered ? "registered" : releaseReady ? "releaseReady" : undefined
-      return {
-        id: r.id,
-        title: r.title,
-        status: r.status,
-        startDate: msToYmd(r.createdAt),
-        submitTestDate: submit,
-        submitSource,
-        promiseDate,
-        isHotfix: (r.issues?.length ?? 0) > 0,
-        remainingHours: hours,
-        hoursSource: source,
-        unevaluated,
-      }
-    })
-    .filter((r) => r.remainingHours > 0)
-}
 
 const SOURCE_LABEL: Record<HoursSource, string> = {
   manual: "人工矫正",
@@ -170,7 +78,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const { data, error, loading, refresh } = RequirementsData()
   const ones = useFetch<OnesTasksResponse>("/api/ones/tasks")
   const [project] = useState(globalProject || "")
-  const [config, setConfig] = useState<PanelConfig>(() => loadJson(LS_CONFIG, DEFAULT_PANEL_CONFIG))
+  const [config, setConfig] = useState<PanelConfig>(() => readPanelConfig())
   const [whatIfMode, setWhatIfMode] = useState<"check" | "max">("check")
   const [whatIfUnits, setWhatIfUnits] = useState(2)
   const [whatIfTitle, setWhatIfTitle] = useState("")
@@ -182,13 +90,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const [excludedOpen, setExcludedOpen] = useState(false)
   const [excludedJustSaved, setExcludedJustSaved] = useState(false)
 
-  const loggedMap = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const c of ones.data?.candidates || []) {
-      if (c.actualHours && c.actualHours > 0) map.set(c.displayId.toUpperCase(), c.actualHours)
-    }
-    return map
-  }, [ones.data])
+  const loggedMap = useMemo(() => loggedHoursMap(ones.data), [ones.data])
 
   const allReqs = useMemo(() => {
     const list = data?.requirements || []
@@ -204,7 +106,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   const excludedStatusSet = useMemo(() => new Set(defaultExcludedStatuses), [defaultExcludedStatuses])
 
   const queueReqs = useMemo(
-    () => buildQueueReqs(allReqs, loggedMap, config.onesHoursFactor ?? 0.8, excludedStatusSet),
+    () => buildQueueReqs(allReqs, loggedMap, config.onesHoursFactor ?? 0.8, excludedStatusSet, QUEUEABLE_STATUSES),
     [allReqs, loggedMap, config.onesHoursFactor, excludedStatusSet],
   )
   const util: UtilResult = useMemo(() => utilization(queueReqs, config), [queueReqs, config])
@@ -235,7 +137,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
   function updateConfig(patch: Partial<PanelConfig>) {
     const next = { ...config, ...patch }
     setConfig(next)
-    saveJson(LS_CONFIG, next)
+    savePanelConfig(next)
   }
 
   const statusOrder = (list: string[]) => SCHEDULE_STATUS_OPTIONS.filter((s) => list.includes(s))
@@ -282,13 +184,12 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
       setSavingReq(null)
     }
   }
-
   return (
     <PageChrome
       icon={<CalendarRange size={18} />}
       eyebrow="Schedule"
       title="需求排期"
-      description="并行均摊：每个在制需求的剩余工时均摊到「投入 → 提测」区间得到每日饱和度；饱和度是容量占用账，不锁定每天具体做哪个需求，实际安排弹性调整。"
+      description="并行均摊：每个在制需求的剩余工时（虚拟工时口径）均摊到「投入 → 提测」区间得到每日饱和度。未登记提测时间的需求按剩余容量推算推荐提测日（开发完成 + 预留天数），未手动修改前默认按推荐值参与排期。"
     >
       {error ? <ErrorCard error={error} /> : null}
       {loading ? <LoadingCard /> : null}
@@ -351,7 +252,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                 />
                 个需求
               </label>
-              <label title="未登记提测时间的需求，假设每天投入该小时数推进，推算虚拟提测日">
+              <label title="多个未登记提测时间的需求之间分配容量时，未轮到推荐推算的需求按该小时数临时均摊占位">
                 未登记提测：按每日
                 <input
                   type="number"
@@ -362,6 +263,17 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                   onChange={(e) => updateConfig({ defaultDailyPerReq: Math.max(0.5, Number(e.target.value) || 4) })}
                 />
                 h 推进
+              </label>
+              <label title="推荐提测 = 开发完成日之后预留的工作日数，覆盖代码审查 / 测试反馈问题修复 / 上线前准备；未登记提测时间的需求默认按推荐值排期">
+                提测预留
+                <input
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={config.submitBufferDays ?? 2}
+                  onChange={(e) => updateConfig({ submitBufferDays: Math.max(0, Math.min(10, Math.floor(Number(e.target.value) || 0))) })}
+                />
+                个工作日
               </label>
               <label title="ONES 登记工时为膨胀口径（登记 10h/天 ≈ 实际 8h/天），折算为真实工时后再冲抵剩余工时">
                 ONES 折算
@@ -567,14 +479,28 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                               value={it.virtualDeadline ? "" : it.effDeadline}
                               disabled={savingReq === it.id}
                               title={
-                                it.virtualDeadline
-                                  ? "实际提测：未登记且无发布就绪历史，当前为虚拟推算；点选日期即登记"
+                                it.virtualDeadline && it.recommendedDeadline
+                                  ? recommendSummary(it, config) ?? ""
                                   : it.submitSource === "releaseReady"
                                     ? "实际提测：未登记，暂按进入「发布就绪」的日期推定；点选日期即登记覆盖"
                                     : "实际提测（排期饱和度口径）：登记/调整"
                               }
                               onChange={(e) => setSubmitTestDate(it.id, e.target.value)}
                             />
+                            {it.virtualDeadline && it.recommendedDeadline ? (
+                              <span className="react-sched-recommend">
+                                <em title={recommendSummary(it, config) ?? ""}>推荐 {it.recommendedDeadline.slice(5)}</em>
+                                <button
+                                  type="button"
+                                  className="react-ghost-btn"
+                                  disabled={savingReq === it.id}
+                                  title={`把实际提测登记为推荐值 ${it.recommendedDeadline}（当前未登记，排期已默认按推荐值计算）`}
+                                  onClick={() => setSubmitTestDate(it.id, it.recommendedDeadline!)}
+                                >
+                                  采用
+                                </button>
+                              </span>
+                            ) : null}
                             {it.promiseDate ? <span className="react-sched-promise" title="承诺提测时间（紧急度），详情页可改">承诺 {it.promiseDate}</span> : null}
                           </td>
                           <td>
@@ -583,7 +509,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                             ) : (
                               <>
                                 {it.spanDays} 天
-                                {it.virtualDeadline ? <span className="react-muted">（虚拟）</span> : null}
+                                {it.virtualDeadline ? <span className="react-muted">（推荐）</span> : null}
                                 {!it.virtualDeadline && it.submitSource === "releaseReady" ? <span className="react-muted">（发布就绪推定）</span> : null}
                               </>
                             )}
@@ -603,7 +529,7 @@ export function SchedulePage({ globalProject }: { globalProject?: string }) {
                                   type="button"
                                   className={`react-sched-unit ${units === u ? "is-active" : ""}`}
                                   disabled={savingReq === it.id}
-                                  title={it.unevaluated ? "当前为默认值（未评估），点击设为该单位" : `设为 ${u} 单位（${u * HOUR_UNIT}h 真实工时）`}
+                                  title={it.unevaluated ? "当前为默认值（未评估），点击设为该单位" : `设为 ${u} 单位（${u * HOUR_UNIT}h 虚拟工时）`}
                                   onClick={() => setManualUnit(it.id, u)}
                                 >
                                   {u}u

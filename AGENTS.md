@@ -41,7 +41,7 @@ Current architecture:
 - `web/src/features/requirements/badges.tsx` — Requirement status/experience-summary/ONES badges and requirement display helpers.
 - `web/src/features/requirements/annotation-panel.tsx` — Diff page right-hand inspector: file summary, key variables, mermaid flow, hunk notes, JSON hand-editing.
 - `web/src/features/requirements/ones-manhour-card.tsx` — 需求详情页 ONES 工时卡片：工时四联展示/编辑（人工预估、agent 实际可编辑）+ 快速登记（准备模式）+ 登记历史。
-- `web/src/features/requirements/schedule-info-card.tsx` — 需求详情页排期信息卡：提测时间登记 + 倒计时；agent 预估展示 + 人工矫正（manualHours），排期统计优先人工矫正。
+- `web/src/features/requirements/schedule-info-card.tsx` — 需求详情页排期信息卡：提测时间登记 + 倒计时 + Agent 推荐提测日（未登记时按全局容量填充推算，一键采用）；agent 预估展示 + 人工矫正（manualHours），排期统计优先人工矫正。
 - `web/src/features/requirements/mermaid-flow.tsx` — Lazy mermaid renderer for annotation flow diagrams; degrades to source on syntax errors.
 - `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
@@ -53,8 +53,10 @@ Current architecture:
 - `web/src/lib/annotations.ts` — Matching of code-annotations onto parsed diffs (file index, hunk anchoring, stale detection).
 - `web/src/types.ts` — Shared browser-side API DTOs and feature payload types.
 - `web/src/pages/testdata.tsx` — 接口测试页（路由 /testdata，侧边栏「接口测试」）：API 接口目录（造数/测试/线上修数据标记 + 关键字筛选 + 卡片点击自动滚动展开详情，占位符入参/模板请求头/请求体临时编辑不写回模板，test/UAT 切换，粘贴真实环境 curl 凭证发起线上修数请求）+ 造数脚本（目标状态/CLI 配置含 count/dry-run/执行）。
-- `web/src/pages/schedule.tsx` — 需求排期页（路由 /schedule，侧边栏「需求排期」）：并行均摊模型（投入→提测区间摊派）的每日饱和度、接单评估（能不能接/能接多大）、行内快改工时与提测日；ONES 登记工时按折算系数换算真实口径。
-- `web/src/lib/schedule.ts` — 排期算法纯函数：4h 单位制、均摊饱和度（utilization）、接单评估（checkAcceptance）、反算容量（maxAcceptable）；饱和度是容量账不锁定每日日程。
+- `web/src/pages/schedule.tsx` — 需求排期页（路由 /schedule，侧边栏「需求排期」）：并行均摊模型（投入→提测区间摊派）的每日饱和度、接单评估（能不能接/能接多大）、行内快改工时与提测日、推荐提测日展示与一键采用；ONES 登记工时按折算系数换算真实口径。
+- `web/src/lib/schedule.ts` — 排期算法纯函数：4h 单位制、均摊饱和度（utilization）、接单评估（checkAcceptance）、反算容量（maxAcceptable）、推荐提测日（未登记需求按净剩余容量填充推算开发完成日 + submitBufferDays 个工作日预留，默认排期即按推荐值；recommendSummary）；饱和度是容量账不锁定每日日程。
+- `web/src/lib/schedule-input.ts` — 排期输入组装（排期页与详情页共用）：需求+ONES 登记工时+本机排期配置 → ScheduleReqInput 队列与 PanelConfig；虚拟工时优先级 = 人工矫正 > agent 预估 > ONES 剩余折算 > 默认 8h。
+- `web/tests/schedule.test.ts` — 排期算法 bun test（`bun run test:web`）：推荐提测日容量填充/预留/跨周末/贪心多需求/逾期挤压场景。
 - `web/src/styles.css` — SPA styles scoped under `.react-*`.
 - `web/index.html` + `vite.config.ts` — Vite build into `public/dashboard-react/`.
 

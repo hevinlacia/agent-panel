@@ -11,6 +11,7 @@
     "fmt": "cargo fmt",
     "fmt:check": "cargo fmt --check",
     "test": "cargo test",
+    "test:web": "bun test web/tests",
     "build:dashboard": "vite build",
     "build:backend": "cargo build --release",
     "build": "bun run build:dashboard && cargo build --release",
