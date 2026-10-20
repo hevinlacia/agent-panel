@@ -770,6 +770,7 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/health", get(health))
         .route("/api/mode", get(api_mode))
         .route("/api/workers", get(workers::api_workers))
+        .route("/api/worker/register", post(workers::api_worker_register))
         .route("/api/dashboard/stats", get(api_dashboard_stats))
         .route(
             "/api/requirements",
