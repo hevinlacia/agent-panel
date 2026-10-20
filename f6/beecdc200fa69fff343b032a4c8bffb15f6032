@@ -1,0 +1,25 @@
+AGENTS.md
+  4f360a90d3f3eba7 129-132
+scripts/deploy/hub-data-autocommit.sh
+  4f360a90d3f3eba7 2,5,12-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f6beecdc200fa69fff343b032a4c8bffb15f6032",
+  "prompts": {
+    "4f360a90d3f3eba7": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1588c-ee31-76ba-9b03-becadf41d935",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 9,
+      "accepted_lines": 17,
+      "overriden_lines": 0
+    }
+  }
+}
