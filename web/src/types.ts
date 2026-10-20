@@ -777,6 +777,44 @@ export interface KnowledgeItem {
 }
 export interface KnowledgeListPayload { items: KnowledgeItem[]; generatedAt?: number }
 export interface KnowledgeSavePayload { ok: boolean; item: KnowledgeItem }
+
+export interface KnowledgeIndexEntry {
+  id: string
+  kind: KnowledgeKind | string
+  category?: string
+  domain?: string
+  scope?: string
+  project?: string
+  title: string
+  summary?: string
+  status?: string
+  confidence?: string
+  updatedAt?: string
+  observedAt?: string
+  infoAgeDays?: number
+  stale?: boolean
+  tags?: string[]
+  sourcePath?: string
+  metaPath?: string
+  triggerTerms?: string[]
+  relatedSkills?: string[]
+  relatedRepos?: string[]
+  relatedTables?: string[]
+  relatedApis?: string[]
+}
+export interface KnowledgeIndexCounts {
+  kinds?: Record<string, number>
+  categories?: Record<string, number>
+  domains?: Record<string, number>
+  scopes?: Record<string, number>
+}
+export interface KnowledgeIndexPayload {
+  generatedAt?: number
+  total: number
+  skippedCorrupt?: number
+  counts?: KnowledgeIndexCounts
+  entries?: KnowledgeIndexEntry[]
+}
 export type KnowledgeDraft = Partial<KnowledgeItem> & { details?: string; root?: string }
 
 export interface PiConfigFileSnapshot { file: string; label: string; path: string; sensitive: boolean; description: string; content: string; updatedAt: number | null }

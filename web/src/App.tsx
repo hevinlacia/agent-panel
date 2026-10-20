@@ -94,7 +94,7 @@ import { RequirementsData } from "./pages/projects"
 import { TestdataPage } from "./pages/testdata"
 import { TestdataApiDetailPage } from "./pages/testdata-api-detail"
 import { DashboardPage } from "./pages/dashboard"
-import { KnowledgePage, ExperiencesPage } from "./pages/knowledge"
+import { KnowledgeBasePage, KnowledgePage, ExperiencesPage } from "./pages/knowledge"
 import { ProjectsPage } from "./pages/projects"
 import { ReleasePlanPage } from "./pages/release-plan"
 import { SchedulePage } from "./pages/schedule"
@@ -139,7 +139,7 @@ const navItems = [
   { href: "/ones-missing", label: "ONES 缺失", short: "ON", icon: <Unlink2 size={16} /> },
   { href: "/manhour", label: "工时录入", short: "MH", icon: <Clock3 size={16} /> },
   { href: "/issues", label: "线上问题", short: "IS", icon: <Siren size={16} /> },
-  { href: "/business-knowledge", label: "业务知识", short: "BK", icon: <Library size={16} /> },
+  { href: "/knowledge", label: "知识库", short: "KB", icon: <Library size={16} /> },
   { href: "/experiences", label: "经验", short: "EX", icon: <Lightbulb size={16} /> },
   { href: "/sessions", label: "Sessions", short: "SE", icon: <Server size={16} /> },
   { href: "/connect", label: "连接", short: "CN", icon: <MonitorSmartphone size={16} /> },
@@ -157,7 +157,7 @@ function isActiveNav(path: string, href: string): boolean {
   if (href === "/ones-missing") return path === "/ones-missing"
   if (href === "/manhour") return path === "/manhour"
   if (href === "/issues") return path === "/issues"
-  if (href === "/business-knowledge") return path === "/business-knowledge"
+  if (href === "/knowledge") return path === "/knowledge" || path === "/business-knowledge"
   if (href === "/experiences") return path === "/experiences"
   if (href === "/schedulers") return path === "/schedulers"
   if (href === "/auth-sites") return path === "/auth-sites"
@@ -173,7 +173,7 @@ function titleForPath(path: string): { eyebrow: string; title: string } {
   if (path === "/ones-missing") return { eyebrow: "ONES Missing", title: "ONES 缺失统计" }
   if (path === "/manhour") return { eyebrow: "Manhour", title: "工时录入" }
   if (path === "/issues") return { eyebrow: "Online Issues", title: "线上问题" }
-  if (path === "/business-knowledge") return { eyebrow: "Business Knowledge", title: "业务知识" }
+  if (path === "/knowledge" || path === "/business-knowledge") return { eyebrow: "Knowledge Base", title: "知识库" }
   if (path === "/experiences") return { eyebrow: "Experiences", title: "经验" }
   if (path === "/requirement") return { eyebrow: "Requirement", title: "需求详情" }
   if (path === "/requirement-doc") return { eyebrow: "Requirement Doc", title: "需求文档" }
@@ -257,7 +257,7 @@ export function App({ apiPath }: AppProps) {
     : path === "/ones-missing" ? <OnesMissingPage globalProject={project} />
     : path === "/manhour" ? <ManhourPage globalProject={project} />
     : path === "/issues" ? <IssuesPage globalProject={project} />
-    : path === "/business-knowledge" ? <KnowledgePage kind="businessKnowledge" />
+    : path === "/knowledge" || path === "/business-knowledge" ? <KnowledgeBasePage />
     : path === "/experiences" ? <KnowledgePage kind="experience" />
     : docsMode && path === "/sessions" ? workerPage("Sessions")
     : docsMode && path === "/session" ? workerPage("Session 详情")

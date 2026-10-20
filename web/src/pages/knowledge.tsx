@@ -1,7 +1,7 @@
 import { motion } from "framer-motion"
 import { Activity, AlertTriangle, CheckCircle2, Lightbulb, Library, RefreshCw, Search } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { ExperienceSummaryDispatchPayload, ExperienceSummaryJobsPayload, KnowledgeDraft, KnowledgeItem, KnowledgeKind, KnowledgeListPayload, KnowledgeSavePayload, Requirement } from "../types"
+import type { ExperienceSummaryDispatchPayload, ExperienceSummaryJobsPayload, KnowledgeDraft, KnowledgeIndexPayload, KnowledgeItem, KnowledgeKind, KnowledgeListPayload, KnowledgeSavePayload, Requirement } from "../types"
 import { fetchJson, postJson, useFetch } from "../lib/api"
 import { joinList, relAge, splitCsvText } from "../lib/format"
 import { EmptyCard, ErrorCard, KpiCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
@@ -50,33 +50,56 @@ function stalePill(stale?: boolean) {
 
 export function KnowledgePage({ kind }: { kind: KnowledgeKind }) {
   if (kind === "experience") return <ExperiencesPage />
-  return <KnowledgeEditorPage kind={kind} />
+  return <KnowledgeEditorPage kindFilter={kind} />
 }
 
-function KnowledgeEditorPage({ kind }: { kind: KnowledgeKind }) {
-  const isBiz = kind === "businessKnowledge"
-  const label = isBiz ? "业务知识" : "经验"
+export function KnowledgeBasePage() {
+  const [kindFilter, setKindFilter] = useState<"all" | KnowledgeKind>("all")
+  return <KnowledgeEditorPage kindFilter={kindFilter} onKindFilter={setKindFilter} />
+}
+
+function knowledgeKindLabel(kind: KnowledgeKind) {
+  return kind === "businessKnowledge" ? "业务知识" : "经验"
+}
+
+function KnowledgeEditorPage({ kindFilter, onKindFilter }: { kindFilter: KnowledgeKind | "all"; onKindFilter?: (next: "all" | KnowledgeKind) => void }) {
+  const unified = Boolean(onKindFilter)
+  const [editorKindOverride, setEditorKindOverride] = useState<KnowledgeKind | null>(null)
+  const editorKind: KnowledgeKind = editorKindOverride ?? (kindFilter === "experience" ? "experience" : "businessKnowledge")
+  const isBiz = editorKind === "businessKnowledge"
+  const label = unified ? "知识库" : knowledgeKindLabel(editorKind)
   const [query, setQuery] = useState("")
   const [domain, setDomain] = useState("")
+  const [category, setCategory] = useState("")
   const [tag, setTag] = useState("")
   const [status, setStatus] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<KnowledgeDraft>(() => emptyKnowledgeDraft(kind))
+  const [draft, setDraft] = useState<KnowledgeDraft>(() => emptyKnowledgeDraft(editorKind))
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const params = new URLSearchParams({ kind, limit: "100" })
+  const params = new URLSearchParams({ limit: "100" })
+  if (kindFilter !== "all") params.set("kind", kindFilter)
   if (query) params.set("q", query)
   if (domain) params.set("domain", domain)
+  if (category) params.set("category", category)
   if (tag) params.set("tag", tag)
   if (status) params.set("status", status)
-  const list = useFetch<KnowledgeListPayload>(`/api/knowledge?${params.toString()}`, [kind, query, domain, tag, status])
+  const list = useFetch<KnowledgeListPayload>(`/api/knowledge?${params.toString()}`, [kindFilter, query, domain, category, tag, status])
+  const index = useFetch<KnowledgeIndexPayload>("/api/knowledge/index", [])
   const items = list.data?.items || []
+  const kindCounts = index.data?.counts?.kinds || {}
   const domains = useMemo(() => Array.from(new Set(items.map((i) => i.domain).filter(Boolean) as string[])).sort(), [items])
   const allTags = useMemo(() => Array.from(new Set(items.flatMap((i) => i.tags || []).filter(Boolean))).sort(), [items])
   const selected = selectedId ? items.find((item) => item.id === selectedId) || null : null
-  useEffect(() => { setDraft(emptyKnowledgeDraft(kind)); setSelectedId(null); setMessage(null) }, [kind])
+  useEffect(() => {
+    setEditorKindOverride(null)
+    setSelectedId(null)
+    setMessage(null)
+    setDraft(emptyKnowledgeDraft(kindFilter === "experience" ? "experience" : "businessKnowledge"))
+  }, [kindFilter])
   const editItem = async (item: KnowledgeItem) => {
     setSelectedId(item.id)
+    setEditorKindOverride(item.kind === "experience" ? "experience" : "businessKnowledge")
     try {
       const full = await fetchJson<{ item: KnowledgeItem }>(`/api/knowledge/item?id=${encodeURIComponent(item.id)}`)
       setDraft({ ...full.item, details: full.item.details || "" })
@@ -84,7 +107,7 @@ function KnowledgeEditorPage({ kind }: { kind: KnowledgeKind }) {
       setDraft({ ...item, details: item.summary || "" })
     }
   }
-  const resetDraft = () => { setSelectedId(null); setDraft(emptyKnowledgeDraft(kind)); setMessage(null) }
+  const resetDraft = () => { setSelectedId(null); setEditorKindOverride(null); setDraft(emptyKnowledgeDraft(kindFilter === "experience" ? "experience" : "businessKnowledge")); setMessage(null) }
   const save = async () => {
     if (!draft.title?.trim() || saving) return
     setSaving(true)
@@ -92,7 +115,7 @@ function KnowledgeEditorPage({ kind }: { kind: KnowledgeKind }) {
     try {
       const payload = {
         id: selectedId || draft.id || undefined,
-        kind,
+        kind: editorKind,
         title: draft.title,
         domain: draft.domain || "general",
         project: draft.project || "",
@@ -117,18 +140,19 @@ function KnowledgeEditorPage({ kind }: { kind: KnowledgeKind }) {
       setDraft({ ...saved.item, details: saved.item.details || draft.details || "" })
       setMessage("已保存")
       list.refresh()
+      index.refresh()
     } catch (err) {
       setMessage(`保存失败：${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(false)
     }
   }
-  const apiHint = `POST /api/agent/knowledge/query\n{\n  "kind": "${kind}",\n  "intent": "${query || (isBiz ? "状态流转 / 接口字段" : "排障现象 / 错误信息")}",\n  "domain": "${domain || "wms"}",\n  "limit": 5,\n  "tokensBudget": 2200\n}`
-  return <PageChrome icon={isBiz ? <Library size={15} /> : <Lightbulb size={15} />} eyebrow={isBiz ? "Business Knowledge" : "Experiences"} title={label} description={isBiz ? "维护短保质期的业务事实、规则、接口和表关系；Agent 默认只查询摘要。" : "维护特化排障经验、踩坑记录和历史处理方式；成熟稳定后再提升为 skill。"} actions={<button onClick={list.refresh}><RefreshCw size={15} />刷新</button>}><section className="react-panel react-filter-panel"><div className="react-filter-grid"><label>关键词<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={isBiz ? "状态 / 接口 / 表 / 字段" : "现象 / 报错 / 模块 / 处理方式"} /></label><label>Domain<input list="knowledge-domains" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="wms / general" /><datalist id="knowledge-domains">{domains.map((d) => <option key={d} value={d} />)}</datalist></label><label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部</option><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>标识(Tag)<input list="knowledge-tags" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="如：线上问题修复" /><datalist id="knowledge-tags">{allTags.map((t) => <option key={t} value={t} />)}</datalist></label><label>接口提示<textarea readOnly rows={4} value={apiHint} /></label></div><div className="react-actions"><button onClick={resetDraft}>新建{label}</button><a href={isBiz ? "/experiences" : "/business-knowledge"}>{isBiz ? "切到经验" : "切到业务知识"}</a></div></section>{list.error ? <ErrorCard error={list.error} /> : <div className="react-knowledge-layout"><section className="react-card-list">{list.loading ? <LoadingCard /> : items.length === 0 ? <EmptyCard>暂无{label}记录。</EmptyCard> : items.map((item, index) => <KnowledgeCard key={item.id} item={item} selected={item.id === selectedId} index={index} onEdit={() => editItem(item)} />)}</section><KnowledgeEditor kind={kind} draft={draft} setDraft={setDraft} saving={saving} selected={selected} message={message} onSave={save} onReset={resetDraft} /></div>}</PageChrome>
+  const apiHint = `POST /api/agent/knowledge/query\n{\n  "kind": "${kindFilter === "all" ? editorKind : kindFilter}",\n  "intent": "${query || (isBiz ? "状态流转 / 接口字段" : "排障现象 / 错误信息")}",\n  "domain": "${domain || "wms"}",\n  "limit": 5,\n  "tokensBudget": 2200\n}\n\n# 知识库索引（全量轻量列表 + facets）\nGET /api/knowledge/index?kind=${kindFilter === "all" ? "" : kindFilter}&category=${category}&verbose=1`
+  return <PageChrome icon={isBiz ? <Library size={15} /> : <Lightbulb size={15} />} eyebrow={unified ? "Knowledge Base" : isBiz ? "Business Knowledge" : "Experiences"} title={label} description={unified ? "统一浏览知识、经验与踩坑记录；Agent 通过 GET /api/knowledge/index 获取索引，POST /api/agent/knowledge/query 语义检索。" : isBiz ? "维护短保质期的业务事实、规则、接口和表关系；Agent 默认只查询摘要。" : "维护特化排障经验、踩坑记录和历史处理方式；成熟稳定后再提升为 skill。"} actions={<button onClick={list.refresh}><RefreshCw size={15} />刷新</button>}><section className="react-panel react-filter-panel">{unified ? <div className="react-tab-row"><button className={kindFilter === "all" ? "active" : ""} onClick={() => onKindFilter?.("all")}>全部 {index.data?.total ?? ""}</button><button className={kindFilter === "businessKnowledge" ? "active" : ""} onClick={() => onKindFilter?.("businessKnowledge")}>知识 {kindCounts.businessKnowledge ?? ""}</button><button className={kindFilter === "experience" ? "active" : ""} onClick={() => onKindFilter?.("experience")}>经验 {kindCounts.experience ?? ""}</button></div> : null}<div className="react-filter-grid"><label>关键词<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={isBiz ? "状态 / 接口 / 表 / 字段" : "现象 / 报错 / 模块 / 处理方式"} /></label><label>Domain<input list="knowledge-domains" value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="wms / general" /><datalist id="knowledge-domains">{domains.map((d) => <option key={d} value={d} />)}</datalist></label><label>Category<input list="knowledge-index-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="biz / pitfall / ref…" /><datalist id="knowledge-index-categories">{Array.from(new Set(items.map((i) => i.category).filter(Boolean) as string[])).sort().map((c) => <option key={c} value={c} />)}</datalist></label><label>Status<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">全部</option><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>标识(Tag)<input list="knowledge-tags" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="如：线上问题修复" /><datalist id="knowledge-tags">{allTags.map((t) => <option key={t} value={t} />)}</datalist></label><label>接口提示<textarea readOnly rows={5} value={apiHint} /></label></div><div className="react-actions"><button onClick={resetDraft}>新建{knowledgeKindLabel(editorKind)}</button>{unified ? null : <a href={isBiz ? "/experiences" : "/business-knowledge"}>{isBiz ? "切到经验" : "切到业务知识"}</a>}</div></section>{list.error ? <ErrorCard error={list.error} /> : <div className="react-knowledge-layout"><section className="react-card-list">{list.loading ? <LoadingCard /> : items.length === 0 ? <EmptyCard>暂无{label}记录。</EmptyCard> : items.map((item, index) => <KnowledgeCard key={item.id} item={item} selected={item.id === selectedId} index={index} onEdit={() => editItem(item)} />)}</section><KnowledgeEditor kind={editorKind} draft={draft} setDraft={setDraft} saving={saving} selected={selected} message={message} onSave={save} onReset={resetDraft} /></div>}</PageChrome>
 }
 
 function KnowledgeCard({ item, selected, index, onEdit }: { item: KnowledgeItem; selected: boolean; index: number; onEdit: () => void }) {
-  return <motion.article className={`react-list-card react-knowledge-card ${selected ? "active" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{item.id}</span><h3>{item.title}</h3><p>{item.summary || "暂无摘要"}</p><div className="react-card-meta"><span>{item.domain || "general"}</span>{item.project ? <span>{item.project}</span> : null}<span>{item.scope || "project"}</span>{item.category ? <span>{item.category}</span> : null}<span>更新 {item.updatedAt || "-"}</span>{item.observedAt ? <span>观察 {item.observedAt.slice(0, 10)}{item.infoAgeDays != null ? `（${item.infoAgeDays} 天前）` : ""}</span> : null}{item.whyMatched?.length ? <span>match: {item.whyMatched.join(" / ")}</span> : null}</div><div className="react-chip-list">{(item.tags || []).slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</div></div><div className="react-card-side">{knowledgeStatusPill(item.status)}{confidencePill(item.confidence)}{stalePill(item.stale)}<button type="button" className="react-copy-link-btn" onClick={onEdit}>编辑</button></div></motion.article>
+  return <motion.article className={`react-list-card react-knowledge-card ${selected ? "active" : ""}`} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(index, 16) * 0.025 }} whileHover={{ y: -3 }}><div><span className="react-card-id">{item.id}</span><h3>{item.title}</h3><p>{item.summary || "暂无摘要"}</p><div className="react-card-meta"><span>{item.kind === "experience" ? "经验" : "知识"}</span><span>{item.domain || "general"}</span>{item.project ? <span>{item.project}</span> : null}<span>{item.scope || "project"}</span>{item.category ? <span>{item.category}</span> : null}<span>更新 {item.updatedAt || "-"}</span>{item.observedAt ? <span>观察 {item.observedAt.slice(0, 10)}{item.infoAgeDays != null ? `（${item.infoAgeDays} 天前）` : ""}</span> : null}{item.whyMatched?.length ? <span>match: {item.whyMatched.join(" / ")}</span> : null}</div><div className="react-chip-list">{(item.tags || []).slice(0, 6).map((tag) => <span key={tag}>{tag}</span>)}</div></div><div className="react-card-side">{knowledgeStatusPill(item.status)}{confidencePill(item.confidence)}{stalePill(item.stale)}<button type="button" className="react-copy-link-btn" onClick={onEdit}>编辑</button></div></motion.article>
 }
 
 export function ExperiencesPage() {
@@ -141,7 +165,7 @@ export function ExperiencesPage() {
     if (next === "knowledge") q.set("tab", "knowledge"); else q.delete("tab")
     window.history.replaceState(null, "", `/experiences${q.toString() ? `?${q}` : ""}`)
   }
-  return <PageChrome icon={<Lightbulb size={15} />} eyebrow="Experiences" title="经验" description="集中查看需求经验自动总结进度，也可维护长期经验库条目。"><div className="react-tab-row"><button className={tab === "summary" ? "active" : ""} onClick={() => switchTab("summary")}>需求总结</button><button className={tab === "knowledge" ? "active" : ""} onClick={() => switchTab("knowledge")}>经验库</button></div>{tab === "summary" ? <ExperienceSummaryJobsPage /> : <KnowledgeEditorPage kind="experience" />}</PageChrome>
+  return <PageChrome icon={<Lightbulb size={15} />} eyebrow="Experiences" title="经验" description="集中查看需求经验自动总结进度，也可维护长期经验库条目。"><div className="react-tab-row"><button className={tab === "summary" ? "active" : ""} onClick={() => switchTab("summary")}>需求总结</button><button className={tab === "knowledge" ? "active" : ""} onClick={() => switchTab("knowledge")}>经验库</button></div>{tab === "summary" ? <ExperienceSummaryJobsPage /> : <KnowledgeEditorPage kindFilter="experience" />}</PageChrome>
 }
 
 function ExperienceSummaryJobsPage() {
@@ -220,5 +244,5 @@ function ExperienceSummaryJobCard({ req, stage, index, onChanged }: { req: Requi
 function KnowledgeEditor({ kind, draft, setDraft, saving, selected, message, onSave, onReset }: { kind: KnowledgeKind; draft: KnowledgeDraft; setDraft: (draft: KnowledgeDraft) => void; saving: boolean; selected: KnowledgeItem | null; message: string | null; onSave: () => void; onReset: () => void }) {
   const isBiz = kind === "businessKnowledge"
   const set = (patch: KnowledgeDraft) => setDraft({ ...draft, ...patch })
-  return <section className="react-panel react-knowledge-editor"><PanelHead kicker={selected ? "Edit" : "Create"} title={selected ? selected.title : `新建${isBiz ? "业务知识" : "经验"}`} chip={draft.id || "new"} /><div className="react-knowledge-form"><label>标题<input value={draft.title || ""} onChange={(e) => set({ title: e.target.value })} placeholder={isBiz ? "例如：WMS 出库单状态流转" : "例如：波次取消后库存占用未释放排查"} /></label><label>Domain<input value={draft.domain || ""} onChange={(e) => set({ domain: e.target.value })} placeholder="wms" /></label><label>Project<input value={draft.project || ""} onChange={(e) => set({ project: e.target.value })} placeholder="可选" /></label><label>Scope<select value={draft.scope || "project"} onChange={(e) => set({ scope: e.target.value })}><option value="project">project</option><option value="global">global</option></select></label><label>Category<input list="knowledge-categories" value={draft.category || ""} onChange={(e) => set({ category: e.target.value })} placeholder="api / biz / link / profile / ref / conventions / pitfall" /><datalist id="knowledge-categories"><option value="api" /><option value="biz" /><option value="link" /><option value="profile" /><option value="ref" /><option value="conventions" /><option value="pitfall" /></datalist></label><label>Status<select value={draft.status || "active"} onChange={(e) => set({ status: e.target.value })}><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>Confidence<select value={draft.confidence || "medium"} onChange={(e) => set({ confidence: e.target.value })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label><label>Observed At（信息观察时间）<input type="date" value={(draft.observedAt || "").slice(0, 10)} onChange={(e) => set({ observedAt: e.target.value })} /></label><label>Source Grade（调研来源等级）<select value={draft.sourceGrade || ""} onChange={(e) => set({ sourceGrade: e.target.value })}><option value="">无（系统/代码事实）</option><option value="A">A 现场直接观察</option><option value="B">B 一线员工访谈</option><option value="C">C 管理/转述</option><option value="D">D 推测/二手</option></select></label><label>Tags<input value={joinList(draft.tags)} onChange={(e) => set({ tags: splitCsvText(e.target.value) })} placeholder="逗号分隔" /></label><label>Trigger Terms<input value={joinList(draft.triggerTerms)} onChange={(e) => set({ triggerTerms: splitCsvText(e.target.value) })} placeholder="Agent 查询关键词" /></label><label>Related Skills<input value={joinList(draft.relatedSkills)} onChange={(e) => set({ relatedSkills: splitCsvText(e.target.value) })} placeholder="skill-name" /></label><label>Related Repos<input value={joinList(draft.relatedRepos)} onChange={(e) => set({ relatedRepos: splitCsvText(e.target.value) })} placeholder="yl-cwhsea-wms-web" /></label><label>Related Tables<input value={joinList(draft.relatedTables)} onChange={(e) => set({ relatedTables: splitCsvText(e.target.value) })} placeholder="shipment_header" /></label><label>Related APIs<input value={joinList(draft.relatedApis)} onChange={(e) => set({ relatedApis: splitCsvText(e.target.value) })} placeholder="POST /wms-web/... 或 api-* id" /></label><label>Source<input value={draft.source || ""} onChange={(e) => set({ source: e.target.value })} placeholder="manual / code / test / session" /></label><label className="react-knowledge-wide">摘要<textarea rows={3} value={draft.summary || ""} onChange={(e) => set({ summary: e.target.value })} placeholder="给 Agent 默认返回的一句话或短段摘要" /></label><label className="react-knowledge-wide">详情<textarea rows={14} value={draft.details || ""} onChange={(e) => set({ details: e.target.value })} placeholder="Markdown 正文" /></label></div><div className="react-actions"><button onClick={onSave} disabled={saving || !draft.title?.trim()}>{saving ? "保存中…" : "保存"}</button><button type="button" onClick={onReset}>重置</button></div>{message ? <p className={message.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{message}</p> : null}<p className="react-muted">保存后写入 <code>{isBiz ? ".agents/business-knowledge/" : ".agents/experiences/"}</code> 或全局 <code>~/.agents/</code> 对应目录，自动维护 created_at / updated_at。</p></section>
+  return <section className="react-panel react-knowledge-editor"><PanelHead kicker={selected ? "Edit" : "Create"} title={selected ? selected.title : `新建${knowledgeKindLabel(kind)}`} chip={draft.id || "new"} /><div className="react-knowledge-form"><label>标题<input value={draft.title || ""} onChange={(e) => set({ title: e.target.value })} placeholder={isBiz ? "例如：WMS 出库单状态流转" : "例如：波次取消后库存占用未释放排查"} /></label><label>Domain<input value={draft.domain || ""} onChange={(e) => set({ domain: e.target.value })} placeholder="wms" /></label><label>Project<input value={draft.project || ""} onChange={(e) => set({ project: e.target.value })} placeholder="可选" /></label><label>Scope<select value={draft.scope || "project"} onChange={(e) => set({ scope: e.target.value })}><option value="project">project</option><option value="global">global</option></select></label><label>Category<input list="knowledge-categories" value={draft.category || ""} onChange={(e) => set({ category: e.target.value })} placeholder="api / biz / link / profile / ref / conventions / pitfall" /><datalist id="knowledge-categories"><option value="api" /><option value="biz" /><option value="link" /><option value="profile" /><option value="ref" /><option value="conventions" /><option value="pitfall" /></datalist></label><label>Status<select value={draft.status || "active"} onChange={(e) => set({ status: e.target.value })}><option value="active">active</option><option value="stale">stale</option><option value="deprecated">deprecated</option><option value="draft">draft</option></select></label><label>Confidence<select value={draft.confidence || "medium"} onChange={(e) => set({ confidence: e.target.value })}><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label><label>Observed At（信息观察时间）<input type="date" value={(draft.observedAt || "").slice(0, 10)} onChange={(e) => set({ observedAt: e.target.value })} /></label><label>Source Grade（调研来源等级）<select value={draft.sourceGrade || ""} onChange={(e) => set({ sourceGrade: e.target.value })}><option value="">无（系统/代码事实）</option><option value="A">A 现场直接观察</option><option value="B">B 一线员工访谈</option><option value="C">C 管理/转述</option><option value="D">D 推测/二手</option></select></label><label>Tags<input value={joinList(draft.tags)} onChange={(e) => set({ tags: splitCsvText(e.target.value) })} placeholder="逗号分隔" /></label><label>Trigger Terms<input value={joinList(draft.triggerTerms)} onChange={(e) => set({ triggerTerms: splitCsvText(e.target.value) })} placeholder="Agent 查询关键词" /></label><label>Related Skills<input value={joinList(draft.relatedSkills)} onChange={(e) => set({ relatedSkills: splitCsvText(e.target.value) })} placeholder="skill-name" /></label><label>Related Repos<input value={joinList(draft.relatedRepos)} onChange={(e) => set({ relatedRepos: splitCsvText(e.target.value) })} placeholder="yl-cwhsea-wms-web" /></label><label>Related Tables<input value={joinList(draft.relatedTables)} onChange={(e) => set({ relatedTables: splitCsvText(e.target.value) })} placeholder="shipment_header" /></label><label>Related APIs<input value={joinList(draft.relatedApis)} onChange={(e) => set({ relatedApis: splitCsvText(e.target.value) })} placeholder="POST /wms-web/... 或 api-* id" /></label><label>Source<input value={draft.source || ""} onChange={(e) => set({ source: e.target.value })} placeholder="manual / code / test / session" /></label><label className="react-knowledge-wide">摘要<textarea rows={3} value={draft.summary || ""} onChange={(e) => set({ summary: e.target.value })} placeholder="给 Agent 默认返回的一句话或短段摘要" /></label><label className="react-knowledge-wide">详情<textarea rows={14} value={draft.details || ""} onChange={(e) => set({ details: e.target.value })} placeholder="Markdown 正文" /></label></div><div className="react-actions"><button onClick={onSave} disabled={saving || !draft.title?.trim()}>{saving ? "保存中…" : "保存"}</button><button type="button" onClick={onReset}>重置</button></div>{message ? <p className={message.startsWith("保存失败") ? "react-effort-error" : "react-save-hint"}>{message}</p> : null}<p className="react-muted">保存后写入 <code>{isBiz ? ".agents/business-knowledge/" : ".agents/experiences/"}</code> 或全局 <code>~/.agents/</code> 对应目录，自动维护 created_at / updated_at。</p></section>
 }
