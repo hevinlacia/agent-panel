@@ -32,9 +32,11 @@ async fn dispatch_status_gate(gate: &str, req: &Requirement) -> ApiResult<()> {
     match gate {
         "review" => ensure_review_gate_allows_testing(req).await,
         "selftest-checklist" => ensure_selftest_checklist_allows_testing(req).await,
+        "uat-regression" => ensure_uat_regression_allows_release(req).await,
         "test-scenario" => ensure_test_scenario_allows_testing(req).await,
         "issue-root-cause" => ensure_issue_root_cause_allows_transition(req).await,
         "issue-troubleshooting" => ensure_issue_troubleshooting_allows_transition(req).await,
+        "effort-estimate" => ensure_effort_estimate_allows_dev(req),
         other => {
             // 配置归一化已拦未知 id；这里兜底放行并记日志，避免脏配置卡死状态流转。
             tracing::warn!(gate = %other, "unknown status gate id, skipping");
@@ -90,6 +92,22 @@ pub(crate) async fn evaluate_status_gate(gate: &str, req: &Requirement) -> Statu
                 }
             }
         }
+        "uat-regression" => {
+            let eval = uat_regression_eval(req).await;
+            if eval.problems.is_empty() {
+                StatusGateEval {
+                    passed: true,
+                    reason: "当前满足通过条件".into(),
+                    warnings: eval.warnings,
+                }
+            } else {
+                StatusGateEval {
+                    passed: false,
+                    reason: eval.problems.join("；"),
+                    warnings: Vec::new(),
+                }
+            }
+        }
         "test-scenario" => {
             let outcome = ensure_test_scenario_allows_testing(req).await;
             gate_eval_from_outcome(outcome)
@@ -102,6 +120,7 @@ pub(crate) async fn evaluate_status_gate(gate: &str, req: &Requirement) -> Statu
             let outcome = ensure_issue_troubleshooting_allows_transition(req).await;
             gate_eval_from_outcome(outcome)
         }
+        "effort-estimate" => gate_eval_from_outcome(ensure_effort_estimate_allows_dev(req)),
         _ => StatusGateEval {
             passed: true,
             reason: "当前满足通过条件".into(),
@@ -154,11 +173,38 @@ pub(crate) async fn ensure_test_scenario_allows_testing(req: &Requirement) -> Ap
     ))
 }
 
+/// 工时预估门禁：需求澄清/创建 → 开发中 流转前必须有真实工时预估（供需求排期页消费）。
+/// 有效预估 = effort-estimate.json 存在且 model 非 placeholder 且 estimatedHours > 0；
+/// 绑线上问题的抢修需求（is_hotfix）速度优先自动豁免。
+pub(crate) fn ensure_effort_estimate_allows_dev(req: &Requirement) -> ApiResult<()> {
+    if req.is_hotfix() {
+        return Ok(());
+    }
+    match req.effort_estimate.as_ref() {
+        Some(est) => {
+            let model = est.get("model").and_then(Value::as_str).unwrap_or("");
+            let hours = est
+                .get("estimatedHours")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            if model != "manual-placeholder" && hours > 0.0 {
+                Ok(())
+            } else {
+                Err(ApiError::bad_request(EFFORT_ESTIMATE_HINT))
+            }
+        }
+        None => Err(ApiError::bad_request(EFFORT_ESTIMATE_HINT)),
+    }
+}
+
+const EFFORT_ESTIMATE_HINT: &str = "进入开发前必须先完成工时预估（需求排期依赖）：按 4h 单位的真实工时口径评估需求工作量（1u=4h，常规需求 1-8u，不要求精确，大致即可），调用 POST /api/requirement/effort-estimate 传 {\"reqId\":\"...\",\"estimatedHours\":<单位数*4>,\"summary\":\"一句话评估依据\",\"model\":\"agent-auto\"} 后重新推进状态；绑定了线上问题的抢修需求自动豁免";
+
 /// 线上问题定位门禁：流转到「已定位」前必须填完根因与修复决策
 /// （root-cause.md：根因 + 可复核证据链 + 修复路径决策），
 /// 存量兼容：历史问题已写 technical-plan.md 且内容成型时同样放行。仅对 category=线上问题 生效。
 pub(crate) async fn ensure_issue_root_cause_allows_transition(req: &Requirement) -> ApiResult<()> {
-    if req.category.as_deref() != Some("线上问题") {
+    // 线上问题/性能问题强制；测试问题轻门禁（建议按需维护）。
+    if !matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         return Ok(());
     }
     let dir = req_dir_path(req)?;
@@ -180,13 +226,14 @@ pub(crate) async fn ensure_issue_root_cause_allows_transition(req: &Requirement)
     ))
 }
 
-/// 线上问题复盘点禁：流转到「已复盘」前必须已沉淀排查经验
+/// 线上问题经验沉淀门禁：流转到「经验总结」前必须已沉淀排查经验
 /// （troubleshooting.md 含怎么排查/怎么修复），无沉淀价值的问题应直接「已关闭」而不是复盘。
 /// 仅对 category=线上问题 生效。
 pub(crate) async fn ensure_issue_troubleshooting_allows_transition(
     req: &Requirement,
 ) -> ApiResult<()> {
-    if req.category.as_deref() != Some("线上问题") {
+    // 线上问题/性能问题强制；测试问题轻门禁（建议按需沉淀）。
+    if !matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
         return Ok(());
     }
     let dir = req_dir_path(req)?;
@@ -198,6 +245,6 @@ pub(crate) async fn ensure_issue_troubleshooting_allows_transition(
         return Ok(());
     }
     Err(ApiError::bad_request(
-        "进入「已复盘」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
+        "进入「经验总结」前必须先沉淀排查经验：请填写 troubleshooting.md（含 怎么排查 + 怎么修复，至少一条非「待补充」记录）；无沉淀价值请改用「已关闭」",
     ))
 }

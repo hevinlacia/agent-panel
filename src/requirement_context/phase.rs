@@ -32,9 +32,20 @@ pub(crate) async fn build_phase_runtime_context(
         .flatten()
         .unwrap_or_else(|| json!({ "version": 1, "status": req.status, "history": [] }));
     let rework_rounds = rework_round_count(&state_json);
-    let rework_mode = req.status == "开发中" && rework_rounds > 0;
+    let release_ready_rounds = release_ready_round_count(&state_json);
+    // 循环语境：最近一次进入开发中来自打回（返工）还是发布就绪（上线前快速修复）。
+    let loop_kind = dev_loop_kind_from_state(&state_json);
+    let rework_mode = req.status == "开发中" && loop_kind == DevLoopKind::Rework;
+    let fast_fix_mode = req.status == "开发中" && loop_kind == DevLoopKind::ReleaseReady;
     let fixed_phase_prompt = load_fixed_phase_prompt(state).await;
-    let state_phase_prompt = load_phase_prompt(state, &req.status, rework_rounds).await;
+    let state_phase_prompt = load_phase_prompt(
+        state,
+        &req.status,
+        loop_kind,
+        rework_rounds,
+        release_ready_rounds,
+    )
+    .await;
     let current_phase_prompt = [fixed_phase_prompt.trim(), state_phase_prompt.trim()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -79,7 +90,11 @@ pub(crate) async fn build_phase_runtime_context(
             }))
         })
         .collect();
-    let entry_checks = phase_entry_checks(&req.status, dir);
+    let entry_checks = phase_entry_checks(
+        &req.status,
+        dir,
+        is_issue_category(req.category.as_deref().unwrap_or("")),
+    );
     let entry_checks = if req.source == "开发推动" && req.status == "测试中" {
         let mut checks = entry_checks;
         checks.push(file_check(
@@ -113,11 +128,14 @@ pub(crate) async fn build_phase_runtime_context(
         "recommendedIntent": default_intent_for_status(&req.status),
         "reworkRounds": rework_rounds,
         "reworkMode": rework_mode,
+        "releaseReadyRounds": release_ready_rounds,
+        "fastFixMode": fast_fix_mode,
+        "loopKind": loop_kind.as_str(),
         "fixedPhasePromptFile": PHASE_COMMON_PROMPT_FILE,
         "fixedPhasePrompt": fixed_phase_prompt.trim(),
-        "statePhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
+        "statePhasePromptFile": phase_prompt_file_for(&req.status, loop_kind),
         "statePhasePrompt": state_phase_prompt.trim(),
-        "currentPhasePromptFile": phase_prompt_file_for(&req.status, rework_rounds),
+        "currentPhasePromptFile": phase_prompt_file_for(&req.status, loop_kind),
         "currentPhasePrompt": current_phase_prompt.trim(),
         "entryChecks": entry_checks,
         "phaseGaps": phase_gaps,
@@ -143,13 +161,13 @@ pub(crate) fn default_intent_for_status(status: &str) -> &'static str {
         "排查中" => "progress",
         "已定位" => "overview",
         "已修复" => "experience-summary",
-        "已复盘" | "已关闭" => "overview",
+        "已关闭" => "overview",
         "已完成" => "overview",
         _ => "overview",
     }
 }
 
-pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
+pub(crate) fn phase_entry_checks(status: &str, dir: &Path, is_issue: bool) -> Vec<Value> {
     match status {
         "需求澄清" => vec![
             file_check(dir, "background.md", "业务背景、范围和验收口径", true),
@@ -233,6 +251,37 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
             ),
             file_check(dir, BRANCH_SCOPE_FILE, "UAT 环境与合并目标可计算", false),
         ],
+        "发布就绪" => vec![
+            any_file_check(
+                dir,
+                &["review.md", "code-review-ai.md", CODE_REVIEW_FILE],
+                "代码审查门禁已通过或豁免",
+                true,
+            ),
+            file_check(
+                dir,
+                "release-check.md",
+                "发布预检结论（发布就绪小循环回归后需补充本轮改动核对）",
+                false,
+            ),
+            file_check(dir, BRANCH_SCOPE_FILE, "分支与合并目标可计算", false),
+        ],
+        // 问题家族的经验总结（原「已复盘」）：排查经验必须已沉淀，可自动派发总结任务复核补漏。
+        "经验总结" if is_issue => vec![
+            file_check(
+                dir,
+                "troubleshooting.md",
+                "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
+                true,
+            ),
+            any_file_check(
+                dir,
+                &["root-cause.md", "technical-plan.md"],
+                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
+                true,
+            ),
+            file_check(dir, "notes.md", "关键结论和坑点可追溯", false),
+        ],
         "经验总结" => vec![
             file_check(
                 dir,
@@ -259,6 +308,12 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 "根因、可复核证据链和修复路径决策（存量问题可用 technical-plan.md 兼容）",
                 true,
             ),
+            file_check(
+                dir,
+                "reproduce.md",
+                "复现文档：复现步骤 + 预期判定；必要时附带开关控制的复现代码（默认关闭，打开才复现）",
+                true,
+            ),
         ],
         "已修复" => vec![
             file_check(dir, "notes.md", "排查与修复过程可追溯", true),
@@ -275,21 +330,12 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path) -> Vec<Value> {
                 false,
             ),
         ],
-        "已复盘" => vec![
-            file_check(
-                dir,
-                "troubleshooting.md",
-                "排查经验已沉淀：怎么排查 + 怎么修复 + 复用清单",
-                true,
-            ),
-            any_file_check(
-                dir,
-                &["root-cause.md", "technical-plan.md"],
-                "根因与修复决策（存量问题可用 technical-plan.md 兼容）",
-                true,
-            ),
-            file_check(dir, "notes.md", "排查过程与经验库落地记录", true),
-        ],
+        "已关闭" => vec![file_check(
+            dir,
+            "notes.md",
+            "排查过程与经验库落地记录",
+            true,
+        )],
         "已关闭" => vec![
             file_check(
                 dir,
@@ -381,13 +427,14 @@ pub(crate) fn any_file_check(dir: &Path, files: &[&str], label: &str, required: 
     })
 }
 
-pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&'static str> {
-    if is_online_issue {
-        // 线上问题专用文档集：不注入需求开发文档（technical-plan/config-changes 等）；
+pub(crate) fn agent_context_tokens(intent: &str, is_issue_family: bool) -> Vec<&'static str> {
+    if is_issue_family {
+        // issue 家族（线上问题/测试问题/性能问题）专用文档集：不注入需求开发文档（technical-plan/config-changes 等）；
         // 复现/验证代码允许登记分支，注入 req.branchScope 供 diff/merge 使用。
         return match intent {
             "progress" | "status" => vec![
                 "req.rootCause",
+                "req.reproduce",
                 "req.branchScope",
                 "req.memory",
                 "req.notes",
@@ -395,6 +442,7 @@ pub(crate) fn agent_context_tokens(intent: &str, is_online_issue: bool) -> Vec<&
             _ => vec![
                 "req.incident",
                 "req.rootCause",
+                "req.reproduce",
                 "req.branchScope",
                 "req.memory",
                 "req.notes",

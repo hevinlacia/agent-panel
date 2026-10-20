@@ -1,4 +1,7 @@
-use axum::{extract::{Query, State}, Json};
+use axum::{
+    extract::{Query, State},
+    Json,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -216,7 +219,10 @@ async fn collect_release_repo_scope(
 /// 从子需求已登记分支推导发布分支名前缀：
 /// `hevin.yang/feature/WMS-143-x` → `hevin.yang/feature` →（feature→release）`hevin.yang/release`；
 /// 无 `/` 或无法识别时回退 `release`。`branch_prefix` 显式传参时优先。
-pub(crate) fn derive_release_branch_prefix(registered_branches: &[String], explicit: Option<&str>) -> String {
+pub(crate) fn derive_release_branch_prefix(
+    registered_branches: &[String],
+    explicit: Option<&str>,
+) -> String {
     if let Some(prefix) = explicit.map(str::trim).filter(|v| !v.is_empty()) {
         // 分支名不允许空白字符：去除内部空格后再去首尾斜杠。
         let cleaned: String = prefix.chars().filter(|c| !c.is_whitespace()).collect();
@@ -328,7 +334,10 @@ async fn append_note_quiet(state: &AppState, req_id: &str, title: &str, text: &s
 
 fn repo_project_path(repo: &BranchRepo) -> ApiResult<PathBuf> {
     resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name).ok_or_else(|| {
-        ApiError::bad_request(format!("仓库 {} 缺少 path，无法定位项目目录", repo.repo_name))
+        ApiError::bad_request(format!(
+            "仓库 {} 缺少 path，无法定位项目目录",
+            repo.repo_name
+        ))
     })
 }
 
@@ -375,7 +384,12 @@ pub(crate) async fn api_release_branch_create(
             .collect();
         derive_release_branch_prefix(&registered, body.branch_prefix.as_deref())
     };
-    let label_seg = match body.label.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    let label_seg = match body
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         Some(label) => {
             let safe = ensure_safe_segment(label, "label")?;
             format!("-{safe}")
@@ -391,8 +405,7 @@ pub(crate) async fn api_release_branch_create(
         .unwrap_or(0)
         + 1;
     let template = |n: u64| format!("{prefix}/{}{label_seg}-r{n}", parent.id);
-    let (seq, branch_name) =
-        allocate_release_branch(&pairs, template, next_seq).await;
+    let (seq, branch_name) = allocate_release_branch(&pairs, template, next_seq).await;
     let mut repo_results = Vec::new();
     let mut entry_repos = Vec::new();
     for (repo, _path) in &pairs {
@@ -413,8 +426,7 @@ pub(crate) async fn api_release_branch_create(
         }
         repo_results.push(result);
     }
-    let all_ok = !entry_repos.is_empty()
-        && entry_repos.len() == pairs.len();
+    let all_ok = !entry_repos.is_empty() && entry_repos.len() == pairs.len();
     if all_ok {
         let repo_names: Vec<String> = entry_repos.iter().map(|r| r.repo_name.clone()).collect();
         let entry = ReleaseBranchEntry {
@@ -641,7 +653,8 @@ pub(crate) async fn api_release_branch_merge_sub(
                 r.get("status").and_then(Value::as_str),
                 Some("merged") | Some("upToDate")
             ) || (r.get("status").and_then(Value::as_str) == Some("skipped")
-                && r.get("message").and_then(Value::as_str)
+                && r.get("message")
+                    .and_then(Value::as_str)
                     .map(|m| m.contains("纯配置子需求"))
                     .unwrap_or(false))
         });
@@ -652,11 +665,7 @@ pub(crate) async fn api_release_branch_merge_sub(
         // 更新 mergedSubs：同子需求重复合入（拉取后续 commit）时刷新 mergedAt/repos。
         let merged_at = now_ms();
         let repos = merged_repo_names.clone();
-        if let Some(existing) = entry
-            .merged_subs
-            .iter_mut()
-            .find(|m| m.req_id == sub.id)
-        {
+        if let Some(existing) = entry.merged_subs.iter_mut().find(|m| m.req_id == sub.id) {
             existing.merged_at = merged_at;
             if !repos.is_empty() {
                 existing.repos = repos.clone();
@@ -845,7 +854,7 @@ pub(crate) async fn api_release_branch_prod_mr(
         .unwrap_or(false)
     {
         return Err(ApiError::bad_request(
-            "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR",
+            "线上问题/测试问题/性能问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR",
         ));
     }
     let dir = req_dir_path(&parent)?;
@@ -873,14 +882,13 @@ pub(crate) async fn api_release_branch_prod_mr(
         fallback: false,
         round: 1,
     };
-    let results = generate_prod_mrs(&parent, &scope).await?;
+    // 三步式 GitLab 认证链需要 browser_auth 配置（Chrome 登录态读取等）。
+    let cfg = read_config(&state).await?;
+    let auth_cfg = normalize_browser_auth_config(cfg.browser_auth);
+    let (results, auth_source) = generate_prod_mrs(&parent, &scope, &auth_cfg).await?;
     let mr_urls: Vec<String> = results
         .iter()
-        .filter_map(|r| {
-            r.get("webUrl")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
+        .filter_map(|r| r.get("webUrl").and_then(Value::as_str).map(str::to_string))
         .collect();
     if !mr_urls.is_empty() {
         append_note_quiet(
@@ -905,6 +913,7 @@ pub(crate) async fn api_release_branch_prod_mr(
         "branch": entry.name,
         "branchId": entry.id,
         "generatedAt": now_ms(),
+        "authSource": auth_source,
         "results": results,
     })))
 }

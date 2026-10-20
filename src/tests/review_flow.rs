@@ -545,3 +545,92 @@ async fn prepare_review_materials_rejects_unknown_mode() {
     // auto 显式传值等价缺省，不报错（空 scope 也不应该在 mode 校验层失败）
     let _ = prepare_review_materials(&req_dir, "T-902", &scope, Some("auto"), "自测中").await;
 }
+
+#[test]
+fn classify_round_heading_and_conclusion_tokens() {
+    // 返工轮次标题
+    assert_eq!(
+        classify_round_heading("返工轮次 2 增量审查"),
+        ("rework", Some(2))
+    );
+    // 发布就绪小循环标题（两种写法都识别）
+    assert_eq!(
+        classify_round_heading("发布就绪轮次 1 增量审查"),
+        ("release-ready", Some(1))
+    );
+    assert_eq!(
+        classify_round_heading("发布就绪小循环 3"),
+        ("release-ready", Some(3))
+    );
+    // 一般小节 / 主流程（无标题由调用方处理）
+    assert_eq!(classify_round_heading("审查概览"), ("other", None));
+    assert_eq!(classify_round_heading("自测清单交叉评估"), ("other", None));
+
+    // 结论行 token 提取
+    assert_eq!(
+        review_gate_conclusion_token("Review Gate: PASS"),
+        Some("PASS")
+    );
+    assert_eq!(
+        review_gate_conclusion_token("review gate: BLOCKED（P0 非空）"),
+        Some("BLOCKED")
+    );
+    assert_eq!(
+        review_gate_conclusion_token("Review Gate: WAIVED（用户豁免：改动极小）"),
+        Some("WAIVED")
+    );
+    assert_eq!(review_gate_conclusion_token("- 修复了幂等缺陷"), None);
+    assert_eq!(review_gate_conclusion_token("结论：尚无明确结论"), None);
+}
+
+#[tokio::test]
+async fn resolve_base_ref_prefers_remote_ref_and_falls_back_to_local_branch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "master"]);
+    git(&["config", "user.email", "test@example.com"]);
+    git(&["config", "user.name", "test"]);
+    git(&["commit", "--allow-empty", "-q", "-m", "init"]);
+
+    let base_info = parse_base_ref("origin/master");
+
+    // 无远端跟踪引用：回退本地 master，并给出回退警告。
+    let (used, warning) = resolve_base_ref(dir, &base_info).await;
+    assert_eq!(used, "master");
+    let warning = warning.expect("fallback warning");
+    assert!(warning.contains("回退"), "unexpected warning: {warning}");
+
+    // 补上远端跟踪引用后：优先 origin/master，无警告。
+    git(&["update-ref", "refs/remotes/origin/master", "HEAD"]);
+    let (used, warning) = resolve_base_ref(dir, &base_info).await;
+    assert_eq!(used, "origin/master");
+    assert!(warning.is_none());
+
+    // 空仓库（连本地分支都不存在）：保留原 ref 并给出无法验证警告，不 panic。
+    let empty = tempfile::tempdir().expect("tempdir");
+    let out = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(empty.path())
+        .output()
+        .expect("run git init");
+    assert!(out.status.success());
+    let (used, warning) = resolve_base_ref(empty.path(), &parse_base_ref("origin/master")).await;
+    assert_eq!(used, "origin/master");
+    let warning = warning.expect("unverifiable warning");
+    assert!(
+        warning.contains("无法验证"),
+        "unexpected warning: {warning}"
+    );
+}

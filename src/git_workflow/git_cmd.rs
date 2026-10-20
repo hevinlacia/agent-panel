@@ -61,11 +61,19 @@ pub(crate) async fn git(
     }
 }
 
+/// 超限时优先截断到最后一个完整换行，保证 diff/numstat/log 等按行消费的输出
+/// 不会出现半行（半个 hunk、半个转义路径）被截断的情况；单个超长无换行字符串才硬截。
 pub(crate) fn limit_output(value: String, max: usize) -> (String, bool) {
     if value.len() <= max {
         return (value, false);
     }
-    (value.chars().take(max).collect::<String>(), true)
+    let prefix: String = value.chars().take(max).collect();
+    match prefix.rfind('\n') {
+        // 保留到最后一个完整换行（含），丢弃尾部半行；首个字符就是换行时至少保留该行。
+        Some(0) => (prefix[..1].to_string(), true),
+        Some(idx) => (prefix[..=idx].to_string(), true),
+        None => (prefix, true),
+    }
 }
 
 pub(crate) fn compact(value: &str, max: usize) -> Option<String> {

@@ -1,12 +1,14 @@
-import { ArrowLeft, FileCode2, GitBranch, MessageSquareText, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
+import { ArrowLeft, Copy, FileCode2, GitBranch, MessageSquareText, Plus, Redo2, RefreshCw, Search, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import type { AnnotationsPayload, BranchRoundsPayload, CodeAnnotations, CodeDiffSnapshot, CodeFileAnnotation, DiffSnapshotsPayload, MasterDiffPayload } from "../types"
 import { fetchJson, postForm, postJson, putJson, useFetch } from "../lib/api"
-import { compactPath, diffDomId, diffLineDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
+import { compactPath, diffDomId, parseUnifiedDiffFiles, reviewStats, shortFileName } from "../lib/diff"
 import { formatDateTime } from "../lib/format"
 import { annotationStaleRepos, buildAnnotationIndex, hunkOwners, matchHunkNotes, normalizeCodeAnnotations } from "../lib/annotations"
 import { readDiffInspectorCollapsed, persistDiffInspectorCollapsed } from "../lib/preferences"
 import { AnnotationPanel } from "../features/requirements/annotation-panel"
+import { DiffFileCard, type DiffFileCardHandle } from "../features/requirements/diff-file-card"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome } from "../components/ui"
 import { RequirementsData } from "./projects"
 
@@ -31,10 +33,74 @@ export function RequirementDiffPage() {
   const [viewIndex, setViewIndex] = useState(0)
   const review = snapshots[viewIndex] || null
   const files = useMemo(() => parseUnifiedDiffFiles(review), [review])
+  /** 左侧文件列表悬浮卡：hover 延迟弹出文件全名/仓库/完整路径，卡片可移入选中复制；单例共享。 */
+  const [fileCard, setFileCard] = useState<{ key: string; x: number; y: number } | null>(null)
+  const fileCardShowTimer = useRef<number | null>(null)
+  const fileCardHideTimer = useRef<number | null>(null)
+  const fileCardCopyHint = useRef(false)
+  const [fileCardCopied, setFileCardCopied] = useState(false)
+  const hoveredFile = fileCard ? files.find((f) => `${f.repo.repoName}:${f.file.path}` === fileCard.key) : null
+  const clearFileCardTimers = () => {
+    if (fileCardShowTimer.current) window.clearTimeout(fileCardShowTimer.current)
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardShowTimer.current = null
+    fileCardHideTimer.current = null
+  }
+  const showFileCard = (e: React.MouseEvent<HTMLButtonElement>, key: string) => {
+    clearFileCardTimers()
+    const rect = e.currentTarget.getBoundingClientRect()
+    fileCardShowTimer.current = window.setTimeout(() => {
+      const width = 420
+      const x = rect.right + 10 + width > window.innerWidth ? Math.max(8, rect.left - width - 10) : rect.right + 10
+      const y = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 150))
+      setFileCard({ key, x, y })
+    }, 300)
+  }
+  const scheduleHideFileCard = () => {
+    if (fileCardShowTimer.current) window.clearTimeout(fileCardShowTimer.current)
+    fileCardShowTimer.current = null
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardHideTimer.current = window.setTimeout(() => setFileCard(null), 180)
+  }
+  const cancelHideFileCard = () => {
+    if (fileCardHideTimer.current) window.clearTimeout(fileCardHideTimer.current)
+    fileCardHideTimer.current = null
+  }
+  const closeFileCard = () => {
+    clearFileCardTimers()
+    setFileCard(null)
+    setFileCardCopied(false)
+  }
+  const copyFilePath = async (full: string) => {
+    try {
+      await navigator.clipboard.writeText(full)
+      setFileCardCopied(true)
+      window.setTimeout(() => setFileCardCopied(false), 1600)
+    } catch {
+      /* 剪贴板不可用时用户仍可手动选中复制 */
+    }
+  }
   const stats = reviewStats(review)
   const [activeKey, setActiveKey] = useState("")
-  /** 行级联动状态：用户点击的 diff 行（key + 行下标），驱动右侧说明面板与 hunk 高亮。 */
+  /** 行级选中：点击切换选中/取消，支持跨行多选；最后操作的行作为右侧说明面板锚点（activeLine）。 */
+  const [selectedLines, setSelectedLines] = useState<{ key: string; line: number }[]>([])
   const [activeLine, setActiveLine] = useState<{ key: string; line: number } | null>(null)
+  const selectedSet = useMemo(() => new Set(selectedLines.map((s) => `${s.key}#${s.line}`)), [selectedLines])
+  const activeRowKey = activeLine ? `${activeLine.key}#${activeLine.line}` : null
+  const toggleLine = (key: string, line: number) => {
+    setActiveKey(key)
+    const rowId = `${key}#${line}`
+    if (selectedSet.has(rowId)) {
+      const next = selectedLines.filter((s) => !(s.key === key && s.line === line))
+      setSelectedLines(next)
+      setActiveLine((cur) => (cur && cur.key === key && cur.line === line ? (next.length ? next[next.length - 1] : null) : cur))
+    } else {
+      setSelectedLines([...selectedLines, { key, line }])
+      setActiveLine({ key, line })
+    }
+  }
+  /** 卡片句柄：展开被折叠的 import 区块并滚动到锚点行。 */
+  const cardRefs = useRef(new Map<string, DiffFileCardHandle>())
   const [savingAnnotation, setSavingAnnotation] = useState(false)
   // 右侧说明栏折叠：折叠后 grid 第三列变成窄竖条，点击展开；localStorage 记忆上次选择。
   const [inspectorCollapsed, setInspectorCollapsed] = useState(readDiffInspectorCollapsed)
@@ -101,7 +167,8 @@ export function RequirementDiffPage() {
       setLoadingDiff(false)
     }
   }
-  useEffect(() => { setActiveLine(null) }, [viewIndex])
+  // 快照切换/重新生成时清空选中与锚点（行下标空间已变化）。
+  useEffect(() => { setSelectedLines([]); setActiveLine(null) }, [review])
   useEffect(() => {
     if (!files.length) { setActiveKey(""); return }
     const exists = files.some((item) => `${item.repo.repoName}:${item.file.path}` === activeKey)
@@ -124,17 +191,57 @@ export function RequirementDiffPage() {
     }
     return map
   }, [hunkNotes, activeAnnotation])
+  // 滚动跟随（scrollspy）：程序化滚动期间暂停，避免经过中间文件时高亮闪烁。
+  const spySuppressedUntil = useRef(0)
+  const suppressSpy = (ms = 1000) => { spySuppressedUntil.current = Date.now() + ms }
   const scrollToFile = (key: string) => {
     setActiveKey(key)
     setActiveLine(null)
+    suppressSpy()
     document.getElementById(diffDomId(key))?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
   const locateNote = (noteIndex: number) => {
     const lineIndex = noteLocateMap.get(noteIndex)
     if (lineIndex == null) return
     setActiveLine({ key: activeKey, line: lineIndex })
-    document.getElementById(diffLineDomId(activeKey, lineIndex))?.scrollIntoView({ behavior: "smooth", block: "center" })
+    suppressSpy(900)
+    // 由卡片负责展开所在折叠区块并在渲染后滚动到行。
+    cardRefs.current.get(activeKey)?.revealLine(lineIndex)
   }
+  // 阅读滚动跟随：把视口顶部参考线附近的文件卡片同步为当前文件，左侧文件栏与右侧说明面板联动；
+  // 点侧栏跳转/定位备注等程序化滚动期间不跟随。滚动到底部时强制选中最后一个文件。
+  const spyRafPending = useRef(false)
+  useEffect(() => {
+    if (!files.length) return
+    const offset = 150 // 顶部 sticky 工具栏高度 + 余量（与 .react-diff-file-card 的 scroll-margin-top 对应）
+    const compute = () => {
+      if (Date.now() < spySuppressedUntil.current) return
+      let current = ""
+      for (const item of files) {
+        const key = `${item.repo.repoName}:${item.file.path}`
+        const el = document.getElementById(diffDomId(key))
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= offset) current = key
+        else break
+      }
+      const doc = document.documentElement
+      if (window.innerHeight + window.scrollY >= doc.scrollHeight - 4) current = `${files[files.length - 1].repo.repoName}:${files[files.length - 1].file.path}`
+      if (!current) current = `${files[0].repo.repoName}:${files[0].file.path}`
+      setActiveKey((cur) => (cur === current ? cur : current))
+    }
+    const onScroll = () => {
+      if (spyRafPending.current) return
+      spyRafPending.current = true
+      requestAnimationFrame(() => { spyRafPending.current = false; compute() })
+    }
+    window.addEventListener("scroll", onScroll, { passive: true })
+    window.addEventListener("resize", onScroll)
+    compute()
+    return () => {
+      window.removeEventListener("scroll", onScroll)
+      window.removeEventListener("resize", onScroll)
+    }
+  }, [files])
   const saveAnnotation = async (next: CodeFileAnnotation) => {
     if (!reqId) return
     setSavingAnnotation(true)
@@ -193,10 +300,16 @@ export function RequirementDiffPage() {
           const repoFiles = files.filter((f) => f.repo.repoName === repoName)
           return <details key={repoName} className="react-diff-repo-group" open>
             <summary><strong>{repoName}</strong><em>base: {repo?.baseRef || baseRef}</em></summary>
-            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onClick={() => scrollToFile(key)}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
+            {repoFiles.length ? repoFiles.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; return <button key={key} className={key === activeKey ? "active" : ""} onMouseEnter={(e) => showFileCard(e, key)} onMouseLeave={scheduleHideFileCard} onFocus={() => clearFileCardTimers()} onClick={() => { closeFileCard(); scrollToFile(key) }}><FileCode2 size={14} /><span><strong>{shortFileName(item.file.path)}</strong><small>{compactPath(item.file.path)}</small></span><em>{annotationIndex.has(key) ? <MessageSquareText size={12} className="react-diff-annotated" /> : null}<b>+{item.file.additions}</b> <i>-{item.file.deletions}</i></em></button> }) : <p className="react-muted" style={{padding: '8px'}}>暂无文件差异</p>}
           </details>
         })}</div></aside>
-      <main className="react-diff-main"><div className="react-diff-topbar"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{snapshots.length ? <span>快照 {viewIndex + 1}/{snapshots.length}</span> : null}{review?.savedAt ? <span>生成 {formatDateTime(review.savedAt)}</span> : review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{viewIndex > 0 ? <span className="react-warn-note">⚠ 正在查看历史快照（base: {review?.baseRef || baseRef}），备注锚定以当前显示快照为准</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}{pruneNotice ? <span className="react-warn-note">✂ {pruneNotice}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{files.length ? <div className="react-diff-hscroll" ref={scrollBarRef} onScroll={onHScrollBarScroll}><div className="react-diff-hscroll-pad" style={{ width: hScrollWidth }} /></div> : null}</div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成代码差异…" /> : files.length === 0 ? <EmptyCard>{snapshots.length === 0 ? <>暂无代码差异快照。点右上角「生成代码差异」首次生成并保存；之后每次刷新都会保留旧版本，可回退对比。</> : "该快照没有可展示的文件级差异。"}</EmptyCard> : <div className="react-diff-scroll-body" ref={scrollBodyRef} onScroll={onHScrollBodyScroll}>{files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const owners = hunkOwners(item.lines); const focusHunk = activeLine && activeLine.key === key ? owners[activeLine.line] ?? -1 : -1; return <article key={key} id={diffDomId(key)} className="react-diff-file-card"><header><div><FileCode2 size={16} /><strong>{item.repo.repoName}/{item.file.path}</strong><em className="react-diff-base-label">vs {item.repo.baseRef || review?.baseRef || "?"}</em></div><span><b>+{item.file.additions}</b><i>-{item.file.deletions}</i></span></header>{item.lines.length ? <table className="react-diff-code"><tbody>{item.lines.map((line, i) => <tr key={i} id={diffLineDomId(key, i)} className={`react-diff-line-${line.type}${focusHunk >= 0 && owners[i] === focusHunk ? " react-diff-line-focus" : ""}`} onClick={() => { setActiveKey(key); setActiveLine({ key, line: i }) }}><td>{line.oldNo}</td><td>{line.newNo}</td><td><code>{line.type === "add" ? "+" : line.type === "del" ? "-" : line.type === "hunk" ? "" : " "}{line.text || " "}</code></td></tr>)}</tbody></table> : <pre className="react-diff-preview">{item.diff || "该文件 diff 已截断或为空。"}</pre>}</article> })}</div>}</main>
+      {fileCard && hoveredFile ? createPortal(<div className="react-file-hover-card" style={{ left: fileCard.x, top: fileCard.y }} onMouseEnter={cancelHideFileCard} onMouseLeave={scheduleHideFileCard}>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">文件</span><code>{hoveredFile.file.path}</code></div>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">仓库</span><code>{hoveredFile.repo.repoName}</code></div>
+          <div className="react-file-hover-row"><span className="react-file-hover-label">路径</span><code>{hoveredFile.repo.projectPath ? `${hoveredFile.repo.projectPath.replace(/\/$/, "")}/${hoveredFile.file.path}` : `(${hoveredFile.repo.repoName}) ${hoveredFile.file.path}`}</code></div>
+          <div className="react-file-hover-actions"><button type="button" onClick={() => { const full = hoveredFile.repo.projectPath ? `${hoveredFile.repo.projectPath.replace(/\/$/, "")}/${hoveredFile.file.path}` : hoveredFile.file.path; copyFilePath(full) }}><Copy size={12} />{fileCardCopied ? "已复制 ✓" : "复制完整路径"}</button><em>文字可直接选中复制</em></div>
+        </div>, document.body) : null}
+      <main className="react-diff-main"><div className="react-diff-topbar"><div className="react-diff-toolbar"><div><strong>{stats.fileCount} files</strong><span className="react-review-add">+{stats.additions}</span><span className="react-review-del">-{stats.deletions}</span>{snapshots.length ? <span>快照 {viewIndex + 1}/{snapshots.length}</span> : null}{review?.savedAt ? <span>生成 {formatDateTime(review.savedAt)}</span> : review?.updatedAt ? <span>生成 {formatDateTime(review.updatedAt)}</span> : null}{viewIndex > 0 ? <span className="react-warn-note">⚠ 正在查看历史快照（base: {review?.baseRef || baseRef}），备注锚定以当前显示快照为准</span> : null}{review?.repos?.some((r) => r.diffTruncated) ? <span className="react-warn-note">⚠ 部分仓库 diff 超过输出上限被截断，缺失内容可分仓或减小差异后重试</span> : null}{staleRepos.length ? <span className="react-warn-note">⚠ {staleRepos.join(" / ")} 的备注基于旧 diff</span> : null}{pruneNotice ? <span className="react-warn-note">✂ {pruneNotice}</span> : null}{review?.emptyScopeNote ? <span className="react-warn-note">ℹ {review.emptyScopeNote}</span> : null}</div><span>{activeIndex + 1}/{Math.max(files.length, 1)}</span></div>{files.length ? <div className="react-diff-hscroll" ref={scrollBarRef} onScroll={onHScrollBarScroll}><div className="react-diff-hscroll-pad" style={{ width: hScrollWidth }} /></div> : null}</div>{requirements.error ? <ErrorCard error={requirements.error} /> : error ? <ErrorCard error={error} /> : loadingDiff ? <LoadingCard label="正在生成代码差异…" /> : files.length === 0 ? <EmptyCard>{snapshots.length === 0 ? <>暂无代码差异快照。点右上角「生成代码差异」首次生成并保存；之后每次刷新都会保留旧版本，可回退对比。</> : review?.emptyScope ? <>该需求分支登记为空（零代码需求），无代码差异可展示{review.emptyScopeNote ? <>：{review.emptyScopeNote}</> : null}。</> : "该快照没有可展示的文件级差异。"}</EmptyCard> : <div className="react-diff-scroll-body" ref={scrollBodyRef} onScroll={onHScrollBodyScroll}>{files.map((item) => { const key = `${item.repo.repoName}:${item.file.path}`; const snapKey = review?.savedAt || review?.updatedAt || viewIndex; return <DiffFileCard key={`${key}#${snapKey}`} ref={(h) => { if (h) cardRefs.current.set(key, h); else cardRefs.current.delete(key) }} view={item} review={review} selectedSet={selectedSet} activeRowKey={activeRowKey} onToggleLine={toggleLine} /> })}</div>}</main>
       <AnnotationPanel
         fileLabel={activeView ? `${activeView.repo.repoName}/${activeView.file.path}` : ""}
         annotation={activeAnnotation}

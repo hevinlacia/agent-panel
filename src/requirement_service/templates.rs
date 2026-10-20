@@ -12,6 +12,7 @@ pub(crate) fn requirement_create_files(
     owner: &str,
     start_date: &str,
     plan_release: &str,
+    submit_test_date: &str,
     ones: &str,
     issues: &[String],
     summary: &str,
@@ -31,6 +32,7 @@ pub(crate) fn requirement_create_files(
         owner,
         start_date,
         plan_release,
+        submit_test_date,
         ones,
         issues,
         summary,
@@ -75,6 +77,7 @@ pub(crate) fn build_meta_doc(
     owner: &str,
     start_date: &str,
     plan_release: &str,
+    submit_test_date: &str,
     ones: &str,
     issues: &[String],
     summary: &str,
@@ -113,7 +116,7 @@ pub(crate) fn build_meta_doc(
         .map(|p| format!("\n- Parent requirement: {}", p))
         .unwrap_or_default();
     format!(
-        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Project: {}{}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
+        "---\n{}\n---\n\n# {} {}\n\n## Summary\n- Title: {}\n- Status: {}\n- Owner: {}\n- Start date: {}\n- Planned release: {}\n- Submit test: {}\n- Project: {}{}\n\n{}\n\n## Scope\n- Include:\n  - 待补充\n- Exclude:\n  - 待补充\n\n## Open Questions\n- 待补充\n",
         fm.join("\n"),
         req_id,
         title,
@@ -122,6 +125,7 @@ pub(crate) fn build_meta_doc(
         owner,
         start_date,
         plan_release,
+        submit_test_date,
         projects.join(" / "),
         parent_line,
         summary.trim()
@@ -177,7 +181,7 @@ pub(crate) fn template_impact(req_id: &str) -> String {
 }
 
 pub(crate) fn template_test(req_id: &str) -> String {
-    format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测清单\n\n> 自测中推进「测试中」前必须逐项填写（自测门禁）：分三类小节，每项都要有结果（通过/失败/无法测试）。全部通过直接放行；存在「无法测试/跳过」（写明原因）放行但门禁警示结果未知；存在「失败」不放行，失败项必须写明具体原因。\n> 边界与并发流量类必须先写「#### 风险场景分析」分析出风险场景，再列测试清单并完成测试；确认无风险写 `无风险场景：<依据>`，整类不适用写 `不适用：<原因>`。\n\n### 主流程测试\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n### 边界场景测试\n\n#### 风险场景分析\n- 待补充（逐条列出边界/异常风险场景；确认无风险写 `无风险场景：<依据>`）\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n### 高并发/大流量场景测试\n\n#### 风险场景分析\n- 待补充（逐条列出并发/重复/流量风险场景：MQ 重复消费、接口重放、Job 重跑、批量峰值等；确认无风险写 `无风险场景：<依据>`，整类不适用写 `不适用：<原因>`）\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归记录\n- ⬜ 待执行\n")
+    format!("# {req_id} Test\n\n## 测试场景清单\n\n| ID | 场景描述 | 触发方式 | 前置条件 | 预期结果 | 证据标准 |\n| --- | --- | --- | --- | --- | --- |\n| S1 | 待补充 | 待补充 | 待补充 | 待补充 | 日志 + DB + 副作用 + 反向检查 |\n\n## 自测清单\n\n> 自测中推进「测试中」前必须逐项填写（自测门禁）：分三类小节，每项都要有结果（通过/失败/无法测试）。全部通过直接放行；存在「无法测试/跳过」（写明原因）放行但门禁警示结果未知；存在「失败」不放行，失败项必须写明具体原因。\n> 边界与并发流量类必须先写「#### 风险场景分析」分析出风险场景，再列测试清单并完成测试；确认无风险写 `无风险场景：<依据>`，整类不适用写 `不适用：<原因>`。\n\n### 主流程测试\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n### 边界场景测试\n\n#### 风险场景分析\n- 待补充（逐条列出边界/异常风险场景；确认无风险写 `无风险场景：<依据>`）\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n### 高并发/大流量场景测试\n\n#### 风险场景分析\n- 待补充（逐条列出并发/重复/流量风险场景：MQ 重复消费、接口重放、Job 重跑、批量峰值等；确认无风险写 `无风险场景：<依据>`，整类不适用写 `不适用：<原因>`）\n\n#### 测试清单\n\n| # | 自测项 | 结果 | 失败/无法测试原因 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 待测试 | - |\n\n## 自测记录\n- ⬜ 待执行\n\n## UAT 回归\n\n> UAT 回归门禁（测试中推进「人工核查/发布就绪」前校验）：每项都要有结果（通过/失败/无法测试/未执行）与证据；证据必须是已发生的可核对事实（tid/日志关键字/接口返回/DB 前后值），计划与状态流转动作不算证据。全部通过放行；「无法测试」（有原因）放行但警示；失败/未执行/缺结果/通过但证据不可采不放行；整节不适用写 `不适用：<原因>`。\n\n| # | 场景 | 结果 | 证据 |\n| --- | --- | --- | --- |\n| 1 | 待补充 | 未执行 | - |\n")
 }
 
 pub(crate) fn template_test_scenario(req_id: &str) -> String {
@@ -185,7 +189,7 @@ pub(crate) fn template_test_scenario(req_id: &str) -> String {
 }
 
 pub(crate) fn template_troubleshooting(req_id: &str) -> String {
-    format!("# {req_id} 排查经验\n\n> 用途：沉淀本线上问题的完整排查路径与修复方案，让同类问题下次直接复用；推进到「已复盘」前必须填完本档。\n\n## 现象与影响\n- 环境/时间窗口：待补充\n- 现象：待补充（报错、指标、用户反馈）\n- 影响范围：待补充（仓库/租户/单号/接口）\n\n## 怎么排查（可复用的定位路径）\n- 证据链：待补充（日志关键字/tid、DB 状态、接口返回、MQ/Job 状态）\n- 排查步骤：待补充（按顺序记录：先看什么、再看什么、在哪里分叉）\n- 用到的工具/命令/知识：待补充（Kibana 查询、SQL、相关业务知识/经验条目 id）\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 怎么修复\n- 修复方案：待补充（代码变更、配置、数据修复、人工动作）\n- 验证方式：待补充（如何确认修复生效、回归范围）\n- 是否转需求：待补充（需要常规开发承接时记录需求 id）\n\n## 复用清单\n- [ ] 下次遇到同类现象，按「怎么排查」逐步执行\n- [ ] 已落地到经验库：待补充（经验条目 id/链接，无则写「未落地」及原因）\n")
+    format!("# {req_id} 排查经验\n\n> 用途：沉淀本线上问题的完整排查路径与修复方案，让同类问题下次直接复用；推进到「经验总结」前必须填完本档。\n\n## 现象与影响\n- 环境/时间窗口：待补充\n- 现象：待补充（报错、指标、用户反馈）\n- 影响范围：待补充（仓库/租户/单号/接口）\n\n## 怎么排查（可复用的定位路径）\n- 证据链：待补充（日志关键字/tid、DB 状态、接口返回、MQ/Job 状态）\n- 排查步骤：待补充（按顺序记录：先看什么、再看什么、在哪里分叉）\n- 用到的工具/命令/知识：待补充（Kibana 查询、SQL、相关业务知识/经验条目 id）\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 怎么修复\n- 修复方案：待补充（代码变更、配置、数据修复、人工动作）\n- 验证方式：待补充（如何确认修复生效、回归范围）\n- 是否转需求：待补充（需要常规开发承接时记录需求 id）\n\n## 复用清单\n- [ ] 下次遇到同类现象，按「怎么排查」逐步执行\n- [ ] 已落地到经验库：待补充（经验条目 id/链接，无则写「未落地」及原因）\n")
 }
 
 pub(crate) fn template_incident(req_id: &str) -> String {
@@ -194,6 +198,10 @@ pub(crate) fn template_incident(req_id: &str) -> String {
 
 pub(crate) fn template_root_cause(req_id: &str) -> String {
     format!("# {req_id} 根因与修复决策\n\n> 用途：回答「为什么」和「怎么办」。每条证据必须附用户可独立复核的验证线索：日志证据=时间范围+tid/关键字；DB 证据=验证 SQL；代码证据=应用+文件+可搜关键字；配置证据=环境+key。推进到「已定位」前必须填完根因、证据链和修复路径决策。\n\n## 根因\n- 直接原因：待补充\n- 深层原因：待补充（为什么会发生：流程/校验/变更遗漏）\n\n## 证据链（每条必须可复核）\n- 日志证据：待补充（环境/索引/应用 + tid 或唯一关键字 + 带时区绝对时间范围）\n- DB 证据：待补充（验证 SQL：表、条件、预期结果；必要时附查询结果摘要）\n- 代码证据：待补充（应用名 + 文件路径 + 可全局搜索的关键字片段：日志文本/方法名/常量）\n- 配置证据：待补充（Apollo/Nacos namespace + key + 环境，如有）\n\n## 影响面\n- 待补充（哪些业务对象/数据受影响，与 incident.md 影响范围呼应）\n\n## 修复路径决策\n- 结论：待补充（数据修复直接推进已修复 / 代码修复转普通需求（需求 id）/ 复现代码已验证但仅测试环境使用（分支 id，不合入生产）/ 不修复）\n- 临时处置：待补充（应急 SQL 及影响行数、应急配置回滚，如有）\n- 回滚方案：待补充\n\n## 验证方式\n- 待补充（如何确认修复生效，附可复核的查询/日志线索）\n")
+}
+
+pub(crate) fn template_reproduce(req_id: &str) -> String {
+    format!("# {req_id} 复现文档\n\n> 用途：回答「怎么把这个问题复现出来」。已定位阶段产出，让后来人（测试/开发/接管 agent）照文档就能复现同一故障；证据线索规范同 root-cause.md。需要复现代码时，复现代码必须有开关控制（Apollo/Nacos 配置或环境变量，默认关闭），只有打开开关才触发故障，防止污染正常逻辑。\n\n## 复现结论\n- 可否稳定复现：待补充（稳定复现 / 概率复现（概率+条件）/ 无法复现（记录当时条件））\n- 复现环境：待补充（test / cn-uat / sea-uat；复现代码只允许部署测试环境）\n- 复现前置条件：待补充（数据/配置/时间窗口/依赖服务状态）\n\n## 复现步骤\n- 待补充（按顺序列操作步骤：入口/接口/MQ 消息/数据构造，每步带可复核线索：请求样例、tid、单号）\n\n## 预期现象与判定标准\n- 待补充（复现成功时应该看到什么：报错日志关键字、指标异常、数据状态，附验证 SQL/日志查询条件）\n\n## 复现代码（如有）\n- 是否需要复现代码：待补充（不需要：纯操作步骤即可触达故障，写明原因 / 需要：故障路径无法靠纯操作触达）\n- 开关控制：待补充（Apollo/Nacos 配置 key 或环境变量，默认关闭；开关关闭时代码行为与线上完全一致，只有打开开关才触发故障复现；说明打开/关闭开关的行为差异与验证方法）\n- 代码位置：待补充（应用 + 需求分支 + 文件路径/类/方法）\n- 清理方式：待补充（问题修复后如何移除复现代码或保持开关永久关闭）\n")
 }
 
 pub(crate) fn template_experience_summary(req_id: &str) -> String {
@@ -238,6 +246,7 @@ pub(crate) fn requirement_doc_template(req: &Requirement, doc_file: &str) -> Str
         "troubleshooting.md" => template_troubleshooting(&req.id),
         "incident.md" => template_incident(&req.id),
         "root-cause.md" => template_root_cause(&req.id),
+        "reproduce.md" => template_reproduce(&req.id),
         "test-scenario.md" => template_test_scenario(&req.id),
         "notes.md" => template_notes(&req.id),
         _ => String::new(),
@@ -270,6 +279,7 @@ pub(crate) fn requirement_doc_file(doc_type: &str) -> ApiResult<&'static str> {
         }
         "incident" | "incident.md" | "现象" => Ok("incident.md"),
         "root-cause" | "rootcause" | "root-cause.md" | "根因" => Ok("root-cause.md"),
+        "reproduce" | "reproduce.md" | "复现" | "复现文档" => Ok("reproduce.md"),
         "test-scenario" | "testscenario" | "test-scenario.md" | "测试场景" => {
             Ok("test-scenario.md")
         }

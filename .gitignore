@@ -26,3 +26,6 @@ secrets.json
 
 # agent-panel 的代码变更一律在 worktree/<repo>-<slug> 下进行，不入库
 worktree/
+
+# 本地 typecheck 用软链接 → 主仓 node_modules，不入库
+/node_modules

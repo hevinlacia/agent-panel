@@ -64,6 +64,7 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
         owner: None,
         start_date: None,
         plan_release: None,
+        submit_test_date: None,
         ones: None,
         issues: None,
         members: None,
@@ -73,6 +74,7 @@ async fn concurrent_create_allocates_distinct_seq_numbers() {
         background: None,
         notes: None,
         dry_run: None,
+        region: None,
     };
 
     // 并发创建两个不同 slug 的需求：旧实现在这里双双拿到 T-001。
@@ -113,6 +115,7 @@ fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         owner: None,
         start_date: None,
         plan_release: None,
+        submit_test_date: None,
         ones: None,
         issues: None,
         members: None,
@@ -122,6 +125,7 @@ fn group_test_form(req_id: &str, title: &str) -> RequirementCreateForm {
         background: None,
         notes: None,
         dry_run: None,
+        region: None,
     }
 }
 
@@ -398,10 +402,13 @@ async fn group_status_is_locked_against_manual_status_writes() {
             owner: None,
             start_date: None,
             plan_release: None,
+            submit_test_date: None,
+            promise_submit_date: None,
             ones: None,
             issues: None,
             note: None,
             dry_run: None,
+            region: None,
         },
     )
     .await

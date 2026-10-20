@@ -86,6 +86,25 @@ function ReviewGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayl
         if (a.stale) return <div className="react-drive-blockers"><strong>代码问题备注过期</strong><p>{a.reason || "备注提交指纹与最新审查材料不一致"}：备注锚定的是旧 diff，需按最新材料复核后重新 PUT /api/requirement/annotations（刷新 reviewedCommit 指纹）。</p></div>
         return <div className="react-save-hint">✓ 代码问题备注已就绪：差异页右侧说明栏展示文件摘要与问题 hunk 备注，提交指纹与当前审查材料一致。</div>
       })() : null}
+      {detail.roundRecords?.length ? (() => {
+        const kindLabel: Record<string, string> = { main: "主流程", rework: "返工轮次", "release-ready": "发布就绪小循环", other: "其他小节" }
+        const mark = (c?: string | null) => c === "PASS" ? "✅ PASS" : c === "BLOCKED" ? "❌ BLOCKED" : c === "WAIVED" ? "⚠ WAIVED" : "⬜ 未见结论"
+        return <div className="react-drive-blockers">
+          <strong>循环审查记录（主流程 / 返工轮次 / 发布就绪小循环）{detail.snapshotRounds?.length ? <span className="react-muted">　diff 快照轮次：{detail.snapshotRounds.join("、")}</span> : null}</strong>
+          <ul>
+            {detail.roundRecords.map((r, i) => (
+              <li key={i}>
+                <code>{kindLabel[r.kind] || r.kind}</code>
+                {r.round != null ? <strong>　第 {r.round} 轮</strong> : null}
+                {r.heading ? <span>　{r.heading}</span> : null}
+                <span>　<strong>{mark(r.conclusion)}</strong></span>
+                <span className="react-muted">　来源 {r.source}{r.docUpdatedAt ? ` · ${formatDateTime(r.docUpdatedAt)}` : ""}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="react-muted">轮次结论约定：review.md / code-review-ai.md 顶部 = 主流程结论；追加小节标题「返工轮次 N」「发布就绪轮次 N」分别对应打回返工与发布就绪小循环的增量审查结论（每轮结论行 `Review Gate: PASS/BLOCKED/WAIVED` 独立成行）。</p>
+        </div>
+      })() : null}
       {staleRepos.length ? <div className="react-drive-blockers"><strong>审查快照需刷新覆盖</strong><ul>{staleRepos.map((repo) => <li key={`${repo.repoName}-${repo.branch}`}><code>{repo.repoName}</code> / <code>{repo.branch}</code>：{(repo.reviewedTargetCommit || "").slice(0, 12) || "reviewed?"} → {(repo.currentTargetCommit || "").slice(0, 12) || "current?"}</li>)}</ul><p>点击「准备审查材料」重新备料复审（发布就绪起默认增量，只审上次已审 commit → 当前 HEAD 的新增 diff；非线性历史自动回退全量）。</p></div> : null}
       <GateWarnings warnings={detail.warnings} />
       {detail.actions?.length ? <div className="react-drive-blockers"><strong>门禁动作</strong><ul>{detail.actions.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
@@ -131,6 +150,27 @@ function SelftestGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPa
   </section>
 }
 
+function UatGateDetail({ detail }: { detail: NonNullable<StatusGateDetailPayload["detail"]> }) {
+  const problems = detail.problems || []
+  return <section className="react-panel"><PanelHead kicker="UAT Regression" title="UAT 回归校验详情" />
+    <p className="react-muted">校验目标：test.md「## UAT 回归」逐项给出回归结果与证据（| # | 场景 | 结果 | 证据 |，结果=通过/失败/无法测试/未执行）——证据必须是已发生的可核对事实（tid/日志关键字/接口返回/DB 前后值），计划与状态流转动作不算证据。全部通过放行；「无法测试」（有原因）放行但警示；失败/未执行/缺结果/通过但证据不可采不放行；整节不适用写 {'`不适用：<原因>`'}。</p>
+    {detail.hotfix ? <p className="react-save-hint">抢修模式（已关联线上问题）：UAT 回归门禁默认放行，速度优先。</p> : null}
+    {problems.length ? <div className="react-drive-blockers"><strong>当前问题（{problems.length}）</strong><ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div> : <p className="react-save-hint">✓ UAT 回归校验通过：每项都有结果与证据；存在「无法测试」项时放行但下方警示结果未知。</p>}
+    <SelftestChecklistView checklist={detail.uatRegression ?? { found: false, sections: [] }} />
+    <GateWarnings warnings={detail.warnings} />
+    <details className="react-review-repo"><summary><span><strong>期望格式</strong></span></summary><pre className="react-gate-detail-pre">{`## UAT 回归
+
+| # | 场景 | 结果 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 混合明细任务确认（缺货明细保留） | 通过 | UAT tid=abc123；DB 头 900、缺货明细 700 保留 |
+| 2 | 整单取消后明细行展示 | 无法测试 | UAT 无整单取消入口，由测试同事人工覆盖 |
+
+# 证据 = 已发生事实：tid / 日志关键字 / 接口返回 / DB 前后值
+# 不算证据：待执行/计划/后续、状态流转动作（“已推进状态”）、推断
+# 整节不适用写：不适用：<原因>`}</pre></details>
+  </section>
+}
+
 function DocGateDetail({ detail, title, file }: { detail: NonNullable<StatusGateDetailPayload["detail"]>; title: string; file: string }) {
   return <section className="react-panel"><PanelHead kicker="Doc Gate" title={title} />
     <div className="react-meta-grid">
@@ -158,6 +198,7 @@ export function RequirementGatePage() {
       </section>
       {d.gate === "review" && d.detail ? <ReviewGateDetail detail={d.detail} /> : null}
       {d.gate === "selftest-checklist" && d.detail ? <SelftestGateDetail detail={d.detail} /> : null}
+      {d.gate === "uat-regression" && d.detail ? <UatGateDetail detail={d.detail} /> : null}
       {d.gate === "test-scenario" && d.detail ? <DocGateDetail detail={d.detail} title="测试场景文档校验" file="test-scenario.md" /> : null}
       {d.gate === "issue-root-cause" && d.detail ? <DocGateDetail detail={d.detail} title="线上问题定位校验" file="root-cause.md" /> : null}
       {d.gate === "issue-troubleshooting" && d.detail ? <DocGateDetail detail={d.detail} title="线上问题复盘校验" file="troubleshooting.md" /> : null}

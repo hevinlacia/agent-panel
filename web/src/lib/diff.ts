@@ -132,6 +132,120 @@ export function shortFileName(path: string): string {
   return parts.slice(-1)[0] || path
 }
 
+/**
+ * import/package 等引入声明行识别：用于把 import 区域折叠成可展开区块。
+ * 覆盖 Java/Groovy(package/import)、TS/JS(import/require)、Python(import/from)、
+ * Go(import 块)、Rust(use)、C(#include)、C#(using) 等常见形态。
+ */
+const IMPORT_START_RE = /^\s*(?:import\s|package\s+[\w.]+|from\s+[\w.]+\s+import\b|using\s+[A-Za-z_]|#include\b|use\s+[A-Za-z_]|extern\s+crate\b|@import\b|(?:const|let|var)\s+\w+.*=\s*require\s*\()/
+/** import 起始行之后的延续行（多行 import 列表成员、收尾的 } from "x" / from "x" / ) 等）。 */
+const IMPORT_CONT_RE = /^\s*(?:\}\s*(?:from\s.+)?[;,]?\s*|\)\s*;?\s*|from\s+['"][^'"]*['"];?\s*|[\w$]+(?:\s*,\s*[\w$]+)*\s*,?\s*|["'][^"']*["'],?\s*)$/
+
+export function isImportLikeLine(text: string, inRun: boolean): boolean {
+  if (IMPORT_START_RE.test(text)) return true
+  return inRun && text.trim().length > 0 && IMPORT_CONT_RE.test(text)
+}
+
+/** 连续 import 行达到该长度才折叠，避免把零星一两行 import 也折起来。 */
+export const IMPORT_COLLAPSE_MIN_LINES = 3
+
+export interface ImportBlock {
+  id: string
+  /** 解析后 diff 行下标范围（含两端） */
+  from: number
+  to: number
+  adds: number
+  dels: number
+}
+
+/** 找出文件 diff 中可折叠的连续 import 区块（跨 add/del/ctx 行类型）。 */
+export function buildImportBlocks(lines: DiffLine[], minRun = IMPORT_COLLAPSE_MIN_LINES): ImportBlock[] {
+  const blocks: ImportBlock[] = []
+  let start = -1
+  let adds = 0
+  let dels = 0
+  const flush = (endExclusive: number) => {
+    if (start >= 0 && endExclusive - start >= minRun) {
+      blocks.push({ id: `imp-${start}`, from: start, to: endExclusive - 1, adds, dels })
+    }
+    start = -1
+    adds = 0
+    dels = 0
+  }
+  lines.forEach((line, i) => {
+    const inRun = start >= 0
+    if (line.type !== "hunk" && isImportLikeLine(line.text, inRun)) {
+      if (!inRun) start = i
+      if (line.type === "add") adds += 1
+      else if (line.type === "del") dels += 1
+      return
+    }
+    flush(i)
+  })
+  flush(lines.length)
+  return blocks
+}
+
+export interface FileGap {
+  id: string
+  /** 新侧（目标分支文件）1-based 行号范围（含两端），该范围内行未变化、diff 未包含 */
+  from: number
+  to: number
+  /** 新旧行号偏移（newNo - oldNo），用于展开行同时显示两侧行号 */
+  drift: number
+}
+
+export interface FileGapScan {
+  /** 文件头部/两个 hunk 之间的未修改区间（不含文件尾，尾部需知道总行数后由调用方补） */
+  gaps: FileGap[]
+  /** diff 覆盖到的最后一个新侧行号 */
+  lastNew: number
+  /** diff 结束时的新旧行号偏移，用于尾部 gap 的旧行号换算 */
+  lastDrift: number
+  /** diff 中是否存在新侧内容（纯删除文件为 false，不做区间展开） */
+  hasNewSide: boolean
+}
+
+/**
+ * 扫描解析后的 diff 行，找出未展示的未修改行区间（文件头、hunk 之间）。
+ * git 保证相邻 hunk 的上下文不重叠，因此这些区间在当前展示中完全缺失，
+ * 是“文件展示不全/突然截断”的根源；前端用可展开标记补齐。
+ */
+export function computeFileGaps(lines: DiffLine[]): FileGapScan {
+  const gaps: FileGap[] = []
+  let lastOld = 0
+  let lastNew = 0
+  let seq = 0
+  let hasNewSide = false
+  for (const line of lines) {
+    if (line.type === "hunk") {
+      const m = line.text.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+      if (!m) continue
+      const oldStart = Number(m[1])
+      const newStart = Number(m[2])
+      if (newStart > lastNew + 1) {
+        gaps.push({ id: `gap-${seq++}`, from: lastNew + 1, to: newStart - 1, drift: lastNew - lastOld })
+      }
+      // 同步到 hunk 体起点：后续行的 oldNo/newNo 在该基础上递增（首个 hunk 从 269 开始时，
+      // 行号必须落到 269 而不是从 1 重新计数，否则尾部 gap 计算全错）。
+      lastOld = Math.max(0, oldStart - 1)
+      lastNew = Math.max(0, newStart - 1)
+      continue
+    }
+    if (line.type === "add") {
+      hasNewSide = true
+      lastNew += 1
+    } else if (line.type === "del") {
+      lastOld += 1
+    } else {
+      hasNewSide = true
+      lastOld += 1
+      lastNew += 1
+    }
+  }
+  return { gaps, lastNew, lastDrift: lastNew - lastOld, hasNewSide }
+}
+
 export function compactPath(path: string, max = 52): string {
   if (path.length <= max) return path
   const parts = path.split("/")

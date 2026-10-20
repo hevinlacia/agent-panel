@@ -9,7 +9,7 @@ import react from "@vitejs/plugin-react"
 
 export default defineConfig({
   root: "web",
-  publicDir: false,
+  publicDir: "public", // PWA 资产（manifest/sw.js/icons）随构建拷入 outDir 根
   plugins: [react()],
   build: {
     outDir: "../public/dashboard-react",

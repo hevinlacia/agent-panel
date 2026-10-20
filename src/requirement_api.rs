@@ -11,6 +11,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha1::{Digest, Sha1};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -233,7 +234,20 @@ pub(crate) async fn api_requirement_context(
         .map(parse_token_list)
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| intent_read_tokens(&intent));
-    let mut value = build_requirement_context(&req, &intent, tokens, budget).await?;
+    // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
+    // Programmatic callers (agents, curl) keep receiving JSON.
+    // HTML 阅读视图走 full 模式：单独页面就是用来看全文的，不做预算截断；JSON（agent 口径）仍按预算。
+    let wants_html = query
+        .format
+        .as_deref()
+        .map(|f| f.eq_ignore_ascii_case("html") || f.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
+        || headers
+            .get("accept")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_ascii_lowercase().contains("text/html"))
+            .unwrap_or(false);
+    let mut value = build_requirement_context(&req, &intent, tokens, budget, wants_html).await?;
     if let Some(group) = group_context_value(&req) {
         value["group"] = group;
     }
@@ -246,18 +260,6 @@ pub(crate) async fn api_requirement_context(
     if let Some(parts_ctx) = doc_parts_context_value(&req).await {
         value["docParts"] = parts_ctx;
     }
-    // Browser/human-friendly rendering: explicit `format=html` or a text/html Accept header.
-    // Programmatic callers (agents, curl) keep receiving JSON.
-    let wants_html = query
-        .format
-        .as_deref()
-        .map(|f| f.eq_ignore_ascii_case("html") || f.eq_ignore_ascii_case("md"))
-        .unwrap_or(false)
-        || headers
-            .get("accept")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_ascii_lowercase().contains("text/html"))
-            .unwrap_or(false);
     if wants_html {
         return Ok(Html(render_requirement_context_html(&req, &intent, &value)).into_response());
     }
@@ -684,6 +686,16 @@ pub(crate) async fn api_requirement_status_gate_detail(
                 "selftestChecklist": checklist,
             })
         }
+        "uat-regression" => {
+            let eval = uat_regression_eval(&req).await;
+            let checklist = uat_regression_detail(&req).await;
+            json!({
+                "problems": eval.problems,
+                "warnings": eval.warnings,
+                "hotfix": req.is_hotfix(),
+                "uatRegression": checklist,
+            })
+        }
         "test-scenario" => {
             let body = match req.req_dir.as_deref() {
                 Some(dir) => tokio::fs::read_to_string(PathBuf::from(dir).join("test-scenario.md"))
@@ -715,7 +727,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
             };
             json!({
                 "category": req.category,
-                "applicable": req.category.as_deref() == Some("线上问题"),
+                "applicable": matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")),
                 "rootCauseFilled": root_cause,
                 "legacyPlanFilled": legacy,
             })
@@ -731,7 +743,7 @@ pub(crate) async fn api_requirement_status_gate_detail(
             };
             json!({
                 "category": req.category,
-                "applicable": req.category.as_deref() == Some("线上问题"),
+                "applicable": matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")),
                 "filled": filled,
             })
         }
@@ -781,13 +793,20 @@ pub(crate) async fn api_requirement_status_flow(
         .iter()
         .position(|s| *s == req.status)
         .map(|i| i as u32);
+    // 挂起是流水外标记状态：currentIndex 为 null（currentKnown=false），
+    // 恢复目标由状态历史派生（resume_status_from_state），供前端一键回到挂起前状态。
+    let suspended = req.status == "挂起";
+    let mut resume_status: Option<String> = None;
     // 历史流转里每个状态最近一次进入时的门禁校验方式（gateCheck）。
     let mut gate_checks: HashMap<String, String> = HashMap::new();
-    // 返工轮次（rework loop）：人工核查/测试中 → 开发中 的打回次数。
+    // 返工轮次（rework loop）：人工核查/测试中 → 开发中 的打回次数；
+    // 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数。
     let mut rework_rounds: u64 = 0;
+    let mut release_ready_rounds: u64 = 0;
     if let Some(dir) = req.req_dir.as_deref() {
         if let Ok(Some(state_json)) = read_requirement_state(Path::new(dir)).await {
             rework_rounds = rework_round_count(&state_json);
+            release_ready_rounds = release_ready_round_count(&state_json);
             if let Some(history) = state_json.get("history").and_then(Value::as_array) {
                 for entry in history {
                     if let (Some(st), Some(gc)) = (
@@ -797,6 +816,9 @@ pub(crate) async fn api_requirement_status_flow(
                         gate_checks.insert(st.to_string(), gc.to_string());
                     }
                 }
+            }
+            if suspended {
+                resume_status = resume_status_from_state(&state_json);
             }
         }
     }
@@ -871,8 +893,13 @@ pub(crate) async fn api_requirement_status_flow(
     let rework = if !is_issue && !req.is_sub_req {
         json!({
             "to": "开发中",
-            "fromStatuses": ["人工核查", "测试中"],
+            "fromStatuses": ["人工核查", "测试中", "发布就绪"],
             "rounds": rework_rounds,
+            "releaseReadyRounds": release_ready_rounds,
+            "loops": {
+                "rework": { "fromStatuses": ["人工核查", "测试中"], "rounds": rework_rounds },
+                "releaseReady": { "fromStatuses": ["发布就绪"], "rounds": release_ready_rounds }
+            }
         })
     } else {
         Value::Null
@@ -883,6 +910,8 @@ pub(crate) async fn api_requirement_status_flow(
         "category": req.category,
         "currentStatus": req.status,
         "currentKnown": current_index.is_some(),
+        "suspended": suspended,
+        "resumeStatus": resume_status,
         "statuses": statuses,
         "currentIndex": current_index,
         "transitions": transitions,
@@ -905,6 +934,8 @@ pub(crate) async fn api_requirement_status(
         ensure_sub_req_status_transition(&req, &status)?;
     } else {
         ensure_status_allowed_for_non_sub(&status)?;
+        // issue 家族只允许轻流程状态机，不接受常规需求流状态。
+        ensure_status_for_category(req.category.as_deref(), &status)?;
     }
     // 状态流转门禁（配置驱动）：agent/API 推进时强校验；via=ui 表示人在 Panel 界面上修改，直接跳过。
     let gate_check = if body.via.as_deref() == Some("ui") {
@@ -924,9 +955,7 @@ pub(crate) async fn api_requirement_status(
     .await?;
     if !matches!(st.get("changed").and_then(Value::as_bool), Some(false)) {
         record_status_transition_event(&state, &req, &st, body.note.as_deref()).await?;
-        if status == "经验总结"
-            || (req.category.as_deref() == Some("线上问题") && status == "已复盘")
-        {
+        if status == "经验总结" {
             let cfg = read_config(&state).await.unwrap_or_default();
             if cfg.auto_experience_summary {
                 if let Err(e) = dispatch_experience_summary_jobs(&state, Some(&req.id)).await {
@@ -948,7 +977,7 @@ pub(crate) async fn api_requirement_category(
     let st = write_requirement_category(req.req_dir.as_deref().unwrap_or_default(), &body.category)
         .await?;
     let mut status_state = Value::Null;
-    // issue 家族（线上问题/测试问题）共用轻量状态机：从需求流程切入时进入排查中；切回需求流程时回需求澄清。
+    // issue 家族（线上问题/测试问题/性能问题）共用轻量状态机：从需求流程切入时进入排查中；切回需求流程时回需求澄清。
     if is_issue_category(&body.category) && !ISSUE_STATUSES.contains(&req.status.as_str()) {
         status_state = write_requirement_status(
             req.req_dir.as_deref().unwrap_or_default(),
@@ -975,18 +1004,23 @@ pub(crate) async fn api_requirement_convert_issue(
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let issue = get_real_requirement(&state, &body.req_id).await?;
-    if issue.category.as_deref() != Some("线上问题") {
+    // 性能问题与线上问题同样承接「代码修复需求」（优化型修复）；测试问题不走此路径。
+    if !matches!(
+        issue.category.as_deref(),
+        Some("线上问题") | Some("性能问题")
+    ) {
         return Err(ApiError::bad_request(format!(
-            "{} 不是线上问题，无需转换",
+            "{} 不是线上问题/性能问题，无需转换",
             issue.id
         )));
     }
-    // 代码修复路径：创建独立的普通需求承接修复，线上问题保持 category=线上问题 不变，
+    // 代码修复路径：创建独立的普通需求承接修复，原问题保持 category 不变，
     // 绑定在新需求的 meta.md issues 字段；需求进入 >= 经验总结 时自动把问题推进到已修复。
     let created = create_requirement(
         &state,
         RequirementCreateForm {
             req_id: String::new(),
+            region: None,
             title: format!("{}（代码修复）", issue.title),
             project: Some(issue.project.clone()),
             projects: Some(issue.projects.clone()),
@@ -998,6 +1032,7 @@ pub(crate) async fn api_requirement_convert_issue(
             owner: None,
             start_date: None,
             plan_release: None,
+            submit_test_date: None,
             ones: None,
             source: None,
             issues: Some(vec![issue.id.clone()]),
@@ -1005,7 +1040,8 @@ pub(crate) async fn api_requirement_convert_issue(
             release_policy: None,
             consolidated: None,
             summary: Some(format!(
-                "由线上问题 {} 转出的代码修复需求；排查过程见原问题。",
+                "由{} {} 转出的代码修复需求；排查过程见原问题。",
+                issue.category.as_deref().unwrap_or("线上问题"),
                 issue.id
             )),
             background: None,
@@ -1419,20 +1455,46 @@ pub(crate) async fn api_requirement_master_diff(
     })?);
     let round = body.round.unwrap_or(1).max(1);
     let scope_file = branch_scope_file_for_round(round);
-    let branch_scope = read_branch_scope_round(&req_dir, round)
-        .await?
-        .ok_or_else(|| {
-            ApiError::bad_request(format!(
-                "missing {scope_file}; register the round's branches first"
-            ))
-        })?;
     let base_ref = body
         .base_ref
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .unwrap_or("origin/master");
-    let review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    // 登记文件存在但无任何仓库登记（如零代码需求：仅配置/SQL 变更，无需求分支）不按错误处理，
+    // 改为生成空差异快照，并把登记 note 透传给页面说明原因；只有文件缺失才报错引导登记。
+    let (branch_scope, empty_scope_note) = match read_branch_scope_round(&req_dir, round).await? {
+        Some(scope) => (scope, None),
+        None => {
+            let Some(raw) = read_json_if_exists(&req_dir.join(&scope_file)).await else {
+                return Err(ApiError::bad_request(format!(
+                    "missing {scope_file}; register the round's branches first"
+                )));
+            };
+            let note = raw
+                .get("note")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            (
+                BranchScope {
+                    round,
+                    ..Default::default()
+                },
+                note,
+            )
+        }
+    };
+    let mut review = run_master_diff_scan(&req.id, &branch_scope, base_ref, round).await?;
+    if branch_scope.repos.is_empty() {
+        let reason =
+            empty_scope_note.unwrap_or_else(|| "分支登记为空：无需求分支、无代码差异".to_string());
+        if let Some(obj) = review.as_object_mut() {
+            obj.insert("emptyScope".to_string(), json!(true));
+            obj.insert("emptyScopeNote".to_string(), json!(reason));
+        }
+    }
     // 自动清理：某应用全部登记分支均无文件差异（且 diff 读取无失败/截断）时，
     // 把它从本轮次登记文件移除，避免已合入/未开发的分支残留登记。
     let (pruned_repos, pruned_written) =
@@ -1440,8 +1502,16 @@ pub(crate) async fn api_requirement_master_diff(
     // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
     let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
+    let notice = if branch_scope.repos.is_empty() {
+        Some(format!(
+            "分支登记为空（零代码需求），无代码差异可展示；审查对象见登记文件 {} 的 note 说明",
+            scope_file
+        ))
+    } else {
+        None
+    };
     Ok(Json(
-        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots, "notice": notice }),
     ))
 }
 
@@ -2226,7 +2296,7 @@ pub(crate) async fn api_requirement_merge_branch(
         ))
     })?;
     let merge_request = normalize_merge_request(&body)?;
-    // issue 家族（线上问题/测试问题）允许登记分支写复现/测试代码，但禁止合入生产分支。
+    // issue 家族（线上问题/测试问题/性能问题）允许登记分支写复现/测试代码，但禁止合入生产分支。
     let block_prod_branches = req
         .category
         .as_deref()
@@ -2333,8 +2403,8 @@ async fn resolve_merge_conflict_context(
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| ApiError::bad_request("branches.json 缺少需求分支"))?;
     let target = normalize_merge_target(target_raw.unwrap_or("test"))?;
-    let project_path =
-        resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name).ok_or_else(|| {
+    let project_path = resolve_code_review_project_path(repo.path.as_deref(), &repo.repo_name)
+        .ok_or_else(|| {
             ApiError::bad_request(format!("branches.json 缺少 path：{}", repo.repo_name))
         })?;
     let target_branch = merge_target_branch_for_repo(&repo, &target, &project_path)
@@ -2451,8 +2521,7 @@ pub(crate) async fn api_requirement_merge_conflict_complete(
         .await
         .map_err(|e| ApiError::from(anyhow::anyhow!(e)))?;
     let temp_branch = merge_temp_branch(&ctx.target, &ctx.source_branch, &ctx.target_branch);
-    let cleanup =
-        cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
+    let cleanup = cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
     let cleanup_warnings: Vec<String> = cleanup
         .iter()
         .filter(|c| c.contains(" failed:"))
@@ -2497,8 +2566,7 @@ pub(crate) async fn api_requirement_merge_conflict_abort(
         ));
     }
     let temp_branch = merge_temp_branch(&ctx.target, &ctx.source_branch, &ctx.target_branch);
-    let cleanup =
-        cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
+    let cleanup = cleanup_merge_worktree(&ctx.project_path, &ctx.worktree_path, &temp_branch).await;
     warnings.extend(cleanup.iter().filter(|c| c.contains(" failed:")).cloned());
     Ok(Json(json!({
         "ok": true,
@@ -2522,7 +2590,7 @@ pub(crate) async fn api_requirement_prod_mrs(
         .unwrap_or(false)
     {
         return Err(ApiError::bad_request(
-            "线上问题/测试问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
+            "线上问题/测试问题/性能问题的分支代码仅用于测试环境复现与验证，禁止合入生产分支，不生成生产 MR；正式生产修复请点「创建修复需求」转普通需求承接",
         ));
     }
     // 合并 MR 不再校验门禁状态：MR 生成只是创建合并请求，不会自动合入；
@@ -2538,12 +2606,16 @@ pub(crate) async fn api_requirement_prod_mrs(
                 "missing {scope_file}; register the round's branches first"
             ))
         })?;
-    let results = generate_prod_mrs(&req, &branch_scope).await?;
+    // 三步式 GitLab 认证链需要 browser_auth 配置（Chrome 登录态读取等）。
+    let cfg = read_config(&state).await?;
+    let auth_cfg = normalize_browser_auth_config(cfg.browser_auth);
+    let (results, auth_source) = generate_prod_mrs(&req, &branch_scope, &auth_cfg).await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
         "generatedAt": now_ms(),
         "round": round,
+        "authSource": auth_source,
         "branchScope": branch_scope,
         "results": results,
     })))
@@ -2581,17 +2653,21 @@ pub(crate) async fn api_recommendations(
     Ok(Json(json!({ "recommendations": recommendations })))
 }
 
-/// 预估工时表单：仅 req_id 为占位估算；带 estimated_hours 时由 agent/用户
-/// 显式提交评估结果（自动预估工时的维护入口，面板与 agent 会话均可调用）。
+/// 预估工时表单：仅 req_id 为占位估算；带 estimated_hours 时由 agent/用户显式提交评估结果；
+/// 带 manual_hours 时为人工矫正（排期统计优先于 agent 预估，与评估字段共存互不覆盖）。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EffortEstimateForm {
     pub(crate) req_id: String,
     pub(crate) estimated_hours: Option<f64>,
+    /// 人工矫正工时（真实工时口径）：Some(>0) 覆盖、Some(0) 清除矫正、None 不动。
+    pub(crate) manual_hours: Option<f64>,
     pub(crate) summary: Option<String>,
     pub(crate) model: Option<String>,
 }
 
+/// 需求详情页/排期页共用的工时档案结构：
+/// estimatedHours = agent/评估工时；manualHours = 人工矫正；排期统计取 manual ?? estimate。
 pub(crate) async fn api_effort_estimate(
     State(state): State<AppState>,
     form: FormOrJson<EffortEstimateForm>,
@@ -2601,31 +2677,226 @@ pub(crate) async fn api_effort_estimate(
         .0
         .estimated_hours
         .filter(|h| h.is_finite() && *h > 0.0 && *h <= 1000.0);
-    let estimate = match explicit {
-        Some(hours) => json!({
+    let manual = form
+        .0
+        .manual_hours
+        .filter(|h| h.is_finite() && *h >= 0.0 && *h <= 1000.0);
+    let summary_input = form
+        .0
+        .summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    // 读现有档案：写评估不销毁人工矫正，写矫正不覆盖评估。
+    let mut estimate = match req.effort_estimate.as_ref() {
+        Some(v) if v.is_object() => v.clone(),
+        _ => json!({
             "version": 1,
             "coefficient": 1.0,
-            "baseHours": hours,
-            "estimatedHours": hours,
+            "baseHours": 0,
+            "estimatedHours": 0,
             "factors": [],
-            "summary": form.0.summary.unwrap_or_default(),
-            "model": form.0.model.unwrap_or_else(|| "agent-manual".to_string()),
-            "updatedAt": now_ms()
-        }),
-        None => json!({
-            "version": 1,
-            "coefficient": 1.0,
-            "baseHours": 4,
-            "estimatedHours": 4,
-            "factors": [],
-            "summary": "Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.",
-            "model": "manual-placeholder",
-            "updatedAt": now_ms()
+            "summary": "",
+            "model": "",
+            "updatedAt": 0
         }),
     };
-    if let Some(dir) = req.req_dir {
+    if let Some(h) = explicit {
+        estimate["version"] = json!(1);
+        estimate["coefficient"] = json!(1.0);
+        estimate["baseHours"] = json!(h);
+        estimate["estimatedHours"] = json!(h);
+        if let Some(s) = &summary_input {
+            estimate["summary"] = json!(s);
+        }
+        estimate["model"] = json!(form
+            .0
+            .model
+            .clone()
+            .unwrap_or_else(|| "agent-manual".to_string()));
+        estimate["updatedAt"] = json!(now_ms());
+    }
+    if let Some(h) = manual {
+        estimate["version"] = json!(1);
+        if h > 0.0 {
+            estimate["manualHours"] = json!(h);
+            estimate["manualUpdatedAt"] = json!(now_ms());
+            if let Some(s) = &summary_input {
+                estimate["summary"] = json!(s);
+            }
+        } else {
+            // Some(0) = 清除人工矫正，回落到 agent 预估。
+            estimate["manualHours"] = Value::Null;
+            estimate["manualUpdatedAt"] = json!(now_ms());
+        }
+    }
+    if explicit.is_none() && manual.is_none() {
+        // 兼容旧行为：无参数调用写占位评估（工时预估门禁视为未预估），但保留已有人工矫正。
+        estimate["version"] = json!(1);
+        estimate["coefficient"] = json!(1.0);
+        estimate["baseHours"] = json!(4);
+        estimate["estimatedHours"] = json!(4);
+        estimate["factors"] = json!([]);
+        estimate["summary"] =
+            json!("Rust rewrite placeholder: AI effort estimation has not been reimplemented yet.");
+        estimate["model"] = json!("manual-placeholder");
+        estimate["updatedAt"] = json!(now_ms());
+    }
+    if let Some(dir) = req.req_dir.as_deref() {
         let path = PathBuf::from(dir).join("effort-estimate.json");
         atomic_write_json(&path, &estimate).await?;
     }
     Ok(Json(json!({ "ok": true, "estimate": estimate })))
+}
+
+// ---- Agent 远程文件编辑（容器 hub 阶段一：本机挂载只读 + hub API 写的配套端点）----
+//
+// 定位：覆盖现有结构化 API（doc/doc-part/section/status/annotations…）没覆盖的边角
+// 文档编辑（如 manual-check.md、临时分析文档）。结构化数据（state.json、编号池、
+// branches.json 等）一律不走本端点，仍由对应 API 写入，避免读改写序列冲突。
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentFileReadQuery {
+    id: Option<String>,
+    #[serde(alias = "reqId")]
+    req_id: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentFileWriteForm {
+    id: Option<String>,
+    #[serde(alias = "reqId")]
+    req_id: Option<String>,
+    path: String,
+    content: String,
+    /// GET 返回的内容 sha1（乐观锁）。空 = 仅允许新建（文件已存在则 409）。
+    base_sha: Option<String>,
+}
+
+/// agent 可编辑文件的相对路径白名单：
+/// - 顶层单段 `.md` 文件（test.md / manual-check.md / 自建分析文档等；meta.md 除外——
+///   frontmatter 结构化字段由专门 API 维护，裸编辑会破坏索引）
+/// - `docs/<base>/<file>.md` 分册两层路径
+/// 拒绝：绝对路径、`..` 穿越、空段、非 `.md`、超过两层。
+pub(crate) fn resolve_agent_editable_rel_path(input: &str) -> ApiResult<String> {
+    let v = input.trim().trim_start_matches("./");
+    if v.is_empty() || v.starts_with('/') || v.split('/').any(|s| s == ".." || s.is_empty()) {
+        return Err(ApiError::bad_request(format!(
+            "非法文件路径：{input}（只允许需求目录内相对 .md 路径）"
+        )));
+    }
+    let segs: Vec<&str> = v.split('/').collect();
+    match segs.len() {
+        1 => {
+            let file = segs[0];
+            if !file.ends_with(".md") || file == ".md" {
+                return Err(ApiError::bad_request(format!(
+                    "只允许编辑 .md 文件：{input}"
+                )));
+            }
+            if file == "meta.md" {
+                return Err(ApiError::bad_request(
+                    "meta.md 由专门 API 维护（status/category/ones/effort-estimate 等），不接受裸编辑",
+                ));
+            }
+            ensure_safe_segment(file.trim_end_matches(".md"), "文档名")?;
+            Ok(v.to_string())
+        }
+        3 if segs[0] == "docs" => resolve_doc_part_rel_path(v),
+        _ => Err(ApiError::bad_request(format!(
+            "只允许顶层 .md 或 docs/<base>/<file>.md 分册路径：{input}"
+        ))),
+    }
+}
+
+pub(crate) fn sha1_hex(s: &str) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(s.as_bytes());
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
+}
+
+/// GET /api/requirement/file?id=&path=：读需求目录内白名单文件，返回内容 + sha 乐观锁版本。
+pub(crate) async fn api_requirement_file_get(
+    State(state): State<AppState>,
+    Query(query): Query<AgentFileReadQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_agent_editable_rel_path(query.path.as_deref().unwrap_or_default())?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let (exists, content) = match fs::read_to_string(&path).await {
+        Ok(text) => (true, text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, String::new()),
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    Ok(Json(json!({
+        "id": req.id,
+        "path": rel,
+        "exists": exists,
+        "content": content,
+        "sha": sha1_hex(&content),
+        "size": content.len(),
+    })))
+}
+
+/// PUT /api/requirement/file：带 sha 乐观锁写回。baseSha 与当前内容不符返回 409（重新 GET 再写）。
+pub(crate) async fn api_requirement_file_put(
+    State(state): State<AppState>,
+    form: FormOrJson<AgentFileWriteForm>,
+) -> ApiResult<Json<Value>> {
+    let form = form.0;
+    let req_id = form.id.or(form.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_agent_editable_rel_path(&form.path)?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let current = match fs::read_to_string(&path).await {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    let current_sha = current.as_deref().map(sha1_hex);
+    let base_sha = form
+        .base_sha
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase());
+    match (&current_sha, &base_sha) {
+        (Some(cur), Some(base)) if cur != base => {
+            return Err(ApiError::conflict(format!(
+                "文件已被修改（当前 sha {cur}，请求基于 {base}）；重新 GET /api/requirement/file 获取最新内容与 sha 后再写"
+            )));
+        }
+        (Some(_), None) => {
+            return Err(ApiError::conflict(
+                "文件已存在：更新必须携带 GET 返回的 baseSha；如需覆盖请先 GET",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ApiError::conflict(
+                "文件不存在（可能已被删除）：新建请省略 baseSha",
+            ));
+        }
+        _ => {}
+    }
+    atomic_write_text(&path, &form.content).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "id": req.id,
+        "path": rel,
+        "sha": sha1_hex(&form.content),
+        "size": form.content.len(),
+        "created": current.is_none(),
+    })))
 }

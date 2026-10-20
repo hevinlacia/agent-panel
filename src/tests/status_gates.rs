@@ -52,14 +52,31 @@ fn status_gate_rules_default_seed_preserves_historical_gates() {
     );
     // 线上问题硬门禁迁移为默认规则。
     assert_eq!(gates_of("排查中", "已定位"), vec!["issue-root-cause"]);
-    assert_eq!(gates_of("已修复", "已复盘"), vec!["issue-troubleshooting"]);
+    assert_eq!(
+        gates_of("已修复", "经验总结"),
+        vec!["issue-troubleshooting"]
+    );
+    // 2026-10 新增：需求澄清/需求创建 → 开发中 挂工时预估门禁（排期依赖，抢修豁免）。
+    assert_eq!(gates_of("需求澄清", "开发中"), vec!["effort-estimate"]);
+    assert_eq!(gates_of("需求创建", "开发中"), vec!["effort-estimate"]);
     // 未配置的流转不拦。
-    assert!(gates_of("需求澄清", "开发中").is_empty());
-    assert!(gates_of("测试中", "人工核查").is_empty());
-    // 人工核查（2026-08 新增）：进入发布就绪的两条路径都挂 review 门禁兜底 agent 推进；
+    assert!(gates_of("需求澄清", "测试中").is_empty());
+    // 2026-10 新增：测试中 → 人工核查挂 UAT 回归门禁（原无门禁）。
+    assert_eq!(gates_of("测试中", "人工核查"), vec!["uat-regression"]);
+    // 人工核查（2026-08 新增）：进入发布就绪的路径都挂 review 门禁兜底 agent 推进；
+    // 2026-10 新增：同时挂 UAT 回归门禁。
     // 人工在 UI 推进跳过门禁 = 人工确权（视觉验收 + 主流程复测 + 人工审码）。
-    assert_eq!(gates_of("人工核查", "发布就绪"), vec!["review"]);
-    assert_eq!(gates_of("测试中", "发布就绪"), vec!["review"]);
+    assert_eq!(
+        gates_of("人工核查", "发布就绪"),
+        vec!["review", "uat-regression"]
+    );
+    assert_eq!(
+        gates_of("测试中", "发布就绪"),
+        vec!["review", "uat-regression"]
+    );
+    // 发布就绪小循环（2026-09 新增）：开发中 → 发布就绪 直通挂 review 门禁，
+    // 小改动必须增量审查刷新快照后才能回发布就绪；不挂 selftest-checklist（快）。
+    assert_eq!(gates_of("开发中", "发布就绪"), vec!["review"]);
 }
 
 #[test]
@@ -343,14 +360,35 @@ async fn status_flow_reports_gate_states_with_unverified() {
 
 #[test]
 fn online_issue_status_machine_uses_new_statuses_with_legacy_aliases() {
-    // 新状态机：排查中 → 已定位 → 已修复 → 已复盘 / 已关闭。
-    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+    // 新状态机：排查中 → 已定位 → 已修复 → 经验总结 / 已关闭。
+    for s in ["排查中", "已定位", "已修复", "经验总结", "已关闭"] {
         assert_eq!(canonical_status(s).unwrap(), s);
     }
     // 旧状态兼容：已确认/问题确认 → 已定位。
     assert_eq!(canonical_status("已确认").unwrap(), "已定位");
     assert_eq!(canonical_status("问题确认").unwrap(), "已定位");
     assert_eq!(canonical_status("线上排查").unwrap(), "排查中");
+}
+
+#[test]
+fn suspend_status_is_valid_but_outside_flow() {
+    // 挂起可经 canonical_status 校验（任意状态可挂起的合法目标），
+    // 但不在流水序列（REQ_STATUSES/REQ_FLOW_STATUSES）：不影响组聚合序数、
+    // skipped_statuses 跳过计算和门禁规则匹配。
+    assert_eq!(canonical_status("挂起").unwrap(), "挂起");
+    assert!(!REQ_STATUSES.contains(&"挂起"));
+    assert!(!REQ_FLOW_STATUSES.contains(&"挂起"));
+    assert!(!SUB_REQ_STATUSES.contains(&"挂起"));
+    // 挂起目标不算“跳过”流水状态；从挂起恢复到流水状态也不算。
+    assert!(skipped_statuses(Some("开发中"), "挂起").is_empty());
+    assert!(skipped_statuses(Some("挂起"), "测试中").is_empty());
+}
+
+#[test]
+fn sub_req_and_marker_status_sets_do_not_overlap() {
+    // 子需求状态机不含挂起：ensure_sub_req_status_transition 天然拒绝子需求挂起。
+    assert!(!SUB_REQ_STATUSES.contains(&"挂起"));
+    assert_eq!(REQ_MARKER_STATUSES, &["挂起"]);
 }
 
 #[test]
@@ -598,7 +636,10 @@ fn selftest_checklist_sections_parses_items_results_and_reasons() {
     let body = selftest_test_md_body();
     let sections = selftest_checklist_sections(&body).expect("section should be found");
     assert_eq!(sections.len(), 3);
-    let main = sections.iter().find(|s| s.category == "主流程测试").unwrap();
+    let main = sections
+        .iter()
+        .find(|s| s.category == "主流程测试")
+        .unwrap();
     assert_eq!(main.items.len(), 2);
     assert_eq!(main.items[0].no, 1);
     assert_eq!(main.items[0].item, "回退接口");
@@ -609,11 +650,17 @@ fn selftest_checklist_sections_parses_items_results_and_reasons() {
         main.items[1].reason.as_deref(),
         Some("test 环境 OMS 未订阅 topic，无法联调")
     );
-    let boundary = sections.iter().find(|s| s.category == "边界场景测试").unwrap();
+    let boundary = sections
+        .iter()
+        .find(|s| s.category == "边界场景测试")
+        .unwrap();
     assert_eq!(boundary.risk_analysis, vec!["已取消单重复回退".to_string()]);
     assert_eq!(boundary.items.len(), 1);
     assert_eq!(boundary.items[0].result, "pass");
-    let concurrency = sections.iter().find(|s| s.category == "高并发/大流量场景测试").unwrap();
+    let concurrency = sections
+        .iter()
+        .find(|s| s.category == "高并发/大流量场景测试")
+        .unwrap();
     assert_eq!(concurrency.items.len(), 0);
     assert_eq!(
         concurrency.not_applicable_reason.as_deref(),

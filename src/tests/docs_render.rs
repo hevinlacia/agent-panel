@@ -25,6 +25,7 @@ fn build_meta_doc_writes_source_line() {
         "hevin",
         "2026-01-01",
         "unknown",
+        "unknown",
         "",
         &[],
         "s",
@@ -42,6 +43,7 @@ fn build_meta_doc_writes_source_line() {
         "产品推动",
         "hevin",
         "2026-01-01",
+        "unknown",
         "unknown",
         "",
         &[],
@@ -65,6 +67,7 @@ fn build_meta_doc_writes_issues_frontmatter_when_bound() {
         "hevin",
         "2026-01-01",
         "unknown",
+        "unknown",
         "",
         &["WMS-099-issue".into()],
         "s",
@@ -82,6 +85,7 @@ fn build_meta_doc_writes_issues_frontmatter_when_bound() {
         "产品推动",
         "hevin",
         "2026-01-01",
+        "unknown",
         "unknown",
         "",
         &[],
@@ -140,7 +144,7 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // 排查中：incident + notes 必填，未创建时 required 检查不通过。
-    let checks = phase_entry_checks("排查中", &dir);
+    let checks = phase_entry_checks("排查中", &dir, true);
     let incident_check = checks
         .iter()
         .find(|c| c["id"] == "incident-md")
@@ -149,13 +153,13 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     assert_eq!(incident_check["ok"], false);
     std::fs::write(dir.join("incident.md"), "内容").unwrap();
     std::fs::write(dir.join("notes.md"), "内容").unwrap();
-    let checks = phase_entry_checks("排查中", &dir);
+    let checks = phase_entry_checks("排查中", &dir, true);
     assert!(checks
         .iter()
         .all(|c| c["required"] == false || c["ok"] == true));
     // 已定位：root-cause 缺失但存量 technical-plan.md 兼容放行。
     std::fs::write(dir.join("technical-plan.md"), "存量根因记录").unwrap();
-    let checks = phase_entry_checks("已定位", &dir);
+    let checks = phase_entry_checks("已定位", &dir, true);
     let fallback_check = checks
         .iter()
         .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
@@ -164,7 +168,7 @@ fn phase_entry_checks_issue_doc_set_with_legacy_technical_plan_fallback() {
     assert_eq!(fallback_check["ok"], true);
     // 新问题写 root-cause.md 后同样满足。
     std::fs::write(dir.join("root-cause.md"), "根因与证据链").unwrap();
-    let checks = phase_entry_checks("已定位", &dir);
+    let checks = phase_entry_checks("已定位", &dir, true);
     let fallback_check = checks
         .iter()
         .find(|c| c["id"] == "root-cause-md-or-technical-plan-md")
@@ -214,6 +218,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         "hevin",
         "2026-01-01",
         "unknown",
+        "unknown",
         "",
         &[],
         "s",
@@ -240,6 +245,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         "hevin",
         "2026-01-01",
         "unknown",
+        "unknown",
         "",
         &[],
         "s",
@@ -264,6 +270,7 @@ fn requirement_create_files_issue_category_scaffolds_incident_doc_set() {
         "产品推动",
         "hevin",
         "2026-01-01",
+        "unknown",
         "unknown",
         "",
         &[],
@@ -348,10 +355,14 @@ fn context_page_contains_sections_and_raw_link() {
         ones: None,
         issues: Vec::new(),
         plan_release: None,
+        submit_test_date: None,
+        promise_submit_date: None,
+        release_ready_at: None,
         created_at: 0,
         updated_at: 0,
         completed_at: None,
         rework_rounds: 0,
+        release_ready_rounds: 0,
         req_dir: None,
         meta_path: None,
         background_path: None,
@@ -369,6 +380,7 @@ fn context_page_contains_sections_and_raw_link() {
         troubleshooting_path: None,
         incident_path: None,
         root_cause_path: None,
+        reproduce_path: None,
         test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,
@@ -384,6 +396,7 @@ fn context_page_contains_sections_and_raw_link() {
         req_kind: None,
         is_sub_req: false,
         sub_reqs: Vec::new(),
+        region: None,
     };
     let html = render_requirement_context_html(&req, "release-check", &value);
     assert!(html.contains("上线清单 Release Manifest"));

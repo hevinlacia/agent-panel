@@ -403,16 +403,25 @@ fn effective_cookie_allowlist(auth: &BrowserAuthConfig) -> Vec<String> {
 
 /// 读取 Chrome 登录 cookie：优先直读 cookie 数据库（无 CDP、无弹窗），
 /// 失败时回退到 CDP（可能触发 Chrome “允许远程调试”确认）。
-/// 只返回白名单域名内的 cookie。返回 (读取方式, cookies)。
+/// 只返回配置白名单域名内的 cookie。返回 (读取方式, cookies)。
 pub(crate) async fn load_chrome_cookies(
     auth: &BrowserAuthConfig,
 ) -> Result<(String, Vec<ChromeCookie>)> {
     let allowlist = effective_cookie_allowlist(auth);
-    match load_chrome_cookies_db(&allowlist).await {
+    load_chrome_cookies_with_allowlist(auth, &allowlist).await
+}
+
+/// 显式域名白名单版：调用方自带 allowlist（如 GitLab MR 功能只读 GitLab 域名的登录态），
+/// 不依赖 browser_auth 全局配置。其余行为与 [`load_chrome_cookies`] 一致。
+pub(crate) async fn load_chrome_cookies_with_allowlist(
+    auth: &BrowserAuthConfig,
+    allowlist: &[String],
+) -> Result<(String, Vec<ChromeCookie>)> {
+    match load_chrome_cookies_db(allowlist).await {
         Ok(cookies) => Ok(("db".into(), cookies)),
         Err(db_err) => {
             tracing::warn!(error = %db_err, "Chrome cookie DB read failed; falling back to CDP");
-            match load_chrome_cookies_cdp(auth, &allowlist).await {
+            match load_chrome_cookies_cdp(auth, allowlist).await {
                 Ok(cookies) => Ok(("cdp".into(), cookies)),
                 Err(cdp_err) => Err(anyhow!("cookie DB: {db_err:#}; CDP fallback: {cdp_err:#}")),
             }

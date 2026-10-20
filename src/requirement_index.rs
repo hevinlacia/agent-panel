@@ -27,15 +27,29 @@ pub(crate) struct Requirement {
     /// 需求推动方：产品推动（默认）/ 开发推动；开发推动必须先完成测试场景文档。
     pub(crate) source: String,
     pub(crate) ones: Option<String>,
+    /// 区域维度（issue 家族专用）：cn=中国 / sea=东南亚，后续可扩展更多国家/区域；
+    /// 存量问题与未登记记录为 None，前端筛选归入「未登记」。
+    pub(crate) region: Option<String>,
     /// 绑定的线上问题 req id 列表（meta.md issues 字段，仅普通需求使用）。
     pub(crate) issues: Vec<String>,
     pub(crate) plan_release: Option<String>,
+    /// 提测时间（meta.md frontmatter `submit-test-date`）：交付测试开始测试的日期 deadline；
+    /// 到点时需求状态必须 ≥ 人工核查（开发侧工作全部完成）。unknown = 未登记。
+    /// 提测时间（实际）：排期面板容量评估用的实际提测日。
+    pub(crate) submit_test_date: Option<String>,
+    /// 承诺提测时间：给产品/测试承诺的提测日，用户手设，判断紧急度用。
+    pub(crate) promise_submit_date: Option<String>,
+    /// 最近一次进入「发布就绪」的时间（ms）；未登记提测时间时供排期页推定提测日。
+    pub(crate) release_ready_at: Option<i64>,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) completed_at: Option<i64>,
     /// 打回返工轮次：人工核查/测试中 → 开发中 的回退次数
     /// （state.json `reworkRounds`，历史数据字段缺失时从 history 派生）。
     pub(crate) rework_rounds: u64,
+    /// 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数
+    /// （state.json `releaseReadyRounds`，历史数据字段缺失时从 history 派生）。
+    pub(crate) release_ready_rounds: u64,
     pub(crate) req_dir: Option<String>,
     pub(crate) meta_path: Option<String>,
     pub(crate) background_path: Option<String>,
@@ -53,6 +67,7 @@ pub(crate) struct Requirement {
     pub(crate) troubleshooting_path: Option<String>,
     pub(crate) incident_path: Option<String>,
     pub(crate) root_cause_path: Option<String>,
+    pub(crate) reproduce_path: Option<String>,
     pub(crate) test_scenario_path: Option<String>,
     pub(crate) experience_summary_job: Option<Value>,
     pub(crate) alignment_path: Option<String>,
@@ -163,7 +178,7 @@ pub(crate) fn sub_req_seq(req_id: &str) -> Option<u64> {
 
 pub(crate) const GROUP_RELEASE_POLICIES: &[&str] = &["together", "independent"];
 
-/// 需求流状态序数（越小越早）；线上问题/测试问题轻流程状态不参与聚合。
+/// 需求流状态序数（越小越早）；线上问题/测试问题/性能问题轻流程状态不参与聚合。
 pub(crate) fn requirement_flow_status_rank(status: &str) -> Option<usize> {
     REQ_FLOW_STATUSES.iter().position(|s| *s == status)
 }
@@ -582,6 +597,21 @@ pub(crate) async fn load_requirement_from_dir(
         .get("plan-release")
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let submit_test_date = fm
+        .fields
+        .get("submit-test-date")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let promise_submit_date = fm
+        .fields
+        .get("promise-submit-date")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    let region = fm
+        .fields
+        .get("region")
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
     let parent_req_id = fm
         .fields
         .get("parent-req-id")
@@ -640,6 +670,7 @@ pub(crate) async fn load_requirement_from_dir(
         created_at = updated_at;
     }
     let completed_at = req_state.as_ref().and_then(extract_completed_at);
+    let release_ready_at = req_state.as_ref().and_then(release_ready_at_from_state);
     let effort = read_json_if_exists(&dir.join("effort-estimate.json")).await;
     let ones_manhour = read_json_if_exists(&dir.join("ones-manhour.json")).await;
     let project = projects
@@ -658,12 +689,20 @@ pub(crate) async fn load_requirement_from_dir(
         category: Some(category),
         source,
         ones,
+        region,
         issues,
         plan_release,
+        submit_test_date,
+        promise_submit_date,
+        release_ready_at,
         created_at,
         updated_at,
         completed_at,
         rework_rounds: req_state.as_ref().map(rework_round_count).unwrap_or(0),
+        release_ready_rounds: req_state
+            .as_ref()
+            .map(release_ready_round_count)
+            .unwrap_or(0),
         req_dir: Some(dir.to_string_lossy().to_string()),
         meta_path: Some(meta_path.to_string_lossy().to_string()),
         background_path: path_if_exists(dir.join("background.md")),
@@ -681,6 +720,7 @@ pub(crate) async fn load_requirement_from_dir(
         troubleshooting_path: path_if_exists(dir.join("troubleshooting.md")),
         incident_path: path_if_exists(dir.join("incident.md")),
         root_cause_path: path_if_exists(dir.join("root-cause.md")),
+        reproduce_path: path_if_exists(dir.join("reproduce.md")),
         test_scenario_path: path_if_exists(dir.join("test-scenario.md")),
         experience_summary_job: normalize_experience_summary_job_value(
             &id,
@@ -911,6 +951,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
     Requirement {
         id: DEFAULT_REQ_ID.into(),
         title: "默认需求".into(),
+        region: None,
         status: "开发中".into(),
         projects: vec![DEFAULT_PROJECT_NAME.into()],
         project: DEFAULT_PROJECT_NAME.into(),
@@ -922,10 +963,14 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         ones: None,
         issues: Vec::new(),
         plan_release: None,
+        submit_test_date: None,
+        promise_submit_date: None,
+        release_ready_at: None,
         created_at: now,
         updated_at: now,
         completed_at: None,
         rework_rounds: 0,
+        release_ready_rounds: 0,
         req_dir: None,
         meta_path: None,
         background_path: None,
@@ -943,6 +988,7 @@ pub(crate) fn default_requirement(session_ids: Vec<String>) -> Requirement {
         troubleshooting_path: None,
         incident_path: None,
         root_cause_path: None,
+        reproduce_path: None,
         test_scenario_path: None,
         experience_summary_job: None,
         alignment_path: None,

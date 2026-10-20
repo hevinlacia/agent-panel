@@ -84,6 +84,7 @@ export function RequirementFilesPanel({ req }: { req: Requirement }) {
       existing("release-check.md", req.releaseCheckPath),
       existing("experience-summary.md", req.experienceSummaryPath),
       existing("troubleshooting.md", req.troubleshootingPath),
+      existing("reproduce.md", req.reproducePath),
       existing("review.md", req.reviewPath),
     ].filter(Boolean) as [string, string][] },
     { title: "历史兼容文件", note: "旧需求存在时继续读取；新需求不再默认要求。", rows: [

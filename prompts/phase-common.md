@@ -30,6 +30,9 @@
 - `dedupeKey`: 推荐 `项目.主题.细分`，用于经验总结阶段去重
 - `confidence`: `confirmed` / `inferred` / `needs-confirmation`
 - `appendNote`: 重要候选可设为 `true`，同步压缩到 notes.md，避免当前 session 细节丢失
+- `reqId`: 必填，目标需求 ID
+- 数组约束: `evidence` / `triggerTerms` / `relatedFiles` / `relatedRepos` / `relatedTables` / `relatedApis` / `tags` 必须传字符串数组，传单个字符串返回 400
+- 完整类型契约: 见 agent-panel skill `references/requirement-api.md` 的『events 字段类型与误发清理』节；接口 400 报错不含字段名，按契约逐字段核对
 
 ## 固定禁止项
 - 不把未验证猜测写成 active 事实。

@@ -230,3 +230,96 @@ fn resolve_skill_path_prefers_override_and_supports_three_shapes() {
     let empty = BTreeMap::new();
     assert!(resolve_skill_path_with(&empty, "req-tracker").ends_with("SKILL.md"));
 }
+
+#[test]
+fn limit_output_truncates_at_line_boundary() {
+    let value = "aaa\nbbb\nccc".to_string();
+    let (out, truncated) = limit_output(value.clone(), 8);
+    assert!(truncated);
+    // 保留到最后一个完整换行，不产生半行。
+    assert_eq!(out, "aaa\nbbb\n");
+    // 未超限原样返回。
+    let (same, truncated) = limit_output(value, 64);
+    assert!(!truncated);
+    assert_eq!(same, "aaa\nbbb\nccc");
+    // 单个无换行超长字符串退回硬截。
+    let (hard, truncated) = limit_output("x".repeat(100), 10);
+    assert!(truncated);
+    assert_eq!(hard.len(), 10);
+}
+
+#[test]
+fn parse_iso_date_prefix_accepts_date_and_rfc3339() {
+    assert_eq!(
+        crate::knowledge::parse_iso_date_prefix("2026-03-15"),
+        chrono::NaiveDate::from_ymd_opt(2026, 3, 15)
+    );
+    assert_eq!(
+        crate::knowledge::parse_iso_date_prefix("2026-08-12T03:20:00Z"),
+        chrono::NaiveDate::from_ymd_opt(2026, 8, 12)
+    );
+    assert_eq!(crate::knowledge::parse_iso_date_prefix("bad"), None);
+    assert_eq!(crate::knowledge::parse_iso_date_prefix(""), None);
+}
+
+#[test]
+fn observed_date_matches_filters_with_inclusive_bounds() {
+    let item = json!({"observedAt": "2026-03-15", "createdAt": "2026-08-12T00:00:00Z"});
+    // observed_at 存在时优先于 created_at；边界当天含入
+    assert!(crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-03-15"),
+        true
+    ));
+    assert!(crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-03-15"),
+        false
+    ));
+    assert!(crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-03-01"),
+        true
+    ));
+    assert!(!crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-03-16"),
+        true
+    ));
+    assert!(crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-04-01"),
+        false
+    ));
+    assert!(!crate::knowledge::observed_date_matches(
+        &item,
+        Some("2026-03-14"),
+        false
+    ));
+    // 无效边界不过滤
+    assert!(crate::knowledge::observed_date_matches(
+        &item,
+        Some("junk"),
+        true
+    ));
+    assert!(crate::knowledge::observed_date_matches(&item, None, false));
+    // 完全缺日期的条目不过滤
+    let no_date = json!({"title": "x"});
+    assert!(crate::knowledge::observed_date_matches(
+        &no_date,
+        Some("2020-01-01"),
+        true
+    ));
+    // observed_at 缺省回退 created_at
+    let fallback = json!({"createdAt": "2026-08-12T00:00:00Z"});
+    assert!(crate::knowledge::observed_date_matches(
+        &fallback,
+        Some("2026-08-12"),
+        true
+    ));
+    assert!(!crate::knowledge::observed_date_matches(
+        &fallback,
+        Some("2026-08-13"),
+        true
+    ));
+}

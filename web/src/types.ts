@@ -5,13 +5,19 @@
  * Read-this-with: src/main.rs and web/src/App.tsx.
  */
 
-export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已复盘" | "已关闭" | "需求创建" | "已合入" | "已发布" | "已取消"
-export type ReqCategory = "需求" | "线上问题" | "测试问题"
+export type ReqStatus = "需求澄清" | "开发中" | "自测中" | "测试中" | "人工核查" | "发布就绪" | "经验总结" | "已完成" | "排查中" | "已定位" | "已修复" | "已关闭" | "需求创建" | "已合入" | "已发布" | "已取消" | "挂起"
+export type ReqCategory = "需求" | "线上问题" | "测试问题" | "性能问题"
 
 export interface EffortEstimate {
   coefficient: number
   baseHours: number
+  /** agent/评估工时（真实工时口径，4h 单位倍数）。 */
   estimatedHours: number
+  /** 评估来源：agent-auto（澄清完成自动预估）/ agent-manual / schedule-panel / manual-placeholder（占位）。 */
+  model?: string
+  /** 人工矫正工时：排期统计优先于 estimatedHours；null/缺省 = 未矫正。 */
+  manualHours?: number | null
+  manualUpdatedAt?: number
   summary?: string
   updatedAt?: number
 }
@@ -44,7 +50,8 @@ export interface ApitestApiItem {
   method: string
   url: string
   status: string
-  kind: "create" | "test" | string
+  /** create 造数 / test 测试 / prod_fix 线上修数据。 */
+  kind: "create" | "test" | "prod_fix" | string
   tags: string[]
   envSupport: Record<string, string>
   notes?: string
@@ -76,10 +83,31 @@ export interface ApitestDetailPayload {
   responseSchemaPath?: string | null
 }
 
+/** 触发请求头临时覆盖：value=null 表示移除该头。 */
+export interface ApitestHeaderOverrideInput {
+  name: string
+  value: string | null
+}
+
+/** POST /api/apitest/curl-import 响应：粘贴 curl 解析预览（凭证值已脱敏）。 */
+export interface ApitestCurlImportPayload {
+  ok: boolean
+  method: string
+  url: string
+  origin: string
+  headers: [string, string][]
+  credentialHeaders: string[]
+  hasToken: boolean
+  bodyPreview?: string | null
+  note?: string
+}
+
 /** POST /api/apitest/trigger 响应。 */
 export interface ApitestTriggerPayload {
   ok: boolean
   dryRun?: boolean
+  /** 凭证来源：auto-login（login.mjs）/ curl（粘贴真实环境 curl）。 */
+  credentialSource?: "auto-login" | "curl" | string
   status?: number
   durationMs?: number
   contentType?: string | null
@@ -308,6 +336,8 @@ export interface Requirement {
   completedAt?: number
   /** 打回返工轮次：人工核查/测试中 → 开发中 的回退次数（rework loop）。 */
   reworkRounds?: number
+  /** 发布就绪小循环轮次：发布就绪 → 开发中 的上线前快速修复次数（fast-fix loop）。 */
+  releaseReadyRounds?: number
   sessionIds: string[]
   reqDir?: string
   metaPath?: string
@@ -327,16 +357,25 @@ export interface Requirement {
   troubleshootingPath?: string
   incidentPath?: string
   rootCausePath?: string
+  reproducePath?: string
   experienceSummaryJob?: ExperienceSummaryJob
   prdPath?: string
   ones?: string
+  /** 区域维度（issue 家族）：cn=中国 / sea=东南亚，后续可扩展更多国家/区域；未登记为 null。 */
+  region?: string | null
   /** 需求工时档案（ones-manhour.json）：人工预估 / agent 实际 / 录入历史。 */
   onesManhour?: OnesManhourFileValue
-  /** 绑定的线上问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
+  /** 绑定的线上问题/性能问题 req id 列表（仅普通需求，meta.md issues 字段）。 */
   issues?: string[]
   /** 测试场景文档路径（开发推动的需求必须维护）。 */
   testScenarioPath?: string
   planRelease?: string
+  /** 提测时间（实际，meta.md submit-test-date）：排期面板饱和度口径；进入「发布就绪」自动刷新为当天（覆盖式），可手动调整。 */
+  submitTestDate?: string
+  /** 承诺提测时间（meta.md promise-submit-date）：给产品/测试承诺的提测日，用户手设，判断需求紧急度用。 */
+  promiseSubmitDate?: string
+  /** 最近一次进入「发布就绪」的时间（ms，state.json 历史推定）：未登记提测时间时供排期页推定提测日。 */
+  releaseReadyAt?: number | null
   effortEstimate?: EffortEstimate
   /** 引用式需求组：本需求 group.json 的成员列表（非空 = 本需求是组）。 */
   groupMembers?: GroupMemberRef[]
@@ -352,7 +391,7 @@ export interface Requirement {
   parentReqId?: string
   /** 派生字段：是否子需求。 */
   isSubReq?: boolean
-  /** 实体类型标记：meta.md req-kind（如 rollup = 整合需求）。 */
+  /** 实体类型标记：meta.md req-kind（rollup = 整合需求，fix = 修复需求：绑定线上问题的代码修复，独立 FIX 编号池）。 */
   reqKind?: string
   /** 本需求作为父需求时拆出的子需求列表（扫描回填）。 */
   subReqs?: SubReqRef[]
@@ -455,6 +494,15 @@ export interface DeployFreeze {
   since?: string
 }
 
+/** 自动任务派发时间窗口：仅窗口内允许自动派发；start > end = 跨午夜；手动派发不受限。 */
+export interface DispatchWindow {
+  enabled?: boolean
+  /** 窗口起点 HH:MM（本地时间，含）。 */
+  start: string
+  /** 窗口终点 HH:MM（本地时间，排他）。 */
+  end: string
+}
+
 export interface StatusGateRule {
   from: ReqStatus | string
   to: ReqStatus | string
@@ -489,7 +537,15 @@ export interface StatusFlowTransition {
 export interface StatusFlowRework {
   to: string
   fromStatuses: string[]
+  /** 打回返工轮次（向后兼容字段，等于 loops.rework.rounds）。 */
   rounds: number
+  /** 发布就绪小循环轮次：发布就绪 → 开发中（上线前快速修复）。 */
+  releaseReadyRounds?: number
+  /** 分循环轮次明细。 */
+  loops?: {
+    rework?: { fromStatuses: string[]; rounds: number }
+    releaseReady?: { fromStatuses: string[]; rounds: number }
+  }
 }
 
 export interface StatusFlowPayload {
@@ -498,6 +554,9 @@ export interface StatusFlowPayload {
   category?: string | null
   currentStatus: string
   currentKnown: boolean
+  /** 挂起是流水外标记状态：suspended=true 时 currentIndex 为 null，resumeStatus 为挂起前状态。 */
+  suspended?: boolean
+  resumeStatus?: string | null
   statuses: string[]
   currentIndex: number | null
   transitions: StatusFlowTransition[]
@@ -527,6 +586,10 @@ export interface StatusGateDetail {
     items?: { id?: string; title?: string; conclusion?: string; note?: string; evidence?: string }[]
   } | null
   annotations?: { present?: boolean; stale?: boolean; reason?: string } | null
+  /** 按循环语境整理的历史审查结论记录（主流程 / 返工轮次 / 发布就绪小循环）。 */
+  roundRecords?: ReviewRoundRecord[]
+  /** diff 快照栈里出现过的轮次号（供按轮次回看差异材料）。 */
+  snapshotRounds?: number[]
   /** 放行但需用户注意的警示（如 P1 严重问题、无法测试项）。 */
   warnings?: string[] | null
   actions?: string[]
@@ -539,6 +602,18 @@ export interface StatusGateDetail {
   category?: string | null
   /** 自测清单门禁：test.md 结构化自测清单（每项含结果与原因）。 */
   selftestChecklist?: SelftestChecklistPayload | null
+  /** UAT 回归门禁：test.md「## UAT 回归」结构化回归清单（结构同 selftestChecklist）。 */
+  uatRegression?: SelftestChecklistPayload | null
+}
+
+/** 循环语境审查结论记录：主流程结论 + 各轮次追加结论（review.md / code-review-ai.md）。 */
+export interface ReviewRoundRecord {
+  kind: "main" | "rework" | "release-ready" | "other"
+  round?: number | null
+  heading?: string | null
+  source: string
+  conclusion?: "PASS" | "BLOCKED" | "WAIVED" | null
+  docUpdatedAt?: number
 }
 
 export interface SelftestChecklistItem {
@@ -591,6 +666,8 @@ export interface ConfigPayload {
   cainiaoMockPort?: number
   /** 发版冻结：开启后 ylops_deploy.py 拒绝在 UAT（uat-sg/uat-cn）触发构建/部署。 */
   deployFreeze?: DeployFreeze
+  /** 自动总结派发时间窗口：仅窗口内自动派发（手动不受限）；null/缺省 = 不限。 */
+  experienceSummaryDispatchWindow?: DispatchWindow | null
   mergeExcludedRepos?: string[]
   /** 未配置（undefined）时后端使用内置默认门禁；显式空数组 = 关闭所有门禁。 */
   statusGates?: StatusGateRule[] | null
@@ -675,6 +752,7 @@ export interface KnowledgeItem {
   scope?: string
   status?: string
   confidence?: string
+  category?: string
   tags?: string[]
   triggerTerms?: string[]
   relatedSkills?: string[]
@@ -686,6 +764,10 @@ export interface KnowledgeItem {
   updatedAt?: string
   lastVerifiedAt?: string
   validUntil?: string
+  observedAt?: string
+  sourceGrade?: string
+  infoAgeDays?: number | null
+  stale?: boolean
   summary?: string
   details?: string | null
   detailsTruncated?: boolean
@@ -729,13 +811,13 @@ export interface CodeReviewRepoSnapshot {
   warnings?: string[]
   error?: string | null
 }
-export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; repos: CodeReviewRepoSnapshot[] }
+export interface CodeReviewSnapshot { version: number; reqId: string; updatedAt: number; baseRef: string; frontendBaseRef?: string; backendBaseRef?: string; sourceFallback?: boolean; mode?: string; sourceSnapshot?: string; baseDescription?: string; targetDescription?: string; /** 空登记快照（零代码需求）：登记文件存在但无仓库登记，无代码差异可展示 */ emptyScope?: boolean; emptyScopeNote?: string; repos: CodeReviewRepoSnapshot[] }
 export interface CodeReviewPayload { ok: boolean; branchScope?: BranchScope | null; review?: CodeReviewSnapshot | null; incrementalReview?: CodeReviewSnapshot | null }
 export interface ReviewGateStaleRepo { repoName: string; branch: string; projectPath?: string | null; reviewedTargetRef?: string; reviewedTargetCommit?: string; currentTargetRef?: string; currentTargetCommit?: string }
 export interface ReviewGatePayload { ok: boolean; reqId: string; gate: { status: string; label: string; allowsTesting: boolean; reason: string; source?: string | null; reviewPath: string; aiReviewPath: string; riskTags?: string[]; inventoryRisk?: boolean; staleRepos?: ReviewGateStaleRepo[]; incrementalReview?: CodeReviewSnapshot | null; checkedAt: number; actions: string[]; warnings?: string[]; annotations?: { present?: boolean; stale?: boolean; reason?: string } | null } }
 export interface CodeDiffSnapshot extends CodeReviewSnapshot { savedAt?: number; round?: number }
 export interface DiffSnapshotsPayload { ok: boolean; round?: number; snapshots: CodeDiffSnapshot[] }
-export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; prunedRepos?: string[]; prunedWritten?: boolean; snapshots: CodeDiffSnapshot[] }
+export interface MasterDiffPayload { ok: boolean; round?: number; branchScope?: BranchScope | null; prunedRepos?: string[]; prunedWritten?: boolean; notice?: string | null; snapshots: CodeDiffSnapshot[] }
 /** 分支登记轮次：1 = 原始 branches.json；>=2 = 合入生产后的修复轮次文件 branches-round-<n>.json */
 export interface BranchRoundInfo { round: number; file: string; updatedAt: number; repoCount: number; branchCount: number; sealed: boolean }
 export interface BranchRoundsPayload { ok: boolean; reqId: string; rounds: BranchRoundInfo[]; latest: number }

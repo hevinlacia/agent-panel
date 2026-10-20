@@ -149,6 +149,7 @@ pub(crate) struct BaseRefInfo {
 mod branch_scope;
 mod code_review;
 mod git_cmd;
+mod gitlab_auth;
 mod merge_conflict;
 mod merge_exec;
 mod merge_options;
@@ -161,6 +162,7 @@ mod sync_base;
 pub(crate) use branch_scope::*;
 pub(crate) use code_review::*;
 pub(crate) use git_cmd::*;
+pub(crate) use gitlab_auth::*;
 pub(crate) use merge_conflict::*;
 pub(crate) use merge_exec::*;
 pub(crate) use merge_options::*;

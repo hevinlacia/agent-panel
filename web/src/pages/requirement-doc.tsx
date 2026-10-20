@@ -12,6 +12,7 @@ const DOC_TITLES: Record<string, string> = {
   "troubleshooting": "排查经验",
   "incident": "问题档案",
   "root-cause": "根因与修复决策",
+  "reproduce": "复现文档",
   "review": "代码审查",
   "release-check": "发布预检",
   "test": "测试用例",

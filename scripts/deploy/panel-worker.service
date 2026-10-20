@@ -1,0 +1,25 @@
+[Unit]
+Description=Agent Panel worker (本机执行节点，向 hub 注册心跳)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hevin/Developer/tools/agent-panel
+Environment=PORT=7332
+Environment=PANEL_MODE=worker
+# hub 地址：同机部署指向本机 hub；混合部署改为 hub 的 tailnet/容器地址
+Environment=PANEL_HUB_URL=http://127.0.0.1:7331
+# worker 对外回调地址：hub 代理转发的目标；同机 127.0.0.1 即可，
+# 混合部署改为本机 tailnet/ZeroTier 地址（hub 必须可达）
+Environment=PANEL_CALLBACK_BASE=http://127.0.0.1:7332
+# worker 鉴权（可选）：与 hub 的 PANEL_WORKER_TOKEN/PANEL_AUTH_TOKEN 配对
+#Environment=PANEL_AUTH_TOKEN=change-me
+ExecStart=/home/hevin/Developer/tools/agent-panel/target/release/agent-panel --mode worker
+KillMode=process
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/home/hevin/.local/state/agent-panel-worker.log
+StandardError=append:/home/hevin/.local/state/agent-panel-worker.log
+
+[Install]
+WantedBy=default.target

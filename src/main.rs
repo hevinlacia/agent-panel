@@ -1,11 +1,12 @@
-use std::{env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use axum::{
     extract::{Query, State},
     http::{StatusCode, Uri},
+    middleware,
     response::{Html, IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -13,8 +14,9 @@ use serde_json::{json, Value};
 use tokio::{fs, sync::Mutex, task::JoinHandle};
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
-mod attachments;
 mod api_catalog;
+mod attachments;
+mod auth;
 mod browser_auth;
 mod cainiao_mock;
 mod capability;
@@ -22,6 +24,8 @@ mod chrome_cookies;
 mod config;
 mod dsh_client;
 mod experience_summary;
+mod git_blame;
+mod git_file_lines;
 mod git_workflow;
 mod harness;
 mod http;
@@ -31,6 +35,7 @@ mod ones;
 mod ones_manhour;
 mod paths;
 mod pi_config;
+mod pi_rpc;
 mod requirement_api;
 mod requirement_context;
 mod requirement_index;
@@ -39,15 +44,18 @@ mod requirement_service;
 mod requirement_sub;
 mod sessions;
 mod util;
+mod workers;
 
-use attachments::*;
 use api_catalog::*;
+use attachments::*;
 use browser_auth::*;
 use cainiao_mock::*;
 use capability::*;
 use chrome_cookies::*;
 use config::*;
 use experience_summary::*;
+use git_blame::*;
+use git_file_lines::*;
 pub(crate) use git_workflow::*;
 use harness::*;
 use http::*;
@@ -56,6 +64,7 @@ use markdown::*;
 use ones::*;
 use ones_manhour::*;
 use pi_config::*;
+use pi_rpc::*;
 use requirement_api::*;
 use requirement_context::*;
 use requirement_index::*;
@@ -66,6 +75,20 @@ use sessions::*;
 use util::*;
 
 const DEFAULT_PORT: u16 = 7331;
+/// worker 模式默认端口（本机执行节点；PORT 可覆盖）。
+const WORKER_DEFAULT_PORT: u16 = 7332;
+/// docs 模式（容器 hub）默认端口。
+const HUB_DEFAULT_PORT: u16 = 8788;
+const ENV_PANEL_MODE: &str = "PANEL_MODE";
+const ENV_PANEL_AUTH_TOKEN: &str = "PANEL_AUTH_TOKEN";
+const ENV_PANEL_DATA_DIR: &str = "PANEL_DATA_DIR";
+const ENV_PANEL_PORT: &str = "PANEL_PORT";
+/// 绑定地址覆盖：docs 默认 0.0.0.0、local 默认 127.0.0.1；手机/局域网/Tailscale 远程访问时设 0.0.0.0。
+const ENV_PANEL_BIND_HOST: &str = "PANEL_BIND_HOST";
+/// worker → hub 注册地址（worker 模式用）。
+const ENV_PANEL_HUB_URL: &str = "PANEL_HUB_URL";
+/// worker 对外回调地址（hub 代理转发的目标，worker 模式用）。
+const ENV_PANEL_CALLBACK_BASE: &str = "PANEL_CALLBACK_BASE";
 const DEFAULT_PROJECT_NAME: &str = "默认项目";
 const DEFAULT_REQ_ID: &str = "__default__";
 const STATE_FILE: &str = "state.json";
@@ -96,6 +119,7 @@ const PHASE_COMMON_PROMPT_FILE: &str = "prompts/phase-common.md";
 /// 开发中返工轮次变体 prompt：需求被打回（人工核查/测试中 → 开发中）后加载，
 /// 语境是「小修小补 + 增量验证」，不是首轮全新开发。
 const PHASE_DEV_REWORK_PROMPT_FILE: &str = "prompts/phase-dev-rework.md";
+const PHASE_DEV_RELEASE_READY_PROMPT_FILE: &str = "prompts/phase-dev-release-ready.md";
 const DEFAULT_GITLAB_API_URL: &str = "http://code.jms.com/api/v4";
 const DEFAULT_CAINIAO_MOCK_PORT: u16 = 13528;
 /// 经验总结状态停留超过该时长后自动推进为已完成（48 小时）。
@@ -135,12 +159,12 @@ static REQ_STATUSES: &[&str] = &[
     "经验总结",
     "已完成",
     // Lightweight statuses for category=线上问题; no strict requirement lifecycle gate.
-    // 流转：排查中 → 已定位 → 已修复 → 已复盘（有价值路径，复盘前必须沉淀 troubleshooting.md）；
+    // 流转：排查中 → 已定位 → 已修复 → 经验总结（有价值路径，与需求流经验总结统一：进入即触发自动总结任务队列）；
     // 任意阶段可直接已关闭（无沉淀价值：误报/重复/环境问题等）。
     "排查中",
     "已定位",
     "已修复",
-    "已复盘",
+    "经验总结",
     "已关闭",
 ];
 /// 需求流状态（REQ_STATUSES 前 7 个，有序）：需求组聚合状态取成员状态的最小序数。
@@ -154,13 +178,20 @@ static REQ_FLOW_STATUSES: &[&str] = &[
     "经验总结",
     "已完成",
 ];
-static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "已复盘", "已关闭"];
+static ISSUE_STATUSES: &[&str] = &["排查中", "已定位", "已修复", "经验总结", "已关闭"];
 /// 子需求独立状态机：从大需求拆出的并行执行单元。
 /// 两种路径：① 父集成模型（legacy）：需求创建 → 开发中 → 已合入，环境集成/发布在父需求做；
 /// ② 整合发布模型：需求创建 → 开发中 →（自测中/测试中/发布就绪可跳级）→ 已合入（合入整合发布分支）
 /// → 已发布（随发布分支生产 MR 合入封版）；发布进度由子需求独立跟踪。
 static SUB_REQ_STATUSES: &[&str] = &[
-    "需求创建", "开发中", "自测中", "测试中", "发布就绪", "已合入", "已发布", "已取消",
+    "需求创建",
+    "开发中",
+    "自测中",
+    "测试中",
+    "发布就绪",
+    "已合入",
+    "已发布",
+    "已取消",
 ];
 /// 仅子需求可用的状态（“开发中/自测中/测试中/发布就绪”与需求流共用）；普通需求/issue 设置这些状态会被拒。
 static SUB_ONLY_STATUSES: &[&str] = &["需求创建", "已合入", "已发布", "已取消"];
@@ -175,10 +206,16 @@ static REQ_STATUS_ALIASES: &[(&str, &str)] = &[
     ("问题排查", "排查中"),
     ("已确认", "已定位"),
     ("问题确认", "已定位"),
+    // 存量兼容：问题家族旧终态「已复盘」并入统一经验总结环节（读路径自动升级）。
+    ("已复盘", "经验总结"),
 ];
-static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题"];
+static REQ_CATEGORIES: &[&str] = &["需求", "线上问题", "测试问题", "性能问题"];
 /// 需求推动方：产品推动（默认）可问产品要测试范围；开发推动必须先沉淀测试场景文档才能进入测试中。
 static REQ_SOURCES: &[&str] = &["产品推动", "开发推动"];
+/// 流水外标记状态：不进 REQ_STATUSES/REQ_FLOW_STATUSES 流水序列（不影响组聚合序数、
+/// skipped_statuses 跳过计算、状态门禁规则），任何状态都可置为挂起，恢复时回到挂起前状态。
+/// 子需求/需求组不支持挂起（子需求独立状态机拒绝，组状态为派生值被锁）。
+static REQ_MARKER_STATUSES: &[&str] = &["挂起"];
 
 #[derive(Clone)]
 struct AppState {
@@ -196,6 +233,8 @@ struct AppState {
     requirement_create_lock: Arc<Mutex<()>>,
     /// ONES 候选任务内存缓存（GET /api/ones/tasks 默认命中，refresh=true 回源）。
     ones_cache: Arc<Mutex<Option<OnesCache>>>,
+    /// pi RPC 会话注册表：session id → 活跃 `pi --mode rpc` 子进程（全局单例）。
+    pi_rpc_sessions: PiRpcRegistry,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -219,6 +258,8 @@ struct IdQuery {
     kind: Option<String>,
     q: Option<String>,
     domain: Option<String>,
+    /// 知识列表/agent 知识查询：按 tags 精确过滤（trim + 大小写不敏感匹配任一 tag，如「线上问题修复」）。
+    tag: Option<String>,
     project: Option<String>,
     scope: Option<String>,
     /// 分支登记轮次（diff-snapshots / branch-rounds 等）：1 = 原始 branches.json。
@@ -228,6 +269,12 @@ struct IdQuery {
     /// 合并冲突页：需求分支（缺省取 branches.json 第一条）
     branch: Option<String>,
     status: Option<String>,
+    /// 知识查询：信息观察时间下界（YYYY-MM-DD，含当天）。
+    #[serde(alias = "observedAfter")]
+    observed_after: Option<String>,
+    /// 知识查询：信息观察时间上界（YYYY-MM-DD，含当天）。
+    #[serde(alias = "observedBefore")]
+    observed_before: Option<String>,
     limit: Option<usize>,
     cursor: Option<usize>,
     include_full: Option<bool>,
@@ -238,18 +285,76 @@ struct IdQuery {
     include_subs: Option<bool>,
 }
 
+/// 运行模式：docs = hub（文档/状态 SSOT + agent 文档 API，默认，调用方唯一入口）；
+/// worker = 本机执行节点（git/会话/造数/Chrome 登录态）+ 向 hub 注册心跳。
+/// 分离式架构：worker 类请求由 hub 代理转发，调用方不直接感知 worker 地址。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PanelMode {
+    Docs,
+    Worker,
+}
+
+impl PanelMode {
+    fn resolve() -> Self {
+        let args: Vec<String> = env::args().skip(1).collect();
+        let env_mode = env::var(ENV_PANEL_MODE)
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let flag_mode = args
+            .windows(2)
+            .find(|w| w[0] == "--mode")
+            .map(|w| w[1].to_ascii_lowercase())
+            .or_else(|| {
+                args.iter()
+                    .find_map(|a| a.strip_prefix("--mode=").map(|v| v.to_ascii_lowercase()))
+            });
+        match flag_mode.or(Some(env_mode)).as_deref() {
+            Some("worker") => PanelMode::Worker,
+            _ => PanelMode::Docs,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            PanelMode::Docs => "docs",
+            PanelMode::Worker => "worker",
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let mode = PanelMode::resolve();
     let project_root = env::current_dir().context("resolve project root")?;
     let home = home_dir()?;
-    let data_dir = home.join(".local/share/agent-panel");
+    let data_dir = match mode {
+        // 容器部署用 PANEL_DATA_DIR 指向数据卷。
+        PanelMode::Docs => env::var(ENV_PANEL_DATA_DIR).ok().map(PathBuf::from),
+        PanelMode::Worker => None,
+    }
+    .unwrap_or_else(|| home.join(".local/share/agent-panel"));
     let pi_session_root = home.join(".pi/agent/sessions");
     let dsh_session_root = home.join(".dsh/sessions");
     fs::create_dir_all(&data_dir).await.ok();
+
+    let auth_token = env::var(ENV_PANEL_AUTH_TOKEN)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if mode == PanelMode::Docs {
+        workers::init_worker_token();
+    }
+    if mode == PanelMode::Docs && auth_token.is_none() {
+        // token 可选（内网/tailnet 场景用户可选择不启用鉴权）；配置后则全部 API 强制校验。
+        tracing::warn!(
+            "{ENV_PANEL_AUTH_TOKEN} 未配置：docs 模式不启用鉴权，任何能访问该地址的设备均可读写需求数据"
+        );
+    }
 
     let state = AppState {
         project_root: Arc::new(project_root.clone()),
@@ -260,18 +365,95 @@ async fn main() -> Result<()> {
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
         ones_cache: Arc::new(Mutex::new(None)),
+        pi_rpc_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
 
-    // Start the cainiao print mock server on boot if enabled in config.
-    sync_cainiao_mock(&state).await;
+    match mode {
+        PanelMode::Worker => {
+            // Start the cainiao print mock server on boot if enabled in config.
+            sync_cainiao_mock(&state).await;
 
-    // Background: dispatch automatic experience-summary agents, then auto-advance stale summaries as a fallback.
-    tokio::spawn(experience_summary_dispatch_loop(state.clone()));
-    tokio::spawn(expire_stale_experience_summary_loop(state.clone()));
+            // Background: dispatch automatic experience-summary agents, then auto-advance stale summaries as a fallback.
+            tokio::spawn(experience_summary_dispatch_loop(state.clone()));
+            tokio::spawn(expire_stale_experience_summary_loop(state.clone()));
 
-    let public_dir = project_root.join("public");
-    let app = Router::new()
+            // 向 hub 注册并周期心跳（失败仅告警，本地服务继续——hub 恢复后自动重注册）。
+            let hub_url = env::var(ENV_PANEL_HUB_URL)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| format!("http://127.0.0.1:{HUB_DEFAULT_PORT}"));
+            let callback_base = env::var(ENV_PANEL_CALLBACK_BASE)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| format!("http://127.0.0.1:{WORKER_DEFAULT_PORT}"));
+            workers::spawn_worker_heartbeat(hub_url, callback_base, workers::worker_machine_id())
+                .await;
+        }
+        // 容器 hub 无本机执行环境：不启动 cainiao mock，不派发经验总结 agent。
+        PanelMode::Docs => {}
+    }
+
+    let app = build_router(state, mode, auth_token);
+
+    let port = match mode {
+        PanelMode::Docs => env::var(ENV_PANEL_PORT)
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(HUB_DEFAULT_PORT),
+        PanelMode::Worker => env::var("PORT")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(WORKER_DEFAULT_PORT),
+    };
+    // 绑定地址：docs 模式默认 0.0.0.0（容器/tailnet 场景）；local 模式默认仅回环（本地个人使用
+    // 安全默认）；两种模式都可用 PANEL_BIND_HOST 覆盖（远程访问局域网/Tailscale 时设 0.0.0.0）。
+    let host = env::var(ENV_PANEL_BIND_HOST)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| match mode {
+            PanelMode::Docs => "0.0.0.0".to_string(),
+            PanelMode::Worker => "127.0.0.1".to_string(),
+        });
+    let addr: SocketAddr = host
+        .parse::<std::net::IpAddr>()
+        .map(|ip| SocketAddr::new(ip, port))
+        .with_context(|| format!("非法 {ENV_PANEL_BIND_HOST}：{host}"))?;
+    tracing::info!(%addr, mode = mode.as_str(), "Agent Panel running");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// 组装路由：docs = hub 子集 + worker 代理 + worker 类端点 503 stub 兼底；
+/// worker = 本机执行节点全量路由（原 local 模式路由，local 已退役）。
+/// 两种模式统一挂 token 鉴权（未配置 PANEL_AUTH_TOKEN 时不拦截，行为与历史一致）。
+fn build_router(state: AppState, mode: PanelMode, auth_token: Option<String>) -> Router {
+    let public_dir = state.project_root.join("public");
+    let router = match mode {
+        PanelMode::Worker => worker_router(public_dir),
+        PanelMode::Docs => docs_router(public_dir),
+    };
+    let router = match mode {
+        // hub：worker 类请求代理转发到在线 worker（无在线 worker 时落回 503 stub）。
+        PanelMode::Docs => router.layer(middleware::from_fn_with_state(
+            state.clone(),
+            workers::worker_proxy_middleware,
+        )),
+        PanelMode::Worker => router,
+    };
+    router
+        .layer(middleware::from_fn_with_state(
+            auth_token,
+            auth::require_token_middleware,
+        ))
+        .with_state(state)
+}
+
+/// 本机执行节点全量路由（原 local 模式路由；同机部署下数据与 hub 同源，worker 直接写 SSOT）。
+fn worker_router(public_dir: PathBuf) -> Router<AppState> {
+    Router::new()
         .route("/health", get(health))
+        .route("/api/mode", get(api_mode))
         .route("/api/dashboard/stats", get(api_dashboard_stats))
         .route(
             "/api/requirements",
@@ -332,6 +514,10 @@ async fn main() -> Result<()> {
         )
         .route("/api/requirement/validate", post(api_requirement_validate))
         .route("/api/requirement/status", post(api_requirement_status))
+        .route(
+            "/api/requirement/compliance",
+            get(api_requirement_compliance),
+        )
         .route(
             "/api/requirement/status-flow",
             get(api_requirement_status_flow),
@@ -403,6 +589,8 @@ async fn main() -> Result<()> {
             "/api/requirement/diff-snapshots",
             get(api_requirement_diff_snapshots_get),
         )
+        .route("/api/git/file-lines", get(api_git_file_lines))
+        .route("/api/git/blame", get(api_git_blame))
         .route(
             "/api/requirement/branch-rounds",
             get(api_requirement_branch_rounds_get).post(api_requirement_branch_rounds_post),
@@ -526,12 +714,15 @@ async fn main() -> Result<()> {
         .route("/api/apitest/apis", get(api_apitest_apis))
         .route("/api/apitest/api", get(api_apitest_api))
         .route("/api/apitest/trigger", post(api_apitest_trigger))
+        .route("/api/apitest/curl-import", post(api_apitest_curl_import))
         .route(
             "/api/agent/capabilities/query",
             get(api_testdata_capabilities),
         )
         .route("/api/config", get(api_config).post(api_config_post))
         .route("/api/config/skills", get(api_config_skills))
+        .route("/api/pi-chat/open", get(api_pi_chat_open))
+        .route("/ws/pi-chat", get(ws_pi_chat))
         .route("/api/auth-sites", get(api_auth_sites))
         .route("/api/ones/tasks", get(api_ones_tasks))
         .route("/api/ones/manhour", get(api_ones_manhour))
@@ -564,21 +755,334 @@ async fn main() -> Result<()> {
             "/assets",
             ServeDir::new(public_dir.join("dashboard-react/assets")),
         )
+        .nest_service(
+            "/icons",
+            ServeDir::new(public_dir.join("dashboard-react/icons")),
+        )
+        .route("/manifest.webmanifest", get(serve_pwa_root_file))
+        .route("/sw.js", get(serve_pwa_root_file))
         .nest_service("/static", ServeDir::new(public_dir.clone()))
         .fallback(get(spa_fallback))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+}
 
-    let port = env::var("PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(DEFAULT_PORT);
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    tracing::info!(%addr, "Agent Panel running");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-    Ok(())
+/// 容器 hub：WORKER 类端点统一 503，阶段二替换为 worker 代理。
+async fn worker_only_stub() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({
+            "error": "requires local worker",
+            "message": "该端点属于本机执行类能力，docs 模式（容器 hub）不直接提供，等待阶段二 worker 代理。"
+        })),
+    )
+        .into_response()
+}
+
+/// 免 token 的模式探测：前端据此裁剪菜单，agent 据此判断调用面。
+async fn api_mode() -> Json<Value> {
+    Json(json!({ "mode": PanelMode::resolve().as_str() }))
+}
+
+/// 容器 hub（docs 模式）路由：文档/状态 SSOT + agent 文档 API；WORKER 类端点挂 503 stub。
+fn docs_router(public_dir: PathBuf) -> Router<AppState> {
+    Router::new()
+        .route("/health", get(health))
+        .route("/api/mode", get(api_mode))
+        .route("/api/workers", get(workers::api_workers))
+        .route("/api/worker/register", post(workers::api_worker_register))
+        .route("/api/dashboard/stats", get(api_dashboard_stats))
+        .route(
+            "/api/requirements",
+            get(api_requirements).post(api_requirements_post),
+        )
+        .route(
+            "/api/requirement",
+            get(api_requirement).patch(api_requirement_patch),
+        )
+        .route("/api/requirement/update", post(api_requirement_update))
+        .route("/api/requirement/schema", get(api_requirement_schema))
+        .route("/api/requirement/context", get(api_requirement_context))
+        .route(
+            "/api/requirement/experience-summary-context",
+            get(api_requirement_experience_summary_context),
+        )
+        .route(
+            "/api/requirement/experience-summary-report",
+            get(api_requirement_experience_summary_report),
+        )
+        .route(
+            "/api/experience-summary/jobs",
+            get(api_experience_summary_jobs),
+        )
+        .route(
+            "/api/experience-summary/jobs/complete",
+            post(api_experience_summary_jobs_complete),
+        )
+        .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
+        .route("/api/requirement/edit", post(api_requirement_edit))
+        .route("/api/requirement/events", post(api_requirement_events))
+        .route(
+            "/api/requirement/sections/:section",
+            post(api_requirement_section).patch(api_requirement_section),
+        )
+        .route("/api/requirement/notes", post(api_requirement_notes))
+        .route(
+            "/api/requirement/doc",
+            get(api_requirement_doc_get)
+                .post(api_requirement_doc)
+                .put(api_requirement_doc),
+        )
+        .route(
+            "/api/requirement/doc-part",
+            post(api_requirement_doc_part_post),
+        )
+        .route(
+            "/api/requirement/doc-parts",
+            get(api_requirement_doc_parts_get),
+        )
+        .route("/api/requirement/validate", post(api_requirement_validate))
+        .route("/api/requirement/status", post(api_requirement_status))
+        .route(
+            "/api/requirement/compliance",
+            get(api_requirement_compliance),
+        )
+        .route(
+            "/api/requirement/status-flow",
+            get(api_requirement_status_flow),
+        )
+        .route(
+            "/api/requirement/review-checklist",
+            get(api_requirement_review_checklist_get).put(api_requirement_review_checklist_put),
+        )
+        .route(
+            "/api/requirement/branch-registration",
+            get(api_requirement_branch_registration_get)
+                .put(api_requirement_branch_registration_put),
+        )
+        .route(
+            "/api/requirement/status-gate-detail",
+            get(api_requirement_status_gate_detail),
+        )
+        .route("/api/requirement/category", post(api_requirement_category))
+        .route(
+            "/api/requirement/convert-issue",
+            post(api_requirement_convert_issue),
+        )
+        .route("/api/requirement/ones", post(api_requirement_ones))
+        .route(
+            "/api/requirement/associate",
+            post(api_requirement_associate),
+        )
+        .route(
+            "/api/requirement/dissociate",
+            post(api_requirement_dissociate),
+        )
+        .route(
+            "/api/requirement/new-session",
+            post(api_requirement_new_session),
+        )
+        .route(
+            "/api/requirement/pending-session",
+            get(api_requirement_pending_session),
+        )
+        .route(
+            "/api/requirement/session-candidates",
+            get(api_requirement_session_candidates),
+        )
+        .route(
+            "/api/requirement/by-session",
+            get(api_requirement_by_session),
+        )
+        // 审查产物读取在 hub（生成在 worker）：GET 读快照，POST 走 worker。
+        .route(
+            "/api/requirement/code-review",
+            get(api_requirement_code_review).post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/code-review/incremental",
+            post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/review-gate",
+            get(api_requirement_review_gate),
+        )
+        .route("/api/requirement/review-materials", post(worker_only_stub))
+        .route("/api/requirement/master-diff", post(worker_only_stub))
+        .route(
+            "/api/requirement/diff-snapshots",
+            get(api_requirement_diff_snapshots_get),
+        )
+        .route("/api/git/file-lines", get(worker_only_stub))
+        .route("/api/git/blame", get(worker_only_stub))
+        .route(
+            "/api/requirement/branch-rounds",
+            get(api_requirement_branch_rounds_get).post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/annotations",
+            get(api_requirement_annotations_get).put(api_requirement_annotations_put),
+        )
+        .route("/api/requirement/sync-base", post(worker_only_stub))
+        .route("/api/requirement/merge-options", get(worker_only_stub))
+        .route("/api/requirement/merge-branch", post(worker_only_stub))
+        .route("/api/requirement/merge-status", get(worker_only_stub))
+        .route("/api/requirement/prod-mrs", post(worker_only_stub))
+        .route("/api/requirement/recommendations", get(api_recommendations))
+        .route("/api/requirement/attachments", get(api_attachments))
+        .route(
+            "/api/requirement/effort-estimate",
+            post(api_effort_estimate),
+        )
+        .route(
+            "/api/requirement/file",
+            get(api_requirement_file_get).put(api_requirement_file_put),
+        )
+        .route(
+            "/api/requirement/create-sub",
+            post(api_requirement_create_sub),
+        )
+        .route("/api/requirement/sub/init-branches", post(worker_only_stub))
+        .route("/api/requirement/sub/sync-parent", post(worker_only_stub))
+        .route(
+            "/api/requirement/sub/merge-to-parent",
+            post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/release-branch/create",
+            post(api_release_branch_create),
+        )
+        .route(
+            "/api/requirement/release-branch/list",
+            get(api_release_branch_list),
+        )
+        .route(
+            "/api/requirement/release-branch/merge-sub",
+            post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/release-branch/sync-prod",
+            post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/release-branch/prod-mr",
+            post(worker_only_stub),
+        )
+        .route(
+            "/api/requirement/release-branch/mark-released",
+            post(api_release_branch_mark_released),
+        )
+        .route("/api/sessions", get(worker_only_stub))
+        .route("/api/session", get(worker_only_stub))
+        .route("/api/session/log", get(worker_only_stub))
+        .route("/api/sessions/resolve", get(worker_only_stub))
+        .route(
+            "/api/knowledge",
+            get(api_knowledge_list)
+                .post(api_knowledge_save)
+                .delete(api_knowledge_delete),
+        )
+        .route(
+            "/api/knowledge/item",
+            get(api_knowledge_item).patch(api_knowledge_save),
+        )
+        .route(
+            "/api/agent/knowledge/query",
+            post(api_agent_knowledge_query),
+        )
+        .route("/api/agent/items", post(api_knowledge_save))
+        .route("/api/agent/items/summary", get(api_agent_item_summary))
+        .route("/api/agent/items/full", get(api_agent_item_full))
+        .route("/api/agent/items/section", get(api_agent_item_full))
+        .route("/api/capability/sources", get(worker_only_stub))
+        .route("/api/capability/schema", get(worker_only_stub))
+        .route("/api/capabilities", get(worker_only_stub))
+        .route("/api/capability", get(worker_only_stub))
+        .route("/api/testdata/capabilities", get(worker_only_stub))
+        .route("/api/testdata/capability", get(worker_only_stub))
+        .route("/api/testdata/run", post(worker_only_stub))
+        .route("/api/apitest/apis", get(worker_only_stub))
+        .route("/api/apitest/api", get(worker_only_stub))
+        .route("/api/apitest/trigger", post(worker_only_stub))
+        .route("/api/agent/capabilities/query", get(worker_only_stub))
+        .route("/api/config", get(api_config).post(api_config_post))
+        .route("/api/config/skills", get(worker_only_stub))
+        .route("/api/pi-chat/open", get(worker_only_stub))
+        .route("/ws/pi-chat", get(worker_only_stub))
+        .route("/api/auth-sites", get(worker_only_stub))
+        .route("/api/ones/tasks", get(worker_only_stub))
+        .route("/api/ones/manhour", get(worker_only_stub))
+        .route("/api/ones/manhour/save", post(worker_only_stub))
+        .route("/api/ones/manhour/log", post(worker_only_stub))
+        .route(
+            "/api/auth-sites/:site/check",
+            get(worker_only_stub).post(worker_only_stub),
+        )
+        .route("/api/auth-sites/:site/request", post(worker_only_stub))
+        .route("/api/cainiao-mock/status", get(worker_only_stub))
+        .route("/api/harness/list", get(worker_only_stub))
+        .route("/api/harness/current", get(worker_only_stub))
+        .route("/api/harness/switch", post(worker_only_stub))
+        .route("/api/harness/models", get(worker_only_stub))
+        .route("/api/pi-config", get(worker_only_stub))
+        .route(
+            "/api/pi-config/file",
+            get(worker_only_stub).post(worker_only_stub),
+        )
+        .route("/api/pi-config/settings", post(worker_only_stub))
+        .route("/api/notifications", get(api_notifications))
+        .route(
+            "/api/notifications/unread-count",
+            get(api_notifications_unread_count),
+        )
+        .route("/api/notifications/dismiss", post(ok_json))
+        .route("/api/notifications/mark-read", post(ok_json))
+        .nest_service(
+            "/assets",
+            ServeDir::new(public_dir.join("dashboard-react/assets")),
+        )
+        .nest_service("/static", ServeDir::new(public_dir.clone()))
+        .nest_service(
+            "/icons",
+            ServeDir::new(public_dir.join("dashboard-react/icons")),
+        )
+        .route("/manifest.webmanifest", get(serve_pwa_root_file))
+        .route("/sw.js", get(serve_pwa_root_file))
+        .fallback(get(spa_fallback))
+        .layer(TraceLayer::new_for_http())
+}
+
+/// PWA 根路径静态文件（manifest / sw.js）：白名单文件名防路径穿越，从 vite 构建产物读取。
+/// 路径基于 AppState.project_root（与 spa_fallback 同源），不依赖进程 cwd。
+async fn serve_pwa_root_file(State(state): State<AppState>, uri: Uri) -> Response {
+    use axum::http::header;
+    let name = uri.path().trim_start_matches('/');
+    let (allowed, mime) = match name {
+        "manifest.webmanifest" => (true, "application/manifest+json"),
+        "sw.js" => (true, "application/javascript"),
+        _ => (false, ""),
+    };
+    if !allowed {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let path = state
+        .project_root
+        .join(format!("public/dashboard-react/{name}"));
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, mime.to_string()),
+                // sw.js 需要根 scope；Service-Worker-Allowed 放宽默认目录 scope。
+                (
+                    header::HeaderName::from_static("service-worker-allowed"),
+                    "/".to_string(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> Response {

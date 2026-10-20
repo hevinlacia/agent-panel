@@ -67,6 +67,9 @@ pub(crate) struct AppConfig {
     /// 发版冻结开关：ylops_deploy.py 直读 config.json 的 deployFreeze 字段拦截 UAT 构建/部署。
     #[serde(default)]
     pub(crate) deploy_freeze: DeployFreeze,
+    /// 自动总结派发时间窗口：仅在窗口内允许自动派发（手动派发不受限）；None = 不限。
+    #[serde(default)]
+    pub(crate) experience_summary_dispatch_window: Option<DispatchWindow>,
     #[serde(default)]
     pub(crate) browser_auth: BrowserAuthConfig,
     /// 状态流转门禁规则：from → to 流转上要依次通过的门禁；None（配置文件未写）时使用内置默认规则。
@@ -78,6 +81,68 @@ pub(crate) struct AppConfig {
     /// skill 目录迁移后在这里改映射，避免依赖该 skill 的 panel 功能静默失效。
     #[serde(default)]
     pub(crate) skill_path_overrides: BTreeMap<String, String>,
+}
+
+/// 自动任务派发时间窗口：仅在窗口内允许自动派发（如 GLM 晚间低价，把自动总结排在夜间）。
+/// start > end 表示跨午夜（22:00-08:00）；窗口内已触发的任务执行多久都不受限；
+/// 手动派发（显式指定 reqId）不受窗口限制。
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchWindow {
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    /// 窗口起点 HH:MM（本地时间，含）。
+    pub(crate) start: String,
+    /// 窗口终点 HH:MM（本地时间，排他；早于 start 表示跨午夜）。
+    pub(crate) end: String,
+}
+
+pub(crate) fn parse_hh_mm(s: &str) -> Result<chrono::NaiveTime, String> {
+    chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M")
+        .map_err(|_| format!("invalid HH:MM time: {s:?}"))
+}
+
+/// 判定 now 是否在派发窗口内（start 含、end 排他；start > end = 跨午夜；start == end = 全天允许）。
+/// 窗口时间非法时返回 Err（调用方 fail-open 视为不限，避免配置错误停摆自动总结）。
+pub(crate) fn dispatch_window_allows(
+    win: &DispatchWindow,
+    now: chrono::NaiveTime,
+) -> Result<bool, String> {
+    let start = parse_hh_mm(&win.start)?;
+    let end = parse_hh_mm(&win.end)?;
+    if start == end {
+        return Ok(true);
+    }
+    if start < end {
+        Ok(now >= start && now < end)
+    } else {
+        Ok(now >= start || now < end)
+    }
+}
+
+/// serde 双层 Option 反序列化：区分「字段缺失(None，不动)」与「显式 null(Some(None)，清除)」。
+/// 直接用 Option<Option<T>> 时 serde 会把 JSON null 折叠成外层 None，导致无法显式清除。
+fn deserialize_some<'de, T, D>(de: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    serde::Deserialize::deserialize(de).map(Some)
+}
+
+/// 保存路径严格校验：enabled 时 start/end 必须是合法 HH:MM 且不相等（相等语义歧义）。
+pub(crate) fn normalize_dispatch_window(win: DispatchWindow) -> ApiResult<DispatchWindow> {
+    if !win.enabled {
+        return Ok(win);
+    }
+    let start = parse_hh_mm(&win.start).map_err(ApiError::bad_request)?;
+    let end = parse_hh_mm(&win.end).map_err(ApiError::bad_request)?;
+    if start == end {
+        return Err(ApiError::bad_request(
+            "dispatchWindow start == end 语义歧义（全天或禁用），请调整时间",
+        ));
+    }
+    Ok(win)
 }
 
 /// 发版冻结状态：开启后部署脚本（ylops_deploy.py）在触发 UAT（uat-sg/uat-cn）构建/部署前
@@ -139,6 +204,11 @@ pub(crate) static STATUS_GATE_DEFS: &[StatusGateDef] = &[
         description: "test.md「自测清单」必须列出测试项目且每项有结果（通过/失败/无法测试），失败或无法测试的项必须写明具体原因",
     },
     StatusGateDef {
+        id: "uat-regression",
+        label: "UAT 回归门禁",
+        description: "test.md「## UAT 回归」必须逐项给出回归结果与证据（| # | 场景 | 结果 | 证据 |）；证据须是已发生的可核对事实（tid/日志关键字/接口返回/DB 前后值），计划与状态流转动作不算；全通过放行，「无法测试」（有原因）放行但警示，失败/未执行/缺结果/通过但证据不可采不放行；整节不适用写 `不适用：<原因>`",
+    },
+    StatusGateDef {
         id: "test-scenario",
         label: "测试场景文档门禁",
         description: "仅 source=开发推动 生效：流转前必须完成 test-scenario.md（需求说明 + 开发评估测试范围 + 覆盖场景）",
@@ -153,6 +223,11 @@ pub(crate) static STATUS_GATE_DEFS: &[StatusGateDef] = &[
         label: "线上问题复盘点禁",
         description: "仅 category=线上问题 生效：流转前必须沉淀 troubleshooting.md（怎么排查 + 怎么修复）",
     },
+    StatusGateDef {
+        id: "effort-estimate",
+        label: "工时预估门禁",
+        description: "需求澄清/创建 → 开发中：必须先完成工时预估（effort-estimate.json 非 placeholder），供需求排期页消费；绑线上问题的抢修需求自动豁免",
+    },
 ];
 
 pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
@@ -160,9 +235,14 @@ pub(crate) fn status_gate_known_ids() -> Vec<&'static str> {
 }
 
 /// 内置默认门禁规则：与历史硬编码门禁行为一致，外加新增的自测清单门禁。
-/// 人工核查（2026-08 新增）：测试中 → 人工核查无硬门禁（agent 测完即推进）；
-/// 进入发布就绪的两条路径（人工核查→发布就绪 / 测试中→发布就绪直达）都挂 review 门禁，
-/// agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
+/// 人工核查（2026-08 新增）：测试中 → 人工核查原无硬门禁（agent 测完即推进）；
+/// 2026-10 新增 uat-regression 门禁（WMS-136 实测：agent 把「用户推进状态」当 UAT 回归证据，
+/// 薄证据一路畅通到发布就绪）：测试中 → 人工核查、及进入发布就绪的两条流转都挂 UAT 回归门禁，
+/// agent API 推进时要求 test.md「## UAT 回归」逐项有结果与证据；人工在 UI 推进跳过门禁 = 人工确权
+/// （状态流转卡片会实时评估门禁材料并展示三态，人工跳过是知情跳过）。
+/// 进入发布就绪的路径（人工核查→发布就绪 / 测试中→发布就绪直达 / 开发中→发布就绪小循环直通）都挂
+/// review 门禁，agent API 推进时兜底要求审查通过；人工在 UI 推进跳过门禁 = 人工确权（复测 + 人工审码）。
+/// 开发中→发布就绪（2026-09 新增）服务发布就绪小循环：上线前小改动改完必须增量审查刷新快照后才能回发布就绪。
 pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
     vec![
         StatusGateRule {
@@ -180,12 +260,24 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
             ],
         },
         StatusGateRule {
+            from: "测试中".into(),
+            to: "人工核查".into(),
+            gates: vec!["uat-regression".into()],
+        },
+        StatusGateRule {
             from: "人工核查".into(),
             to: "发布就绪".into(),
-            gates: vec!["review".into()],
+            gates: vec!["review".into(), "uat-regression".into()],
         },
         StatusGateRule {
             from: "测试中".into(),
+            to: "发布就绪".into(),
+            gates: vec!["review".into(), "uat-regression".into()],
+        },
+        // 发布就绪小循环：开发中 → 发布就绪 直通（跳过自测中/测试中/人工核查），
+        // 挂 review 门禁保证小改动经增量审查刷新快照后才能回发布就绪；不挂 selftest-checklist（快）。
+        StatusGateRule {
+            from: "开发中".into(),
             to: "发布就绪".into(),
             gates: vec!["review".into()],
         },
@@ -194,9 +286,21 @@ pub(crate) fn default_status_gate_rules() -> Vec<StatusGateRule> {
             to: "已定位".into(),
             gates: vec!["issue-root-cause".into()],
         },
+        // 工时预估门禁（2026-10 新增）：需求澄清完成进入开发前，agent 必须先按 4h 单位（真实工时口径）
+        // 评估工作量并写入 effort-estimate.json，供需求排期页消费；绑线上问题的抢修需求自动豁免。
+        StatusGateRule {
+            from: "需求澄清".into(),
+            to: "开发中".into(),
+            gates: vec!["effort-estimate".into()],
+        },
+        StatusGateRule {
+            from: "需求创建".into(),
+            to: "开发中".into(),
+            gates: vec!["effort-estimate".into()],
+        },
         StatusGateRule {
             from: "已修复".into(),
-            to: "已复盘".into(),
+            to: "经验总结".into(),
             gates: vec!["issue-troubleshooting".into()],
         },
     ]
@@ -307,6 +411,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             harness: "pi".into(),
+            experience_summary_dispatch_window: None,
             dsh_profile: default_dsh_profile(),
             dsh_api_base_url: default_dsh_api_base_url(),
             auto_extract: false,
@@ -369,6 +474,9 @@ pub(crate) struct ConfigPatch {
     pub(crate) cainiao_mock_enabled: Option<bool>,
     pub(crate) cainiao_mock_port: Option<u16>,
     pub(crate) deploy_freeze: Option<DeployFreeze>,
+    /// 外层 Some = 本次要改；内层 None = 清除窗口（不限）。enabled=true 时严格校验时间。
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub(crate) experience_summary_dispatch_window: Option<Option<DispatchWindow>>,
     pub(crate) merge_excluded_repos: Option<Vec<String>>,
     pub(crate) browser_auth: Option<BrowserAuthConfig>,
     pub(crate) status_gates: Option<Vec<StatusGateRule>>,
@@ -472,6 +580,12 @@ pub(crate) async fn api_config_post(
     }
     if let Some(v) = patch.deploy_freeze {
         cfg.deploy_freeze = normalize_deploy_freeze(v);
+    }
+    if let Some(v) = patch.experience_summary_dispatch_window {
+        cfg.experience_summary_dispatch_window = match v {
+            Some(w) => Some(normalize_dispatch_window(w)?),
+            None => None,
+        };
     }
     if let Some(v) = patch.merge_excluded_repos {
         cfg.merge_excluded_repos = normalize_repo_name_list(v);

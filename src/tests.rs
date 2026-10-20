@@ -2,6 +2,7 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 // 按业务域拆分的测试子模块（verbatim 移动，不改断言）。
+mod agent_file;
 mod branch_registration;
 mod branch_scope_prune;
 mod cainiao_mock;
@@ -9,14 +10,17 @@ mod docs_render;
 mod experience_summary;
 mod groups;
 mod id_seq;
+mod issue_region;
+mod issue_status_machine;
 mod merge_options;
 mod misc;
 mod release_branch;
-mod rework;
 mod review_flow;
+mod rework;
 mod sessions;
 mod status_gates;
 mod sub_requirement;
+mod uat_regression;
 
 fn chrono_like_unique_suffix() -> u128 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -49,5 +53,6 @@ fn temp_app_state(data: &Path, pi_root: &Path, dsh_root: &Path) -> AppState {
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
         ones_cache: Arc::new(Mutex::new(None)),
+        pi_rpc_sessions: Arc::new(Mutex::new(HashMap::new())),
     }
 }

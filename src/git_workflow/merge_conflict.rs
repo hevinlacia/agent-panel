@@ -411,10 +411,7 @@ pub(crate) fn render_with_markers(segments: &[MergeSegment]) -> String {
 
 /// 字节版 git 执行器（blob 内容不能走 lossy String，否则二进制/编码会被破坏）
 async fn git_bytes(cwd: &Path, args: &[&str], timeout_ms: u64) -> Result<Vec<u8>, String> {
-    let fut = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output();
+    let fut = Command::new("git").args(args).current_dir(cwd).output();
     match timeout(Duration::from_millis(timeout_ms), fut).await {
         Ok(Ok(output)) if output.status.success() => Ok(output.stdout),
         Ok(Ok(output)) => Err(format!(
@@ -423,7 +420,10 @@ async fn git_bytes(cwd: &Path, args: &[&str], timeout_ms: u64) -> Result<Vec<u8>
             String::from_utf8_lossy(&output.stderr).trim()
         )),
         Ok(Err(err)) => Err(format!("git {} 启动失败: {err}", args.join(" "))),
-        Err(_) => Err(format!("git {} timed out after {timeout_ms}ms", args.join(" "))),
+        Err(_) => Err(format!(
+            "git {} timed out after {timeout_ms}ms",
+            args.join(" ")
+        )),
     }
 }
 
@@ -458,7 +458,9 @@ async fn collect_unmerged(worktree: &Path) -> Result<BTreeMap<String, UnmergedSt
         if parts.len() != 3 || !parts[2].chars().all(|c| c.is_ascii_digit()) {
             return Err(format!("unexpected ls-files -u record: {text:?}"));
         }
-        let stage: u32 = parts[2].parse().map_err(|_| format!("bad stage: {text:?}"))?;
+        let stage: u32 = parts[2]
+            .parse()
+            .map_err(|_| format!("bad stage: {text:?}"))?;
         entries
             .entry(path.to_string())
             .or_default()
@@ -516,7 +518,12 @@ async fn git_add(worktree: &Path, path: &str) -> Result<(), String> {
     }
 }
 
-async fn stage_side(worktree: &Path, path: &str, stages: &UnmergedStages, side: u32) -> Result<(), String> {
+async fn stage_side(
+    worktree: &Path,
+    path: &str,
+    stages: &UnmergedStages,
+    side: u32,
+) -> Result<(), String> {
     if !stages.contains_key(&side) {
         return Err(format!("index 中不存在 stage {side} 版本：{path}"));
     }
@@ -680,7 +687,11 @@ pub(crate) async fn auto_resolve_worktree_conflicts(
             }
             "partial" => {
                 report.remaining_files += 1;
-                report.remaining_hunks += fc.segments.iter().filter(|s| matches!(s, MergeSegment::Conflict(_))).count();
+                report.remaining_hunks += fc
+                    .segments
+                    .iter()
+                    .filter(|s| matches!(s, MergeSegment::Conflict(_)))
+                    .count();
             }
             _ => {
                 report.unresolvable_files += 1;
@@ -730,7 +741,9 @@ pub(crate) async fn apply_resolution(
     match action {
         ResolveAction::Content(content) => {
             if let Some(marker) = find_conflict_marker_in_content(&content) {
-                return Err(format!("解决内容中仍含冲突标记 {marker}，请先处理所有冲突块"));
+                return Err(format!(
+                    "解决内容中仍含冲突标记 {marker}，请先处理所有冲突块"
+                ));
             }
             write_worktree_file(worktree, path, &content).await?;
             git_add(worktree, path).await
@@ -740,7 +753,11 @@ pub(crate) async fn apply_resolution(
             let Some(stages) = entries.get(path) else {
                 return Err(format!("该文件已不在冲突状态：{path}"));
             };
-            let side = if matches!(action, ResolveAction::KeepOurs) { 2 } else { 3 };
+            let side = if matches!(action, ResolveAction::KeepOurs) {
+                2
+            } else {
+                3
+            };
             stage_side(worktree, path, stages, side).await
         }
         ResolveAction::AcceptDelete => {
@@ -795,7 +812,9 @@ pub(crate) async fn complete_merge(worktree: &Path, target_branch: &str) -> Resu
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SegmentDto {
-    Plain { lines: Vec<String> },
+    Plain {
+        lines: Vec<String>,
+    },
     Conflict {
         index: usize,
         kind: &'static str,
@@ -1062,8 +1081,19 @@ mod tests {
         let root = tmp.path();
         let remote = root.join("remote.git");
         let repo = root.join("repo");
-        run(root, &["init", "--bare", "--initial-branch=main", remote.to_str().unwrap()]);
-        run(root, &["clone", remote.to_str().unwrap(), repo.to_str().unwrap()]);
+        run(
+            root,
+            &[
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                remote.to_str().unwrap(),
+            ],
+        );
+        run(
+            root,
+            &["clone", remote.to_str().unwrap(), repo.to_str().unwrap()],
+        );
         run(&repo, &["config", "user.email", "t@t"]);
         run(&repo, &["config", "user.name", "t"]);
 
@@ -1162,7 +1192,10 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
-        run(tmp.path(), &["init", "--initial-branch=main", repo.to_str().unwrap()]);
+        run(
+            tmp.path(),
+            &["init", "--initial-branch=main", repo.to_str().unwrap()],
+        );
         run(&repo, &["config", "user.email", "t@t"]);
         run(&repo, &["config", "user.name", "t"]);
 
@@ -1210,11 +1243,23 @@ mod tests {
             .unwrap();
         assert!(unmerged_paths(&repo).await.is_empty());
 
-        let commit = git(&repo, &["commit", "--no-edit"], 30_000, COMMAND_OUTPUT_LIMIT).await;
+        let commit = git(
+            &repo,
+            &["commit", "--no-edit"],
+            30_000,
+            COMMAND_OUTPUT_LIMIT,
+        )
+        .await;
         assert!(commit.ok, "commit should succeed: {}", short_err(&commit));
         // keep.txt 人工内容，gone.txt 保留了 ours 版本
-        assert_eq!(std::fs::read_to_string(repo.join("keep.txt")).unwrap(), "merged-both\n");
-        assert_eq!(std::fs::read_to_string(repo.join("gone.txt")).unwrap(), "v2-main\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("keep.txt")).unwrap(),
+            "merged-both\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("gone.txt")).unwrap(),
+            "v2-main\n"
+        );
     }
 
     #[tokio::test]
@@ -1236,7 +1281,10 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
-        run(tmp.path(), &["init", "--initial-branch=main", repo.to_str().unwrap()]);
+        run(
+            tmp.path(),
+            &["init", "--initial-branch=main", repo.to_str().unwrap()],
+        );
         run(&repo, &["config", "user.email", "t@t"]);
         run(&repo, &["config", "user.name", "t"]);
 
@@ -1268,6 +1316,9 @@ mod tests {
             .await
             .unwrap();
         assert!(unmerged_paths(&repo).await.is_empty());
-        assert_eq!(std::fs::read_to_string(repo.join("f.txt")).unwrap(), "v2-req\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "v2-req\n"
+        );
     }
 }

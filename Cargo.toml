@@ -7,7 +7,7 @@ description = "Local React + Rust control panel for pi agent sessions and requir
 [dependencies]
 anyhow = "1.0"
 aes = "0.8"
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 futures-util = "0.3.33"

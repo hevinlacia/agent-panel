@@ -5,7 +5,7 @@ pub(crate) async fn create_requirement(
     form: RequirementCreateForm,
 ) -> ApiResult<Value> {
     let title = clean_required(&form.title, "title")?;
-    // 类别推导：reqId 模板带问题编号池前缀（WMS-INC-/WMS-TST-）时按前缀推导类别。
+    // 类别推导：reqId 模板带问题编号池前缀（WMS-INC-/WMS-TST-/PERF-）时按前缀推导类别。
     // 用户约定：登记问题未强调测试环境的默认线上问题；显式 category 与前缀冲突时拒绝。
     let id_template_raw = form.req_id.trim();
     let derived_category = derive_category_from_id_template(id_template_raw);
@@ -19,7 +19,7 @@ pub(crate) async fn create_requirement(
             if let Some(derived) = derived_category {
                 if explicit != derived {
                     return Err(ApiError::bad_request(format!(
-                        "reqId 使用问题编号池前缀（{derived} 对应 WMS-INC-/WMS-TST-），category 应为「{derived}」（未强调测试环境的问题默认线上问题），当前为「{explicit}」"
+                        "reqId 使用问题编号池前缀（{derived} 对应 WMS-INC-/WMS-TST-/PERF-），category 应为「{derived}」（未强调测试环境的问题默认线上问题），当前为「{explicit}」"
                     )));
                 }
             }
@@ -50,12 +50,13 @@ pub(crate) async fn create_requirement(
     if is_issue_category(&category) && form.status.is_none() {
         status = "排查中".to_string();
     }
-    ensure_status(&status)?;
+    // issue 家族只允许轻流程状态机，不接受常规需求流状态（修复进展由关联 FIX 需求承载）。
+    ensure_status_for_category(Some(&category), &status)?;
     // 需求组（members 非空）只能使用 category=需求；issue 家族不支持组。
     let is_group = form.members.as_ref().is_some_and(|m| !m.is_empty());
     if is_group && is_issue_category(&category) {
         return Err(ApiError::bad_request(
-            "需求组（members 非空）只能使用 category=需求；线上问题/测试问题不支持组",
+            "需求组（members 非空）只能使用 category=需求；线上问题/测试问题/性能问题不支持组",
         ));
     }
     // 整合需求（consolidated=true）：ROLLUP 独立编号池，仅 category=需求，与需求组互斥。
@@ -75,7 +76,41 @@ pub(crate) async fn create_requirement(
         Some(state.requirement_create_lock.lock().await)
     };
     let base = resolve_create_req_root(state, form.root.as_deref()).await?;
-    let id_template = normalize_create_id_template(form.req_id.trim(), &category, is_group, is_consolidated)?;
+    // 修复需求自动路由：category=需求 且绑定 issues（线上问题）= 代码修复性质 → FIX 独立编号池。
+    // 修复仍走普通需求状态机（7 状态 + 门禁），仅前缀 + req-kind=fix 区分；存量 REQ/WMS 绑定需求不改号。
+    let is_fix = !is_group
+        && !is_consolidated
+        && category == "需求"
+        && form
+            .issues
+            .as_ref()
+            .is_some_and(|v| v.iter().any(|s| !s.trim().is_empty()));
+    // 区域维度：仅 issue 家族支持（cn=中国 / sea=东南亚，后续可扩展更多国家/区域）；
+    // 不设硬枚举，值统一小写规范化；不传则不写入（存量问题由 PATCH 补登记）。
+    // 必须在占号（resolve_req_id_and_target_dir）之前校验，避免 400 后遗留空占号目录。
+    let region = match form
+        .region
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(raw) => {
+            if !is_issue_category(&category) {
+                return Err(ApiError::bad_request(
+                    "只有线上问题/测试问题/性能问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+                ));
+            }
+            raw.to_lowercase()
+        }
+        None => String::new(),
+    };
+    let id_template = normalize_create_id_template(
+        form.req_id.trim(),
+        &category,
+        is_group,
+        is_consolidated,
+        is_fix,
+    )?;
     let (req_id, target_dir) =
         resolve_req_id_and_target_dir(state, &base, &id_template, &form, dry_run).await?;
 
@@ -90,13 +125,16 @@ pub(crate) async fn create_requirement(
     let plan_release =
         clean_optional(form.plan_release.as_deref()).unwrap_or_else(|| "unknown".to_string());
     ensure_date_or_unknown(&plan_release, "planRelease")?;
+    let submit_test_date =
+        clean_optional(form.submit_test_date.as_deref()).unwrap_or_else(|| "unknown".to_string());
+    ensure_date_or_unknown(&submit_test_date, "submitTestDate")?;
     let ones = clean_optional(form.ones.as_deref()).unwrap_or_default();
-    // 创建时绑定线上问题：仅 category=需求 时允许，且每个 id 必须是真实存在的线上问题。
+    // 创建时绑定线上/性能问题：仅 category=需求 时允许，且每个 id 必须是真实存在的同族问题。
     let mut issues: Vec<String> = Vec::new();
     if let Some(raw_issues) = form.issues.as_ref() {
         if category != "需求" {
             return Err(ApiError::bad_request(
-                "只有 category=需求 的记录可以绑定线上问题（issues）",
+                "只有 category=需求 的记录可以绑定线上问题/性能问题（issues）",
             ));
         }
         issues = unique_strings(raw_issues.clone());
@@ -104,9 +142,12 @@ pub(crate) async fn create_requirement(
             let issue = get_real_requirement(state, id)
                 .await
                 .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
-            if issue.category.as_deref() != Some("线上问题") {
+            if !matches!(
+                issue.category.as_deref(),
+                Some("线上问题") | Some("性能问题")
+            ) {
                 return Err(ApiError::bad_request(format!(
-                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    "{} 不是线上问题/性能问题（category={}），只能绑定 category=线上问题/性能问题 的记录",
                     id,
                     issue.category.unwrap_or_else(|| "需求".into())
                 )));
@@ -125,7 +166,7 @@ pub(crate) async fn create_requirement(
     )
     .await?;
 
-    let files = requirement_create_files(
+    let mut files = requirement_create_files(
         &req_id,
         &title,
         &status,
@@ -136,13 +177,20 @@ pub(crate) async fn create_requirement(
         &owner,
         &start_date,
         &plan_release,
+        &submit_test_date,
         &ones,
         &issues,
         &summary,
         background.as_deref(),
         notes.as_deref(),
         None,
-        if is_consolidated { Some("rollup") } else { None },
+        if is_consolidated {
+            Some("rollup")
+        } else if is_fix {
+            Some("fix")
+        } else {
+            None
+        },
     );
     let mut planned: Vec<String> = files
         .iter()
@@ -153,6 +201,12 @@ pub(crate) async fn create_requirement(
     }
     if !dry_run {
         fs::create_dir_all(&target_dir).await?;
+        // 区域维度写入 meta frontmatter（落盘前就地改 meta 模板）。
+        if !region.is_empty() {
+            if let Some(slot) = files.iter_mut().find(|(n, _)| *n == "meta.md") {
+                slot.1 = set_frontmatter_field(&slot.1, "region", &region);
+            }
+        }
         for (name, body) in &files {
             atomic_write_text(&target_dir.join(name), body).await?;
         }
@@ -175,10 +229,17 @@ pub(crate) async fn create_requirement(
         "title": title,
         "status": status,
         "category": category,
+        "region": if region.is_empty() { Value::Null } else { json!(region) },
         "source": source,
         "project": project,
         "projects": projects,
-        "reqKind": if is_consolidated { json!("rollup") } else { Value::Null },
+        "reqKind": if is_consolidated {
+            json!("rollup")
+        } else if is_fix {
+            json!("fix")
+        } else {
+            Value::Null
+        },
         "reqDir": target_dir.to_string_lossy(),
         "files": planned,
         "group": group_file.map(|g| json!({
@@ -293,6 +354,7 @@ pub(crate) async fn create_sub_requirement(
         &parent.source,
         &owner,
         &start_date,
+        "unknown",
         "unknown",
         "",
         &[],
@@ -493,10 +555,33 @@ pub(crate) async fn update_requirement(
         meta_next = update_meta_summary_line(&meta_next, "Planned release", &plan_release);
         changes.push("meta.planRelease".into());
     }
+    if let Some(submit_test_date) = clean_optional(form.submit_test_date.as_deref()) {
+        ensure_date_or_unknown(&submit_test_date, "submitTestDate")?;
+        meta_next = set_frontmatter_field(&meta_next, "submit-test-date", &submit_test_date);
+        meta_next = update_meta_summary_line(&meta_next, "Submit test", &submit_test_date);
+        changes.push("meta.submitTestDate".into());
+    }
+    if let Some(promise_submit_date) = clean_optional(form.promise_submit_date.as_deref()) {
+        ensure_date_or_unknown(&promise_submit_date, "promiseSubmitDate")?;
+        meta_next = set_frontmatter_field(&meta_next, "promise-submit-date", &promise_submit_date);
+        meta_next = update_meta_summary_line(&meta_next, "Promise submit", &promise_submit_date);
+        changes.push("meta.promiseSubmitDate".into());
+    }
     if let Some(ones) = form.ones.as_deref() {
         let value = ones.trim().to_string();
         meta_next = set_frontmatter_field(&meta_next, "ones", &value);
         changes.push("meta.ones".into());
+    }
+    if let Some(region) = form.region.as_deref() {
+        // 区域维度仅 issue 家族支持；空字符串 = 清除（set_frontmatter_field 空值即移除字段）。
+        if !is_issue_category(req.category.as_deref().unwrap_or("需求")) {
+            return Err(ApiError::bad_request(
+                "只有线上问题/测试问题/性能问题支持 region 区域属性（cn=中国 / sea=东南亚）",
+            ));
+        }
+        let value = region.trim().to_lowercase();
+        meta_next = set_frontmatter_field(&meta_next, "region", &value);
+        changes.push("meta.region".into());
     }
     if let Some(category) = form.category.as_deref() {
         ensure_category(category)?;
@@ -517,9 +602,12 @@ pub(crate) async fn update_requirement(
             let issue = get_real_requirement(state, id)
                 .await
                 .map_err(|_| ApiError::bad_request(format!("关联线上问题不存在：{id}")))?;
-            if issue.category.as_deref() != Some("线上问题") {
+            if !matches!(
+                issue.category.as_deref(),
+                Some("线上问题") | Some("性能问题")
+            ) {
                 return Err(ApiError::bad_request(format!(
-                    "{} 不是线上问题（category={}），只能绑定 category=线上问题 的记录",
+                    "{} 不是线上问题/性能问题（category={}），只能绑定 category=线上问题/性能问题 的记录",
                     id,
                     issue.category.unwrap_or_else(|| "需求".into())
                 )));
@@ -538,6 +626,8 @@ pub(crate) async fn update_requirement(
             ensure_sub_req_status_transition(&req, &status)?;
         } else {
             ensure_status_allowed_for_non_sub(&status)?;
+            // issue 家族只允许轻流程状态机，不接受常规需求流状态。
+            ensure_status_for_category(req.category.as_deref(), &status)?;
         }
         // 状态流转门禁（配置驱动）：review / selftest-checklist / test-scenario / issue-*。
         // edit 接口主要供 agent 与脚本使用，始终强校验；人工在 Panel UI 上改状态走 status 接口并跳过。
@@ -767,12 +857,14 @@ pub(crate) fn requirement_section_form_to_edit(
 
 pub(crate) fn requirement_section_default_doc_type(section: &str) -> Option<&'static str> {
     let s = normalize_section_key(section);
-    // issue 家族（线上问题/测试问题文档集）：incident.md / root-cause.md 必须是独立落点，
+    // issue 家族（线上问题/测试问题/性能问题文档集）：incident.md / root-cause.md 必须是独立落点，
     // 不得再回退到 impact.md（历史 bug：rootcause 被旧别名映射进 impact，静默写错文件）。
     if matches!(s.as_str(), "rootcause") {
         Some("root-cause")
     } else if matches!(s.as_str(), "incident" | "issue") {
         Some("incident")
+    } else if matches!(s.as_str(), "reproduce") {
+        Some("reproduce")
     } else if matches!(
         s.as_str(),
         "test" | "tests" | "selftest" | "uat" | "testcase" | "testcases"
@@ -806,6 +898,7 @@ pub(crate) fn requirement_section_default_heading(section: &str) -> &str {
     match s.as_str() {
         "boxcodeissue" => "boxCode 问题",
         "rootcause" => "根因分析",
+        "reproduce" => "复现",
         "test" | "tests" | "testcase" | "testcases" => "测试场景",
         "selftest" => "自测证据",
         "uat" => "UAT 验证",

@@ -625,7 +625,8 @@ fn extract_selftest_section(body: &str) -> Option<String> {
 }
 
 /// 解析小节内的 markdown 表格行；跳过分隔行与全空行。
-fn parse_table_rows(section: &str) -> Vec<Vec<String>> {
+/// （pub(crate)：UAT 回归门禁等同类表格契约解析复用同一套原语。）
+pub(crate) fn parse_table_rows(section: &str) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     for line in section.lines() {
         let trimmed = line.trim();
@@ -654,7 +655,7 @@ fn is_header_row(row: &[String]) -> bool {
     row.iter().any(|c| c.contains("自测项")) && row.iter().any(|c| c.contains("结果"))
 }
 
-fn find_result_column(header: &[String]) -> Option<usize> {
+pub(crate) fn find_result_column(header: &[String]) -> Option<usize> {
     header
         .iter()
         .position(|c| c.contains("结果") || c.to_lowercase().contains("result"))
@@ -702,8 +703,18 @@ fn classify_result_cell(cell: &str) -> SelftestResult {
     SelftestResult::Missing
 }
 
+/// 结果分类的字符串视图（pass/fail/cannot/missing），供同类表格门禁复用。
+pub(crate) fn classify_result_str(cell: &str) -> &'static str {
+    match classify_result_cell(cell) {
+        SelftestResult::Pass => "pass",
+        SelftestResult::Fail => "fail",
+        SelftestResult::CannotTest => "cannot",
+        SelftestResult::Missing => "missing",
+    }
+}
+
 /// 结果列内联写了原因（如「失败：test 环境未部署」）时也算有原因。
-fn has_inline_reason(result_cell: &str) -> bool {
+pub(crate) fn has_inline_reason(result_cell: &str) -> bool {
     let mut v = result_cell.trim().to_lowercase();
     for m in [
         "未通过",
@@ -742,7 +753,7 @@ fn has_inline_reason(result_cell: &str) -> bool {
     v.chars().count() >= 4
 }
 
-fn meaningful_reason(cell: &str) -> Option<String> {
+pub(crate) fn meaningful_reason(cell: &str) -> Option<String> {
     let v = cell.trim();
     if PLACEHOLDER_CELLS.contains(&v.to_lowercase().as_str()) {
         return None;
@@ -754,7 +765,7 @@ fn meaningful_reason(cell: &str) -> Option<String> {
 }
 
 /// 从结果列之前的单元格中取测试项名称（跳过序号列和占位符）。
-fn row_item_label(row: &[String], result_col: usize, row_no: usize) -> String {
+pub(crate) fn row_item_label(row: &[String], result_col: usize, row_no: usize) -> String {
     let end = result_col.min(row.len());
     row[..end]
         .iter()

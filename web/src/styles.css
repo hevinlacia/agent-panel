@@ -497,6 +497,13 @@ button, input, select, textarea { font: inherit; }
 .react-collapse-head.open .react-collapse-chevron { transform: rotate(180deg); }
 .react-excluded-status-options { opacity: .94; }
 .react-excluded-status-option.active { border-color: rgba(248,113,113,.48); background: rgba(248,113,113,.12); color: #fecaca; }
+/* 默认排除状态编辑区：草稿勾选 + 显式保存按钮 */
+.react-excluded-editor { min-width: 0; }
+.react-excluded-save-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.react-excluded-save-row button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(34,197,94,.4); border-radius: 999px; padding: 6px 14px; background: rgba(34,197,94,.14); color: #86efac; font: 800 .7rem var(--react-mono); cursor: pointer; }
+.react-excluded-save-row button:hover:not(:disabled) { background: rgba(34,197,94,.26); color: #bbf7d0; }
+.react-excluded-save-row button:disabled { opacity: .45; cursor: not-allowed; }
+.react-excluded-save-row em { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; }
 .react-status-option { display: flex; align-items: center; gap: 8px; min-height: 44px; border: 1px solid var(--react-border); border-radius: 15px; padding: 8px 10px; background: rgba(255,255,255,0.04); color: var(--react-muted); cursor: pointer; }
 .react-status-option.active { border-color: var(--react-border-strong); background: rgba(34,211,238,0.1); color: var(--react-text); }
 .react-status-option strong { margin-left: auto; color: var(--react-text); }
@@ -843,6 +850,9 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-statusflow-rework-count { color: #fbbf24; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(251,191,36,.5); }
 .react-statusflow-rework-count.is-high { color: #fca5a5; border-color: rgba(248,113,113,.55); background: rgba(248,113,113,.08); }
 .react-statusflow-rework-hint { flex-basis: 100%; font-size: .68rem; }
+/* 挂起（流水外标记状态）toggle 按钮：未挂起显示挂起、已挂起显示取消挂起 */
+.react-statusflow-suspend-actions { margin-bottom: 10px; display: flex; }
+.react-toggle-btn.is-suspending { color: #fbbf24; border-color: rgba(245,158,11,.55); }
 /* 门禁验证详情页 */
 .react-gate-detail-state { display: inline-flex; gap: 12px; padding: 10px 16px; border-radius: 12px; font: 700 .92rem var(--react-mono); margin: 6px 0 12px; }
 .react-gate-detail-state strong { font-size: .95rem; }
@@ -992,7 +1002,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-diff-scroll-body::-webkit-scrollbar { display: none; }
 .react-diff-toolbar div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .react-diff-toolbar strong { color: #fff; }
-.react-diff-file-card { width: max-content; min-width: 100%; overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); }
+.react-diff-file-card { width: max-content; min-width: 100%; overflow: hidden; border: 1px solid var(--react-border); border-radius: 16px; background: rgba(10,14,21,.9); scroll-margin-top: 148px; }
 .react-diff-file-card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(148,163,184,.14); background: rgba(16,22,31,.95); }
 .react-diff-file-card header div { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--react-text); }
 .react-diff-file-card header svg { color: var(--react-cyan); flex: 0 0 auto; }
@@ -1011,7 +1021,7 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-diff-line-hunk td:nth-child(3) { color: #93c5fd; }
 .react-diff-code tbody tr { cursor: pointer; }
 .react-diff-code tbody tr:hover td { background: rgba(56,189,248,.07); }
-.react-diff-code tbody tr.react-diff-line-focus td { box-shadow: inset 3px 0 0 #38bdf8; background: rgba(56,189,248,.1); }
+/* 行级多选选中态：点击行单独变蓝，再点取消；与 hunk 无关 */
 .react-diff-annotated { color: #4ade80; }
 
 /* ---- diff annotation inspector (right column) ---- */
@@ -1062,6 +1072,20 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-annotation-flow svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
 .react-annotation-flow-fallback { margin: 0; padding: 10px; border: 1px dashed rgba(148,163,184,.3); border-radius: 12px; color: var(--react-muted); font: .68rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
 .react-annotation-flow-loading { margin: 0; font: .7rem var(--react-mono); }
+.react-annotation-flow-click { cursor: zoom-in; position: relative; }
+.react-annotation-flow-click:hover { border-color: var(--react-border-strong); }
+.react-annotation-flow-hint { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font: .62rem var(--react-mono); color: var(--react-muted); background: rgba(10, 14, 22, .82); border: 1px solid var(--react-border); opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.react-annotation-flow-click:hover .react-annotation-flow-hint { opacity: 1; }
+.react-flow-lightbox { position: fixed; inset: 0; z-index: 120; display: flex; flex-direction: column; background: rgba(3, 6, 10, .9); backdrop-filter: blur(6px); }
+.react-flow-lightbox-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; color: var(--react-muted); font: .7rem var(--react-mono); user-select: none; }
+.react-flow-lightbox-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-flow-lightbox-scale { min-width: 46px; text-align: center; color: var(--react-text); }
+.react-flow-lightbox-bar button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--react-border); background: rgba(255, 255, 255, .05); color: var(--react-text); cursor: pointer; }
+.react-flow-lightbox-bar button:hover { background: rgba(255, 255, 255, .12); border-color: var(--react-border-strong); }
+.react-flow-lightbox-surface { flex: 1; overflow: hidden; cursor: grab; touch-action: none; }
+.react-flow-lightbox-surface.dragging { cursor: grabbing; }
+.react-flow-lightbox-content { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.react-flow-lightbox-content svg { height: auto; display: block; }
 .react-fix-ok { color: #86efac !important; border-color: rgba(34,197,94,.36) !important; background: rgba(34,197,94,.12) !important; }
 .react-fix-note-btn { border: 1px solid rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; color: #fcd34d !important; border-radius: 999px !important; padding: 7px 12px !important; font: 800 .74rem var(--react-mono) !important; cursor: pointer; }
 .react-fix-note-btn:disabled { opacity: .5; cursor: not-allowed; }
@@ -1158,6 +1182,12 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-apitest-body { width: 100%; margin-top: 6px; padding: 10px 12px; border: 1px solid var(--react-border); border-radius: 12px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .78rem/1.55 var(--react-mono); resize: vertical; }
 .react-apitest-json { max-height: 420px; overflow: auto; margin: 10px 0 0; padding: 12px; border: 1px solid rgba(148,163,184,.14); border-radius: 12px; background: rgba(0,0,0,.28); color: #cbd5f5; font: .74rem/1.5 var(--react-mono); white-space: pre-wrap; word-break: break-word; }
 .react-apitest-result { margin-top: 14px; }
+.react-apitest-header-list { display: flex; flex-direction: column; gap: 6px; }
+.react-apitest-header-row { display: grid; grid-template-columns: auto minmax(120px, 200px) 1fr; gap: 8px; align-items: center; }
+.react-apitest-header-row > code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #93a4bc; font: .72rem var(--react-mono); }
+.react-apitest-header-row > input:not([type="checkbox"]) { padding: 6px 10px; border: 1px solid var(--react-border); border-radius: 9px; background: rgba(0,0,0,.24); color: #e2e8f0; font: .74rem var(--react-mono); }
+.react-curl-textarea { min-height: 96px; font-size: .72rem; }
+@media (max-width: 680px) { .react-apitest-header-row { grid-template-columns: auto 1fr; } .react-apitest-header-row > input:not([type="checkbox"]) { grid-column: 1 / -1; } }
 
 /* Settings — Skill 路径映射 */
 .react-skill-row { border: 1px solid var(--react-border); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -1184,7 +1214,6 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-gate-item-name { flex: 1 1 240px; }
 .react-gate-item-result { white-space: nowrap; }
 .react-gate-risk ul { margin: 4px 0 8px; padding-left: 20px; }
-
 /* ===================== 合并冲突解决页（/requirement-merge-conflict，IDEA 风格三栏） ===================== */
 .react-cfl-panel { position: relative; }
 .react-cfl-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
@@ -1264,3 +1293,212 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-cfl-done + .react-actions { margin-top: 16px; }
 /* 提示浮层 */
 .react-cfl-toast { position: fixed; right: 22px; bottom: 22px; z-index: 60; max-width: 420px; border: 1px solid var(--react-border-strong); border-radius: 12px; padding: 12px 16px; background: var(--react-panel-strong); color: var(--react-text); font: .74rem/1.6 var(--react-mono); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45); }
+
+/* ===== Pi 会话聊天页（/pi-chat，RPC over WebSocket） ===== */
+.react-pichat-panel { display: flex; flex-direction: column; gap: 12px; min-height: 60vh; }
+.react-pichat-status { display: flex; align-items: center; gap: 10px; color: var(--react-muted); font-size: .8rem; flex-wrap: wrap; }
+.react-pichat-status code { font: .72rem var(--react-mono); color: var(--react-cyan); }
+.react-pichat-status em { font-style: normal; color: var(--react-faint); }
+.react-pichat-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--react-faint); flex: none; }
+.react-pichat-dot.on { background: var(--react-green); box-shadow: 0 0 8px rgba(34, 197, 94, .6); }
+.react-pichat-exit { border: 1px solid rgba(245, 158, 11, .4); border-radius: 10px; padding: 10px 14px; color: var(--react-amber); font-size: .82rem; }
+.react-pichat-exit pre { margin: 8px 0 0; max-height: 180px; overflow: auto; font: .72rem var(--react-mono); color: var(--react-muted); white-space: pre-wrap; }
+.react-pichat-note { margin: 0; color: var(--react-amber); font-size: .82rem; }
+.react-pichat-stream { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 6px 2px; max-height: 58vh; }
+.react-pichat-msg { display: flex; gap: 10px; align-items: flex-start; }
+.react-pichat-msg.user { flex-direction: row-reverse; }
+.react-pichat-role { flex: none; font: 800 .64rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--react-faint); border: 1px solid var(--react-border); border-radius: 999px; padding: 3px 9px; margin-top: 2px; }
+.react-pichat-msg.assistant .react-pichat-role { color: var(--react-cyan); border-color: var(--react-border-strong); }
+.react-pichat-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 76%; }
+.react-pichat-msg.user .react-pichat-body { align-items: flex-end; }
+.react-pichat-text { margin: 0; padding: 10px 14px; background: var(--react-panel-strong); border: 1px solid var(--react-border); border-radius: 12px; font-size: .88rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.react-pichat-msg.user .react-pichat-text { background: rgba(34, 211, 238, .1); border-color: var(--react-border-strong); }
+.react-pichat-typing { color: var(--react-muted); animation: react-pichat-pulse 1.2s ease-in-out infinite; }
+@keyframes react-pichat-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.react-pichat-thinking summary, .react-pichat-tool summary { cursor: pointer; color: var(--react-purple); font: .74rem var(--react-mono); list-style: none; }
+.react-pichat-tool summary { color: var(--react-muted); }
+.react-pichat-tool.running summary { color: var(--react-amber); }
+.react-pichat-thinking pre, .react-pichat-tool pre { margin: 6px 0 0; padding: 10px 12px; background: rgba(2, 6, 12, .6); border: 1px solid var(--react-border); border-radius: 8px; font: .72rem var(--react-mono); max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--react-muted); }
+.react-pichat-input { display: flex; gap: 10px; align-items: flex-end; border-top: 1px solid var(--react-border); padding-top: 12px; }
+.react-pichat-input textarea { flex: 1; resize: vertical; min-height: 52px; max-height: 180px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 10px; color: var(--react-text); font: .86rem/1.5 inherit; padding: 10px 12px; }
+.react-pichat-input textarea:focus { outline: none; border-color: var(--react-border-strong); }
+.react-pichat-input-actions { display: flex; gap: 8px; }
+
+/* ===== 需求排期页（/schedule）===== */
+.react-kpi-warn .react-kpi-value { color: var(--react-amber); }
+.react-kpi-violet .react-kpi-value { color: var(--react-purple); }
+.react-kpi-rose .react-kpi-value { color: #fb7185; }
+.react-kpi-green .react-kpi-value { color: var(--react-green); }
+
+/* 排期页四项统计平铺条：单行横向布局（icon + label/sub 左，value 右），替代纵向堆叠的高卡片；1px gap 充当分隔线 */
+.react-sched-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin-bottom: 20px; border: 1px solid var(--react-border); border-radius: 23px; background: var(--react-border); box-shadow: 0 20px 58px rgba(0, 0, 0, 0.24); overflow: hidden; }
+.react-sched-stat { display: flex; gap: 12px; align-items: center; min-width: 0; padding: 16px 20px; background: linear-gradient(180deg, rgba(19, 24, 32, 0.84), rgba(10, 14, 21, 0.9)), rgba(255, 255, 255, 0.025); }
+.react-sched-stat-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 14px; color: var(--react-cyan); background: rgba(255, 255, 255, 0.052); }
+.react-sched-stat-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.react-sched-stat-label { color: var(--react-muted); font: 800 0.7rem var(--react-mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.react-sched-stat-sub { color: var(--react-faint); font: 0.74rem var(--react-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-sched-stat-value { flex: none; color: #fff; font: 900 2rem/1 var(--react-mono); letter-spacing: -0.04em; }
+.react-sched-stat-rose .react-sched-stat-value { color: #fb7185; }
+.react-sched-stat-warn .react-sched-stat-value { color: var(--react-amber); }
+.react-sched-stat-violet .react-sched-stat-value { color: var(--react-purple); }
+.react-sched-stat-green .react-sched-stat-value { color: var(--react-green); }
+.react-sched-stat-active .react-sched-stat-value { color: var(--react-cyan); }
+.react-sched-stat-avg .react-sched-stat-value { color: var(--react-amber); }
+@media (max-width: 1400px) { .react-sched-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .react-sched-strip { grid-template-columns: 1fr; } }
+.react-sched-config { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; color: var(--react-muted); font: .8rem var(--react-mono); }
+.react-sched-config label { display: inline-flex; gap: 8px; align-items: center; }
+.react-sched-config input[type="number"] { width: 64px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .82rem var(--react-mono); padding: 6px 8px; }
+.react-sched-config input[type="number"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-check input { accent-color: var(--react-cyan); }
+.react-sched-whatif { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.react-sched-whatif-title { flex: 1 1 220px; max-width: 320px; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .82rem var(--react-mono); padding: 8px 10px; }
+.react-sched-whatif-title:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-units { display: inline-flex; gap: 6px; }
+.react-sched-unit { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-muted); font: 800 .74rem var(--react-mono); padding: 7px 10px; cursor: pointer; transition: all .16s ease; }
+.react-sched-unit:hover { border-color: var(--react-border-strong); color: var(--react-text); }
+.react-sched-unit.is-active { border-color: var(--react-cyan); color: var(--react-cyan); background: rgba(34, 211, 238, .12); }
+.react-sched-unit:disabled { opacity: .45; cursor: wait; }
+.react-sched-units-sm .react-sched-unit { padding: 4px 7px; font-size: .68rem; }
+.react-sched-pos { display: inline-flex; gap: 6px; }
+.react-sched-pos button { background: transparent; border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-muted); font: 800 .74rem var(--react-mono); padding: 7px 12px; cursor: pointer; }
+.react-sched-pos button.is-active { border-color: var(--react-purple); color: var(--react-purple); background: rgba(168, 85, 247, .12); }
+.react-sched-whatif-result { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--react-border); border-radius: 10px; background: rgba(2, 6, 12, .45); }
+.react-sched-whatif-result.is-breach { border-color: rgba(251, 113, 133, .5); }
+.react-sched-whatif-summary { margin: 0 0 6px; color: var(--react-text); font: .84rem/1.6 var(--react-mono); }
+.react-sched-whatif-result ul { margin: 0; padding-left: 18px; }
+.react-sched-whatif-result li { color: var(--react-muted); font: .78rem/1.7 var(--react-mono); }
+.react-sched-whatif-result li.is-breach { color: #fb7185; }
+.react-sched-days { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.react-sched-day { display: flex; flex-direction: column; gap: 5px; min-width: 76px; }
+.react-sched-day-date { color: var(--react-muted); font: 800 .68rem var(--react-mono); }
+.react-sched-day-bar { height: 8px; border-radius: 4px; background: rgba(148, 163, 184, .12); overflow: hidden; }
+.react-sched-day-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--react-cyan), var(--react-purple)); }
+.react-sched-day-num { color: var(--react-faint); font: .68rem var(--react-mono); min-height: 1em; }
+.react-sched-table-wrap { overflow-x: auto; }
+.react-sched-table { width: 100%; border-collapse: collapse; font: .8rem var(--react-mono); }
+.react-sched-table th { text-align: left; color: var(--react-muted); font: 800 .66rem var(--react-mono); letter-spacing: .1em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--react-border); white-space: nowrap; }
+.react-sched-table td { padding: 9px 10px; border-bottom: 1px solid rgba(148, 163, 184, .08); vertical-align: middle; }
+.react-sched-table tr.is-overdue td { background: rgba(251, 113, 133, .06); }
+.react-sched-req-link { color: var(--react-cyan); font-weight: 700; margin-right: 8px; }
+.react-sched-req-title { color: var(--react-text); margin-right: 8px; }
+.react-sched-req-projects { font-size: .7rem; }
+.react-sched-promise { display: block; margin-top: 2px; color: var(--react-faint); font: 800 0.66rem var(--react-mono); white-space: nowrap; }
+.react-sched-src { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; background: rgba(148, 163, 184, .12); color: var(--react-muted); font: .64rem var(--react-mono); font-style: normal; }
+.react-sched-src.is-warn { background: rgba(245, 158, 11, .16); color: var(--react-amber); }
+.react-sched-risk { display: inline-block; padding: 2px 9px; border-radius: 7px; font-weight: 800; font-size: .72rem; }
+.react-sched-risk-overdue { background: rgba(251, 113, 133, .16); color: #fb7185; }
+.react-sched-risk-tight { background: rgba(245, 158, 11, .16); color: var(--react-amber); }
+.react-sched-risk-ok { background: rgba(34, 197, 94, .14); color: var(--react-green); }
+.react-sched-table td input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 7px; color: var(--react-text); font: .74rem var(--react-mono); padding: 5px 7px; color-scheme: dark; }
+.react-sched-table td input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-tl { display: inline-flex; gap: 2px; }
+.react-sched-tl span { width: 12px; height: 14px; border-radius: 3px; background: rgba(148, 163, 184, .1); }
+.react-sched-tl span.is-work { background: linear-gradient(180deg, var(--react-cyan), rgba(34, 211, 238, .55)); }
+.react-sched-tl span.is-deadline { background: #fb7185; box-shadow: 0 0 6px rgba(251, 113, 133, .8); }
+
+/* ===== 需求排期页：并行均摊模型补充 ===== */
+.react-sched-deadline { display: inline-flex; gap: 8px; align-items: center; color: var(--react-muted); font: .8rem var(--react-mono); }
+.react-sched-deadline input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .8rem var(--react-mono); padding: 6px 8px; color-scheme: dark; }
+.react-sched-deadline input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-whatif-detail { margin: 4px 0 0; color: var(--react-amber); font: .76rem/1.6 var(--react-mono); }
+.react-sched-day.react-sched-sat-ok .react-sched-day-date { color: var(--react-green); }
+.react-sched-day.react-sched-sat-full .react-sched-day-date { color: var(--react-amber); }
+.react-sched-day.react-sched-sat-over .react-sched-day-date { color: #fb7185; }
+.react-sched-day-bar { height: 8px; border-radius: 4px; background: rgba(148, 163, 184, .12); overflow: hidden; }
+.react-sched-day-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--react-green), rgba(34, 197, 94, .7)); }
+.react-sched-day-fill.is-full { background: linear-gradient(90deg, var(--react-amber), rgba(245, 158, 11, .7)); }
+.react-sched-day-fill.is-over { background: linear-gradient(90deg, #fb7185, rgba(251, 113, 133, .7)); }
+.react-sched-day-num { color: var(--react-faint); font: .68rem var(--react-mono); min-height: 1em; }
+.react-sched-hotfix { margin-right: 4px; }
+.react-sched-overload-text { color: #fb7185; }
+
+/* ===== 需求详情页：提测时间 / 工时评估卡 ===== */
+.react-sched-info-card .react-sched-info-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.react-sched-info-card .react-sched-info-label { flex: none; width: 84px; color: var(--react-text); font: 800 0.74rem var(--react-mono); }
+.react-sched-info-card .react-sched-info-row input[type="date"] { flex: none; }
+.react-sched-info-card input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .84rem var(--react-mono); padding: 7px 10px; color-scheme: dark; }
+.react-sched-info-card input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+.react-sched-effort-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--react-border); border-radius: 10px; background: rgba(2, 6, 12, .4); }
+.react-sched-effort-cell strong { color: #fff; font: 900 1.3rem var(--react-mono); }
+.react-sched-effort-label { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .12em; text-transform: uppercase; }
+.react-sched-effort-cell em { font-style: normal; }
+.react-sched-effort-summary { color: var(--react-faint); font-size: .74rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===== Diff 页行信息（blame）===== */
+.react-diff-head-right { display: inline-flex; gap: 10px; align-items: center; }
+.react-diff-blame-btn { display: inline-flex; gap: 4px; align-items: center; background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 7px; color: var(--react-muted); font: 800 .68rem var(--react-mono); padding: 4px 9px; cursor: pointer; transition: all .16s ease; }
+.react-diff-blame-btn:hover { border-color: var(--react-border-strong); color: var(--react-text); }
+.react-diff-blame-btn.is-on { border-color: var(--react-cyan); color: var(--react-cyan); background: rgba(34, 211, 238, .12); }
+.react-diff-blame-btn:disabled { opacity: .5; cursor: wait; }
+.react-diff-blame-error { margin: 6px 14px; }
+.react-diff-code .react-diff-blame-cell { white-space: nowrap; color: var(--react-muted); font: .68rem var(--react-mono); padding: 0 10px; border-left: 1px solid rgba(148, 163, 184, .1); max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.react-diff-code .react-diff-blame-cell .react-diff-blame-empty { color: var(--react-faint); }
+
+/* ===== Diff 页文件列表悬浮卡（文件全名/完整路径，可选中复制）===== */
+.react-file-hover-card { position: fixed; z-index: 90; width: 420px; max-width: calc(100vw - 16px); padding: 12px 14px; border-radius: 12px; border: 1px solid var(--react-border-strong); background: var(--react-panel-strong); box-shadow: 0 12px 32px rgba(0, 0, 0, .5); user-select: text; cursor: text; }
+.react-file-hover-row { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+.react-file-hover-row code { flex: 1; color: var(--react-text); font: .76rem/1.5 var(--react-mono); word-break: break-all; user-select: text; cursor: text; }
+.react-file-hover-label { flex: none; width: 34px; color: var(--react-faint); font: 800 .64rem var(--react-mono); letter-spacing: .1em; }
+.react-file-hover-actions { display: flex; gap: 10px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--react-border); }
+.react-file-hover-actions button { display: inline-flex; gap: 4px; align-items: center; background: rgba(34, 211, 238, .1); border: 1px solid var(--react-border-strong); border-radius: 7px; color: var(--react-cyan); font: 800 .7rem var(--react-mono); padding: 4px 10px; cursor: pointer; }
+.react-file-hover-actions button:hover { background: rgba(34, 211, 238, .18); }
+.react-file-hover-actions em { color: var(--react-faint); font: .66rem var(--react-mono); font-style: normal; }
+
+/* ===== Connect page（多服务器连接管理，移动优先） ===== */
+.react-connect-toolbar { margin-bottom: 12px; }
+.react-connect-list { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.react-connect-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--react-border); background: rgba(255, 255, 255, .02); }
+.react-connect-card.active { border-color: var(--react-border-strong); background: rgba(34, 211, 238, .06); }
+.react-connect-card-head { display: flex; align-items: center; gap: 8px; }
+.react-connect-card-head strong { font: 800 .92rem var(--react-mono); }
+.react-connect-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--react-faint); flex: none; }
+.react-connect-dot.on { background: var(--react-cyan); box-shadow: 0 0 8px rgba(34, 211, 238, .7); }
+.react-connect-badge { margin-left: auto; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--react-border-strong); color: var(--react-cyan); font: 800 .62rem var(--react-mono); font-style: normal; letter-spacing: .08em; text-transform: uppercase; }
+.react-connect-badge.muted { border-color: var(--react-border); color: var(--react-muted); }
+.react-connect-url { color: var(--react-muted); font: .74rem/1.5 var(--react-mono); word-break: break-all; }
+.react-connect-meta { display: flex; gap: 14px; align-items: center; color: var(--react-faint); font: .7rem var(--react-mono); }
+.react-connect-testing, .react-connect-ok, .react-connect-fail { display: inline-flex; gap: 5px; align-items: center; }
+.react-connect-ok { color: var(--react-green); }
+.react-connect-fail { color: var(--react-amber); }
+.react-spin { animation: react-spin 1s linear infinite; }
+@keyframes react-spin { to { transform: rotate(360deg); } }
+.react-connect-card .react-connect-actions { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--react-border); }
+.react-connect-card .react-connect-actions .danger { color: #f87171; border-color: rgba(248, 113, 113, .3); }
+.react-connect-form { margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px; }
+.react-connect-form .react-panel-head { margin-bottom: 0; }
+.react-connect-field { display: flex; flex-direction: column; gap: 6px; }
+.react-connect-field > span { color: var(--react-muted); font: 800 .68rem var(--react-mono); letter-spacing: .08em; text-transform: uppercase; }
+.react-connect-field input { padding: 10px 12px; border-radius: 10px; border: 1px solid var(--react-border); background: rgba(0, 0, 0, .25); color: var(--react-text); font: .82rem var(--react-mono); min-height: 42px; }
+.react-connect-field input:focus { outline: none; border-color: var(--react-border-strong); }
+.react-connect-token-row { display: flex; gap: 8px; align-items: center; }
+.react-connect-token-row input { flex: 1; }
+
+/* ===== Pi-chat 移动布局（脱离 shell 的全屏聊天视口） ===== */
+.react-pichat-mobile { display: flex; flex-direction: column; height: 100dvh; background: var(--react-bg); overflow: hidden; }
+.react-pichat-mobile-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; padding-top: calc(10px + env(safe-area-inset-top)); border-bottom: 1px solid var(--react-border); background: var(--react-panel-strong); flex: none; }
+.react-pichat-mobile-back { display: inline-flex; padding: 8px; border-radius: 10px; border: 1px solid var(--react-border); color: var(--react-text); flex: none; }
+.react-pichat-mobile-back:active { background: rgba(255, 255, 255, .06); }
+.react-pichat-mobile-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.react-pichat-mobile-title strong { font: 800 .9rem var(--react-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.react-pichat-mobile-title span { display: inline-flex; gap: 6px; align-items: center; color: var(--react-muted); font: .68rem var(--react-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.react-pichat-mobile-head .react-ghost-btn { flex: none; }
+.react-pichat-mobile .react-pichat-stream { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 6px; }
+.react-pichat-mobile .react-pichat-msg { max-width: 100%; }
+.react-pichat-mobile .react-pichat-input { position: sticky; bottom: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--react-border); background: var(--react-panel-strong); flex: none; }
+.react-pichat-mobile .react-pichat-input textarea { width: 100%; resize: none; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--react-border); background: rgba(0, 0, 0, .3); color: var(--react-text); font: .9rem/1.45 var(--react-mono); }
+.react-pichat-mobile .react-pichat-input textarea:focus { outline: none; border-color: var(--react-border-strong); }
+.react-pichat-mobile .react-pichat-input-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.react-pichat-mobile .react-pichat-input-actions button { min-height: 40px; padding: 8px 16px; }
+.react-pichat-mobile .react-pichat-exit, .react-pichat-mobile .react-pichat-note { flex: none; margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(245, 158, 11, .35); color: var(--react-amber); font: .74rem/1.5 var(--react-mono); }
+.react-pichat-mobile .react-pichat-exit pre { max-height: 120px; overflow: auto; margin: 6px 0 0; font-size: .66rem; white-space: pre-wrap; word-break: break-all; }
+
+/* ===== 移动端全局微调（safe-area / 触摸目标） ===== */
+@media (max-width: 980px) {
+  .react-topbar { padding-top: env(safe-area-inset-top); }
+  .react-main { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+  .react-sidebar-link { padding-top: 9px; padding-bottom: 9px; }
+  .react-topbar-actions button, .react-topbar-actions a { min-height: 36px; }
+}
+

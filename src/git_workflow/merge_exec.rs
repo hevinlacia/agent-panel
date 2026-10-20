@@ -178,7 +178,7 @@ pub(crate) async fn merge_repo_branch(
             target,
             Some(&target_branch),
             "skipped",
-            "线上问题/测试问题的排查代码仅用于测试环境复现与验证，已拦截合入生产分支；正式生产修复请通过「创建修复需求」转普通需求承接",
+            "线上问题/测试问题/性能问题的排查代码仅用于测试环境复现与验证，已拦截合入生产分支；正式生产修复请通过「创建修复需求」转普通需求承接",
             Some(&project_path),
             Vec::new(),
             Vec::new(),
@@ -336,9 +336,12 @@ pub(crate) async fn merge_repo_branch(
                         // 全部自动解决：直接提交并推送
                         match complete_merge(&worktree_path, &target_branch).await {
                             Ok(done_msg) => {
-                                let cleanup =
-                                    cleanup_merge_worktree(&project_path, &worktree_path, &temp_branch)
-                                        .await;
+                                let cleanup = cleanup_merge_worktree(
+                                    &project_path,
+                                    &worktree_path,
+                                    &temp_branch,
+                                )
+                                .await;
                                 let mut commands = vec![add.command.clone(), merge.command.clone()];
                                 commands.extend(cleanup);
                                 return merge_result(

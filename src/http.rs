@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, env, sync::{OnceLock, RwLock}};
+use std::{
+    collections::BTreeMap,
+    env,
+    sync::{OnceLock, RwLock},
+};
 
 use axum::{
     extract::State,
@@ -45,6 +49,13 @@ impl ApiError {
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
             message: message.into(),
         }
     }
@@ -128,7 +139,10 @@ pub(crate) fn set_skill_path_overrides(map: BTreeMap<String, String>) {
 }
 
 fn skill_overrides_snapshot() -> BTreeMap<String, String> {
-    skill_overrides_cell().read().map(|g| g.clone()).unwrap_or_default()
+    skill_overrides_cell()
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default()
 }
 
 /// 解析 skill 的 SKILL.md 路径：override（支持 skills 根目录 / 具体 skill 目录 / .md 文件三种写法）
@@ -237,7 +251,9 @@ pub(crate) async fn api_config_skills(State(state): State<AppState>) -> ApiResul
     let all_ok = skills
         .iter()
         .all(|s| s.get("exists").and_then(Value::as_bool).unwrap_or(false));
-    Ok(Json(json!({ "ok": true, "allOk": all_ok, "skills": skills })))
+    Ok(Json(
+        json!({ "ok": true, "allOk": all_ok, "skills": skills }),
+    ))
 }
 
 pub(crate) fn api_error_help(message: &str) -> Option<Value> {

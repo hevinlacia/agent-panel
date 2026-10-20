@@ -151,8 +151,15 @@ pub(crate) struct RequirementCreateForm {
     pub(crate) start_date: Option<String>,
     #[serde(default)]
     pub(crate) plan_release: Option<String>,
+    /// 提测时间：交付测试开始测试的日期 deadline（unknown = 未登记）。
+    #[serde(default)]
+    pub(crate) submit_test_date: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 区域维度（仅 issue 家族：cn=中国 / sea=东南亚，可扩展更多国家/区域）；
+    /// 仅线上问题/测试问题/性能问题可设置，普通需求传入报 400。
+    #[serde(default)]
+    pub(crate) region: Option<String>,
     /// 创建时绑定的线上问题 req id 列表（仅 category=需求 时有意义）。
     pub(crate) issues: Option<Vec<String>>,
     /// 引用式需求组成员（reqId + 可选 note）；members 非空 = 创建需求组，
@@ -196,8 +203,17 @@ pub(crate) struct RequirementPatchForm {
     pub(crate) start_date: Option<String>,
     #[serde(default)]
     pub(crate) plan_release: Option<String>,
+    /// 提测时间（实际）：排期面板容量评估用的实际提测日（unknown = 未登记；子需求可独立设置）。
+    #[serde(default)]
+    pub(crate) submit_test_date: Option<String>,
+    /// 承诺提测时间：给产品/测试承诺的提测日，用户手设，判断需求紧急度用。
+    #[serde(default)]
+    pub(crate) promise_submit_date: Option<String>,
     #[serde(default)]
     pub(crate) ones: Option<String>,
+    /// 区域维度（仅 issue 家族）：Some(值) 设置、Some("") 清空、None 不动。
+    #[serde(default)]
+    pub(crate) region: Option<String>,
     /// 绑定的线上问题 req id 列表；空列表表示清空绑定。
     pub(crate) issues: Option<Vec<String>>,
     #[serde(default)]
@@ -352,6 +368,7 @@ pub(crate) struct RequirementEventTestCase {
     pub(crate) evidence: Option<String>,
 }
 
+mod compliance;
 mod create;
 mod doc;
 mod doc_parts;
@@ -363,8 +380,10 @@ mod selftest_gate;
 mod state;
 mod status_gates;
 mod templates;
+mod uat_regression_gate;
 mod validate;
 
+pub(crate) use compliance::*;
 pub(crate) use create::*;
 pub(crate) use doc::*;
 pub(crate) use doc_parts::*;
@@ -376,4 +395,5 @@ pub(crate) use selftest_gate::*;
 pub(crate) use state::*;
 pub(crate) use status_gates::*;
 pub(crate) use templates::*;
+pub(crate) use uat_regression_gate::*;
 pub(crate) use validate::*;

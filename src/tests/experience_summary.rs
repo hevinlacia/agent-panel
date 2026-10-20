@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn experience_summary_dispatch_triggers_for_issue_reviewed() {
     let mut req = default_requirement_for_test("WMS-INC-111-x");
-    req.status = "已复盘".to_string();
+    req.status = "经验总结".to_string();
     req.category = Some("线上问题".to_string());
     assert!(experience_summary_triggered(&req));
     req.status = "已修复".to_string();
@@ -18,7 +18,7 @@ fn experience_summary_dispatch_triggers_for_issue_reviewed() {
 #[test]
 fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check() {
     let mut req = default_requirement_for_test("WMS-INC-111-x");
-    req.status = "已复盘".to_string();
+    req.status = "经验总结".to_string();
     req.category = Some("线上问题".to_string());
     let prompt =
         experience_summary_prompt(&req, Path::new("/tmp/x/experience-summary.md"), "sess-1");
@@ -37,9 +37,14 @@ fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check(
 
 #[test]
 fn online_issue_statuses_map_to_online_issue_phase_prompt() {
-    for s in ["排查中", "已定位", "已修复", "已复盘", "已关闭"] {
+    // 问题家族旧「已复盘」并入「经验总结」：与需求流统一加载经验总结阶段 prompt。
+    for s in ["排查中", "已定位", "已修复", "已关闭"] {
         assert_eq!(phase_prompt_file(s), "prompts/phase-online-issue.md");
     }
+    assert_eq!(
+        phase_prompt_file("经验总结"),
+        "prompts/phase-experience-summary.md"
+    );
 }
 
 #[test]
@@ -280,4 +285,73 @@ fn injection_context_keeps_fixed_prompt_but_omits_state_phase_prompt_body() {
     // 必须以元规则指向 Refresh Context URL 实时获取阶段提示词。
     assert!(out.contains("intentionally NOT included"));
     assert!(out.contains("Refresh Context URL"));
+}
+
+#[test]
+fn dispatch_window_allows_normal_overnight_and_edges() {
+    let t = |h: u32, m: u32| chrono::NaiveTime::from_hms_opt(h, m, 0).unwrap();
+    // 正常窗口 [09:00, 18:00)：start 含、end 排他。
+    let day = DispatchWindow {
+        enabled: true,
+        start: "09:00".into(),
+        end: "18:00".into(),
+    };
+    assert!(dispatch_window_allows(&day, t(9, 0)).unwrap());
+    assert!(dispatch_window_allows(&day, t(17, 59)).unwrap());
+    assert!(!dispatch_window_allows(&day, t(18, 0)).unwrap());
+    assert!(!dispatch_window_allows(&day, t(8, 59)).unwrap());
+    // 跨午夜 22:00-08:00（GLM 晚间低价场景）。
+    let night = DispatchWindow {
+        enabled: true,
+        start: "22:00".into(),
+        end: "08:00".into(),
+    };
+    assert!(dispatch_window_allows(&night, t(23, 0)).unwrap());
+    assert!(dispatch_window_allows(&night, t(3, 30)).unwrap());
+    assert!(dispatch_window_allows(&night, t(0, 0)).unwrap());
+    assert!(!dispatch_window_allows(&night, t(21, 59)).unwrap());
+    assert!(!dispatch_window_allows(&night, t(8, 0)).unwrap());
+    // start == end：保存路径会拒绝；运行时防御性视为全天允许（fail-open）。
+    let all = DispatchWindow {
+        enabled: true,
+        start: "00:00".into(),
+        end: "00:00".into(),
+    };
+    assert!(dispatch_window_allows(&all, t(12, 0)).unwrap());
+    // 非法格式：返回 Err，调用方 fail-open。
+    let bad = DispatchWindow {
+        enabled: true,
+        start: "25:00".into(),
+        end: "08:00".into(),
+    };
+    assert!(dispatch_window_allows(&bad, t(12, 0)).is_err());
+}
+
+#[test]
+fn normalize_dispatch_window_rejects_equal_and_invalid_times() {
+    let ok = normalize_dispatch_window(DispatchWindow {
+        enabled: true,
+        start: "22:00".into(),
+        end: "08:00".into(),
+    });
+    assert!(ok.is_ok());
+    let equal = normalize_dispatch_window(DispatchWindow {
+        enabled: true,
+        start: "09:00".into(),
+        end: "09:00".into(),
+    });
+    assert!(equal.is_err());
+    let invalid = normalize_dispatch_window(DispatchWindow {
+        enabled: true,
+        start: "9点".into(),
+        end: "08:00".into(),
+    });
+    assert!(invalid.is_err());
+    // disabled 时不校验时间（草稿态可保存）。
+    let disabled = normalize_dispatch_window(DispatchWindow {
+        enabled: false,
+        start: "bad".into(),
+        end: "08:00".into(),
+    });
+    assert!(disabled.is_ok());
 }
