@@ -1,15 +1,17 @@
 /**
- * Role: 需求详情页的排期信息卡 — ① 提测时间卡：实际/承诺两个提测时间登记（PATCH meta）+ 承诺倒计时；
+ * Role: 需求详情页的排期信息卡 — ① 提测时间卡：实际/承诺两个提测时间登记（PATCH meta）+ 倒计时 +
  * ② 工时评估卡：agent 预估展示 + 人工矫正输入（POST effort-estimate manualHours），排期统计优先人工矫正。
  * Public surface: SubmitTestCard, EffortEstimateCard — used by web/src/pages/requirement.tsx.
  * Constraints: 写仅 PATCH /api/requirement（submitTestDate / promiseSubmitDate）与 POST /api/requirement/effort-estimate（manualHours）。
- * Read-this-with: web/src/lib/schedule.ts（4h 单位口径）、web/src/features/requirements/ones-manhour-card.tsx（卡片风格）。
+ * Read-this-with: web/src/lib/schedule.ts（4h 单位 + 推荐提测算法）、web/src/lib/schedule-input.ts（共享输入组装）、
  */
-import { useState } from "react"
-import type { EffortEstimate, Requirement } from "../../types"
-import { patchJson, postJson } from "../../lib/api"
+import { useMemo, useState } from "react"
+import type { EffortEstimate, OnesTasksResponse, Requirement } from "../../types"
+import { patchJson, postJson, useFetch } from "../../lib/api"
 import { relAge } from "../../lib/format"
-import { HOUR_UNIT } from "../../lib/schedule"
+import { HOUR_UNIT, recommendSummary, utilization } from "../../lib/schedule"
+import { QUEUEABLE_STATUSES, buildQueueReqs, loggedHoursMap, readPanelConfig } from "../../lib/schedule-input"
+import { readScheduleDefaultExcludedStatuses } from "../../lib/preferences"
 import { PanelHead } from "../../components/ui"
 
 const DAY_MS = 24 * 3600 * 1000
@@ -34,22 +36,34 @@ function countdown(deadline: string): { diff: number; text: string; cls: string 
   return { diff, text: `还有 ${diff} 天`, cls }
 }
 
-export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: () => void }) {
+export function SubmitTestCard({ req, allReqs, onSaved }: { req: Requirement; allReqs: Requirement[]; onSaved: () => void }) {
   const valid = (v?: string | null) => (v && v !== "unknown" ? v : "")
   const actual = valid(req.submitTestDate)
   const promise = valid(req.promiseSubmitDate)
   const [draftActual, setDraftActual] = useState(actual)
   const [draftPromise, setDraftPromise] = useState(promise)
-  const [savingField, setSavingField] = useState<"actual" | "promise" | null>(null)
+  const [savingField, setSavingField] = useState<"actual" | "promise" | "recommend" | null>(null)
   const [err, setErr] = useState<string | null>(null)
   // 倒计时 = 紧急度口径：优先承诺提测时间，未设回退实际提测时间
   const cd = countdown(promise || actual)
 
-  async function save(field: "actual" | "promise", date: string) {
+  // Agent 推荐提测：与排期页同口径（全局需求 + ONES 登记工时 + 本机排期配置）跑容量填充推算；
+  // 仅在本需求未登记实际提测时展示。ONES 接口失败不阻塞推荐（loggedMap 为空时工时回退评估/默认值）。
+  const ones = useFetch<OnesTasksResponse>("/api/ones/tasks")
+  const recommend = useMemo(() => {
+    const config = readPanelConfig()
+    const loggedMap = loggedHoursMap(ones.data)
+    const queue = buildQueueReqs(allReqs, loggedMap, config.onesHoursFactor ?? 0.8, new Set(readScheduleDefaultExcludedStatuses()), QUEUEABLE_STATUSES)
+    const item = utilization(queue, config).items.find((it) => it.id === req.id)
+    if (!item || !item.virtualDeadline || !item.recommendedDeadline) return null
+    return { item, summary: recommendSummary(item, config) ?? "" }
+  }, [req.id, allReqs, ones.data])
+
+  async function save(field: "actual" | "promise" | "recommend", date: string) {
     setSavingField(field)
     setErr(null)
     try {
-      const body = field === "actual" ? { reqId: req.id, submitTestDate: date || "unknown" } : { reqId: req.id, promiseSubmitDate: date || "unknown" }
+      const body = field === "promise" ? { reqId: req.id, promiseSubmitDate: date || "unknown" } : { reqId: req.id, submitTestDate: date || "unknown" }
       await patchJson("/api/requirement", body)
       onSaved()
     } catch (e) {
@@ -60,7 +74,7 @@ export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: ()
   }
 
   const rows = [
-    { key: "actual" as const, label: "实际提测", hint: "排期面板饱和度口径；进入「发布就绪」时自动刷新为当天（覆盖式）", current: actual, draft: draftActual, setDraft: setDraftActual },
+    { key: "actual" as const, label: "实际提测", hint: "排期面板饱和度口径；进入「发布就绪」时自动刷新为当天（覆盖式）；未登记时排期默认按 Agent 推荐提测日计算", current: actual, draft: draftActual, setDraft: setDraftActual },
     { key: "promise" as const, label: "承诺提测", hint: "给产品/测试承诺的提测日，判断需求紧急度；倒计时按此计算", current: promise, draft: draftPromise, setDraft: setDraftPromise },
   ]
 
@@ -71,7 +85,7 @@ export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: ()
         title="提测时间"
         chip={cd ? <span className={`react-sched-risk ${cd.cls}`}>{cd.text}</span> : <span className="react-muted">未登记</span>}
       />
-      <p className="react-muted">实际 = 排期饱和度口径；承诺 = 给产品/测试的紧急度口径（倒计时按承诺，未设回退实际）。两者独立登记、互不覆盖。</p>
+      <p className="react-muted">实际 = 排期饱和度口径；承诺 = 给产品/测试的紧急度口径（倒计时按承诺，未设回退实际）。两者独立登记、互不覆盖。未登记实际提测时，排期默认按下方 Agent 推荐值计算。</p>
       {rows.map((row) => {
         const dirty = row.draft !== row.current
         return (
@@ -96,6 +110,24 @@ export function SubmitTestCard({ req, onSaved }: { req: Requirement; onSaved: ()
           </div>
         )
       })}
+      {recommend ? (
+        <div className="react-sched-info-row react-sched-recommend-row">
+          <span className="react-sched-info-label" title="按全局排期容量填充推算：开发完成日 + 预留工作日（代码审查/测试反馈修复/上线准备）；未登记时排期默认按此值计算">Agent 推荐</span>
+          <strong>{recommend.item.recommendedDeadline}</strong>
+          <button
+            type="button"
+            className="react-ghost-btn"
+            disabled={savingField !== null}
+            title={recommend.summary}
+            onClick={() => save("recommend", recommend.item.recommendedDeadline!)}
+          >
+            {savingField === "recommend" ? "保存中…" : "采用推荐"}
+          </button>
+          <em className="react-sched-recommend-detail" title={recommend.summary}>
+            开发完成 {recommend.item.devFinishDate}
+          </em>
+        </div>
+      ) : null}
       {err ? <p className="react-effort-error">{err}</p> : null}
     </section>
   )

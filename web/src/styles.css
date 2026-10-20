@@ -1384,6 +1384,9 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-sched-req-title { color: var(--react-text); margin-right: 8px; }
 .react-sched-req-projects { font-size: .7rem; }
 .react-sched-promise { display: block; margin-top: 2px; color: var(--react-faint); font: 800 0.66rem var(--react-mono); white-space: nowrap; }
+.react-sched-recommend { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; }
+.react-sched-recommend em { color: var(--react-cyan); font: 800 0.68rem var(--react-mono); font-style: normal; cursor: help; white-space: nowrap; }
+.react-sched-recommend .react-ghost-btn { padding: 1px 8px; font-size: 0.68rem; }
 .react-sched-src { display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 6px; background: rgba(148, 163, 184, .12); color: var(--react-muted); font: .64rem var(--react-mono); font-style: normal; }
 .react-sched-src.is-warn { background: rgba(245, 158, 11, .16); color: var(--react-amber); }
 .react-sched-risk { display: inline-block; padding: 2px 9px; border-radius: 7px; font-weight: 800; font-size: .72rem; }
@@ -1419,6 +1422,8 @@ button.react-ones-badge.react-ones-missing:hover { background: rgba(245,158,11,.
 .react-sched-info-card .react-sched-info-row input[type="date"] { flex: none; }
 .react-sched-info-card input[type="date"] { background: rgba(2, 6, 12, .55); border: 1px solid var(--react-border); border-radius: 8px; color: var(--react-text); font: .84rem var(--react-mono); padding: 7px 10px; color-scheme: dark; }
 .react-sched-info-card input[type="date"]:focus { outline: none; border-color: var(--react-border-strong); }
+.react-sched-recommend-row strong { color: var(--react-cyan); font: 900 0.9rem var(--react-mono); }
+.react-sched-recommend-detail { color: var(--react-muted); font: 0.72rem var(--react-mono); font-style: normal; cursor: help; }
 .react-sched-effort-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
 .react-sched-effort-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--react-border); border-radius: 10px; background: rgba(2, 6, 12, .4); }
 .react-sched-effort-cell strong { color: #fff; font: 900 1.3rem var(--react-mono); }
