@@ -1,0 +1,41 @@
+src/requirement_api.rs
+  7cba5d62c42312fe 2293-2511
+web/src/pages/requirement-merge.tsx
+  7cba5d62c42312fe 53-54
+src/git_workflow.rs
+  7cba5d62c42312fe 65-83,152,164
+web/src/App.tsx
+  7cba5d62c42312fe 107,145,172,224
+web/src/features/requirements/branch-ops-panels.tsx
+  7cba5d62c42312fe 57
+src/git_workflow/merge_conflict.rs
+  7cba5d62c42312fe 1-1273
+src/git_workflow/merge_exec.rs
+  7cba5d62c42312fe 331-420
+web/src/pages/requirement-merge-conflict.tsx
+  7cba5d62c42312fe 1-394
+src/main.rs
+  7cba5d62c42312fe 226-229,430-444
+web/src/types.ts
+  7cba5d62c42312fe 792,795-801
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "9413a6cae3ddda17a38876c77ea9c5e4a7e1c478",
+  "prompts": {
+    "7cba5d62c42312fe": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a0f120-e08a-72a9-8094-3c831b029f37",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 2135,
+      "total_deletions": 107,
+      "accepted_lines": 2033,
+      "overriden_lines": 0
+    }
+  }
+}
