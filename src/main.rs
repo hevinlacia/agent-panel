@@ -493,6 +493,10 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
             "/api/experience-summary/jobs/complete",
             post(api_experience_summary_jobs_complete),
         )
+        .route(
+            "/api/worker/experience-summary/spawn",
+            post(api_worker_experience_summary_spawn),
+        )
         .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
         .route("/api/requirement/edit", post(api_requirement_edit))
         .route("/api/requirement/events", post(api_requirement_events))
@@ -840,6 +844,10 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route(
             "/api/experience-summary/jobs/complete",
             post(api_experience_summary_jobs_complete),
+        )
+        .route(
+            "/api/worker/experience-summary/spawn",
+            post(worker_only_stub),
         )
         .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
         .route("/api/requirement/edit", post(api_requirement_edit))

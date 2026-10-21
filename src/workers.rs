@@ -70,6 +70,8 @@ pub(crate) const WORKER_PROXY_PATHS: &[&str] = &[
     "/api/apitest/api",
     "/api/apitest/trigger",
     "/api/agent/capabilities/query",
+    // 经验总结 agent spawn（hub 决策后下发 worker 本机执行 pi）
+    "/api/worker/experience-summary/spawn",
     // 本机资源：Chrome 登录态/ONES/cainiao mock/pi 配置/harness
     "/api/config/skills",
     "/api/auth-sites",
@@ -231,7 +233,7 @@ pub(crate) async fn api_workers(State(state): State<AppState>) -> Response {
 }
 
 /// 选一个在线 worker（当前只有一个本机 worker；多 worker 时按最近心跳）。
-fn pick_online_worker(data_dir: &std::path::Path) -> Option<WorkerEntry> {
+pub(crate) fn pick_online_worker(data_dir: &std::path::Path) -> Option<WorkerEntry> {
     load_registry(data_dir)
         .values()
         .filter(|w| is_online(w))
@@ -254,7 +256,7 @@ pub(crate) fn init_worker_token() {
     let _ = WORKER_TOKEN.set(token);
 }
 
-fn proxy_client() -> &'static reqwest::Client {
+pub(crate) fn proxy_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -262,6 +264,11 @@ fn proxy_client() -> &'static reqwest::Client {
             .build()
             .expect("build proxy client")
     })
+}
+
+/// hub 内部直调 worker 时带的 token（同代理转发头语义）。
+pub(crate) fn worker_forward_token() -> Option<String> {
+    WORKER_TOKEN.get().and_then(|t| t.as_ref()).cloned()
 }
 
 /// worker 代理中间件：路径命中 WORKER_PROXY_PATHS 且有在线 worker 时转发，
