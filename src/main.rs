@@ -922,6 +922,11 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
             get(api_requirement_review_gate),
         )
         .route("/api/requirement/review-materials", post(worker_only_stub))
+        // 快照直传接收端点：hub 本地执行（worker 生成快照后 POST 过来，不经过 git 备份链）
+        .route(
+            "/api/requirement/review-snapshot",
+            post(api_requirement_review_snapshot_post),
+        )
         .route("/api/requirement/master-diff", post(worker_only_stub))
         .route(
             "/api/requirement/diff-snapshots",
