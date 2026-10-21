@@ -376,10 +376,6 @@ async fn main() -> Result<()> {
             // Start the cainiao print mock server on boot if enabled in config.
             sync_cainiao_mock(&state).await;
 
-            // Background: dispatch automatic experience-summary agents, then auto-advance stale summaries as a fallback.
-            tokio::spawn(experience_summary_dispatch_loop(state.clone()));
-            tokio::spawn(expire_stale_experience_summary_loop(state.clone()));
-
             // 向 hub 注册并周期心跳（失败仅告警，本地服务继续——hub 恢复后自动重注册）。
             let hub_url = env::var(ENV_PANEL_HUB_URL)
                 .ok()
@@ -392,8 +388,15 @@ async fn main() -> Result<()> {
             workers::spawn_worker_heartbeat(hub_url, callback_base, workers::worker_machine_id())
                 .await;
         }
-        // 容器 hub 无本机执行环境：不启动 cainiao mock，不派发经验总结 agent。
-        PanelMode::Docs => {}
+        // 经验总结派发循环跑在 hub（2026-10-21）：开关/窗口/额度等决策配置的 SSOT 在 hub；
+        // spawn 已 HTTP 下发在线 worker，容器内无 pi 也能派发。早期「循环只在 worker 跑」
+        // 是本地架构遗留——分离后 worker 循环读本机配置/本机镜像需求列表，与 hub 配置
+        // 和容器 job 状态分裂（实测：开 hub 开关后循环无响应）。
+        PanelMode::Docs => {
+            // Background: dispatch automatic experience-summary agents, then auto-advance stale summaries as a fallback.
+            tokio::spawn(experience_summary_dispatch_loop(state.clone()));
+            tokio::spawn(expire_stale_experience_summary_loop(state.clone()));
+        }
     }
 
     let app = build_router(state, mode, auth_token);
@@ -840,6 +843,14 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route(
             "/api/experience-summary/jobs",
             get(api_experience_summary_jobs),
+        )
+        .route(
+            "/api/experience-summary/jobs/dispatch",
+            post(api_experience_summary_jobs_dispatch),
+        )
+        .route(
+            "/api/experience-summary/jobs/retry",
+            post(api_experience_summary_jobs_retry),
         )
         .route(
             "/api/experience-summary/jobs/complete",
