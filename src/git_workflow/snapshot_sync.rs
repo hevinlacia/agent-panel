@@ -331,8 +331,9 @@ pub(crate) async fn fetch_requirement_bundle_from_hub(
     let root = worker_data_repo_root(state)
         .await
         .ok_or_else(|| anyhow!("未找到 agent-panel-data 数据仓，无法物化需求目录"))?;
+    // bundle 只含小文件，但 tailnet 下行慢仍需宽松超时
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(60))
         .build()?;
     let mut request = client.get(format!("{hub}/api/requirement/dir-bundle?id={req_id}"));
     if let Ok(token) = std::env::var("PANEL_WORKER_TOKEN") {
