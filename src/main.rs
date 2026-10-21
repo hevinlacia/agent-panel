@@ -585,6 +585,10 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
             post(api_requirement_review_materials_post),
         )
         .route(
+            "/api/requirement/review-snapshot",
+            post(api_requirement_review_snapshot_post),
+        )
+        .route(
             "/api/requirement/master-diff",
             post(api_requirement_master_diff),
         )

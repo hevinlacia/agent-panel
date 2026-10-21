@@ -18,6 +18,7 @@ mod merge_options;
 mod misc;
 mod release_branch;
 mod review_flow;
+mod review_snapshot_delivery;
 mod rework;
 mod sessions;
 mod snapshot_sync;
