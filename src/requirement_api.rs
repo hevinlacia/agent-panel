@@ -1363,6 +1363,7 @@ pub(crate) async fn api_requirement_code_review_post(
     State(state): State<AppState>,
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
+    freshen_scan_roots_for_git_exec(&state).await;
     let req = get_real_requirement(&state, &form.0.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
@@ -1376,11 +1377,14 @@ pub(crate) async fn api_requirement_code_review_post(
     // 与 master-diff 一致的自动清理：无文件差异的应用从 branches.json 移除。
     let (pruned_repos, pruned_written) =
         prune_no_diff_repos(&req_dir, &branch_scope, &review).await?;
+    // 快照自动同步 git（worker 副本 → 远端），失败不阻断只带 warning。
+    let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
         "branchScope": branch_scope,
         "prunedRepos": pruned_repos,
         "prunedWritten": pruned_written,
+        "syncWarning": sync_warning,
         "review": review,
     })))
 }
@@ -1389,13 +1393,16 @@ pub(crate) async fn api_requirement_code_review_incremental_post(
     State(state): State<AppState>,
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
+    freshen_scan_roots_for_git_exec(&state).await;
     let req = get_real_requirement(&state, &form.0.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?;
     let review = run_code_review_incremental_scan(&req_dir, &req.id).await?;
+    let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
         "branchScope": branch_scope,
+        "syncWarning": sync_warning,
         "incrementalReview": review,
     })))
 }
@@ -1417,6 +1424,8 @@ pub(crate) async fn api_requirement_review_materials_post(
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
+    // hub 侧新建/写入经远端同步到 worker 副本有滞后，先节流 pull 再解析需求（INC-149 实测 500）
+    freshen_scan_roots_for_git_exec(&state).await;
     let req = get_real_requirement(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
         ApiError::bad_request(
@@ -1436,10 +1445,14 @@ pub(crate) async fn api_requirement_review_materials_post(
         &req.status,
     )
     .await?;
+    // 备料产物（code-review.json 等）自动同步 git；hub 门禁读取前会节流 pull，
+    // 否则新材料只在 worker 副本，门禁拿 hub 旧副本判 stale（INC-149 实测死结）。
+    let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
         "status": req.status,
+        "syncWarning": sync_warning,
         "materials": materials,
     })))
 }
