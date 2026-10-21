@@ -1,6 +1,6 @@
 use super::*;
 
-fn contract_test_state(tmp: &tempfile::TempDir) -> AppState {
+pub(crate) fn contract_test_state(tmp: &tempfile::TempDir) -> AppState {
     // 预置 .git 目录：验证 relDir 向上找仓库根的逻辑
     std::fs::create_dir_all(tmp.path().join(".git")).expect("create .git");
     let data = tmp.path().join("data");
@@ -16,7 +16,11 @@ fn contract_test_state(tmp: &tempfile::TempDir) -> AppState {
     )
 }
 
-fn contract_form(req_id: &str, title: &str, source: Option<&str>) -> RequirementCreateForm {
+pub(crate) fn contract_form(
+    req_id: &str,
+    title: &str,
+    source: Option<&str>,
+) -> RequirementCreateForm {
     let mut form = RequirementCreateForm {
         req_id: req_id.to_string(),
         title: title.to_string(),
