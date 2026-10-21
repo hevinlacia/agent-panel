@@ -287,3 +287,78 @@ async fn branch_registration_put_validates_and_dedupes() {
     .expect("removal confirmed");
     assert_eq!(v.0["changes"]["removed"], json!(["rl-two"]));
 }
+
+/// 分离部署（2026-10-21）：显式 path 不在 panel 本机时登记不再 400——
+/// 路径原样入库（~/ 风格不反转）+ warning 提示跳过本机分支实测；
+/// 无 path 且探测失败仍 400（空 path 是残废登记）。
+#[tokio::test]
+async fn branch_registration_off_hub_path_degrades_to_warning() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-911");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-911\ntitle: 分离部署登记\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+
+    let put = |repos: Value| {
+        api_requirement_branch_registration_put(
+            State(state.clone()),
+            FormOrJson(BranchRegistrationSaveForm {
+                req_id: "T-911".into(),
+                round: None,
+                repos: Some(repos),
+                confirm_branch_change: false,
+                confirm_removal: false,
+                verify_remote: false,
+            }),
+        )
+    };
+
+    // 1) 显式 path 指向本机不存在的 worker 侧路径 → 登记成功 + 路径原样保留 + warning
+    // （不能用 ~/Developer/... 真实前缀——开发机上可能恰好存在而走了实测分支）
+    let worker_path = "~/Developer/company/云仓/WMS/backend/yl-cwhsea-wms-api-missing-checkout";
+    let v = put(json!([
+        { "repoName": "yl-cwhsea-wms-api", "branch": "hevin.yang/fix/x", "role": "后端", "path": worker_path }
+    ]))
+    .await
+    .expect("off-hub path should register");
+    assert_eq!(v.0["changes"]["added"], json!(["yl-cwhsea-wms-api"]));
+    assert_eq!(
+        v.0["scope"]["repos"][0]["path"],
+        json!(worker_path),
+        "worker 侧路径原样保留，不做本机 ~/ 反转"
+    );
+    let warnings = v.0["warnings"].as_array().expect("warnings");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().unwrap_or_default().contains("未实测")),
+        "warnings 应包含分支未实测提示: {warnings:?}"
+    );
+    let on_disk = std::fs::read_to_string(req_dir.join("branches.json")).expect("branches.json");
+    assert!(on_disk.contains(worker_path), "落盘文件包含原样路径");
+
+    // 2) 同条目重复提交（幂等 unchanged）也不应 400
+    let v = put(json!([
+        { "repoName": "yl-cwhsea-wms-api", "branch": "hevin.yang/fix/x", "role": "后端", "path": worker_path }
+    ]))
+    .await
+    .expect("idempotent re-register with off-hub path");
+    assert_eq!(v.0["changes"]["unchanged"], json!(["yl-cwhsea-wms-api"]));
+
+    // 3) 无 path + 空登记（无 workspace roots）→ 仍 400（残废登记拦截保留）
+    let err = put(json!([{ "repoName": "another-repo", "branch": "feature/z" }]))
+        .await
+        .expect_err("path-less entry with empty roots must 400");
+    assert!(err.message.contains("显式提供 path"), "{}", err.message);
+}

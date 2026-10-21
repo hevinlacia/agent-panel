@@ -1948,22 +1948,33 @@ fn infer_repo_role(path: &Path, repo_name: &str) -> Option<String> {
 }
 
 /// 解析仓库本地路径：条目显式提供优先；否则在已登记条目的 workspace 下探测同名目录。
+/// 分离部署（2026-10-21）：panel（hub 容器）内没有业务仓 checkout，显式 path 不在本机
+/// 时不再 400 —— 降级为 Ok(None) + warning（路径原样入库、跳过本机分支实测）；
+/// 无 path 且探测失败仍 400（空 path 是残废登记，diff/merge 都无法定位仓库）。
 fn resolve_repo_path(
     repo_name: &str,
     provided: Option<&str>,
     workspace_roots: &[PathBuf],
-) -> Result<PathBuf, ApiError> {
+    warnings: &mut Vec<String>,
+) -> Result<Option<PathBuf>, ApiError> {
     if let Some(raw) = provided {
-        let expanded = expand_registration_path(raw).ok_or_else(|| {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "repo {repo_name} 的 path 不能为空字符串"
+            )));
+        }
+        let expanded = expand_registration_path(trimmed).ok_or_else(|| {
             ApiError::bad_request(format!("repo {repo_name} 的 path 无法解析：\"{raw}\""))
         })?;
         if !expanded.is_dir() {
-            return Err(ApiError::bad_request(format!(
-                "repo {repo_name} 的 path 不存在或不是目录：{}（请确认本地 checkout 位置）",
+            warnings.push(format!(
+                "repo {repo_name} 的 path 不在 panel 本机（{}），分支存在性将跳过本机实测；请人工确认分支已推送",
                 expanded.display()
-            )));
+            ));
+            return Ok(None);
         }
-        return Ok(expanded);
+        return Ok(Some(expanded));
     }
     for root in workspace_roots {
         for tier in ["backend", "frontend", "pda", "components", ""] {
@@ -1973,12 +1984,12 @@ fn resolve_repo_path(
                 root.join(tier).join(repo_name)
             };
             if candidate.is_dir() {
-                return Ok(candidate);
+                return Ok(Some(candidate));
             }
         }
     }
     Err(ApiError::bad_request(format!(
-        "无法解析 repo {repo_name} 的本地路径（当前登记为空或未找到同名目录）：请在该条目显式提供 path（~/ 开头或绝对路径）"
+        "无法解析 repo {repo_name} 的本地路径（当前登记为空或未找到同名目录）：请在该条目显式提供 path（~/ 开头或绝对路径；分离部署时允许 panel 本机不存在的 worker 侧路径，将跳过分支实测）"
     )))
 }
 
@@ -2093,6 +2104,8 @@ pub(crate) async fn api_requirement_branch_registration_put(
     }
 
     // 归一化提交条目 + 提交清单内部去重
+    // warnings 提前声明：path 解析（分离部署降级）在 entries 循环内就会产生告警。
+    let mut warnings: Vec<String> = Vec::new();
     let mut entries: Vec<BranchRepo> = Vec::new();
     let mut submitted_names: Vec<String> = Vec::new();
     for (index, entry) in list.iter().enumerate() {
@@ -2133,25 +2146,38 @@ pub(crate) async fn api_requirement_branch_registration_put(
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let expanded_path = resolve_repo_path(repo_name, path_raw, &workspace_roots)?;
+        let resolved = resolve_repo_path(repo_name, path_raw, &workspace_roots, &mut warnings)?;
         let role = obj
             .get("role")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .or_else(|| infer_repo_role(&expanded_path, repo_name));
+            .or_else(|| {
+                resolved
+                    .as_ref()
+                    .and_then(|p| infer_repo_role(p, repo_name))
+            });
         let base_ref = obj
             .get("baseRef")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        // path 分离部署时可能不在 panel 本机（resolved=None）：原样保留 worker 侧路径，
+        // 不做 ~/ 反转（无展开结果可反解）。
+        let stored_path = match resolved.as_ref() {
+            Some(p) => Some(store_registration_path(p)),
+            None => path_raw
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+        };
         entries.push(BranchRepo {
             repo_name: repo_name.to_string(),
             branches: vec![branch.to_string()],
             role,
-            path: Some(store_registration_path(&expanded_path)),
+            path: stored_path,
             base_ref,
             test_target_branch: None,
             uat_target_branch: None,
@@ -2184,7 +2210,6 @@ pub(crate) async fn api_requirement_branch_registration_put(
     let mut added: Vec<String> = Vec::new();
     let mut updated: Vec<String> = Vec::new();
     let mut unchanged: Vec<String> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
     let mut to_verify: Vec<(String, PathBuf, String)> = Vec::new();
     for entry in &entries {
         let branch = entry.branches[0].clone();
@@ -2227,8 +2252,20 @@ pub(crate) async fn api_requirement_branch_registration_put(
         }
     }
 
-    // 分支真实性校验（新增 + 换分支；未变条目上次登记时已验证）
+    // 分支真实性校验（新增 + 换分支；未变条目上次登记时已验证）。
+    // 分离部署：path 不在 panel 本机时无法 git 实测，降级 warning 由 agent 人工确认。
     for (repo_name, path, branch) in &to_verify {
+        if !path.is_dir() {
+            let shown = if path.as_os_str().is_empty() {
+                "（无本地路径）".to_string()
+            } else {
+                format!("{}", path.display())
+            };
+            warnings.push(format!(
+                "repo {repo_name} 分支存在性未实测：{shown} 不在 panel 本机（分离部署时属预期）；请人工确认 origin/{branch} 已推送"
+            ));
+            continue;
+        }
         verify_repo_branch(repo_name, path, branch, body.verify_remote).await?;
     }
 
