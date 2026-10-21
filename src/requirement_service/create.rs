@@ -933,7 +933,7 @@ pub(crate) fn normalize_section_key(value: &str) -> String {
 /// 需求目录相对数据仓库根的路径：向上找 `.git`（数据 SSOT 是 git clone），找不到回退 None。
 /// 容器 hub 返回的 `reqDir`/`files` 是容器内绝对路径，本机 agent 不可直接使用；
 /// `relDir` 供 agent 映射到自己机器的镜像目录（如 `~/Developer/agent-panel-data/<relDir>`）。
-fn repo_rel_dir(req_dir: &std::path::Path) -> Option<String> {
+pub(crate) fn repo_rel_dir(req_dir: &std::path::Path) -> Option<String> {
     let mut cur = Some(req_dir);
     while let Some(dir) = cur {
         if dir.join(".git").exists() {
