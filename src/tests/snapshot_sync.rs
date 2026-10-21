@@ -109,3 +109,69 @@ fn data_repo_root_walks_up_to_git_dir() {
     let plain = tempfile::tempdir().expect("tempdir2");
     assert!(data_repo_root(&plain.path().join("x/y")).is_none());
 }
+
+/// WMS 布局回归：需求目录经工作区符号链接（.agents/req -> agent-panel-data/...）
+/// 进入数据仓。push 必须落在数据仓（canonicalize 后解析），而不是沿符号链接前缀
+/// 撞进工作区自己的 .git（workspace-meta），也不被「路径规格位于符号链接之后」拒绝。
+#[tokio::test]
+async fn snapshot_push_via_symlinked_req_dir_lands_in_data_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let remote = tmp.path().join("remote.git");
+    let data = tmp.path().join("data-repo"); // 数据仓（agent-panel-data 角色）
+    let ws_root = tmp.path().join("ws"); // 工作区（自带 .git，模拟 workspace-meta）
+    git(
+        tmp.path(),
+        &["init", "--bare", "-b", "main", remote.to_str().unwrap()],
+    );
+    std::fs::create_dir_all(&data).expect("mkdir data");
+    git(&data, &["init", "-b", "main"]);
+    git(
+        &data,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    std::fs::write(data.join("seed"), "seed");
+    git(&data, &["add", "-A"]);
+    git(&data, &["commit", "-m", "seed"]);
+    git(&data, &["push", "-u", "origin", "main"]);
+    // 工作区 + 符号链接：ws/.agents/req -> <data>/req
+    std::fs::create_dir_all(ws_root.join(".agents")).expect("mkdir ws");
+    std::fs::write(ws_root.join(".gitignore"), ".gitignore placeholder").expect("ws gitignore");
+    git(&ws_root, &["init", "-b", "main"]);
+    let real_req_root = data.join("req");
+    std::fs::create_dir_all(&real_req_root).expect("mkdir real req");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real_req_root, ws_root.join(".agents/req"))
+        .expect("symlink req dir");
+
+    // 经符号链接路径生成快照并 push
+    let req_dir = ws_root.join(".agents/req/X-3");
+    std::fs::create_dir_all(&req_dir).expect("mkdir req via symlink");
+    std::fs::write(req_dir.join("code-review.json"), r#"{"via":"symlink"}"#)
+        .expect("write snapshot");
+    let warning = push_snapshot_commit(&req_dir, "X-3").await;
+    assert!(
+        warning.is_none(),
+        "push via symlink path should succeed: {warning:?}"
+    );
+
+    // 落在数据仓（真实文件被提交），且工作区 .git 无污染
+    assert!(
+        !data.join(".git/MERGE_HEAD").exists(),
+        "data repo should be clean"
+    );
+    let log = git(&data, &["log", "--oneline", "-1"]);
+    assert!(
+        log.contains("review: sync snapshot for X-3"),
+        "data repo log: {log}"
+    );
+    let ws_log = StdCommand::new("git")
+        .args(["log", "--oneline", "--all"])
+        .current_dir(&ws_root)
+        .output()
+        .expect("ws git log");
+    let ws_out = String::from_utf8_lossy(&ws_log.stdout);
+    assert!(
+        !ws_out.contains("review: sync snapshot"),
+        "workspace repo must not receive the snapshot commit: {ws_out}"
+    );
+}

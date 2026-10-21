@@ -20,7 +20,11 @@ const GATE_PULL_THROTTLE: Duration = Duration::from_secs(30);
 /// 从 req_dir 向上找 `.git`（数据 SSOT 是 git clone，容器与本机两种部署都成立）。
 /// 找不到返回 None（如内存临时目录），调用方按「未同步」处理。
 pub(crate) fn data_repo_root(req_dir: &Path) -> Option<PathBuf> {
-    let mut cur = Some(req_dir);
+    // 先解析符号链接：WMS 需求目录经 `.agents/req -> agent-panel-data/...` symlink 进入
+    // 数据仓库；不解析的话向上找 .git 会先撞进 workspace-meta 仓库，add/commit 落错仓
+    // （git 同时拒绝「路径规格位于符号链接之后」，双保险）。
+    let real = std::fs::canonicalize(req_dir).ok()?;
+    let mut cur = Some(real.as_path());
     while let Some(dir) = cur {
         if dir.join(".git").exists() {
             return Some(dir.to_path_buf());
@@ -69,7 +73,30 @@ pub(crate) async fn push_snapshot_commit(req_dir: &Path, req_id: &str) -> Option
     };
     let stamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let msg = format!("review: sync snapshot for {req_id} ({stamp})");
-    let dir_arg = req_dir.to_string_lossy().to_string();
+    // pathspec 用仓库内相对路径：req_dir 可能含符号链接段（git 拒绝「位于符号链接
+    // 之后」的绝对路径规格），canonicalize 后相对 root 必然可写。
+    let real_req_dir = match std::fs::canonicalize(req_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            return Some(format!(
+                "快照自动同步 git 失败：无法解析需求目录真实路径: {e}"
+            ));
+        }
+    };
+    let rel = match real_req_dir.strip_prefix(&root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().to_string(),
+        Ok(_) => ".".to_string(),
+        Err(_) => {
+            return Some(format!(
+                "快照自动同步 git 失败：需求目录 {} 不在数据仓库 {} 内",
+                real_req_dir.display(),
+                root.display()
+            ));
+        }
+    };
+    let dir_arg = rel;
+    let msg_arc = msg.clone();
+    let dir_arg2 = dir_arg.clone();
     let steps: [(&str, Vec<String>); 3] = [
         (
             "add",
@@ -89,9 +116,9 @@ pub(crate) async fn push_snapshot_commit(req_dir: &Path, req_id: &str) -> Option
                 "user.email=worker@localhost".to_string(),
                 "commit".to_string(),
                 "-m".to_string(),
-                msg.clone(),
+                msg_arc.clone(),
                 "--".to_string(),
-                dir_arg,
+                dir_arg2,
             ],
         ),
         ("push", vec!["push".to_string()]),
@@ -182,8 +209,24 @@ pub(crate) async fn freshen_scan_roots_for_git_exec(state: &AppState) {
     let mut roots: Vec<PathBuf> = Vec::new();
     for r in crate::config::normalize_scan_roots(cfg.requirement_scan_roots) {
         if let Some(root) = data_repo_root(Path::new(&r)) {
-            if !roots.contains(&root) {
-                roots.push(root);
+            // 只 pull 数据仓库：WMS 工作区等扫描根 canonicalize 后落在 workspace-meta，
+            // 语义是「符号链接桥接的工作区」而非数据副本，pull 错仓。
+            if roots.contains(&root) {
+                continue;
+            }
+            if let Ok(out) = run_git(
+                &root,
+                &[
+                    "remote".to_string(),
+                    "get-url".to_string(),
+                    "origin".to_string(),
+                ],
+            )
+            .await
+            {
+                if out.contains("agent-panel-data") {
+                    roots.push(root);
+                }
             }
         }
     }
