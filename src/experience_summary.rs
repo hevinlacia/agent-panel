@@ -558,7 +558,7 @@ pub(crate) fn resolve_experience_summary_cwd(
     scan_root_project_roots.iter().find(|p| p.is_dir()).cloned()
 }
 
-/// 从 scan roots 推导各需求项目根（去掉 `.agents/req` 尾部），供 cwd fallback。
+/// 从 scan roots 收集项目根候选（normalize 后 roots 即项目根，过滤出存在的），供 cwd fallback。
 async fn scan_root_project_roots(state: &AppState) -> Vec<PathBuf> {
     let cfg = match read_config(state).await {
         Ok(cfg) => cfg,
@@ -566,22 +566,8 @@ async fn scan_root_project_roots(state: &AppState) -> Vec<PathBuf> {
     };
     cfg.requirement_scan_roots
         .iter()
-        .filter_map(|root| {
-            let root = PathBuf::from(root);
-            if root.file_name().and_then(|v| v.to_str()) == Some("req")
-                && root
-                    .parent()
-                    .and_then(|v| v.file_name())
-                    .and_then(|v| v.to_str())
-                    == Some(".agents")
-            {
-                root.parent()
-                    .and_then(|p| p.parent())
-                    .map(Path::to_path_buf)
-            } else {
-                None
-            }
-        })
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
         .collect()
 }
 
@@ -747,42 +733,42 @@ pub(crate) async fn spawn_experience_summary_agent(
 }
 
 /// 需求项目目录相对数据仓根的路径（如 `company/云仓/WMS`；数据仓根级需求为空串）。
-/// 从 scan roots 反推：`<数据仓根>/<项目>/.agents/req` → 相对段去掉尾部 `.agents/req/<id>`。
+/// 注意：config 的 requirementScanRoots 经 normalize 后已是项目根形式（无 `.agents/req`
+/// 尾部，实测 hub：`/srv/agent-panel/data`、`/srv/agent-panel/data/company/云仓/WMS`），
+/// 取匹配 req_dir 的最长 root 为项目根、最短为数据仓根，相对即得。
 async fn requirement_project_rel_dir(state: &AppState, req: &Requirement) -> Option<String> {
     let cfg = read_config(state).await.ok()?;
     let req_dir = PathBuf::from(req.req_dir.as_ref()?);
+    let mut project_root: Option<PathBuf> = None;
+    let mut data_root: Option<PathBuf> = None;
     for root in &cfg.requirement_scan_roots {
         let root = PathBuf::from(root);
-        if root.file_name().and_then(|v| v.to_str()) != Some("req")
-            || root
-                .parent()
-                .and_then(|v| v.file_name())
-                .and_then(|v| v.to_str())
-                != Some(".agents")
-        {
+        if !req_dir.starts_with(&root) {
             continue;
         }
-        let Some(data_root) = root.parent().and_then(|p| p.parent()) else {
-            continue;
+        let longer = match &project_root {
+            Some(cur) => root.components().count() > cur.components().count(),
+            None => true,
         };
-        if let Ok(rel) = req_dir.strip_prefix(data_root) {
-            let comps: Vec<std::ffi::OsString> = rel
-                .components()
-                .map(|c| c.as_os_str().to_os_string())
-                .collect();
-            if comps.len() < 3 {
-                return Some(String::new());
-            }
-            let kept = &comps[..comps.len() - 3];
-            let joined = kept
-                .iter()
-                .map(|s| s.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join("/");
-            return Some(joined);
+        if longer {
+            project_root = Some(root.clone());
+        }
+        let shorter = match &data_root {
+            Some(cur) => root.components().count() < cur.components().count(),
+            None => true,
+        };
+        if shorter {
+            data_root = Some(root.clone());
         }
     }
-    None
+    let project_root = project_root?;
+    match data_root {
+        Some(data) if data != project_root => project_root
+            .strip_prefix(&data)
+            .ok()
+            .map(|p| p.to_string_lossy().to_string()),
+        _ => Some(String::new()),
+    }
 }
 
 pub(crate) fn requirement_project_root(req: &Requirement) -> Option<PathBuf> {
