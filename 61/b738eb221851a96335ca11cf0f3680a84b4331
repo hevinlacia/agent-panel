@@ -1,0 +1,27 @@
+src/requirement_service/validate.rs
+  9642ecc426ba3590 9-24,26-27,46-50,67-78
+src/requirement_api.rs
+  9642ecc426ba3590 2777-2779,2844-2848,2854-2857,2885-2887,2899-2900,2903
+src/requirement_service/create.rs
+  9642ecc426ba3590 31,36,38,234,245,420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "61b738eb221851a96335ca11cf0f3680a84b4331",
+  "prompts": {
+    "9642ecc426ba3590": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a15bec-82b3-7289-9c7f-885d6da9fc15",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 48,
+      "total_deletions": 15,
+      "accepted_lines": 60,
+      "overriden_lines": 1
+    }
+  }
+}
