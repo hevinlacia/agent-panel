@@ -2759,22 +2759,24 @@ pub(crate) async fn api_effort_estimate(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentFileReadQuery {
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     #[serde(alias = "reqId")]
-    req_id: Option<String>,
-    path: Option<String>,
+    pub(crate) req_id: Option<String>,
+    pub(crate) path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentFileWriteForm {
-    id: Option<String>,
+    pub(crate) id: Option<String>,
     #[serde(alias = "reqId")]
-    req_id: Option<String>,
-    path: String,
-    content: String,
+    pub(crate) req_id: Option<String>,
+    pub(crate) path: String,
+    pub(crate) content: String,
     /// GET 返回的内容 sha1（乐观锁）。空 = 仅允许新建（文件已存在则 409）。
-    base_sha: Option<String>,
+    /// 兼容别名 `sha`：GET 响应字段名叫 sha，agent 原样传回不应报错（实测踩坑）。
+    #[serde(alias = "sha")]
+    pub(crate) base_sha: Option<String>,
 }
 
 /// agent 可编辑文件的相对路径白名单：
@@ -2839,12 +2841,20 @@ pub(crate) async fn api_requirement_file_get(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, String::new()),
         Err(e) => return Err(ApiError::from(e)),
     };
+    let exists_sha = if exists {
+        Some(sha1_hex(&content))
+    } else {
+        None
+    };
     Ok(Json(json!({
         "id": req.id,
         "path": rel,
         "exists": exists,
         "content": content,
-        "sha": sha1_hex(&content),
+        // 不存在时 sha/baseSha 为 null：不诱导 agent 把空内容 sha 当乐观锁版本传回。
+        // baseSha 与 sha 同值双字段：GET 什么名就传什么名，PUT 两个名字都收。
+        "sha": exists_sha.clone(),
+        "baseSha": exists_sha,
         "size": content.len(),
     })))
 }
@@ -2872,6 +2882,9 @@ pub(crate) async fn api_requirement_file_put(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_ascii_lowercase());
+    // GET 对不存在文件曾返回过空内容 sha（da39a3ee…）；该值传回时自动降级为新建，
+    // 避免「新建请省略 baseSha」的往返报错（实测踩坑）。
+    let empty_content_sha = sha1_hex("");
     match (&current_sha, &base_sha) {
         (Some(cur), Some(base)) if cur != base => {
             return Err(ApiError::conflict(format!(
@@ -2883,9 +2896,11 @@ pub(crate) async fn api_requirement_file_put(
                 "文件已存在：更新必须携带 GET 返回的 baseSha；如需覆盖请先 GET",
             ));
         }
+        // 文件不存在 + baseSha 是空内容标记 sha → 视为新建（GET exists=false 的 sha 直接回传可用）
+        (None, Some(base)) if *base == empty_content_sha => {}
         (None, Some(_)) => {
             return Err(ApiError::conflict(
-                "文件不存在（可能已被删除）：新建请省略 baseSha",
+                "文件不存在（可能已被删除）：传回的 baseSha 与现有文件不匹配；新建请省略 baseSha，或重新 GET 后直接写（exists=false 时带不带 baseSha 均可）",
             ));
         }
         _ => {}
