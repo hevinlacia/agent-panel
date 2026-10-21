@@ -28,14 +28,14 @@ pub(crate) async fn create_requirement(
         None => derived_category.unwrap_or("需求").to_string(),
     };
     ensure_category(&category)?;
-    let source = form
+    let (source, source_defaulted) = form
         .source
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty())
-        .map(|v| ensure_source(v).map(|_| v.to_string()))
+        .map(|v| ensure_source(v).map(|_| (v.to_string(), false)))
         .transpose()?
-        .unwrap_or_else(|| "产品推动".to_string());
+        .unwrap_or_else(|| ("产品推动".to_string(), true));
     let mut status = form
         .status
         .as_deref()
@@ -231,6 +231,7 @@ pub(crate) async fn create_requirement(
         "category": category,
         "region": if region.is_empty() { Value::Null } else { json!(region) },
         "source": source,
+        "sourceDefaulted": source_defaulted,
         "project": project,
         "projects": projects,
         "reqKind": if is_consolidated {
@@ -241,6 +242,7 @@ pub(crate) async fn create_requirement(
             Value::Null
         },
         "reqDir": target_dir.to_string_lossy(),
+        "relDir": repo_rel_dir(&target_dir),
         "files": planned,
         "group": group_file.map(|g| json!({
             "releasePolicy": g.release_policy,
@@ -415,6 +417,7 @@ pub(crate) async fn create_sub_requirement(
         "status": status,
         "parentReqId": parent.id,
         "reqDir": target_dir.to_string_lossy(),
+        "relDir": repo_rel_dir(&target_dir),
         "files": planned,
         "copiedDocs": copied_docs,
         "nextStep": "子需求仅建记录不建分支；并行开发前调 POST /api/requirement/sub/init-branches 以父分支为 base 派生 -sub<n> 分支",
@@ -925,4 +928,22 @@ pub(crate) fn normalize_section_key(value: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric())
         .collect::<String>()
         .to_lowercase()
+}
+
+/// 需求目录相对数据仓库根的路径：向上找 `.git`（数据 SSOT 是 git clone），找不到回退 None。
+/// 容器 hub 返回的 `reqDir`/`files` 是容器内绝对路径，本机 agent 不可直接使用；
+/// `relDir` 供 agent 映射到自己机器的镜像目录（如 `~/Developer/agent-panel-data/<relDir>`）。
+fn repo_rel_dir(req_dir: &std::path::Path) -> Option<String> {
+    let mut cur = Some(req_dir);
+    while let Some(dir) = cur {
+        if dir.join(".git").exists() {
+            return req_dir
+                .strip_prefix(dir)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .filter(|v| !v.is_empty());
+        }
+        cur = dir.parent();
+    }
+    None
 }

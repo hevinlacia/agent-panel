@@ -6,13 +6,25 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
     let mut problems = Vec::<String>::new();
     let mut warnings = Vec::<String>::new();
     let mut files = HashMap::<String, bool>::new();
-    let required_files = [
-        "meta.md",
-        STATE_FILE,
-        "background.md",
-        "technical-plan.md",
-        "notes.md",
-    ];
+    // 必需文件集按类别区分：issue 家族（线上/测试/性能问题）文档集是 incident.md + notes.md
+    // （与 templates 脚手架一致，root-cause.md 按需生成不脚手架），
+    // 普通需求才是 background.md + technical-plan.md——避免线上问题永远带两条假警告（实测踩坑）。
+    let is_issue = req
+        .category
+        .as_deref()
+        .map(is_issue_category)
+        .unwrap_or(false);
+    let required_files: &[&str] = if is_issue {
+        &["meta.md", STATE_FILE, "incident.md", "notes.md"]
+    } else {
+        &[
+            "meta.md",
+            STATE_FILE,
+            "background.md",
+            "technical-plan.md",
+            "notes.md",
+        ]
+    };
     let optional_files = [
         BRANCH_SCOPE_FILE,
         "test.md",
@@ -31,7 +43,11 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
         "release-manifest.md",
     ];
     let mut oversized_docs = Vec::<(String, u64)>::new();
-    for file in required_files.into_iter().chain(optional_files.into_iter()) {
+    for file in required_files
+        .iter()
+        .copied()
+        .chain(optional_files.iter().copied())
+    {
         let path = dir.join(file);
         let exists = path.is_file();
         files.insert(file.to_string(), exists);
@@ -47,6 +63,19 @@ pub(crate) async fn validate_requirement(state: &AppState, req: &Requirement) ->
         } else if required_files.contains(&file) && !exists {
             warnings.push(format!("missing core file {file}"));
         }
+    }
+    // issue 家族根因文档：按需生成不脚手架，但推进到已定位后必须沉淀（模板即此要求）。
+    if is_issue
+        && matches!(
+            req.status.as_str(),
+            "已定位" | "已修复" | "已复盘" | "已关闭"
+        )
+        && !dir.join("root-cause.md").is_file()
+    {
+        warnings.push(
+            "missing root-cause.md（issue 家族进入已定位后必须沉淀根因与修复决策；用 PUT /api/requirement/file 新建）"
+                .into(),
+        );
     }
     // 文档分册阈值告警：主文档超阈值提示索引化拆分；分册自身超阈值提示继续细拆。
     for (file, bytes) in &oversized_docs {
