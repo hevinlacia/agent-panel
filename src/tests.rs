@@ -12,6 +12,7 @@ mod groups;
 mod id_seq;
 mod issue_region;
 mod issue_status_machine;
+mod knowledge_query;
 mod merge_options;
 mod misc;
 mod release_branch;

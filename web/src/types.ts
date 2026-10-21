@@ -813,7 +813,8 @@ export interface KnowledgeIndexPayload {
   total: number
   skippedCorrupt?: number
   counts?: KnowledgeIndexCounts
-  entries?: KnowledgeIndexEntry[]
+  /** 统一列表键（与 /api/knowledge、/api/agent/knowledge/query 一致）；旧键 entries 已移除 */
+  items?: KnowledgeIndexEntry[]
 }
 export type KnowledgeDraft = Partial<KnowledgeItem> & { details?: string; root?: string }
 

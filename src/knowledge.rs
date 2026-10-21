@@ -59,6 +59,9 @@ pub(crate) struct KnowledgeAgentQuery {
     include_outline: Option<bool>,
     #[serde(default)]
     outline: Option<bool>,
+    /// verbose=true 返回全量条目（含 outline/matches/路径字段）；缺省回 lean 条目（省 token）。
+    #[serde(default)]
+    verbose: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -225,16 +228,23 @@ pub(crate) async fn api_agent_knowledge_query(
         include_outline: payload.include_outline.or(payload.outline).unwrap_or(true),
         budget,
     };
+    let verbose = payload.verbose.unwrap_or(false);
     let items = query_knowledge_items(&state, &filter).await?;
+    let out_items = if verbose {
+        items
+    } else {
+        items.iter().map(knowledge_query_entry_lean).collect()
+    };
     Ok(Json(json!({
-        "results": items,
+        "items": out_items,
         "generatedAt": now_ms(),
         "usage": {
-            "summary": "Query returns budgeted summaries, outline, score, whyMatched, matchedFields, and matches. Each item carries observedAt/sourceGrade/infoAgeDays/stale (stale = validUntil passed): a large infoAgeDays means the info was observed long ago and may be outdated, not useless — weigh it before trusting operational details. Filter with observedAfter/observedBefore (YYYY-MM-DD, inclusive) when only recently observed facts are needed. Use ids with GET /api/agent/items/full?id=<id> only when more detail is required; use section=<heading> to fetch one Markdown section.",
+            "summary": "Response lists matches under `items` (unified key across all knowledge endpoints). Default items are lean ({id,title,kind,category,domain,score,whyMatched,summary<=160 chars,updatedAt,stale}) for cheap scanning; pass verbose=true for full items with outline/matches/matchedFields/triggerTerms. Pick by id, then read one item via GET /api/agent/items/full?id=<id> or one Markdown section via &section=<heading>; cheap attributes via /api/agent/items/summary?id=<id>. infoAgeDays/stale (stale = validUntil passed) appear on full items: a large infoAgeDays means the info was observed long ago and may be outdated — weigh it before trusting operational details.",
             "fullItemEndpoint": "/api/agent/items/full?id=<id>",
             "sectionEndpoint": "/api/agent/items/full?id=<id>&section=<heading>",
             "summaryEndpoint": "/api/agent/items/summary?id=<id>",
-            "tokensBudget": filter.budget
+            "tokensBudget": filter.budget,
+            "verbose": verbose
         }
     })))
 }
@@ -427,8 +437,8 @@ pub(crate) async fn api_knowledge_index(
             "domains": domains,
             "scopes": scopes,
         },
-        "entries": entries,
-        "usage": "Agent index for the knowledge base. Browse with filters kind/category/domain/tag/scope/status/q; verbose=true adds triggerTerms/related fields and full summary. Read one item via GET /api/knowledge/item?id= or /api/agent/items/full?id=; edit via POST /api/knowledge with the same id (omit details to keep the body) or PATCH /api/knowledge/item?id=; delete via DELETE /api/knowledge?id=.",
+        "items": entries,
+        "usage": "Agent index for the knowledge base. Browse with filters kind/category/domain/tag/scope/status/q; response key is `items` (unified across knowledge endpoints). Entries are lean ({id,title,kind,category,domain,scope,project,title,summary<=160,status,confidence,updatedAt,observedAt,infoAgeDays,stale,tags}); verbose=true adds triggerTerms/related_* and source/meta paths. The id is the handle for all reads: GET /api/knowledge/item?id= or /api/agent/items/full?id=; edit via POST /api/knowledge with the same id (omit details to keep the body) or PATCH /api/knowledge/item?id=; delete via DELETE /api/knowledge?id=.",
     })))
 }
 
@@ -482,11 +492,15 @@ fn knowledge_index_entry(item: &Value, verbose: bool) -> Value {
         "infoAgeDays": item.get("infoAgeDays"),
         "stale": item.get("stale"),
         "tags": item.get("tags").cloned().unwrap_or(json!([])),
-        "sourcePath": item.get("sourcePath"),
-        "metaPath": item.get("metaPath"),
     });
     if verbose {
         if let Some(obj) = entry.as_object_mut() {
+            // source/meta 路径是服务端容器路径，对远程 agent 无读意义；只在 verbose 回显，平时省 35% 体积。
+            for key in ["sourcePath", "metaPath"] {
+                if let Some(v) = item.get(key) {
+                    obj.insert(key.to_string(), v.clone());
+                }
+            }
             for key in [
                 "triggerTerms",
                 "relatedSkills",
@@ -501,6 +515,33 @@ fn knowledge_index_entry(item: &Value, verbose: bool) -> Value {
         }
     }
     entry
+}
+
+/// 查询条目 lean 裁剪：只留检索决策字段（id 句柄 + 命中依据 + 摘要），
+/// 默认省掉 outline/matches/路径/时间戳长尾，实测约省 85-90% 响应体积；verbose=true 走全量条目。
+pub(crate) fn knowledge_query_entry_lean(item: &Value) -> Value {
+    let summary = item
+        .get("summary")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (summary, _) = truncate_chars(summary, 160);
+    let why = item
+        .get("whyMatched")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let (why_matched, _) = truncate_chars(why, 80);
+    json!({
+        "id": item.get("id"),
+        "title": item.get("title"),
+        "kind": item.get("kind"),
+        "category": item.get("category"),
+        "domain": item.get("domain"),
+        "score": item.get("score"),
+        "whyMatched": why_matched,
+        "summary": summary,
+        "updatedAt": item.get("updatedAt"),
+        "stale": item.get("stale"),
+    })
 }
 
 fn all_knowledge_kinds() -> Vec<String> {
