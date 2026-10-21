@@ -7,10 +7,10 @@ Type=simple
 WorkingDirectory=/home/hevin/Developer/tools/agent-panel
 Environment=PORT=7332
 Environment=PANEL_MODE=worker
-# hub 地址：同机部署指向本机 hub；混合部署改为 hub 的 tailnet/容器地址
-Environment=PANEL_HUB_URL=http://127.0.0.1:7331
-# worker 对外回调地址：hub 代理转发的目标；同机 127.0.0.1 即可，
-# 混合部署改为本机 tailnet/ZeroTier 地址（hub 必须可达）
+# hub 地址：当前混合部署指向容器 hub（分离式架构后本机 :7331 已退役）
+Environment=PANEL_HUB_URL=http://agent-panel.tail260d93.ts.net:8788
+# worker 对外回调地址：hub 代理转发的目标；当前走 ssh 反向隧道（panel-worker-tunnel）
+# hub 侧 127.0.0.1:7332 即本机；ACL 放行后可改本机 tailnet 地址直连并撤隧道
 Environment=PANEL_CALLBACK_BASE=http://127.0.0.1:7332
 # worker 鉴权（可选）：与 hub 的 PANEL_WORKER_TOKEN/PANEL_AUTH_TOKEN 配对
 #Environment=PANEL_AUTH_TOKEN=change-me
