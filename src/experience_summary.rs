@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use tokio::{fs, process::Command};
 use uuid::Uuid;
 
+use crate::workers::{pick_online_worker, proxy_client, worker_forward_token};
 use crate::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -403,8 +404,7 @@ pub(crate) async fn dispatch_experience_summary_jobs(
         }
         let session_id = Uuid::new_v4().to_string();
         let model = clean_optional(Some(&cfg.experience_summary_pi_model));
-        match spawn_experience_summary_agent(state, &req, &dir, &session_id, model.as_deref()).await
-        {
+        match spawn_experience_summary_agent(state, &req, &session_id, model.as_deref()).await {
             Ok(message) => {
                 job.status = "running".to_string();
                 job.session_id = Some(session_id.clone());
@@ -448,46 +448,50 @@ pub(crate) fn experience_summary_triggered(req: &Requirement) -> bool {
 }
 
 /// 构建自动经验总结 agent 的任务提示词；线上问题走 troubleshooting 复核沉淀分支。
+/// 经验总结 prompt。
+///
+/// - `report_file`：报告文件名（相对需求目录，如 `experience-summary.md`）；pi 在 worker
+///   本机运行，不能直接写 hub 容器路径，统一改经 `PUT /api/requirement/file` 写入。
+/// - prompt 内回写/读上下文的 hub 地址统一写 `{{HUB_BASE}}` 字面占位符——hub 不知道
+///   worker 侧视角的可达地址（分离部署时 worker 用 PANEL_HUB_URL），worker spawn
+///   时按自身 env 替换。
 pub(crate) fn experience_summary_prompt(
     req: &Requirement,
-    report_path: &Path,
+    report_file: &str,
     session_id: &str,
 ) -> String {
     let req_id = &req.id;
     let title = &req.title;
+    let report_api = format!(
+        "PUT {{{{HUB_BASE}}}}/api/requirement/file（JSON {{\"id\":\"{req_id}\",\"path\":\"{report_file}\",\"content\":<全文>}}；新建可省 baseSha，报告已存在则先 GET 拿 baseSha 再写）"
+    );
     if matches!(req.category.as_deref(), Some("线上问题") | Some("性能问题")) {
-        let dir = report_path
-            .parent()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        let report = report_path.display();
         return format!(
             "自动经验沉淀任务（问题第二遍独立复核）。{req_id} - {title}
 
              背景：排查 agent 已在 troubleshooting.md 记录 怎么排查/怎么修复/根因/复用清单；你的职责是验证并补齐经验库落地，供下次排查参考，不是重写排查过程。
 
-             必须先读取：
-             - GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200
-             - {dir}/troubleshooting.md（怎么排查 + 怎么修复 + 根因 + 复用清单）
-             - {dir}/incident.md 与 {dir}/root-cause.md（如存在）
+             必须先读取（全部经 Agent Panel API，不读本地需求目录文件）：
+             - GET {{{{HUB_BASE}}}}/api/requirement/experience-summary-context?id={req_id}&limit=200
+             - GET {{{{HUB_BASE}}}}/api/requirement/file?id={req_id}&path=troubleshooting.md（怎么排查 + 怎么修复 + 根因 + 复用清单）
+             - GET {{{{HUB_BASE}}}}/api/requirement/file?id={req_id}&path=incident.md 与 path=root-cause.md（如存在；返回 exists:false 表示无此文件，跳过）
 
              价值判定基线：问题经验默认有价值——除非与经验库已有条目重复（相同现象/根因/触发词已覆盖），或确认为误报/环境问题/纯一次性操作，否则都应落一条 experiences 条目。
              防重复执行：复用清单/改进点里可能有一部分已经在排查或修复过程中落地了（证据：root-cause.md 修复决策、events 进展事件、需求分支 git log、对应 skill/配置文件的现状）。逐项核对，已落地的在 experience-summary.md 标「已落地（<证据线索>）」，不要重复实施、不要再登记为待办；只对未落地的做沉淀或登记。
-             查重：POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
+             查重：POST {{{{HUB_BASE}}}}/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/错误码/模块关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
 
-             价值判定兜底：若确认全部重复/误报/无沉淀价值，仍然必须写 experience-summary.md 记录判定原因，并照常调用下方 complete 接口（note 注明「无新增价值，跳过落库」）。无论是否有产出，都必须回写完成状态，不允许不调用 complete 就结束。
+             价值判定兜底：若确认全部重复/误报/无沉淀价值，仍然必须把判定原因写进 experience-summary.md 并照常调用 complete 接口（note 注明「无新增价值，跳过落库」）。无论是否有产出，都必须回写完成状态，不允许不调用 complete 就结束。
 
              必须产出：
-             - 有价值的：POST http://127.0.0.1:7331/api/knowledge 写入 experiences 条目，JSON 字段 {{\"kind\":\"experience\",\"title\":…,\"summary\":…,\"details\":…,\"triggerTerms\":[…],\"domain\":\"wms\",\"scope\":\"project\",\"source\":\"auto-experience-summary\"}}；triggerTerms 写下次排查可能提到的关键词（现象、错误码、模块、仓库/单号）
-             - 回填 {dir}/troubleshooting.md「复用清单」：已落地条目 id/链接；重复或无价值的写明原因
-             - 写 experience-summary.md（路径：{report}）：已落地条目清单、跳过项及原因
+             - 有价值的：POST {{{{HUB_BASE}}}}/api/knowledge 写入 experiences 条目，JSON 字段 {{\"kind\":\"experience\",\"title\":…,\"summary\":…,\"details\":…,\"triggerTerms\":[…],\"domain\":\"wms\",\"scope\":\"project\",\"source\":\"auto-experience-summary\"}}；triggerTerms 写下次排查可能提到的关键词（现象、错误码、模块、仓库/单号）
+             - 回填 troubleshooting.md「复用清单」：先 GET {{HUB_BASE}}/api/requirement/file 拿全文与 baseSha，追加已落地条目 id/链接后用 PUT 整文写回（path=troubleshooting.md 带 baseSha；409 冲突重新 GET）；重复或无价值的写明原因
+             - 写报告（{report_api}）：已落地条目清单、跳过项及原因
 
-             完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"线上问题/性能问题经验沉淀完成\"}}。
-             无法完成时把原因写入 notes.md 或通过 /api/requirement/events 记录。",
+             完成后必须调用：POST {{{{HUB_BASE}}}}/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"线上问题/性能问题经验沉淀完成\"}}。
+             无法完成时把原因通过 POST {{{{HUB_BASE}}}}/api/requirement/events 记录。",
             req_id = req_id,
             title = title,
-            dir = dir,
-            report = report,
+            report_api = report_api,
             session_id = session_id,
         );
     }
@@ -495,70 +499,290 @@ pub(crate) fn experience_summary_prompt(
         "自动经验总结任务。需求：{req_id} - {title}
 
          目标：按当前经验总结阶段规则，读取 Agent Panel 候选上下文，回顾本需求文档和结构化事件，沉淀可复用业务知识、经验/踩坑和 skill 改进机会。
-         必须先读取：GET http://127.0.0.1:7331/api/requirement/experience-summary-context?id={req_id}&limit=200
+         必须先读取：GET {{{{HUB_BASE}}}}/api/requirement/experience-summary-context?id={req_id}&limit=200
 
          防重复执行（重要）：需求/问题过程中用户可能已经让 agent 把部分改进点做掉了，但改进点仍登记在文档或事件里。对每个候选改进点先判定是否已落地，证据来源：
          - experience-summary-context 的 recentEvents（已完成/已实施/已修复/决策类事件）
-         - notes.md、technical-plan.md（实现状态、待确认问题区的完成标记）
+         - notes.md、technical-plan.md（经 GET {{{{HUB_BASE}}}}/api/requirement/file?id={req_id}&path=<文件名> 读取；实现状态、待确认问题区的完成标记）
          - 需求分支 git log（改进对应的 commit）
          - 改进指向的 skill/配置/文档文件现状（内容是否已包含该改进）
          已落地的：写入 experience-summary.md「已落地」区（每项附证据线索），不要重复实施、不要再登记为待办；落知识条目时在 summary 标注「已在 {req_id} 落地」。
          未落地的：按价值判断写入「待落地」候选。
 
-         知识查重：候选经验与经验库可能已有条目重复（相同现象/根因/触发词已覆盖）。先 POST http://127.0.0.1:7331/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/模块/关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
+         知识查重：候选经验与经验库可能已有条目重复（相同现象/根因/触发词已覆盖）。先 POST {{{{HUB_BASE}}}}/api/agent/knowledge/query，body {{\"kind\":\"experience\",\"intent\":\"<现象/模块/关键词>\",\"limit\":5}}；命中已有条目时在 experience-summary.md 记录「重复，不落库」及命中条目 id。
 
          价值判定兜底：若确认没有可沉淀的新知识/经验/改进点（全部重复或无复用价值），仍然必须把结论写入 experience-summary.md（写明判定依据），然后照常调用下方 complete 接口，note 注明「无新增价值，跳过落库」。无论是否有产出，都必须回写完成状态，不允许不调用 complete 就结束。
 
-         必须写入：experience-summary.md（路径：{report}），区分已落地和待落地。
+         必须写入：报告经 {report_api} 写入（区分已落地和待落地），不要写本地文件。
          可安全落地的知识/经验请通过 Agent Panel API 写入 business-knowledge / experiences；不要把未验证猜测写成稳定事实。
-         完成后必须调用：POST http://127.0.0.1:7331/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"自动经验总结完成\"}}。
-         若无法完成，请尽量把原因写入 notes.md 或通过 /api/requirement/events 记录。",
+         完成后必须调用：POST {{{{HUB_BASE}}}}/api/experience-summary/jobs/complete，JSON body 为 {{\"reqId\":\"{req_id}\",\"sessionId\":\"{session_id}\",\"note\":\"自动经验总结完成\"}}。
+         若无法完成，请尽量把原因通过 POST {{{{HUB_BASE}}}}/api/requirement/events 记录。",
         req_id = req_id,
         title = title,
-        report = report_path.display(),
+        report_api = report_api,
         session_id = session_id,
     )
 }
 
-pub(crate) async fn spawn_experience_summary_agent(
-    state: &AppState,
-    req: &Requirement,
-    dir: &Path,
-    session_id: &str,
-    model: Option<&str>,
-) -> Result<String> {
-    associate_session(state, &req.id, session_id).await?;
-    let ctx_path = write_injection_context(state, req, session_id).await?;
-    let cwd = requirement_project_root(req).unwrap_or_else(|| state.project_root.as_ref().clone());
-    let report_path = dir.join("experience-summary.md");
-    let prompt = experience_summary_prompt(req, &report_path, session_id);
+/// spawn 请求体：hub → worker 下发经验总结 agent 启动指令。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExperienceSummarySpawnForm {
+    pub(crate) req_id: String,
+    pub(crate) session_id: String,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    /// hub 渲染好的完整 prompt（内含 {{HUB_BASE}} 占位符，worker 按自身 env 替换）。
+    pub(crate) prompt: String,
+    /// hub 生成的注入上下文全文（worker 落盘本机临时路径供 --append-system-prompt）。
+    #[serde(default)]
+    pub(crate) context_markdown: String,
+    /// 项目相对数据仓根的目录（如 `company/云仓/WMS`；空 = 数据仓根级需求）。
+    #[serde(default)]
+    pub(crate) project_rel_dir: Option<String>,
+}
+
+/// worker 侧 cwd 解析（纯函数，供单测）：优先 `workspace_base/<project_rel_dir>`
+/// （代码工作区，pi 总结需要业务代码上下文），不存在回落 scan root 推导的数据镜像项目根。
+pub(crate) fn resolve_experience_summary_cwd(
+    workspace_base: &Path,
+    project_rel_dir: Option<&str>,
+    scan_root_project_roots: &[PathBuf],
+) -> Option<PathBuf> {
+    if let Some(rel) = project_rel_dir.map(str::trim).filter(|v| !v.is_empty()) {
+        let candidate = workspace_base.join(rel);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    scan_root_project_roots.iter().find(|p| p.is_dir()).cloned()
+}
+
+/// 从 scan roots 推导各需求项目根（去掉 `.agents/req` 尾部），供 cwd fallback。
+async fn scan_root_project_roots(state: &AppState) -> Vec<PathBuf> {
+    let cfg = match read_config(state).await {
+        Ok(cfg) => cfg,
+        Err(_) => return Vec::new(),
+    };
+    cfg.requirement_scan_roots
+        .iter()
+        .filter_map(|root| {
+            let root = PathBuf::from(root);
+            if root.file_name().and_then(|v| v.to_str()) == Some("req")
+                && root
+                    .parent()
+                    .and_then(|v| v.file_name())
+                    .and_then(|v| v.to_str())
+                    == Some(".agents")
+            {
+                root.parent()
+                    .and_then(|p| p.parent())
+                    .map(Path::to_path_buf)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// worker 端点：在本机 spawn pi 经验总结 agent（hub 决策后 HTTP 下发，
+/// 分离部署时 hub 容器内无 pi/模型配置/代码 checkout，spawn 必须落在 worker）。
+pub(crate) async fn api_worker_experience_summary_spawn(
+    State(state): State<AppState>,
+    form: FormOrJson<ExperienceSummarySpawnForm>,
+) -> ApiResult<Json<Value>> {
+    let form = form.0;
+    if form.session_id.trim().is_empty() {
+        return Err(ApiError::bad_request("sessionId 不能为空"));
+    }
+    if form.prompt.trim().is_empty() {
+        return Err(ApiError::bad_request("prompt 不能为空"));
+    }
+    let session_id = form.session_id.trim().to_string();
+
+    // 注入上下文落盘本机（hub 传全文，避免 worker 反推容器路径）
+    let ctx_dir = state.data_dir.join(INJECTION_CTX_SUBDIR);
+    fs::create_dir_all(&ctx_dir).await?;
+    let ctx_path = ctx_dir.join(format!("{}.md", session_id));
+    atomic_write_text(&ctx_path, &form.context_markdown).await?;
+
+    // prompt 回写地址占位符替换：worker 知道自身视角的 hub 地址（PANEL_HUB_URL）
+    let hub_base = std::env::var("PANEL_HUB_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:8788".to_string());
+    let prompt = form.prompt.replace("{{HUB_BASE}}", &hub_base);
+
+    // cwd：代码工作区优先（PANEL_WORKSPACE_BASE 默认 ~/Developer），回落数据镜像项目根
+    let workspace_base_raw = std::env::var("PANEL_WORKSPACE_BASE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "~/Developer".to_string());
+    let workspace_base: PathBuf = match workspace_base_raw.strip_prefix('~') {
+        Some(rest) => match home_dir() {
+            Ok(home) if rest.is_empty() => home,
+            Ok(home) => home.join(rest.trim_start_matches('/')),
+            Err(_) => PathBuf::from(&workspace_base_raw),
+        },
+        None => PathBuf::from(&workspace_base_raw),
+    };
+    let scan_roots = scan_root_project_roots(&state).await;
+    let cwd = resolve_experience_summary_cwd(
+        &workspace_base,
+        form.project_rel_dir.as_deref(),
+        &scan_roots,
+    )
+    .ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "无法解析经验总结 cwd：workspace base {} 下无 {}，且 scan roots 均不可用",
+            workspace_base.display(),
+            form.project_rel_dir.as_deref().unwrap_or("<空>")
+        ))
+    })?;
+
+    // 报告由 pi 经 hub file API 写入（见 prompt），无需本地报告路径
     let mut cmd = Command::new("pi");
     cmd.current_dir(&cwd)
         .arg("-p")
         .arg("--session-id")
-        .arg(session_id)
+        .arg(&session_id)
         .arg("--name")
-        .arg(format!("经验总结 {}", req.id))
+        .arg(format!("经验总结 {}", form.req_id))
         .arg("--append-system-prompt")
         .arg(format!("@{}", ctx_path.to_string_lossy()))
         .arg("--tools")
         .arg("bash,read,write,edit")
         .arg("--approve");
-    if let Some(model) = model.map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(model) = form
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         cmd.arg("--model").arg(model);
     }
-    cmd.arg(prompt)
+    cmd.arg(&prompt)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let mut child = cmd
         .spawn()
-        .with_context(|| format!("spawn pi auto experience-summary agent for {}", req.id))?;
+        .with_context(|| format!("spawn pi auto experience-summary agent for {}", form.req_id))?;
     let pid = child.id().unwrap_or(0);
     tokio::spawn(async move {
         let _ = child.wait().await;
     });
-    Ok(format!("pi agent spawned pid={pid}, cwd={}", cwd.display()))
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": form.req_id,
+        "sessionId": session_id,
+        "pid": pid,
+        "cwd": cwd.to_string_lossy(),
+        "ctxPath": ctx_path.to_string_lossy(),
+    })))
+}
+
+/// hub 端：把经验总结 agent 的启动下发到在线 worker（HTTP），不在 hub 进程内 spawn——
+/// 分离部署（2026-10-21）后 hub 容器无 pi/模型配置/代码 checkout，本地 spawn 必败。
+pub(crate) async fn spawn_experience_summary_agent(
+    state: &AppState,
+    req: &Requirement,
+    session_id: &str,
+    model: Option<&str>,
+) -> Result<String> {
+    associate_session(state, &req.id, session_id).await?;
+    let worker = pick_online_worker(&state.data_dir).ok_or_else(|| {
+        anyhow::anyhow!(
+            "无在线 worker：经验总结 agent 需要在 worker 本机 spawn pi（hub 容器内无执行环境）；请确认开发机 panel-worker 在线"
+        )
+    })?;
+    let prompt = experience_summary_prompt(req, "experience-summary.md", session_id);
+    let context_path = write_injection_context(state, req, session_id).await?;
+    let context_markdown = fs::read_to_string(&context_path)
+        .await
+        .with_context(|| format!("read injection context {}", context_path.display()))?;
+    let project_rel_dir = requirement_project_rel_dir(state, req).await;
+    let url = format!(
+        "{}/api/worker/experience-summary/spawn",
+        worker.callback_base.trim_end_matches('/')
+    );
+    let body = json!({
+        "reqId": req.id,
+        "sessionId": session_id,
+        "model": model,
+        "prompt": prompt,
+        "contextMarkdown": context_markdown,
+        "projectRelDir": project_rel_dir,
+    });
+    let mut request = proxy_client().post(&url).json(&body);
+    if let Some(token) = worker_forward_token() {
+        request = request.header("X-Worker-Token", token);
+    }
+    let resp = request.send().await.with_context(|| {
+        format!(
+            "dispatch experience-summary spawn to worker {} ({url})",
+            worker.machine_id
+        )
+    })?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "worker {} spawn 失败（HTTP {}）：{}",
+            worker.machine_id,
+            status.as_u16(),
+            text
+        ));
+    }
+    let parsed: Value =
+        serde_json::from_str(&text).with_context(|| format!("worker spawn 响应非 JSON：{text}"))?;
+    let cwd = parsed.get("cwd").and_then(Value::as_str).unwrap_or("?");
+    Ok(format!(
+        "pi agent dispatched via worker {} pid={:?}, cwd={cwd}",
+        worker.machine_id,
+        parsed.get("pid").and_then(Value::as_i64),
+    ))
+}
+
+/// 需求项目目录相对数据仓根的路径（如 `company/云仓/WMS`；数据仓根级需求为空串）。
+/// 从 scan roots 反推：`<数据仓根>/<项目>/.agents/req` → 相对段去掉尾部 `.agents/req/<id>`。
+async fn requirement_project_rel_dir(state: &AppState, req: &Requirement) -> Option<String> {
+    let cfg = read_config(state).await.ok()?;
+    let req_dir = PathBuf::from(req.req_dir.as_ref()?);
+    for root in &cfg.requirement_scan_roots {
+        let root = PathBuf::from(root);
+        if root.file_name().and_then(|v| v.to_str()) != Some("req")
+            || root
+                .parent()
+                .and_then(|v| v.file_name())
+                .and_then(|v| v.to_str())
+                != Some(".agents")
+        {
+            continue;
+        }
+        let Some(data_root) = root.parent().and_then(|p| p.parent()) else {
+            continue;
+        };
+        if let Ok(rel) = req_dir.strip_prefix(data_root) {
+            let comps: Vec<std::ffi::OsString> = rel
+                .components()
+                .map(|c| c.as_os_str().to_os_string())
+                .collect();
+            if comps.len() < 3 {
+                return Some(String::new());
+            }
+            let kept = &comps[..comps.len() - 3];
+            let joined = kept
+                .iter()
+                .map(|s| s.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+            return Some(joined);
+        }
+    }
+    None
 }
 
 pub(crate) fn requirement_project_root(req: &Requirement) -> Option<PathBuf> {

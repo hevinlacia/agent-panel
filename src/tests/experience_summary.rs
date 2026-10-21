@@ -20,19 +20,76 @@ fn experience_summary_prompt_issue_variant_covers_troubleshooting_and_dup_check(
     let mut req = default_requirement_for_test("WMS-INC-111-x");
     req.status = "经验总结".to_string();
     req.category = Some("线上问题".to_string());
-    let prompt =
-        experience_summary_prompt(&req, Path::new("/tmp/x/experience-summary.md"), "sess-1");
+    let prompt = experience_summary_prompt(&req, "experience-summary.md", "sess-1");
     assert!(prompt.contains("troubleshooting.md"));
     assert!(prompt.contains("默认有价值"));
     assert!(prompt.contains("/api/agent/knowledge/query"));
     assert!(prompt.contains("WMS-INC-111-x"));
+    // 回写/读上下文地址用占位符（worker spawn 时按自身 PANEL_HUB_URL 替换）；
+    // 报告与文档读写统一走 hub file API，不引用容器本地路径。
+    assert!(prompt.contains("{{HUB_BASE}}"));
+    assert!(!prompt.contains("127.0.0.1:7331"));
+    assert!(prompt.contains("PUT {{HUB_BASE}}/api/requirement/file"));
+    // report_api 展开后含 JSON 形式的报告路径
+    assert!(prompt.contains("path\":\"experience-summary.md\""));
+    assert!(prompt.contains("experience-summary.md\""));
+    assert!(prompt.contains("jobs/complete"));
     let mut normal = default_requirement_for_test("WMS-120-x");
     normal.status = "经验总结".to_string();
     normal.category = Some("需求".to_string());
-    let prompt =
-        experience_summary_prompt(&normal, Path::new("/tmp/y/experience-summary.md"), "s2");
+    let prompt = experience_summary_prompt(&normal, "experience-summary.md", "s2");
     assert!(!prompt.contains("troubleshooting.md"));
     assert!(prompt.contains("experience-summary-context"));
+    assert!(prompt.contains("{{HUB_BASE}}"));
+}
+
+/// worker 侧 cwd 解析：代码工作区优先，回落 scan root 项目根。
+#[test]
+fn experience_summary_cwd_prefers_workspace_base_then_scan_roots() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let ws = tmp
+        .path()
+        .join("Developer")
+        .join("company")
+        .join("云仓")
+        .join("WMS");
+    std::fs::create_dir_all(&ws).expect("create workspace");
+    let mirror = tmp
+        .path()
+        .join("mirror")
+        .join("company")
+        .join("云仓")
+        .join("WMS");
+    std::fs::create_dir_all(&mirror).expect("create mirror");
+
+    // 1) workspace_base/<rel> 存在 → 优先
+    let got = resolve_experience_summary_cwd(
+        &tmp.path().join("Developer"),
+        Some("company/云仓/WMS"),
+        &[mirror.clone()],
+    );
+    assert_eq!(got.as_deref(), Some(ws.as_path()));
+
+    // 2) workspace 未命中 → 回落 scan root 项目根
+    let got = resolve_experience_summary_cwd(
+        &tmp.path().join("Developer"),
+        Some("company/云仓/OMS"),
+        &[mirror.clone()],
+    );
+    assert_eq!(got.as_deref(), Some(mirror.as_path()));
+
+    // 3) rel 为空 → 直接回落
+    let got =
+        resolve_experience_summary_cwd(&tmp.path().join("Developer"), Some(""), &[mirror.clone()]);
+    assert_eq!(got.as_deref(), Some(mirror.as_path()));
+
+    // 4) 全部落空 → None
+    let got = resolve_experience_summary_cwd(
+        &tmp.path().join("Developer"),
+        Some("company/云仓/OMS"),
+        &[tmp.path().join("nonexistent")],
+    );
+    assert!(got.is_none());
 }
 
 #[test]
