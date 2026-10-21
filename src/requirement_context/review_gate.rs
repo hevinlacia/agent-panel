@@ -377,6 +377,9 @@ async fn diff_snapshot_rounds(req_dir: &Path) -> Vec<u64> {
 
 pub(crate) async fn review_gate_decision(req: &Requirement) -> ApiResult<ReviewGateDecision> {
     let dir = req_dir_path(req)?;
+    // 门禁输入（code-review.json / annotations）可能刚由 worker 备料经 git push 更新，
+    // hub 副本靠 pull 追平（15min autocommit timer 太慢，INC-149 实测）；节流 + 失败静默。
+    freshen_git_copy_for_gate(&dir).await;
     let review_path = dir.join("review.md");
     let ai_review_path = dir.join("code-review-ai.md");
     let (_risk_tags, inventory_risk) = code_review_risk_for(&dir).await;

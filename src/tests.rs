@@ -20,6 +20,7 @@ mod release_branch;
 mod review_flow;
 mod rework;
 mod sessions;
+mod snapshot_sync;
 mod status_gates;
 mod sub_requirement;
 mod uat_regression;
