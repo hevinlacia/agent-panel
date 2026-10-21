@@ -1,10 +1,10 @@
-use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, path::PathBuf, sync::Arc, time::UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Query, State},
-    http::{StatusCode, Uri},
-    middleware,
+    extract::{Query, Request, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -12,6 +12,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::{fs, sync::Mutex, task::JoinHandle};
+use tower::Layer;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 mod api_catalog;
@@ -760,11 +761,13 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/notifications/mark-read", post(ok_json))
         .nest_service(
             "/assets",
-            ServeDir::new(public_dir.join("dashboard-react/assets")),
+            middleware::from_fn_with_state(ASSET_CACHE, cache_on_success)
+                .layer(ServeDir::new(public_dir.join("dashboard-react/assets"))),
         )
         .nest_service(
             "/icons",
-            ServeDir::new(public_dir.join("dashboard-react/icons")),
+            middleware::from_fn_with_state(ICON_CACHE, cache_on_success)
+                .layer(ServeDir::new(public_dir.join("dashboard-react/icons"))),
         )
         .route("/manifest.webmanifest", get(serve_pwa_root_file))
         .route("/sw.js", get(serve_pwa_root_file))
@@ -1051,12 +1054,14 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/notifications/mark-read", post(ok_json))
         .nest_service(
             "/assets",
-            ServeDir::new(public_dir.join("dashboard-react/assets")),
+            middleware::from_fn_with_state(ASSET_CACHE, cache_on_success)
+                .layer(ServeDir::new(public_dir.join("dashboard-react/assets"))),
         )
         .nest_service("/static", ServeDir::new(public_dir.clone()))
         .nest_service(
             "/icons",
-            ServeDir::new(public_dir.join("dashboard-react/icons")),
+            middleware::from_fn_with_state(ICON_CACHE, cache_on_success)
+                .layer(ServeDir::new(public_dir.join("dashboard-react/icons"))),
         )
         .route("/manifest.webmanifest", get(serve_pwa_root_file))
         .route("/sw.js", get(serve_pwa_root_file))
@@ -1064,10 +1069,26 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .layer(TraceLayer::new_for_http())
 }
 
+/// /assets/* 为 Vite 内容哈希产物：文件名变即逻辑失效，可安全 immutable 一年。
+const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
+/// /icons/* 非哈希命名（icon-192.png 等）：长缓存但保留到期 Last-Modified 重验。
+const ICON_CACHE: &str = "public, max-age=604800";
+
+/// 静态资源 Cache-Control 注入：仅对成功响应生效（404/304 不带缓存头，避免负缓存）。
+/// /static 混挂整个 public（含未哈希文件），维持 ServeDir 默认重验行为，不注入长缓存。
+async fn cache_on_success(State(value): State<&'static str>, req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    if res.status().is_success() {
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
+    }
+    res
+}
+
 /// PWA 根路径静态文件（manifest / sw.js）：白名单文件名防路径穿越，从 vite 构建产物读取。
+/// no-cache 强制每次重验，保证发版后 SW 更新与 manifest 引用不被陈旧缓存拖住。
 /// 路径基于 AppState.project_root（与 spa_fallback 同源），不依赖进程 cwd。
 async fn serve_pwa_root_file(State(state): State<AppState>, uri: Uri) -> Response {
-    use axum::http::header;
     let name = uri.path().trim_start_matches('/');
     let (allowed, mime) = match name {
         "manifest.webmanifest" => (true, "application/manifest+json"),
@@ -1084,6 +1105,7 @@ async fn serve_pwa_root_file(State(state): State<AppState>, uri: Uri) -> Respons
         Ok(bytes) => (
             [
                 (header::CONTENT_TYPE, mime.to_string()),
+                (header::CACHE_CONTROL, "no-cache".to_string()),
                 // sw.js 需要根 scope；Service-Worker-Allowed 放宽默认目录 scope。
                 (
                     header::HeaderName::from_static("service-worker-allowed"),
@@ -1097,19 +1119,67 @@ async fn serve_pwa_root_file(State(state): State<AppState>, uri: Uri) -> Respons
     }
 }
 
-async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> Response {
+/// SPA fallback：index.html 带 `Cache-Control: no-cache` + 弱 ETag（mtime+size）。
+/// 浏览器每次导航需重验，If-None-Match 命中时 304，未命中才重拉整页；
+/// 部署后文件变化 → ETag 变化 → 必然拿到引用新哈希资源的新 HTML。
+async fn spa_fallback(State(state): State<AppState>, uri: Uri, headers: HeaderMap) -> Response {
     let path = uri.path();
     if path.starts_with("/api/") || path.starts_with("/ws/") {
         return (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response();
     }
     let index = state.project_root.join("public/dashboard-react/index.html");
-    match fs::read_to_string(index).await {
-        Ok(html) => Html(html).into_response(),
-        Err(_) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Html(String::from("<h1>Agent Panel frontend is not built</h1><p>Run <code>bun run build:dashboard</code>.</p>")),
-        ).into_response(),
+    let meta = match fs::metadata(&index).await {
+        Ok(meta) => meta,
+        Err(_) => return spa_not_built_response(),
+    };
+    let etag = weak_index_etag(&meta);
+    if if_none_match_hits(&headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag.as_str())]).into_response();
     }
+    match fs::read_to_string(index).await {
+        Ok(html) => (
+            [
+                (header::CACHE_CONTROL, "no-cache"),
+                (header::ETAG, etag.as_str()),
+            ],
+            Html(html),
+        )
+            .into_response(),
+        Err(_) => spa_not_built_response(),
+    }
+}
+
+fn spa_not_built_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Html(String::from("<h1>Agent Panel frontend is not built</h1><p>Run <code>bun run build:dashboard</code>.</p>")),
+    )
+        .into_response()
+}
+
+/// index.html 的弱 ETag：mtime 秒 + 字节长度，与 ServeDir 的 Last-Modified 语义一致。
+fn weak_index_etag(meta: &std::fs::Metadata) -> String {
+    let mtime_secs = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("W:\"{:x}-{:x}\"", mtime_secs, meta.len())
+}
+
+/// If-None-Match 按 RFC 9110 弱比较：逗号分隔逐项精确匹配（`*` 视为命中）。
+fn if_none_match_hits(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    if_none_match
+        .split(',')
+        .map(str::trim)
+        .any(|candidate| candidate == "*" || candidate == etag)
 }
 
 #[derive(Debug, Deserialize)]
