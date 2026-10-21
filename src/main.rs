@@ -931,6 +931,11 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
             "/api/requirement/review-snapshot",
             post(api_requirement_review_snapshot_post),
         )
+        // 需求目录包：worker 本地副本缺失时按需物化的活链路读端点
+        .route(
+            "/api/requirement/dir-bundle",
+            get(api_requirement_dir_bundle_get),
+        )
         .route("/api/requirement/master-diff", post(worker_only_stub))
         .route(
             "/api/requirement/diff-snapshots",
