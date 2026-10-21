@@ -119,6 +119,18 @@ cargo test
 
 For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY references.
 
+## Data Repo Principle: agent-panel-data Is Backup Only
+
+数据仓 `agent-panel-data`（本机 clone `~/Developer/agent-panel-data` + GitHub 远端）**只承担备份与人工兜底职责**，任何功能链路不得强依赖它（2026-10-21 拍板）：
+
+1. **agent 读数据一律走 hub API**（需求/知识/经验/审查材料），不读本机镜像、不读 git 仓；镜像符号链接仅供人工与兜底场景使用。
+2. **跨副本数据移动一律走 HTTP**：worker→hub 用直传端点（如 `POST /api/requirement/review-snapshot`）；hub→worker 用按需拉取（如 `GET /api/requirement/dir-bundle` + `snapshot_sync::fetch_requirement_bundle_from_hub` 物化；分支登记缺失走 `fetch_branch_scope_from_hub` fallback）。
+3. **git 通道（hub-data-autocommit.timer / freshen pull / push_snapshot_commit）只做备份**：失败仅产生 warning，不得阻断任何活链路；新增功能必须满足「git 不可用时照常工作」。
+4. **worker 侧识别数据仓**以 remote URL 含 `agent-panel-data` 为准（`snapshot_sync::worker_data_repo_root`），防止误操作 workspace-meta 等工作区仓。
+5. 新增跨副本功能前先自问：**git 断了这条链路还转吗？** 答不上来就先补 HTTP 直传/按需物化路径，再合入。
+
+背景：容器 hub 与开发机 worker 各持一份数据副本，早期活链路靠 git 同步承载，暴露过「备料→门禁死结」「分支登记 15min 窗口」「hub 新建需求 worker 不可见」三类问题（INC-149 及 2026-10-21 断 git 回归），现已全部切换 HTTP 直传/按需物化，git 降级纯备份。
+
 ## Runtime Data
 
 - Config: `~/.local/share/agent-panel/config.json`（docs 模式可 `PANEL_DATA_DIR` 覆盖，容器部署指向数据卷）
@@ -127,7 +139,7 @@ For docs-only changes, re-read the edited docs for stale Node/OpenCode/PTY refer
 - Generated pi context: `~/.local/share/agent-panel/ctx/*.md`
 - Pi sessions: `~/.pi/agent/sessions/*/*.jsonl`（docs 模式 session root 为空 → 会话关联功能自然降级）
 - Service topology（2026-10-20 分离架构落地）：
-  - **hub**：远端 LXC 容器 `agent-panel.tail260d93.ts.net:8788`（`/etc/systemd/system/agent-panel.service`，PANEL_DATA_DIR=/srv/agent-panel/state，数据仓库 /srv/agent-panel/data = workspace-meta clone）。数据自动快照：`hub-data-autocommit.timer`（15min，pull --rebase + commit + push，依赖容器 GitHub deploy key）。
+  - **hub**：远端 LXC 容器 `agent-panel.tail260d93.ts.net:8788`（`/etc/systemd/system/agent-panel.service`，PANEL_DATA_DIR=/srv/agent-panel/state，数据仓库 /srv/agent-panel/data = agent-panel-data clone）。数据自动快照：`hub-data-autocommit.timer`（15min，pull --rebase + commit + push，依赖容器 GitHub deploy key）——**仅备份职责，活链路不依赖 git**（见上方 Data Repo Principle）。
   - **worker**：本机 systemd user 单元 `panel-worker.service`（:7332，PANEL_HUB_URL 指向容器 hub）。hub→worker 回程当前走 ssh 反向隧道 `panel-worker-tunnel.service`（tailnet ACL 未放行 hub→dev 方向；ACL 放行后可改 callbackBase 为 tailscale IP 直连并撤隧道）。
   - **agent 调用面**：`http://agent-panel.tail260d93.ts.net:8788`（pi extensions/scripts/skill docs 已切换，`AGENT_PANEL_URL` 可覆盖）；本机 `agent-panel.service`（:7331）已退役。
 
