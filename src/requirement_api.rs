@@ -3057,9 +3057,14 @@ pub(crate) async fn api_requirement_dir_bundle_get(
     let id = query.id.or(query.req_id).unwrap_or_default();
     let req = get_real_requirement(&state, &id).await?;
     let dir = req_dir_path(&req)?;
-    const MAX_FILE: u64 = 2 * 1024 * 1024;
-    const MAX_TOTAL: u64 = 32 * 1024 * 1024;
+    // 体积约束：hub→worker 的 tailnet 下行慢（实测 ~47KB/s，2.4MB 快照 20s 超不完）。
+    // bundle 只物化小体量登记/元数据（branches.json/meta/state/notes 等）；大产物
+    // （code-review.json/patch，均 >256KB）跳过——物化后无已有快照，备料自动走
+    // 全量重扫，语义正确只是少了增量优化。
+    const MAX_FILE: u64 = 256 * 1024;
+    const MAX_TOTAL: u64 = 4 * 1024 * 1024;
     let mut files = Vec::<Value>::new();
+    let mut skipped_large = Vec::<String>::new();
     let mut total: u64 = 0;
     let mut stack = vec![dir.clone()];
     while let Some(current) = stack.pop() {
@@ -3078,6 +3083,11 @@ pub(crate) async fn api_requirement_dir_bundle_get(
                 continue;
             };
             if meta.len() > MAX_FILE || total + meta.len() > MAX_TOTAL {
+                if meta.len() > MAX_FILE {
+                    if let Ok(rel) = path.strip_prefix(&dir) {
+                        skipped_large.push(rel.to_string_lossy().to_string());
+                    }
+                }
                 continue;
             }
             let Ok(content) = tokio::fs::read_to_string(&path).await else {
@@ -3096,6 +3106,7 @@ pub(crate) async fn api_requirement_dir_bundle_get(
         "ok": true,
         "reqId": req.id,
         "relDir": crate::requirement_service::repo_rel_dir(&dir),
+        "skippedLarge": skipped_large,
         "files": files,
     })))
 }
