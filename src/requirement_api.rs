@@ -2967,7 +2967,9 @@ pub(crate) async fn api_requirement_review_snapshot_post(
             "kind 必须为 full（快照直传以全量为准，增量包随 incremental 字段携带）",
         ));
     }
-    atomic_write_json(&dir.join(CODE_REVIEW_FILE), &body.content).await?;
+    // 落盘顺序：先增量后全量。门禁把「mtime 较新者」当最新材料（annotations 指纹
+    // 对比目标），直传两者都带时必须保证全量 mtime 最新，否则增量包被当材料、
+    // 与全量对齐的备注指纹误判 stale（受控断 git 实测）。
     let incremental_written = match &body.incremental {
         Some(inc) if inc.get("content").is_some() => {
             atomic_write_json(&dir.join(CODE_REVIEW_INCREMENTAL_FILE), &inc["content"]).await?;
@@ -2975,6 +2977,7 @@ pub(crate) async fn api_requirement_review_snapshot_post(
         }
         _ => false,
     };
+    atomic_write_json(&dir.join(CODE_REVIEW_FILE), &body.content).await?;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
