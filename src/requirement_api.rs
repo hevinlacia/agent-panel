@@ -1377,7 +1377,8 @@ pub(crate) async fn api_requirement_code_review_post(
     // 与 master-diff 一致的自动清理：无文件差异的应用从 branches.json 移除。
     let (pruned_repos, pruned_written) =
         prune_no_diff_repos(&req_dir, &branch_scope, &review).await?;
-    // 快照自动同步 git（worker 副本 → 远端），失败不阻断只带 warning。
+    // 活链路：快照直传 hub（门禁立即新鲜）；git push 降级为备份同步。
+    let deliver_warning = deliver_snapshots_to_hub(&req_dir, &req.id).await;
     let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
@@ -1398,10 +1399,12 @@ pub(crate) async fn api_requirement_code_review_incremental_post(
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?;
     let review = run_code_review_incremental_scan(&req_dir, &req.id).await?;
+    let deliver_warning = deliver_snapshots_to_hub(&req_dir, &req.id).await;
     let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
         "branchScope": branch_scope,
+        "deliverWarning": deliver_warning,
         "syncWarning": sync_warning,
         "incrementalReview": review,
     })))
@@ -1432,7 +1435,14 @@ pub(crate) async fn api_requirement_review_materials_post(
             "requirement has no directory; cannot prepare review materials".to_string(),
         )
     })?);
-    let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
+    let mut branch_scope = read_branch_scope(&req_dir).await?;
+    if branch_scope.is_none() {
+        // 活链路 fallback：登记刚在 hub 侧落盘、git 备份尚未同步时，直接从 hub 拉登记。
+        if fetch_branch_scope_from_hub(&req_dir, &req.id, 1).await {
+            branch_scope = read_branch_scope(&req_dir).await?;
+        }
+    }
+    let branch_scope = branch_scope.ok_or_else(|| {
         ApiError::bad_request(format!(
             "missing {BRANCH_SCOPE_FILE}; run req-branches-update first"
         ))
@@ -1445,13 +1455,14 @@ pub(crate) async fn api_requirement_review_materials_post(
         &req.status,
     )
     .await?;
-    // 备料产物（code-review.json 等）自动同步 git；hub 门禁读取前会节流 pull，
-    // 否则新材料只在 worker 副本，门禁拿 hub 旧副本判 stale（INC-149 实测死结）。
+    // 活链路：备料产物直传 hub（门禁立即新鲜，不经过 git）；git push 仅作备份同步。
+    let deliver_warning = deliver_snapshots_to_hub(&req_dir, &req.id).await;
     let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     Ok(Json(json!({
         "ok": true,
         "reqId": req.id,
         "status": req.status,
+        "deliverWarning": deliver_warning,
         "syncWarning": sync_warning,
         "materials": materials,
     })))
@@ -2927,4 +2938,86 @@ pub(crate) async fn api_requirement_file_put(
         "size": form.content.len(),
         "created": current.is_none(),
     })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewSnapshotDeliveryForm {
+    pub(crate) req_id: String,
+    /// full（必填）：全量快照本体
+    pub(crate) kind: Option<String>,
+    pub(crate) content: Value,
+    /// 可选：随行的增量包（kind=incremental + content）
+    pub(crate) incremental: Option<Value>,
+}
+
+/// POST /api/requirement/review-snapshot：worker 备料/刷新快照后直传 hub 落盘
+/// （活链路不经过 git，git 只是备份）。body: {reqId, kind:"full", content:{...},
+/// incremental?: {kind:"incremental", content:{...}}}。
+pub(crate) async fn api_requirement_review_snapshot_post(
+    State(state): State<AppState>,
+    form: FormOrJson<ReviewSnapshotDeliveryForm>,
+) -> ApiResult<Json<Value>> {
+    let body = form.0;
+    let req = get_real_requirement(&state, &body.req_id).await?;
+    let dir = req_dir_path(&req)?;
+    ensure_requirement_dir_writable(&state, &dir).await?;
+    if body.kind.as_deref() != Some("full") {
+        return Err(ApiError::bad_request(
+            "kind 必须为 full（快照直传以全量为准，增量包随 incremental 字段携带）",
+        ));
+    }
+    atomic_write_json(&dir.join(CODE_REVIEW_FILE), &body.content).await?;
+    let incremental_written = match &body.incremental {
+        Some(inc) if inc.get("content").is_some() => {
+            atomic_write_json(&dir.join(CODE_REVIEW_INCREMENTAL_FILE), &inc["content"]).await?;
+            true
+        }
+        _ => false,
+    };
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "snapshot": CODE_REVIEW_FILE,
+        "incrementalWritten": incremental_written,
+        "receivedAt": now_ms(),
+    })))
+}
+
+/// worker 侧 fallback：登记刚在 hub 落盘、git 备份尚未同步时，直接从 hub API 拉取
+/// 分支登记写到本地副本（活链路不依赖 git）。成功返回 true。
+pub(crate) async fn fetch_branch_scope_from_hub(req_dir: &Path, req_id: &str, round: u32) -> bool {
+    let hub = std::env::var("PANEL_HUB_URL").unwrap_or_default();
+    if hub.is_empty() {
+        return false;
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let mut request = client.get(format!(
+        "{hub}/api/requirement/branch-registration?reqId={req_id}&round={round}"
+    ));
+    if let Ok(token) = std::env::var("PANEL_WORKER_TOKEN") {
+        if !token.is_empty() {
+            request = request.header("X-Worker-Token", token);
+        }
+    }
+    let Ok(resp) = request.send().await else {
+        return false;
+    };
+    let Ok(body) = resp.json::<Value>().await else {
+        return false;
+    };
+    let Some(scope) = body.get("scope") else {
+        return false;
+    };
+    if scope.get("repos").and_then(Value::as_array).is_none() {
+        return false;
+    }
+    let file = req_dir.join(branch_scope_file_for_round(round));
+    atomic_write_json(&file, scope).await.is_ok()
 }

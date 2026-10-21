@@ -69,7 +69,7 @@ async fn run_git(root: &Path, args: &[String]) -> Result<String> {
 /// 提醒 agent 走手动 git 桥接（退化为旧行为，不阻断主流程）。
 pub(crate) async fn push_snapshot_commit(req_dir: &Path, req_id: &str) -> Option<String> {
     let Some(root) = data_repo_root(req_dir) else {
-        return Some("快照未自动同步 git（需求目录不在 git 仓库内）：hub 门禁将读到旧快照，请手动把 code-review.json 同步到数据仓库".to_string());
+        return Some("git 备份同步跳过（需求目录不在 git 仓库内）：快照已直传 hub，门禁不受影响；数据仓备份需人工处理".to_string());
     };
     let stamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let msg = format!("review: sync snapshot for {req_id} ({stamp})");
@@ -137,7 +137,7 @@ pub(crate) async fn push_snapshot_commit(req_dir: &Path, req_id: &str) -> Option
                     return None;
                 }
                 return Some(format!(
-                    "快照自动同步 git 在 {label} 步失败：{}；hub 门禁可能读到旧快照，请手动 commit+push 数据仓库",
+                    "git 备份同步在 {label} 步失败：{}（不影响门禁——快照已直传 hub；备份链路请人工 commit+push 数据仓）",
                     text.lines().next().unwrap_or("").chars().take(200).collect::<String>()
                 ));
             }
@@ -240,5 +240,54 @@ pub(crate) async fn freshen_scan_roots_for_git_exec(state: &AppState) {
             ],
         )
         .await;
+    }
+}
+
+/// 快照直传 hub（活链路，不经过 git）：worker 生成快照后直接 POST 给 hub 落盘，
+/// 门禁立即可见；git push/pull 只是备份兜底。失败返回 warning（不阻断）。
+pub(crate) async fn deliver_snapshots_to_hub(req_dir: &Path, req_id: &str) -> Option<String> {
+    let full_path = req_dir.join(CODE_REVIEW_FILE);
+    let incremental_path = req_dir.join(CODE_REVIEW_INCREMENTAL_FILE);
+    let full = match read_json_if_exists(&full_path).await {
+        Some(v) => v,
+        None => {
+            return Some("快照文件不存在，无法直传 hub".to_string());
+        }
+    };
+    let incremental = read_json_if_exists(&incremental_path).await;
+    let hub = std::env::var("PANEL_HUB_URL").unwrap_or_default();
+    if hub.is_empty() {
+        // 无 hub 地址（纯本机模式）：数据仓即本仓，无需直传
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let mut body = json!({
+        "reqId": req_id,
+        "kind": "full",
+        "content": full,
+    });
+    if let Some(inc) = &incremental {
+        body["incremental"] = json!({ "kind": "incremental", "content": inc });
+    }
+    let mut request = client
+        .post(format!("{hub}/api/requirement/review-snapshot"))
+        .json(&body);
+    if let Ok(token) = std::env::var("PANEL_WORKER_TOKEN") {
+        if !token.is_empty() {
+            request = request.header("X-Worker-Token", token);
+        }
+    }
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => None,
+        Ok(resp) => Some(format!(
+            "快照直传 hub 失败（HTTP {}）：门禁可能读到旧快照；git 备份链路仍可用",
+            resp.status().as_u16()
+        )),
+        Err(e) => Some(format!(
+            "快照直传 hub 失败（{e}）：门禁可能读到旧快照；git 备份链路仍可用"
+        )),
     }
 }
