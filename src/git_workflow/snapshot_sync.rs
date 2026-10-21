@@ -214,19 +214,8 @@ pub(crate) async fn freshen_scan_roots_for_git_exec(state: &AppState) {
             if roots.contains(&root) {
                 continue;
             }
-            if let Ok(out) = run_git(
-                &root,
-                &[
-                    "remote".to_string(),
-                    "get-url".to_string(),
-                    "origin".to_string(),
-                ],
-            )
-            .await
-            {
-                if out.contains("agent-panel-data") {
-                    roots.push(root);
-                }
+            if repo_remote_is_data(&root).await {
+                roots.push(root);
             }
         }
     }
@@ -290,4 +279,97 @@ pub(crate) async fn deliver_snapshots_to_hub(req_dir: &Path, req_id: &str) -> Op
             "快照直传 hub 失败（{e}）：门禁可能读到旧快照；git 备份链路仍可用"
         )),
     }
+}
+
+/// 校验仓库 remote 归属 agent-panel-data（数据仓），防止把工作区仓（workspace-meta）误当数据副本。
+async fn repo_remote_is_data(root: &Path) -> bool {
+    matches!(
+        run_git(
+            root,
+            &[
+                "remote".to_string(),
+                "get-url".to_string(),
+                "origin".to_string(),
+            ],
+        )
+        .await,
+        Ok(out) if out.contains("agent-panel-data")
+    )
+}
+
+/// worker 的数据仓根：扫描根里第一个 remote 归属 agent-panel-data 的仓库。
+/// 找不到返回 None（无法物化 hub 侧需求目录）。
+async fn worker_data_repo_root(state: &AppState) -> Option<PathBuf> {
+    let cfg = crate::config::read_config(state).await.ok()?;
+    let mut seen = Vec::new();
+    for r in crate::config::normalize_scan_roots(cfg.requirement_scan_roots) {
+        let Some(root) = data_repo_root(Path::new(&r)) else {
+            continue;
+        };
+        if seen.contains(&root) {
+            continue;
+        }
+        seen.push(root.clone());
+        if repo_remote_is_data(&root).await {
+            return Some(root);
+        }
+    }
+    None
+}
+
+/// 活链路 fallback：本地解析不到需求（hub 侧新建、git 备份未同步）时，从 hub
+/// 拉需求目录包（dir-bundle）物化到本地数据仓，返回物化后的需求目录。
+/// 只在 worker 模式调用方使用；失败返回 Err（调用方回落原有 not found 错误）。
+pub(crate) async fn fetch_requirement_bundle_from_hub(
+    state: &AppState,
+    req_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let hub = std::env::var("PANEL_HUB_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| anyhow!("PANEL_HUB_URL 未配置，无法从 hub 拉取需求目录"))?;
+    let root = worker_data_repo_root(state)
+        .await
+        .ok_or_else(|| anyhow!("未找到 agent-panel-data 数据仓，无法物化需求目录"))?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()?;
+    let mut request = client.get(format!("{hub}/api/requirement/dir-bundle?id={req_id}"));
+    if let Ok(token) = std::env::var("PANEL_WORKER_TOKEN") {
+        if !token.is_empty() {
+            request = request.header("X-Worker-Token", token);
+        }
+    }
+    let resp = request.send().await?;
+    if !resp.status().is_success() {
+        return Err(anyhow!("hub dir-bundle 返回 HTTP {}", resp.status()));
+    }
+    let body: Value = resp.json().await?;
+    let rel_dir = body
+        .get("relDir")
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty() && !v.starts_with('/') && !v.contains(".."))
+        .ok_or_else(|| anyhow!("hub dir-bundle 缺少合法 relDir"))?;
+    let files = body
+        .get("files")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("hub dir-bundle 缺少 files"))?;
+    let target = root.join(rel_dir);
+    for file in files {
+        let Some(rel_path) = file.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        if rel_path.starts_with('/') || rel_path.contains("..") || rel_path.contains('\\') {
+            continue;
+        }
+        let Some(content) = file.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        let dest = target.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        atomic_write_text(&dest, content).await?;
+    }
+    Ok(target)
 }

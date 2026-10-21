@@ -1364,7 +1364,7 @@ pub(crate) async fn api_requirement_code_review_post(
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
     freshen_scan_roots_for_git_exec(&state).await;
-    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let req = resolve_requirement_for_git_exec(&state, &form.0.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?.ok_or_else(|| {
         ApiError::bad_request(format!(
@@ -1395,7 +1395,7 @@ pub(crate) async fn api_requirement_code_review_incremental_post(
     form: FormOrJson<CodeReviewForm>,
 ) -> ApiResult<Json<Value>> {
     freshen_scan_roots_for_git_exec(&state).await;
-    let req = get_real_requirement(&state, &form.0.req_id).await?;
+    let req = resolve_requirement_for_git_exec(&state, &form.0.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.unwrap_or_default());
     let branch_scope = read_branch_scope(&req_dir).await?;
     let review = run_code_review_incremental_scan(&req_dir, &req.id).await?;
@@ -1429,7 +1429,7 @@ pub(crate) async fn api_requirement_review_materials_post(
     let body = form.0;
     // hub 侧新建/写入经远端同步到 worker 副本有滞后，先节流 pull 再解析需求（INC-149 实测 500）
     freshen_scan_roots_for_git_exec(&state).await;
-    let req = get_real_requirement(&state, &body.req_id).await?;
+    let req = resolve_requirement_for_git_exec(&state, &body.req_id).await?;
     let req_dir = PathBuf::from(req.req_dir.ok_or_else(|| {
         ApiError::bad_request(
             "requirement has no directory; cannot prepare review materials".to_string(),
@@ -2989,6 +2989,28 @@ pub(crate) async fn api_requirement_review_snapshot_post(
 
 /// worker 侧 fallback：登记刚在 hub 落盘、git 备份尚未同步时，直接从 hub API 拉取
 /// 分支登记写到本地副本（活链路不依赖 git）。成功返回 true。
+/// git 执行类 handler 的需求解析：本地解析不到（hub 侧新建、git 备份滞后/不可用）
+/// 时从 hub 拉目录包物化后重解析（worker 模式 only；docs 模式直接原样报错）。
+async fn resolve_requirement_for_git_exec(
+    state: &AppState,
+    req_id: &str,
+) -> ApiResult<Requirement> {
+    if let Ok(req) = get_real_requirement(state, req_id).await {
+        return Ok(req);
+    }
+    if std::env::var("PANEL_MODE").as_deref() != Ok("docs") {
+        crate::git_workflow::fetch_requirement_bundle_from_hub(state, req_id)
+            .await
+            .ok();
+        if let Ok(req) = get_real_requirement(state, req_id).await {
+            return Ok(req);
+        }
+    }
+    get_real_requirement(state, req_id)
+        .await
+        .map_err(ApiError::from)
+}
+
 pub(crate) async fn fetch_branch_scope_from_hub(req_dir: &Path, req_id: &str, round: u32) -> bool {
     let hub = std::env::var("PANEL_HUB_URL").unwrap_or_default();
     if hub.is_empty() {
@@ -3023,4 +3045,57 @@ pub(crate) async fn fetch_branch_scope_from_hub(req_dir: &Path, req_id: &str, ro
     }
     let file = req_dir.join(branch_scope_file_for_round(round));
     atomic_write_json(&file, scope).await.is_ok()
+}
+
+/// GET /api/requirement/dir-bundle?id=<reqId>：返回需求目录全部文本文件的清单与内容
+/// （排除 attachments/，单文件 2MB / 总量 32MB 上限），供 worker 在 git 备份不可用、
+/// 本地副本缺失时按需物化需求目录（活链路不依赖 git）。
+pub(crate) async fn api_requirement_dir_bundle_get(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> ApiResult<Json<Value>> {
+    let id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &id).await?;
+    let dir = req_dir_path(&req)?;
+    const MAX_FILE: u64 = 2 * 1024 * 1024;
+    const MAX_TOTAL: u64 = 32 * 1024 * 1024;
+    let mut files = Vec::<Value>::new();
+    let mut total: u64 = 0;
+    let mut stack = vec![dir.clone()];
+    while let Some(current) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&current).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if path.is_dir() {
+                if name == "attachments" || name.starts_with('.') {
+                    continue;
+                }
+                stack.push(path);
+                continue;
+            }
+            let Ok(meta) = entry.metadata().await else {
+                continue;
+            };
+            if meta.len() > MAX_FILE || total + meta.len() > MAX_TOTAL {
+                continue;
+            }
+            let Ok(content) = tokio::fs::read_to_string(&path).await else {
+                continue;
+            };
+            total += meta.len();
+            let rel = path
+                .strip_prefix(&dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push(json!({ "path": rel, "content": content }));
+        }
+    }
+    Ok(Json(json!({
+        "ok": true,
+        "reqId": req.id,
+        "relDir": crate::requirement_service::repo_rel_dir(&dir),
+        "files": files,
+    })))
 }
