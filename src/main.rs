@@ -650,6 +650,10 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/requirement/recommendations", get(api_recommendations))
         .route("/api/requirement/attachments", get(api_attachments))
         .route(
+            "/api/requirement/attachment",
+            get(api_attachment_get).put(api_attachment_put),
+        )
+        .route(
             "/api/requirement/effort-estimate",
             post(api_effort_estimate),
         )
@@ -958,6 +962,10 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/requirement/prod-mrs", post(worker_only_stub))
         .route("/api/requirement/recommendations", get(api_recommendations))
         .route("/api/requirement/attachments", get(api_attachments))
+        .route(
+            "/api/requirement/attachment",
+            get(api_attachment_get).put(api_attachment_put),
+        )
         .route(
             "/api/requirement/effort-estimate",
             post(api_effort_estimate),

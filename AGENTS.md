@@ -29,7 +29,7 @@ Current architecture:
 - `src/config.rs` DispatchWindow — 自动总结派发时间窗口：仅窗口内允许自动派发（start > end 跨午夜；手动派发不受限；窗口内已触发任务执行超时不受限；配置非法 fail-open），设置页「经验自动总结」维护。
 - `src/sessions.rs` — Pi session JSONL scanning, timeline parsing, and session APIs.
 - `src/knowledge.rs` — Knowledge/experience item search, read, save, and metadata APIs.
-- `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers.
+- `src/attachments.rs` — Requirement attachment listing, rendering, and context helpers; agent 附件读写 API（`GET/PUT /api/requirement/attachment`，路径白名单限 `attachments/<file>` 单层 + 文本后缀 sql/txt/md/yaml/yml/json/csv，sha1 乐观锁与 file API 同构）。
 - `src/browser_auth.rs` — Chrome 登录态复用（Browser Auth）：CDP cookie 读取、站点白名单、代发请求、审计日志。
 - `src/ones.rs` — ONES 任务候选与推荐：browser_auth 代理聚合消息通知+工时报表信号源，`GET /api/ones/tasks?reqId=` 按需求标题匹配度推荐可关联任务；候选带进程内存缓存（默认命中，refresh=true 才回源 ONES）；候选携带工时报表已登记工时（actualHoursRaw）。
 - `src/ones_manhour.rs` — ONES 工时联动：需求工时档案 `ones-manhour.json`（人工预估/agent 实际/录入历史）读写、`GET /api/ones/manhour` 工时四联汇总（人工/自动/ONES 已登记/agent 实际+剩余）、`POST /api/ones/manhour/save`、`POST /api/ones/manhour/log`（雏形为准备模式：生成登记清单+任务链接；ONES 写入接口待抓包验证，接缝函数 push_manhour_to_ones）。

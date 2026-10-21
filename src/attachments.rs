@@ -13,7 +13,9 @@ use tokio::fs;
 
 use crate::markdown::html_escape;
 use crate::{
-    get_real_requirement, system_time_to_ms, truncate_chars, ApiResult, AppState, IdQuery,
+    atomic_write_text, ensure_safe_segment, get_real_requirement, req_dir_path, sha1_hex,
+    system_time_to_ms, truncate_chars, AgentFileReadQuery, AgentFileWriteForm, ApiError, ApiResult,
+    AppState, FormOrJson, IdQuery,
 };
 
 pub(crate) async fn api_attachments(
@@ -210,6 +212,133 @@ pub(crate) async fn render_requirement_attachments_context(
         }
     }
     out
+}
+
+// ---- Agent 附件读写（GET/PUT /api/requirement/attachment）----
+//
+// 定位：2026-10-20 数据 SSOT 迁入容器 hub 后，本机 `.agents/req/` 只是只读镜像，
+// 旧「agent 直写 attachments/ 文件」路径会导致改动落在本地 clone 工作区与 hub 漂移
+// （面板/门禁/合规快照看不到附件）。本端点是附件唯一可靠写通道：白名单限
+// `attachments/<file>` 单层 + 文本后缀，sha1 乐观锁与 /api/requirement/file 同构。
+
+/// 附件可写后缀白名单：与只读渲染（requirement_attachment_rows）支持的文本类型完全一致。
+const ATTACHMENT_ALLOWED_EXTS: [&str; 7] = ["sql", "txt", "md", "yaml", "yml", "json", "csv"];
+
+/// 附件相对路径白名单：统一归一化为 `attachments/<file>` 单层路径。
+/// 兼容两种入参：`attachments/xxx.sql` 或裸文件名 `xxx.sql`（减少 agent 选择成本）。
+/// 拒绝：绝对路径、`..` 穿越、空段、多层子目录、非白名单后缀、非 path-safe 文件名。
+pub(crate) fn resolve_attachment_rel_path(input: &str) -> ApiResult<String> {
+    let v = input.trim().trim_start_matches("./");
+    if v.is_empty() || v.starts_with('/') || v.split('/').any(|s| s == ".." || s.is_empty()) {
+        return Err(ApiError::bad_request(format!(
+            "非法附件路径：{input}（只允许 attachments/<file> 单层路径）"
+        )));
+    }
+    let name = v.strip_prefix("attachments/").unwrap_or(v);
+    if name.contains('/') {
+        return Err(ApiError::bad_request(format!(
+            "只允许 attachments/ 单层附件文件，不支持子目录：{input}"
+        )));
+    }
+    let safe = ensure_safe_segment(name, "附件名")?;
+    let ext = safe
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !ATTACHMENT_ALLOWED_EXTS.contains(&ext.as_str()) {
+        return Err(ApiError::bad_request(format!(
+            "附件后缀 .{ext} 不在白名单（允许：sql/txt/md/yaml/yml/json/csv）：{input}"
+        )));
+    }
+    Ok(format!("attachments/{safe}"))
+}
+
+/// GET /api/requirement/attachment?id=&path=：读单个附件，返回内容 + sha 乐观锁版本
+/// （列表接口 /api/requirement/attachments 只给摘要不带 sha，更新前用它取 baseSha）。
+pub(crate) async fn api_attachment_get(
+    State(state): State<AppState>,
+    Query(query): Query<AgentFileReadQuery>,
+) -> ApiResult<Json<Value>> {
+    let req_id = query.id.or(query.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_attachment_rel_path(query.path.as_deref().unwrap_or_default())?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let (exists, content) = match fs::read_to_string(&path).await {
+        Ok(text) => (true, text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (false, String::new()),
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    let exists_sha = if exists {
+        Some(sha1_hex(&content))
+    } else {
+        None
+    };
+    Ok(Json(json!({
+        "id": req.id,
+        "path": rel,
+        "exists": exists,
+        "content": content,
+        "sha": exists_sha.clone(),
+        "baseSha": exists_sha,
+        "size": content.len(),
+    })))
+}
+
+/// PUT /api/requirement/attachment：带 sha 乐观锁写附件。语义与 /api/requirement/file 一致：
+/// 新建可省 baseSha（含空内容标记 sha 降级）；更新必须带 GET 返回的 baseSha，
+/// 不匹配返回 409（重新 GET 再写）。
+pub(crate) async fn api_attachment_put(
+    State(state): State<AppState>,
+    form: FormOrJson<AgentFileWriteForm>,
+) -> ApiResult<Json<Value>> {
+    let form = form.0;
+    let req_id = form.id.or(form.req_id).unwrap_or_default();
+    let req = get_real_requirement(&state, &req_id).await?;
+    let rel = resolve_attachment_rel_path(&form.path)?;
+    let dir = req_dir_path(&req)?;
+    let path = dir.join(&rel);
+    let current = match fs::read_to_string(&path).await {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(ApiError::from(e)),
+    };
+    let current_sha = current.as_deref().map(sha1_hex);
+    let base_sha = form
+        .base_sha
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase());
+    let empty_content_sha = sha1_hex("");
+    match (&current_sha, &base_sha) {
+        (Some(cur), Some(base)) if cur != base => {
+            return Err(ApiError::conflict(format!(
+                "附件已被修改（当前 sha {cur}，请求基于 {base}）；重新 GET /api/requirement/attachment 获取最新内容与 sha 后再写"
+            )));
+        }
+        (Some(_), None) => {
+            return Err(ApiError::conflict(
+                "附件已存在：更新必须携带 GET 返回的 baseSha；如需覆盖请先 GET",
+            ));
+        }
+        (None, Some(base)) if *base == empty_content_sha => {}
+        (None, Some(_)) => {
+            return Err(ApiError::conflict(
+                "附件不存在（可能已被删除）：新建请省略 baseSha，或重新 GET 后直接写",
+            ));
+        }
+        _ => {}
+    }
+    atomic_write_text(&path, &form.content).await?;
+    Ok(Json(json!({
+        "ok": true,
+        "id": req.id,
+        "path": rel,
+        "sha": sha1_hex(&form.content),
+        "size": form.content.len(),
+        "created": current.is_none(),
+    })))
 }
 
 pub(crate) fn human_bytes(bytes: u64) -> String {
