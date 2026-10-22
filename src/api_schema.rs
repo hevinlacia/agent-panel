@@ -56,7 +56,7 @@ fn endpoint_entries() -> Vec<Value> {
         }),
         json!({
             "method": "POST", "path": "/api/requirement/events",
-            "summary": "结构化事件记录（默认同时追加 notes.md）；body: reqId/eventType/title/summary/details…",
+            "summary": "结构化事件记录（默认同时追加 notes.md）；body: reqId/eventType/title/summary/details…/notesMode(full|summary)；并发写已由服务端串行化；未知字段 400 带合法字段清单；type 不在白名单照写但响应带 unknownType:true 警告",
         }),
         json!({
             "method": "PUT", "path": "/api/requirement/sections/:section",
