@@ -607,23 +607,26 @@ pub(crate) async fn api_experience_summary_jobs_complete(
     .await?;
     let mut status_state = Value::Null;
     if req.status == "经验总结" {
-        status_state = write_requirement_status(
-            dir.to_string_lossy().as_ref(),
-            "已完成",
-            Some("自动经验总结完成，需求自动推进为已完成"),
-        )
-        .await?;
+        // 推进目标按家族分流（2026-10-22）：issue 状态机无「已完成」，总结完成即
+        // 自动「已关闭」；普通需求维持推「已完成」（48h grace 兑底扫描不变）。
+        let issue = is_issue_category(req.category.as_deref().unwrap_or(""));
+        let (next_status, note) = if issue {
+            (
+                "已关闭",
+                "自动经验总结完成，问题自动关闭（issue 状态机无「已完成」）",
+            )
+        } else {
+            ("已完成", "自动经验总结完成，需求自动推进为已完成")
+        };
+        status_state =
+            write_requirement_status(dir.to_string_lossy().as_ref(), next_status, Some(note))
+                .await?;
         let refreshed_req = Requirement {
             status: "经验总结".to_string(),
             ..req.clone()
         };
-        if let Err(e) = record_status_transition_event(
-            &state,
-            &refreshed_req,
-            &status_state,
-            Some("自动经验总结完成，需求自动推进为已完成"),
-        )
-        .await
+        if let Err(e) =
+            record_status_transition_event(&state, &refreshed_req, &status_state, Some(note)).await
         {
             tracing::warn!(req_id = %req.id, "auto-summary complete status event failed: {e:?}");
         }
