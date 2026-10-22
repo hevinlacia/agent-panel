@@ -34,6 +34,7 @@ Current architecture:
 - `src/ones.rs` — ONES 任务候选与推荐：browser_auth 代理聚合消息通知+工时报表信号源，`GET /api/ones/tasks?reqId=` 按需求标题匹配度推荐可关联任务；候选带进程内存缓存（默认命中，refresh=true 才回源 ONES）；候选携带工时报表已登记工时（actualHoursRaw）。
 - `src/ones_manhour.rs` — ONES 工时联动：需求工时档案 `ones-manhour.json`（人工预估/agent 实际/录入历史）读写、`GET /api/ones/manhour` 工时四联汇总（人工/自动/ONES 已登记/agent 实际+剩余）、`POST /api/ones/manhour/save`、`POST /api/ones/manhour/log`（雏形为准备模式：生成登记清单+任务链接；ONES 写入接口待抓包验证，接缝函数 push_manhour_to_ones）。
 - `src/tests.rs` — Backend unit tests imported from `main.rs` via `#[cfg(test)] mod tests;`.
+- `.agents/skills/agent-panel/` — **agent-panel skill 真源**（API 契约/门禁语义/附件制的 agent 手册），消费方项目（如 WMS）经 external-skills 声明式链接使用。约定：**改 hub API 的 commit 必须同 commit 更新本手册**，手册与代码永不分仓。旧 `.agents/{business-knowledge,experiences,req}` 数据副本已移除（数据 SSOT 在 agent-panel-data 仓）。
 - `web/src/App.tsx` — React SPA router and remaining legacy page modules; still large, but first low-coupling helpers, DTOs, domain constants, shared UI chrome, requirement badges, and Sessions pages have been extracted.
 - `web/src/pages/sessions.tsx` — Sessions list/detail pages and read-only session log viewer.
 - `web/src/pages/auth-sites.tsx` — Chrome 登录态复用页：CDP 状态、站点登录状态、白名单请求、Auth 配置编辑。
