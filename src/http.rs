@@ -101,9 +101,15 @@ where
     ) -> std::result::Result<Self, Self::Rejection> {
         let headers = req.headers().clone();
         if is_json(&headers) {
-            let Json(value) = Json::<T>::from_request(req, state)
+            // 不走 axum::Json 提取器：它的 JsonRejection 会把 serde 的字段路径
+            // （unknown field / missing field / invalid type at line..column）包装成
+            // 一句通用文案，agent 拿不到具体错在哪个字段（2026-10-22 反馈 #5）。
+            // 直接 to_bytes + serde_json 解析，错误原文透传。
+            let bytes = axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024)
                 .await
-                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                .map_err(|e| ApiError::bad_request(format!("failed to read request body: {e}")))?;
+            let value: T =
+                serde_json::from_slice(&bytes).map_err(|e| ApiError::bad_request(e.to_string()))?;
             return Ok(Self(value));
         }
         let axum::extract::Form(value) = axum::extract::Form::<T>::from_request(req, state)
