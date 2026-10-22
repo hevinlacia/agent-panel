@@ -602,6 +602,7 @@ pub(crate) async fn api_experience_summary_jobs_complete(
             idempotency_key: Some(format!("{}-auto-experience-summary-completed", req.id)),
             append_note: Some(true),
             dry_run: Some(false),
+            notes_mode: None,
         },
     )
     .await?;
@@ -1103,6 +1104,7 @@ pub(crate) async fn api_requirement_convert_issue(
             idempotency_key: Some(format!("{}-convert-issue-{}", issue.id, now_ms())),
             append_note: Some(true),
             dry_run: Some(false),
+            notes_mode: None,
         },
     )
     .await?;

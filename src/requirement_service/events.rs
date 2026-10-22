@@ -29,6 +29,25 @@ pub(crate) fn normalize_requirement_event_type(raw: Option<&str>) -> String {
     }
 }
 
+/// 事件 type 白名单（normalize 后的合法值）。未知值不拒绝（保兼容），但非 dryRun
+/// 响应会带 unknownType:true + knownTypes，防止拼错的 type 静默落盘（2026-10-22）。
+pub(crate) const KNOWN_EVENT_TYPES: &[&str] = &[
+    "note",
+    "issueFound",
+    "rootCause",
+    "workaround",
+    "solution",
+    "testResult",
+    "decision",
+    "knowledgeReference",
+    "learningCandidate",
+    "skillImprovementCandidate",
+    "todo",
+    "risk",
+    "statusTransition",
+    "progress",
+];
+
 pub(crate) fn requirement_event_label(event_type: &str) -> &str {
     match event_type {
         "issueFound" => "发现问题",
@@ -162,6 +181,7 @@ pub(crate) async fn record_status_transition_event(
             idempotency_key: Some(format!("{}-status-{}", req.id, at)),
             append_note: Some(true),
             dry_run: Some(false),
+            notes_mode: None,
         },
     )
     .await?;
@@ -179,6 +199,19 @@ pub(crate) fn requirement_event_exists(raw: &str, id: &str) -> bool {
             .map(|existing| existing == id)
             .unwrap_or(false)
     })
+}
+
+/// 事件 notes 摘要渲染（notesMode=summary）：一行标题 + 事件 id 指回 events.jsonl，
+/// 供 evidence 数组很长的排查类事件避免 notes.md 无限膨胀。
+pub(crate) fn render_requirement_event_note_summary(event: &Value) -> String {
+    let id = event.get("id").and_then(Value::as_str).unwrap_or("?");
+    let title = event.get("title").and_then(Value::as_str).unwrap_or("事件");
+    let kind = event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("progress");
+    let summary = event.get("summary").and_then(Value::as_str).unwrap_or("");
+    format!("- [事件 {id}] {title}（{kind}）：{summary} —— 详情看 events.jsonl 同 id 行")
 }
 
 pub(crate) fn render_requirement_event_note(event: &Value) -> String {
