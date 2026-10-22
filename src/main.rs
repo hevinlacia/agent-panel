@@ -16,6 +16,7 @@ use tower::Layer;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 
 mod api_catalog;
+mod api_schema;
 mod attachments;
 mod auth;
 mod browser_auth;
@@ -48,6 +49,7 @@ mod util;
 mod workers;
 
 use api_catalog::*;
+use api_schema::*;
 use attachments::*;
 use browser_auth::*;
 use cainiao_mock::*;
@@ -750,6 +752,7 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
             get(api_testdata_capabilities),
         )
         .route("/api/config", get(api_config).post(api_config_post))
+        .route("/api/schema", get(api_schema))
         .route("/api/config/skills", get(api_config_skills))
         .route("/api/pi-chat/open", get(api_pi_chat_open))
         .route("/ws/pi-chat", get(ws_pi_chat))
@@ -1069,6 +1072,7 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/apitest/trigger", post(worker_only_stub))
         .route("/api/agent/capabilities/query", get(worker_only_stub))
         .route("/api/config", get(api_config).post(api_config_post))
+        .route("/api/schema", get(api_schema))
         .route("/api/config/skills", get(worker_only_stub))
         .route("/api/pi-chat/open", get(worker_only_stub))
         .route("/ws/pi-chat", get(worker_only_stub))
