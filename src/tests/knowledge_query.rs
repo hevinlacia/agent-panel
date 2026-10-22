@@ -69,3 +69,24 @@ fn knowledge_query_entry_lean_keeps_decision_fields_only() {
     let why = obj.get("whyMatched").and_then(|v| v.as_str()).unwrap_or("");
     assert!(why.chars().count() <= 80, "whyMatched must be <= 80 chars");
 }
+
+/// title 相似度（bigram Jaccard）：查重阈值语义的纯函数锁定。
+#[test]
+fn title_similarity_bigram_jaccard_thresholds() {
+    // 完全相同 → 1.0
+    assert_eq!(
+        crate::knowledge::title_similarity("库存双账本平衡", "库存双账本平衡"),
+        1.0
+    );
+    // 高相似（同主题换措辞）→ 超过 0.6 高阈值
+    let high = crate::knowledge::title_similarity(
+        "库存双账本平衡：可用量与 redis 缓存",
+        "库存双账本平衡机制 redis 可用量",
+    );
+    assert!(high >= 0.5, "high similarity should be >= 0.5, got {high}");
+    // 完全无关 → 接近 0
+    let low = crate::knowledge::title_similarity("库存双账本平衡", "RocketMQ 消费者幂等");
+    assert!(low < 0.4, "unrelated titles should be < 0.4, got {low}");
+    // 空串安全
+    assert_eq!(crate::knowledge::title_similarity("", "任意"), 0.0);
+}

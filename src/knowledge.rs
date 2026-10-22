@@ -114,6 +114,9 @@ pub(crate) struct KnowledgeWriteForm {
     tags: Vec<String>,
     #[serde(default)]
     trigger_terms: Vec<String>,
+    /// 机制级查重：title 高相似（>=0.6）时需显式 true 才允许写入（见 dedupe_warning）。
+    #[serde(default)]
+    confirm_duplicate: Option<bool>,
     #[serde(default)]
     related_skills: Vec<String>,
     #[serde(default)]
@@ -271,12 +274,103 @@ pub(crate) async fn api_agent_item_full(
     Ok(Json(json!({ "item": item })))
 }
 
+/// title 相似度（字符 bigram Jaccard，中文友好；空白剔除、大小写不敏感）。
+pub(crate) fn title_similarity(a: &str, b: &str) -> f64 {
+    fn bigrams(s: &str) -> std::collections::HashSet<String> {
+        let flat: String = s
+            .to_lowercase()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let chars: Vec<char> = flat.chars().collect();
+        if chars.len() < 2 {
+            return chars.iter().map(|c| c.to_string()).collect();
+        }
+        chars.windows(2).map(|w| w.iter().collect()).collect()
+    }
+    let a = bigrams(a);
+    let b = bigrams(b);
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let inter = a.intersection(&b).count() as f64;
+    let union = a.union(&b).count() as f64;
+    inter / union
+}
+
+const DEDUPE_HIGH_THRESHOLD: f64 = 0.5;
+const DEDUPE_MID_THRESHOLD: f64 = 0.35;
+
 pub(crate) async fn api_knowledge_save(
     State(state): State<AppState>,
     Json(payload): Json<KnowledgeWriteForm>,
 ) -> ApiResult<Json<Value>> {
+    // 机制级查重（2026-10-22）：新建（无 id）条目前按 title 相似度与同 kind 现有条目比对。
+    // >=0.6 视为疑似重复，409 要求 confirmDuplicate=true 显式确认；0.4~0.6 放行但响应带
+    // dedupeWarning 供人工复核。自动总结与人工沉淀双入口共用此防线。
+    let mut dedupe_warning: Vec<Value> = Vec::new();
+    let is_new = payload
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .is_none();
+    if is_new {
+        let title = clean_required(&payload.title, "title")?;
+        let kind = normalize_knowledge_kind(payload.kind.as_deref())
+            .unwrap_or_else(|_| "experience".to_string());
+        let filter = KnowledgeQueryFilter {
+            kind: Some(kind),
+            limit: Some(2000),
+            ..Default::default()
+        };
+        let items = query_knowledge_items(&state, &filter).await?;
+        let mut similar: Vec<(f64, Value)> = items
+            .iter()
+            .filter_map(|it| {
+                let t = it.get("title")?.as_str()?;
+                let score = title_similarity(&title, t);
+                (score >= DEDUPE_MID_THRESHOLD).then(|| {
+                    (
+                        score,
+                        json!({
+                            "id": it.get("id"),
+                            "title": t,
+                            "score": (score * 100.0).round() / 100.0,
+                        }),
+                    )
+                })
+            })
+            .collect();
+        similar.sort_by(|x, y| y.0.partial_cmp(&x.0).unwrap_or(std::cmp::Ordering::Equal));
+        similar.truncate(3);
+        let top = similar.first().map(|(s, _)| *s).unwrap_or(0.0);
+        if top >= DEDUPE_HIGH_THRESHOLD && !payload.confirm_duplicate.unwrap_or(false) {
+            let listing = similar
+                .iter()
+                .map(|(score, v)| {
+                    format!(
+                        "- {} (score {score:.2}) {}",
+                        v.get("id").and_then(Value::as_str).unwrap_or("?"),
+                        v.get("title").and_then(Value::as_str).unwrap_or("?")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ApiError::conflict(format!(
+                "疑似重复：与既有条目 title 相似度 {top:.2} >= {DEDUPE_HIGH_THRESHOLD}\n{listing}\n确属新知识请带 confirmDuplicate: true 重发；否则改为更新既有条目（POST /api/knowledge 带 id）"
+            )));
+        }
+        if top >= DEDUPE_MID_THRESHOLD {
+            dedupe_warning = similar.into_iter().map(|(_, v)| v).collect();
+        }
+    }
     let item = save_knowledge_item(&state, payload).await?;
-    Ok(Json(json!({ "ok": true, "item": item })))
+    let mut resp = json!({ "ok": true, "item": item });
+    if !dedupe_warning.is_empty() {
+        resp["dedupeWarning"] = json!(dedupe_warning);
+    }
+    Ok(Json(resp))
 }
 
 /// 删除一条知识/经验条目（DELETE /api/knowledge?id=<id>）。
