@@ -23,6 +23,8 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 
 ## 共享约定
 
+- **端点/门禁/状态机契约以 `GET /api/schema` 为准**（版本/29 端点/写通道白名单与乐观锁/状态机/7 门禁格式契约/知识查重，与代码同仓演进）；本 skill 文档只写策略与组合，契约细节冲突时以 schema 为准。
+
 - API base 与鉴权方式见各子文档；脚本与 curl 均只读优先，状态变更需用户确认。
 - **UAT 部署前先 `GET /api/config` 检查 `deployFreeze.enabled`**（发版冻结期 ylops_deploy.py 会直接拒绝，见 requirement-api.md「人工核查阶段、状态门禁与发版冻结」节）。
 - `req` skill 是需求业务工作流的上层入口：先判断业务场景，再按本 skill 查 API 细节（组间弱耦合，两组各自可独立使用）。
