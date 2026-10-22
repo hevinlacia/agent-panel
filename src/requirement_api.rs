@@ -1247,8 +1247,9 @@ pub(crate) async fn api_requirement_new_session(
         // v1 命令（<2026-10-22）带 hub 侧 @ctx 路径与 cd 前缀，分离架构下本机不可执行：视为过期重生成。
         let stale = pending.harness != harness || !pending.command.contains("$(curl -sf");
         let used = !stale
-            && crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness)
-                .await;
+            && (crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness)
+                .await
+                || session_context_served(&state, &pending.session_id).await);
         if !force && !stale && !used {
             // 未使用过：原样复用，不产生新 session id。
             return Ok(Json(json!(
@@ -1260,6 +1261,7 @@ pub(crate) async fn api_requirement_new_session(
         if !used {
             let _ = dissociate_session(&state, &req.id, &pending.session_id).await;
             let _ = fs::remove_file(&pending.context_path).await;
+            let _ = fs::remove_file(served_marker_path(&state, &pending.session_id)).await;
         }
         let _ = save_pending_command(&state, &req.id, None).await;
     }
@@ -1311,8 +1313,9 @@ pub(crate) async fn api_requirement_pending_session(
             json!({ "ok": true, "harness": harness, "pending": null }),
         ));
     };
-    let used =
-        crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness).await;
+    let used = crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness)
+        .await
+        || session_context_served(&state, &pending.session_id).await;
     Ok(Json(json!({
         "ok": true,
         "harness": harness,
@@ -1346,6 +1349,10 @@ pub(crate) async fn api_requirement_session_context(
     let content = fs::read_to_string(&path)
         .await
         .map_err(|_| ApiError::not_found(format!("session context not found: {sid}")))?;
+    // 拉取即使用信号：命令内联 $(curl …) 在 pi 启动前求值，端点被真实调到 = 命令
+    // 已被粘贴执行。分离架构下 hub 容器没有本机 pi session 库（jsonl 判断失灵），
+    // marker 是 pending「已使用」判定的可靠补充信号，与 jsonl 判断取或。
+    let _ = fs::write(served_marker_path(&state, &sid), now_ms().to_string()).await;
     Ok((
         [(
             axum::http::header::CONTENT_TYPE,
@@ -1353,6 +1360,21 @@ pub(crate) async fn api_requirement_session_context(
         )],
         content,
     ))
+}
+
+/// session-context 拉取 marker：`<data>/ctx/<sessionId>.served`。
+fn served_marker_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
+    state
+        .data_dir
+        .join(INJECTION_CTX_SUBDIR)
+        .join(format!("{session_id}.served"))
+}
+
+/// 该 session 的注入上下文是否被真实拉取过（= 复制命令已被粘贴执行）。
+pub(crate) async fn session_context_served(state: &AppState, session_id: &str) -> bool {
+    fs::try_exists(served_marker_path(state, session_id))
+        .await
+        .unwrap_or(false)
 }
 
 /// 从请求头推导面板对外可访问 base（scheme 优先 X-Forwarded-Proto；Host 必带，
