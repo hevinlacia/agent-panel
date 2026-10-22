@@ -412,3 +412,74 @@ fn normalize_dispatch_window_rejects_equal_and_invalid_times() {
     });
     assert!(disabled.is_ok());
 }
+// ── expire 扫描 issue 家族自动关闭（2026-10-22） ───────────────────────────────
+
+/// issue 家族（线上问题）job completed → 扫描自动推「已关闭」（issue 状态机无「已完成」）；
+/// running/无 job 不动；非 issue 未超 48h grace 不动（原有语义不变）。
+#[tokio::test]
+async fn expire_scan_auto_closes_issue_after_completed_summary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(
+        &data,
+        &tmp.path().join("pi-sessions"),
+        &tmp.path().join("dsh-sessions"),
+    );
+
+    let mk_req = |id: &str, category: &str, job_status: Option<&str>| {
+        let dir = proj.join("req").join(id);
+        std::fs::create_dir_all(&dir).expect("create req dir");
+        std::fs::write(
+            dir.join("meta.md"),
+            format!(
+                "---\nreq-id: {id}\ntitle: {id}\nstatus: 经验总结\ncategory: {category}\n---\n正文\n"
+            ),
+        )
+        .expect("write meta.md");
+        if let Some(js) = job_status {
+            let job = json!({
+                "version": 1,
+                "reqId": id,
+                "status": js,
+                "attempts": 1,
+                "updatedAt": 1,
+            });
+            std::fs::write(
+                dir.join("experience-summary-job.json"),
+                json!(job).to_string(),
+            )
+            .expect("write job");
+        }
+        dir
+    };
+
+    let issue_done_dir = mk_req("WMS-INC-950-x", "线上问题", Some("completed"));
+    let issue_running_dir = mk_req("WMS-INC-951-x", "线上问题", Some("running"));
+    let normal_done_dir = mk_req("REQ-950-x", "需求", Some("completed"));
+
+    let changed = expire_stale_experience_summary(&state).await.expect("scan");
+    assert_eq!(changed, 1, "只有 issue completed 被自动关闭");
+
+    let issue_state = read_requirement_state(&issue_done_dir)
+        .await
+        .expect("read issue state")
+        .expect("issue state exists");
+    assert_eq!(issue_state["status"], json!("已关闭"));
+
+    let running_state = read_requirement_state(&issue_running_dir)
+        .await
+        .expect("read running state");
+    assert!(
+        running_state.is_none(),
+        "running 的 issue 不应被推进（不应产生 state.json）"
+    );
+
+    let normal_state = read_requirement_state(&normal_done_dir)
+        .await
+        .expect("read normal state");
+    assert!(normal_state.is_none(), "非 issue 未超 48h grace 不应被推进");
+}

@@ -135,6 +135,9 @@ const EXPERIENCE_SUMMARY_MAX_ATTEMPTS: i64 = 2;
 /// 自动推进时写入的备注/事件说明。
 const EXPERIENCE_AUTO_COMPLETE_NOTE: &str =
     "自动推进：经验总结状态停留超过 48 小时，自动标记为已完成";
+/// issue 家族（线上问题/测试问题/性能问题）总结完成后的自动关闭备注/事件说明。
+const EXPERIENCE_ISSUE_AUTO_CLOSE_NOTE: &str =
+    "自动经验总结完成，问题自动关闭（issue 状态机无「已完成」，完成即关闭）";
 const CAINIAO_MOCK_PRINTERS: &[(&str, &str)] = &[
     ("Mock-A4", "Mock A4 打印机"),
     ("Mock-Label-100", "Mock 标签机 100x100"),

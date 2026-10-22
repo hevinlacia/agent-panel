@@ -1127,9 +1127,41 @@ pub(crate) async fn expire_stale_experience_summary(state: &AppState) -> Result<
         if req.status != "经验总结" {
             continue;
         }
-        // 问题家族的经验总结不参与 48h 自动完成（「已完成」非法于 issue 状态机）：
-        // 总结完成后由人工确认关闭，避免把问题自动推到非法状态。
+        // issue 家族（线上问题/测试问题/性能问题，2026-10-22）：总结完成后自动「已关闭」
+        // ——issue 状态机无「已完成」，完成即关闭、无 grace 等待；complete API 已即时推进，
+        // 本扫描只兑底 complete 时推进失败/部署重启间隙漏推的场景。
         if is_issue_category(req.category.as_deref().unwrap_or("")) {
+            let dir = match req_dir_path(&req) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let job = read_experience_summary_job(&dir).await?;
+            let job_status = job.as_ref().map(|j| j.status.as_str()).unwrap_or("");
+            if job_status != "completed" {
+                continue;
+            }
+            let st = write_requirement_status(
+                dir.to_string_lossy().as_ref(),
+                "已关闭",
+                Some(EXPERIENCE_ISSUE_AUTO_CLOSE_NOTE),
+            )
+            .await?;
+            if let Err(e) = record_status_transition_event(
+                state,
+                &req,
+                &st,
+                Some(EXPERIENCE_ISSUE_AUTO_CLOSE_NOTE),
+            )
+            .await
+            {
+                tracing::warn!(req_id = %req.id, "issue auto-close event record failed: {e:?}");
+            } else {
+                tracing::info!(
+                    req_id = %req.id,
+                    "issue experience summary completed, auto-closed"
+                );
+            }
+            changed += 1;
             continue;
         }
         let dir = match req_dir_path(&req) {
