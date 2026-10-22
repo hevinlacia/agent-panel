@@ -592,6 +592,11 @@ pub(crate) async fn build_requirement_agent_context(
             "每条证据必须附用户可独立复核的验证线索：日志=带时区时间范围+tid/唯一关键字；DB=验证 SQL（表/条件/预期结果）；代码=应用+文件+可搜关键字片段；配置=环境+namespace/key。agent 知道≠证据成立。",
         );
     }
+    let missing_checks: Vec<Value> = phase_runtime
+        .get("entryChecks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     Ok(json!({
         "ok": true,
         "format": "agentRequirementContext.v2",
@@ -607,7 +612,7 @@ pub(crate) async fn build_requirement_agent_context(
         "phaseRuntime": phase_runtime,
         "summaryDocs": docs,
         "recentEvents": events,
-        "recommendedWrites": recommended_requirement_writes(intent),
+        "recommendedWrites": recommended_requirement_writes(intent, &missing_checks),
         "apis": {
             "recordEvent": "/api/requirement/events",
             "upsertSection": "/api/requirement/sections/{section}",

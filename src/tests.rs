@@ -17,6 +17,7 @@ mod issue_status_machine;
 mod knowledge_query;
 mod merge_options;
 mod misc;
+mod recommended_writes;
 mod release_branch;
 mod review_flow;
 mod review_snapshot_delivery;
