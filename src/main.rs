@@ -573,6 +573,10 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
             get(api_requirement_pending_session),
         )
         .route(
+            "/api/requirement/session-context",
+            get(api_requirement_session_context),
+        )
+        .route(
             "/api/requirement/session-candidates",
             get(api_requirement_session_candidates),
         )
@@ -932,6 +936,10 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route(
             "/api/requirement/pending-session",
             get(api_requirement_pending_session),
+        )
+        .route(
+            "/api/requirement/session-context",
+            get(api_requirement_session_context),
         )
         .route(
             "/api/requirement/session-candidates",

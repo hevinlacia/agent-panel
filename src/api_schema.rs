@@ -95,6 +95,10 @@ fn endpoint_entries() -> Vec<Value> {
             "summary": "代码问题备注落盘；body.annotations 必须是对象 {files:[…],reviewedCommit,…}（传数组报错）；reviewedCommit 须与最新材料一致，否则门禁 stale 拦截",
         }),
         json!({
+            "method": "GET", "path": "/api/requirement/session-context",
+            "summary": "读需求 session 注入上下文原文（text/markdown）；query: sessionId（uuid）；复制命令内联 curl 的服务端——分离架构下 ctx 文件在 hub 容器内，本机 pi 无法 @容器路径",
+        }),
+        json!({
             "method": "GET", "path": "/api/requirement/branch-registration",
             "summary": "查询分支登记；query: reqId/round",
         }),

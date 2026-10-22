@@ -101,7 +101,7 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
     };
 
     // 1) 首次复制：生成新 session id，写入关联 + ctx + pending。
-    let res1 = api_requirement_new_session(State(state.clone()), form(None))
+    let res1 = api_requirement_new_session(State(state.clone()), HeaderMap::new(), form(None))
         .await
         .expect("first copy")
         .0;
@@ -117,13 +117,28 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
         command1.contains("--name"),
         "command carries --name so pi persists at startup"
     );
+    // v2 命令（2026-10-22）：worker 本机可执行——无 cd 前缀；ctx 走内联 curl 拉取
+    assert!(
+        command1.contains(
+            "$(curl -sf 'http://localhost:8788/api/requirement/session-context?sessionId="
+        ),
+        "command inlines curl fetch of session context, got: {command1}"
+    );
+    assert!(
+        !command1.contains("cd "),
+        "v2 command must not embed a hub-side cwd, got: {command1}"
+    );
+    assert!(
+        !command1.contains("@/"),
+        "v2 command must not reference hub-side @file paths, got: {command1}"
+    );
     assert!(
         data.join("ctx").join(format!("{sid1}.md")).is_file(),
         "ctx written"
     );
 
     // 2) 重复复制：复用同一 session id，不新产生。
-    let res2 = api_requirement_new_session(State(state.clone()), form(None))
+    let res2 = api_requirement_new_session(State(state.clone()), HeaderMap::new(), form(None))
         .await
         .expect("second copy")
         .0;
@@ -138,7 +153,7 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
         "{\"type\":\"session\"}\n",
     )
     .expect("write used session file");
-    let res3 = api_requirement_new_session(State(state.clone()), form(None))
+    let res3 = api_requirement_new_session(State(state.clone()), HeaderMap::new(), form(None))
         .await
         .expect("third copy")
         .0;
@@ -160,10 +175,11 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
     assert_eq!(pending.session_id, sid3);
 
     // 4) 强制刷新：无视使用状态换新 id；未使用过的 sid3 被清理（解除关联 + 删 ctx）。
-    let res4 = api_requirement_new_session(State(state.clone()), form(Some(true)))
-        .await
-        .expect("force refresh")
-        .0;
+    let res4 =
+        api_requirement_new_session(State(state.clone()), HeaderMap::new(), form(Some(true)))
+            .await
+            .expect("force refresh")
+            .0;
     assert_eq!(res4["reused"], json!(false));
     let sid4 = res4["sessionId"]
         .as_str()
@@ -200,3 +216,93 @@ async fn new_session_reuses_pending_until_used_then_refreshes() {
 }
 
 // ---- requirement group（引用式需求组 group.json）----
+
+/// session-context 端点：读回注入上下文原文（复制命令内联 curl 的服务端）。
+#[tokio::test]
+async fn session_context_endpoint_reads_ctx_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(data.join("ctx")).expect("create ctx dir");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let sid = uuid::Uuid::new_v4().to_string();
+    std::fs::write(
+        data.join("ctx").join(format!("{sid}.md")),
+        "# 注入上下文\n正文",
+    )
+    .expect("write ctx");
+    let query = |s: Option<String>| -> IdQuery {
+        serde_json::from_value(json!({ "sessionId": s })).expect("IdQuery")
+    };
+
+    // 正常读取：返回 text/markdown 正文。
+    let res =
+        api_requirement_session_context(State(state.clone()), Query(query(Some(sid.clone()))))
+            .await
+            .expect("read ctx");
+    let response = axum::response::IntoResponse::into_response(res);
+    let (parts, body) = response.into_parts();
+    assert_eq!(parts.status, axum::http::StatusCode::OK);
+    assert!(
+        parts
+            .headers
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .starts_with("text/markdown"),
+        "content type should be text/markdown"
+    );
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.expect("body");
+    assert!(String::from_utf8_lossy(&bytes).contains("注入上下文"));
+
+    // 不存在的 sessionId → 404；非 uuid → 400（防路径穿越）。
+    let missing = api_requirement_session_context(
+        State(state.clone()),
+        Query(query(Some(uuid::Uuid::new_v4().to_string()))),
+    )
+    .await;
+    assert!(missing.is_err(), "missing ctx should 404");
+    let bad =
+        api_requirement_session_context(State(state), Query(query(Some("../../etc".into())))).await;
+    assert!(bad.is_err(), "non-uuid should be rejected");
+}
+
+/// Host 请求头驱动内联 curl 的 base（force 生成新命令；浏览器可达即本机 curl 可达）。
+#[tokio::test]
+async fn new_session_command_curl_base_follows_host_header() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-001");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-001\ntitle: Host 头测试\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let form = FormOrJson(NewSessionForm {
+        req_id: "T-001".into(),
+        force: Some(true),
+    });
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::HOST,
+        "panel.example:8788".parse().expect("host"),
+    );
+    let res = api_requirement_new_session(State(state), headers, form)
+        .await
+        .expect("host copy")
+        .0;
+    let command = res["command"].as_str().expect("command");
+    assert!(
+        command.contains("http://panel.example:8788/api/requirement/session-context"),
+        "host header should drive curl base, got: {command}"
+    );
+}
