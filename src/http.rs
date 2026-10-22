@@ -113,6 +113,24 @@ where
     }
 }
 
+/// 方法不匹配的带提示 405：axum 默认 405 空响应体，agent 撞上方法错误（如对
+/// /api/requirement/file 用 POST）拿不到任何该用什么方法的线索（2026-10-22 用户
+/// 实测反馈）。MethodRouter::fallback 只在 method 不匹配时触发，不影响正常路由。
+pub(crate) fn method_not_allowed_hint(
+    allowed: &'static str,
+) -> axum::routing::MethodRouter<crate::AppState> {
+    use axum::http::StatusCode;
+    axum::routing::any(move || async move {
+        (
+            StatusCode::METHOD_NOT_ALLOWED,
+            axum::Json(serde_json::json!({
+                "error": "method not allowed",
+                "hint": format!("allowed methods: {allowed}"),
+            })),
+        )
+    })
+}
+
 pub(crate) fn is_json(headers: &HeaderMap) -> bool {
     headers
         .get(axum::http::header::CONTENT_TYPE)

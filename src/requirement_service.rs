@@ -302,7 +302,8 @@ pub(crate) struct RequirementSectionForm {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Default)]
 pub(crate) struct RequirementEventForm {
     pub(crate) req_id: String,
     #[serde(default, alias = "type")]
@@ -353,6 +354,10 @@ pub(crate) struct RequirementEventForm {
     pub(crate) idempotency_key: Option<String>,
     #[serde(default)]
     pub(crate) append_note: Option<bool>,
+    /// notes.md 追加形态：full（默认，事件全字段渲染）/ summary（一行标题+事件 id，
+    /// 详情留 events.jsonl——排查类长 evidence 事件防 notes 膨胀）。
+    #[serde(default)]
+    pub(crate) notes_mode: Option<String>,
     #[serde(default)]
     pub(crate) dry_run: Option<bool>,
 }

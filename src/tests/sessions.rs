@@ -379,3 +379,45 @@ async fn served_marker_marks_pending_used_and_refreshes() {
     assert_eq!(res2["reused"], json!(false), "served pending must refresh");
     assert_ne!(res2["sessionId"], json!(sid1));
 }
+
+/// 并发 record 两条事件：requirement_append_lock 串行化后两条都必须落盘
+/// （修复前 read-modify-write 竞态后写覆盖先写，实测丢行——2026-10-22 反馈）。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_event_writes_both_persist() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-001");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-001\ntitle: 并发事件测试\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let mk = |summary: &str, key: &str| RequirementEventForm {
+        req_id: "T-001".into(),
+        event_type: Some("progress".into()),
+        title: Some(summary.into()),
+        summary: Some(summary.into()),
+        idempotency_key: Some(key.into()),
+        append_note: Some(false),
+        ..Default::default()
+    };
+    let (a, b) = tokio::join!(
+        record_requirement_event(&state, mk("并发事件甲", "concurrent-a")),
+        record_requirement_event(&state, mk("并发事件乙", "concurrent-b")),
+    );
+    assert!(a.is_ok(), "writer A: {:?}", a.err());
+    assert!(b.is_ok(), "writer B: {:?}", b.err());
+    let raw = std::fs::read_to_string(proj.join("req").join("T-001").join("events.jsonl"))
+        .expect("events.jsonl");
+    let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines.len(), 2, "both concurrent events must persist: {raw}");
+    assert!(raw.contains("concurrent-a") && raw.contains("concurrent-b"));
+}

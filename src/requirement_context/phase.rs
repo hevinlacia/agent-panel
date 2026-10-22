@@ -159,7 +159,8 @@ pub(crate) fn default_intent_for_status(status: &str) -> &'static str {
         "人工核查" => "self-test",
         "经验总结" => "experience-summary",
         "排查中" => "progress",
-        "已定位" => "overview",
+        // 已定位：issue 专属推荐集（root-cause 落定/复现文档），不再落 overview 兜底
+        "已定位" => "issue-located",
         "已修复" => "experience-summary",
         "已关闭" => "overview",
         "已完成" => "overview",
@@ -311,7 +312,7 @@ pub(crate) fn phase_entry_checks(status: &str, dir: &Path, is_issue: bool) -> Ve
             file_check(
                 dir,
                 "reproduce.md",
-                "复现文档：复现步骤 + 预期判定；必要时附带开关控制的复现代码（默认关闭，打开才复现）",
+                "复现文档：复现步骤 + 预期判定；必要时附带开关控制的复现代码（默认关闭，打开才复现）。注意：entry check 是上下文完整性提示，不拦截状态流转；自愈类问题可简写并在文中注明不适用原因",
                 true,
             ),
         ],
@@ -580,32 +581,84 @@ pub(crate) async fn read_recent_requirement_events(path: &Path, limit: usize) ->
     events
 }
 
-pub(crate) fn recommended_requirement_writes(intent: &str) -> Vec<Value> {
-    match intent {
+pub(crate) fn recommended_requirement_writes(intent: &str, entry_checks: &[Value]) -> Vec<Value> {
+    // entry checks 联动（2026-10-22）：required 且未满足的检查映射为置顶 PUT file 建议——
+    // 此前推荐写入是纯静态表，Entry Checks 里缺 reproduce.md 推荐里反而没有，两套脱节。
+    let mut out: Vec<Value> = Vec::new();
+    for check in entry_checks {
+        if check.get("ok").and_then(Value::as_bool).unwrap_or(true) {
+            continue;
+        }
+        if !check
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let source = check.get("source").and_then(Value::as_str).unwrap_or("");
+        let file = source
+            .split('|')
+            .map(str::trim)
+            .find(|f| !f.is_empty())
+            .unwrap_or(source);
+        if file.is_empty() || !file.ends_with(".md") {
+            continue;
+        }
+        let label = check.get("label").and_then(Value::as_str).unwrap_or("文档");
+        out.push(json!({
+            "method": "PUT",
+            "path": "/api/requirement/file",
+            "when": format!("当前缺失且 required 的 entry check，优先补齐：{label}"),
+            "body": {"id": "<req-id>", "path": file, "content": "# ..."},
+        }));
+    }
+    let mut statics: Vec<Value> = match intent {
+        // 已定位（issue 家族）：根因落定 + 复现文档（missing 联动会置顶缺的那份）
+        "issue-located" => vec![
+            json!({"method":"POST","path":"/api/requirement/events","when":"根因确认/修复决策拍板时立即记事件，别只写文档","body":{"type":"rootCause","reqId":"<req-id>","summary":"...","evidence":["可复核证据线索"]}}),
+            json!({"method":"PUT","path":"/api/requirement/file","when":"复现路径沉淀（自愈类问题可简写并注明不适用原因）","body":{"id":"<req-id>","path":"reproduce.md","content":"# 复现\n前置条件+步骤+预期判定"}}),
+        ],
         "self-test" => vec![
-            json!({"method":"POST","path":"/api/requirement/events","body":{"operation":"implicit","type":"testResult","reqId":"<req-id>","summary":"...","testCases":[{"name":"...","result":"pass|fail","evidence":"..."}]}}),
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用验证/排查方法","candidateType":"experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed","target":"experiences"}}),
-            json!({"method":"POST","path":"/api/requirement/sections/test","body":{"reqId":"<req-id>","heading":"测试场景","content":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"每个用例跑完即记，别攒到最后","body":{"operation":"implicit","type":"testResult","reqId":"<req-id>","summary":"...","testCases":[{"name":"...","result":"pass|fail","evidence":"..."}]}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"发现可复用的验证/排查方法时","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用验证/排查方法","candidateType":"experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed","target":"experiences"}}),
+            json!({"method":"PUT","path":"/api/requirement/sections/test","when":"测试场景文档需要结构化更新时","body":{"reqId":"<req-id>","heading":"测试场景","content":"..."}}),
         ],
         "clarification" | "design" => vec![
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"knowledgeReference","reqId":"<req-id>","summary":"已参考相关知识/经验","relatedKnowledgeIds":["..."],"triggerTerms":["..."]}}),
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"decision","reqId":"<req-id>","summary":"...","decisions":["..."]}}),
-            json!({"method":"POST","path":"/api/requirement/sections/background","body":{"reqId":"<req-id>","heading":"范围与验收口径","content":"..."}}),
-            json!({"method":"POST","path":"/api/requirement/sections/technical-plan","body":{"reqId":"<req-id>","heading":"总体实现方案","content":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"开工前参考过知识库条目时留痕","body":{"type":"knowledgeReference","reqId":"<req-id>","summary":"已参考相关知识/经验","relatedKnowledgeIds":["..."],"triggerTerms":["..."]}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"拍板方向/口径/取舍时","body":{"type":"decision","reqId":"<req-id>","summary":"...","decisions":["..."]}}),
+            json!({"method":"PUT","path":"/api/requirement/sections/background","when":"范围与验收口径定稿时","body":{"reqId":"<req-id>","heading":"范围与验收口径","content":"..."}}),
+            json!({"method":"PUT","path":"/api/requirement/sections/technical-plan","when":"方案要点成型时","body":{"reqId":"<req-id>","heading":"总体实现方案","content":"..."}}),
         ],
         "experience-summary" => vec![
-            json!({"method":"GET","path":"/api/requirement/experience-summary-context?id=<req-id>&limit=200"}),
-            json!({"method":"POST","path":"/api/knowledge","body":{"kind":"experience|businessKnowledge","title":"...","summary":"...","details":"..."}}),
-            json!({"method":"POST","path":"/api/requirement/doc","body":{"reqId":"<req-id>","docType":"experience-summary","mode":"replace","content":"# ..."}}),
+            json!({"method":"GET","path":"/api/requirement/experience-summary-context?id=<req-id>&limit=200","when":"写总结前先拉全量素材"}),
+            json!({"method":"POST","path":"/api/knowledge","when":"沉淀可带走的知识/经验正文","body":{"kind":"experience|businessKnowledge","title":"...","summary":"...","details":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/doc","when":"总结报告写入需求目录","body":{"reqId":"<req-id>","docType":"experience-summary","mode":"replace","content":"# ..."}}),
         ],
         _ => vec![
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"progress","reqId":"<req-id>","summary":"..."}}),
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用经验/业务知识候选","candidateType":"business-knowledge|experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed|inferred|needs-confirmation","target":"business-knowledge|experiences"}}),
-            json!({"method":"POST","path":"/api/requirement/events","body":{"type":"skillImprovementCandidate","reqId":"<req-id>","summary":"skill 改进候选","candidateType":"skill-improvement","triggerTerms":["..."],"evidence":["..."],"target":"skill"}}),
-            json!({"method":"POST","path":"/api/requirement/sections/technical-plan","body":{"reqId":"<req-id>","heading":"方案摘要","content":"..."}}),
-            json!({"method":"POST","path":"/api/requirement/edit","body":{"operation":"appendNote","reqId":"<req-id>","title":"进展","text":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"每完成一步事实进展（过程事实首选）","body":{"type":"progress","reqId":"<req-id>","summary":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"发现可沉淀的知识/经验候选时","body":{"type":"learningCandidate","reqId":"<req-id>","summary":"可复用经验/业务知识候选","candidateType":"business-knowledge|experience","triggerTerms":["..."],"evidence":["..."],"dedupeKey":"wms.<topic>.<point>","confidence":"confirmed|inferred|needs-confirmation","target":"business-knowledge|experiences"}}),
+            json!({"method":"POST","path":"/api/requirement/events","when":"发现 skill 文档/流程不足时","body":{"type":"skillImprovementCandidate","reqId":"<req-id>","summary":"skill 改进候选","candidateType":"skill-improvement","triggerTerms":["..."],"evidence":["..."],"target":"skill"}}),
+            json!({"method":"PUT","path":"/api/requirement/sections/technical-plan","when":"方案方向/风险/验证策略变化时","body":{"reqId":"<req-id>","heading":"方案摘要","content":"..."}}),
+            json!({"method":"POST","path":"/api/requirement/edit","when":"无需结构化的轻量进展追加","body":{"operation":"appendNote","reqId":"<req-id>","title":"进展","text":"..."}}),
         ],
-    }
+    };
+    // 同 method+path+type 完全重复的兜底去重（正常不会发生，防未来编辑引入）
+    let mut seen = std::collections::HashSet::new();
+    statics.retain(|item| {
+        let key = format!(
+            "{}|{}|{}",
+            item.get("method").and_then(Value::as_str).unwrap_or(""),
+            item.get("path").and_then(Value::as_str).unwrap_or(""),
+            item.get("body")
+                .and_then(|b| b.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        );
+        seen.insert(key)
+    });
+    out.append(&mut statics);
+    out
 }
 
 pub(crate) fn truncate_chars(raw: &str, max_chars: usize) -> (String, bool) {

@@ -237,6 +237,10 @@ struct AppState {
     /// scan -> reserve dir -> write meta.md must be atomic per process or two parallel
     /// creates observe the same max seq and both succeed with duplicate numbers.
     requirement_create_lock: Arc<Mutex<()>>,
+    /// Serializes events/notes 的 read-modify-write 追加（events.jsonl 丢行与 notes.md
+    /// 交错写入的并发修复，2026-10-22）：并发写同一需求时后写覆盖先写。全局单锁——
+    /// 写临界区毫秒级、hub 单实例，无需 per-req 分桶。
+    requirement_append_lock: Arc<Mutex<()>>,
     /// ONES 候选任务内存缓存（GET /api/ones/tasks 默认命中，refresh=true 回源）。
     ones_cache: Arc<Mutex<Option<OnesCache>>>,
     /// pi RPC 会话注册表：session id → 活跃 `pi --mode rpc` 子进程（全局单例）。
@@ -372,6 +376,7 @@ async fn main() -> Result<()> {
         cainiao_mock: Arc::new(Mutex::new(None)),
         experience_summary_dispatch: Arc::new(Mutex::new(())),
         requirement_create_lock: Arc::new(Mutex::new(())),
+        requirement_append_lock: Arc::new(Mutex::new(())),
         ones_cache: Arc::new(Mutex::new(None)),
         pi_rpc_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
@@ -507,7 +512,10 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         )
         .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
         .route("/api/requirement/edit", post(api_requirement_edit))
-        .route("/api/requirement/events", post(api_requirement_events))
+        .route(
+            "/api/requirement/events",
+            post(api_requirement_events).fallback(method_not_allowed_hint("POST")),
+        )
         .route(
             "/api/requirement/sections/:section",
             post(api_requirement_section).patch(api_requirement_section),
@@ -667,7 +675,9 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/requirement/attachments", get(api_attachments))
         .route(
             "/api/requirement/attachment",
-            get(api_attachment_get).put(api_attachment_put),
+            get(api_attachment_get)
+                .put(api_attachment_put)
+                .fallback(method_not_allowed_hint("GET, PUT")),
         )
         .route(
             "/api/requirement/effort-estimate",
@@ -872,7 +882,10 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         )
         .route("/api/requirement/edit-plan", get(api_requirement_edit_plan))
         .route("/api/requirement/edit", post(api_requirement_edit))
-        .route("/api/requirement/events", post(api_requirement_events))
+        .route(
+            "/api/requirement/events",
+            post(api_requirement_events).fallback(method_not_allowed_hint("POST")),
+        )
         .route(
             "/api/requirement/sections/:section",
             post(api_requirement_section).patch(api_requirement_section),
@@ -997,7 +1010,9 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/requirement/attachments", get(api_attachments))
         .route(
             "/api/requirement/attachment",
-            get(api_attachment_get).put(api_attachment_put),
+            get(api_attachment_get)
+                .put(api_attachment_put)
+                .fallback(method_not_allowed_hint("GET, PUT")),
         )
         .route(
             "/api/requirement/effort-estimate",
@@ -1005,7 +1020,9 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         )
         .route(
             "/api/requirement/file",
-            get(api_requirement_file_get).put(api_requirement_file_put),
+            get(api_requirement_file_get)
+                .put(api_requirement_file_put)
+                .fallback(method_not_allowed_hint("GET, PUT")),
         )
         .route(
             "/api/requirement/create-sub",

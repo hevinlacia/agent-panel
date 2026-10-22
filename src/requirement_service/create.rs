@@ -689,6 +689,23 @@ pub(crate) async fn append_requirement_note(
     state: &AppState,
     form: RequirementNoteForm,
 ) -> ApiResult<Value> {
+    let dry_run = form.dry_run.unwrap_or(false);
+    let _append_guard = if dry_run {
+        None
+    } else {
+        // notes.md 同为 read-modify-write：与 events 共享串行锁，防并发交错覆盖。
+        Some(state.requirement_append_lock.lock().await)
+    };
+    append_requirement_note_locked(state, form).await
+}
+
+/// notes 追加本体（调用方需已持 requirement_append_lock 或 dry_run）。
+/// 独立成 *_locked 是因为 record_requirement_event 持同一把锁内部调用这里，
+/// tokio Mutex 不可重入，直接复用 pub 入口会自锁死（2026-10-22）。
+async fn append_requirement_note_locked(
+    state: &AppState,
+    form: RequirementNoteForm,
+) -> ApiResult<Value> {
     let req = get_real_requirement(state, &form.req_id).await?;
     let dir = req_dir_path(&req)?;
     ensure_requirement_dir_writable(state, &dir).await?;
@@ -732,7 +749,15 @@ pub(crate) async fn record_requirement_event(
     let req = get_real_requirement(state, &form.req_id).await?;
     let dir = req_dir_path(&req)?;
     ensure_requirement_dir_writable(state, &dir).await?;
-    let event_type = normalize_requirement_event_type(form.event_type.as_deref());
+    let raw_event_type = clean_optional(form.event_type.as_deref());
+    let event_type = normalize_requirement_event_type(raw_event_type.as_deref());
+    // 显式传入但不在白名单的 type：照写不拒绝（保兼容），响应带 unknownType 提示，
+    // 防止拼错的 type 静默落盘后被事件渲染/过滤逻辑忽略（2026-10-22）。
+    let unknown_type = raw_event_type
+        .as_deref()
+        .map(|r| !r.trim().is_empty())
+        .unwrap_or(false)
+        && !crate::requirement_service::KNOWN_EVENT_TYPES.contains(&event_type.as_str());
     let title = clean_optional(form.title.as_deref())
         .or_else(|| clean_optional(form.summary.as_deref()))
         .unwrap_or_else(|| requirement_event_label(&event_type).to_string());
@@ -772,11 +797,31 @@ pub(crate) async fn record_requirement_event(
         "createdAt": now_ms(),
     });
     let events_path = dir.join(REQUIREMENT_EVENTS_FILE);
-    let note_text = render_requirement_event_note(&event);
+    let notes_mode = match form.notes_mode.as_deref() {
+        None | Some("") | Some("full") => "full",
+        Some("summary") => "summary",
+        Some(other) => {
+            return Err(ApiError::bad_request(format!(
+                "notesMode 只支持 full | summary，收到: {other}"
+            )))
+        }
+    };
+    let note_text = if notes_mode == "summary" {
+        render_requirement_event_note_summary(&event)
+    } else {
+        render_requirement_event_note(&event)
+    };
     let mut files = vec![events_path.to_string_lossy().to_string()];
     if append_note {
         files.push(dir.join("notes.md").to_string_lossy().to_string());
     }
+    let _append_guard = if dry_run {
+        None
+    } else {
+        // events.jsonl 是 read-modify-write 追加，无乐观锁可依：并发写同一需求时
+        // 后写覆盖先写（实测丢行）。串行化保证并发两条都落盘（2026-10-22）。
+        Some(state.requirement_append_lock.lock().await)
+    };
     if !dry_run {
         let existing = fs::read_to_string(&events_path).await.unwrap_or_default();
         let event_already_exists = requirement_event_exists(
@@ -792,7 +837,8 @@ pub(crate) async fn record_requirement_event(
             };
             atomic_write_text(&events_path, &next).await?;
             if append_note {
-                append_requirement_note(
+                // 已持 requirement_append_lock：必须走 locked 版，pub 入口会重入自锁。
+                append_requirement_note_locked(
                     state,
                     RequirementNoteForm {
                         req_id: req.id.clone(),
@@ -806,15 +852,24 @@ pub(crate) async fn record_requirement_event(
             }
         }
     }
-    Ok(json!({
+    let mut resp = json!({
         "ok": true,
         "dryRun": dry_run,
         "reqId": req.id,
         "operation": "recordEvent",
         "event": event,
+        "notesMode": notes_mode,
         "notePreview": note_text,
         "files": unique_strings(files),
-    }))
+    });
+    if unknown_type {
+        resp["unknownType"] = json!(true);
+        resp["knownTypes"] = json!(crate::requirement_service::KNOWN_EVENT_TYPES);
+        resp["warning"] = json!(format!(
+            "事件 type '{event_type}' 不在白名单，已照写但渲染/过滤会按未知类型降级；请核对拼写"
+        ));
+    }
+    Ok(resp)
 }
 
 pub(crate) fn requirement_section_form_to_edit(
