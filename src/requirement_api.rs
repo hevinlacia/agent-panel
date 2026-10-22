@@ -1179,6 +1179,7 @@ pub(crate) async fn api_requirement_by_session(
 
 pub(crate) async fn api_requirement_new_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     form: FormOrJson<NewSessionForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
@@ -1243,7 +1244,8 @@ pub(crate) async fn api_requirement_new_session(
     };
     let force = body.force.unwrap_or(false);
     if let Some(pending) = load_pending_command(&state, &req.id).await? {
-        let stale = pending.harness != harness;
+        // v1 命令（<2026-10-22）带 hub 侧 @ctx 路径与 cd 前缀，分离架构下本机不可执行：视为过期重生成。
+        let stale = pending.harness != harness || !pending.command.contains("$(curl -sf");
         let used = !stale
             && crate::sessions::session_id_is_used(&state, &pending.session_id, &pending.harness)
                 .await;
@@ -1266,16 +1268,15 @@ pub(crate) async fn api_requirement_new_session(
     let ctx_path = write_injection_context(&state, &req, &session_id).await?;
     // session 命名以需求编号开头，终端 /resume 列表一眼识别所属需求。
     let title = shell_quote(&format!("{}-{}", req.id, req.title));
-    let ctx = shell_quote(ctx_path.to_string_lossy().as_ref());
-    let core_command = format!(
-        "{} --session-id {} --name {} --append-system-prompt @{}",
-        binary, session_id, title, ctx
+    // 分离架构（2026-10-22）：命令要在 worker 本机终端可执行——
+    // - 不再包 `cd <hub 侧路径>`：cwd 由用户粘贴执行时所在目录决定（面板只知道 hub 侧数据路径，对本机无效）；
+    // - ctx 文件在 hub 容器内，本机 pi 无法 `@容器路径`：改为内联 curl 拉取
+    //   GET /api/requirement/session-context（Host 取请求头，浏览器可达即 curl 可达）。
+    let hub_base = external_hub_base(&headers);
+    let command = format!(
+        "{} --session-id {} --name {} --append-system-prompt \"$(curl -sf '{}/api/requirement/session-context?sessionId={}')\"",
+        binary, session_id, title, hub_base, session_id
     );
-    let command = if let Some(root) = &project_root {
-        format!("cd {} && {}", shell_quote(root), core_command)
-    } else {
-        core_command
-    };
     save_pending_command(
         &state,
         &req.id,
@@ -1327,6 +1328,47 @@ pub(crate) async fn api_requirement_pending_session(
 }
 
 /// Unassociated session candidates (of the current harness) for a requirement,
+/// GET /api/requirement/session-context?sessionId=<uuid> —— 读 hub 侧注入上下文原文
+/// （`<data>/ctx/<sessionId>.md`，text/markdown）。分离架构下 ctx 文件在 hub 容器内，
+/// worker 本机 pi 无法 `--append-system-prompt @容器路径`；复制命令改为内联 curl
+/// 拉取本端点（2026-10-22，与 new-session 命令生成配套）。
+pub(crate) async fn api_requirement_session_context(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = clean_required_opt(query.session_id.as_deref(), "sessionId")?;
+    // 严格 uuid 校验，兼防路径穿越
+    Uuid::parse_str(&sid).map_err(|_| ApiError::bad_request("sessionId must be a uuid"))?;
+    let path = state
+        .data_dir
+        .join(INJECTION_CTX_SUBDIR)
+        .join(format!("{sid}.md"));
+    let content = fs::read_to_string(&path)
+        .await
+        .map_err(|_| ApiError::not_found(format!("session context not found: {sid}")))?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/markdown; charset=utf-8",
+        )],
+        content,
+    ))
+}
+
+/// 从请求头推导面板对外可访问 base（scheme 优先 X-Forwarded-Proto；Host 必带，
+/// 无 Host 时回落 localhost——进程内直调 handler 的测试环境）。
+pub(crate) fn external_hub_base(headers: &HeaderMap) -> String {
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:8788");
+    format!("{scheme}://{host}")
+}
+
 /// newest first, filtered to sessions whose directory overlaps the project root.
 /// Lets the user link a dsh-tui session it opened manually.
 pub(crate) async fn api_requirement_session_candidates(
