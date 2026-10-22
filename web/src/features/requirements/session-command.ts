@@ -1,5 +1,6 @@
 import { postForm } from "../../lib/api"
 import type { NewSessionPayload } from "../../types"
+import { copyTextToClipboard } from "../../lib/clipboard"
 
 export interface SessionCommandResult {
   command: string
@@ -25,6 +26,6 @@ export async function copyRequirementSessionCommand(
   if (opts?.force) body.force = "true"
   const res = await postForm<NewSessionPayload>("/api/requirement/new-session", body)
   if (!res.command) throw new Error("当前 harness 不生成终端命令")
-  await navigator.clipboard.writeText(res.command)
+  await copyTextToClipboard(res.command)
   return { command: res.command, sessionId: res.sessionId || "", reused: Boolean(res.reused) }
 }

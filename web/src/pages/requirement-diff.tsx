@@ -11,6 +11,7 @@ import { AnnotationPanel } from "../features/requirements/annotation-panel"
 import { DiffFileCard, type DiffFileCardHandle } from "../features/requirements/diff-file-card"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome } from "../components/ui"
 import { RequirementsData } from "./projects"
+import { copyTextToClipboard } from "../lib/clipboard"
 
 export function RequirementDiffPage() {
   const params = new URLSearchParams(window.location.search)
@@ -73,7 +74,7 @@ export function RequirementDiffPage() {
   }
   const copyFilePath = async (full: string) => {
     try {
-      await navigator.clipboard.writeText(full)
+      await copyTextToClipboard(full)
       setFileCardCopied(true)
       window.setTimeout(() => setFileCardCopied(false), 1600)
     } catch {
