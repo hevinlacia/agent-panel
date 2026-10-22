@@ -255,6 +255,11 @@ async fn session_context_endpoint_reads_ctx_file() {
     );
     let bytes = axum::body::to_bytes(body, usize::MAX).await.expect("body");
     assert!(String::from_utf8_lossy(&bytes).contains("注入上下文"));
+    // 拉取即使用信号：端点被调到后 marker 落盘，pending「已使用」判定以此为准之一。
+    assert!(
+        data.join("ctx").join(format!("{sid}.served")).is_file(),
+        "served marker should be written on fetch"
+    );
 
     // 不存在的 sessionId → 404；非 uuid → 400（防路径穿越）。
     let missing = api_requirement_session_context(
@@ -305,4 +310,72 @@ async fn new_session_command_curl_base_follows_host_header() {
         command.contains("http://panel.example:8788/api/requirement/session-context"),
         "host header should drive curl base, got: {command}"
     );
+}
+
+/// served marker（用户粘贴执行命令触发 curl）→ pending 判已使用 → 自动换新 id。
+#[tokio::test]
+async fn served_marker_marks_pending_used_and_refreshes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data = tmp.path().join("data");
+    let pi_root = tmp.path().join("pi-sessions");
+    let dsh_root = tmp.path().join("dsh-sessions");
+    std::fs::create_dir_all(&data).expect("create data dir");
+    let proj = tmp.path().join("proj");
+    let req_dir = proj.join("req").join("T-001");
+    std::fs::create_dir_all(&req_dir).expect("create req dir");
+    std::fs::write(
+        req_dir.join("meta.md"),
+        "---\nreq-id: T-001\ntitle: marker 测试\nstatus: 开发中\n---\n正文\n",
+    )
+    .expect("write meta.md");
+    let config = json!({ "requirementScanRoots": [proj.to_string_lossy()] });
+    std::fs::write(data.join("config.json"), config.to_string()).expect("write config.json");
+    let state = temp_app_state(&data, &pi_root, &dsh_root);
+    let form = || {
+        FormOrJson(NewSessionForm {
+            req_id: "T-001".into(),
+            force: None,
+        })
+    };
+
+    // 首次复制生成 pending。
+    let res1 = api_requirement_new_session(State(state.clone()), HeaderMap::new(), form())
+        .await
+        .expect("first copy")
+        .0;
+    let sid1 = res1["sessionId"].as_str().expect("sessionId").to_string();
+
+    // 只读视图：未拉取前 used=false。
+    let view = api_requirement_pending_session(
+        State(state.clone()),
+        Query(serde_json::from_value(json!({ "id": "T-001" })).expect("q")),
+    )
+    .await
+    .expect("view")
+    .0;
+    assert_eq!(view["pending"]["used"], json!(false));
+
+    // 用户粘贴执行命令：curl 拉取 ctx（端点内部打 marker）。
+    let _ctx = api_requirement_session_context(
+        State(state.clone()),
+        Query(serde_json::from_value(json!({ "sessionId": sid1 })).expect("q")),
+    )
+    .await
+    .expect("fetch ctx");
+
+    // 视图与复用判定都应视为已使用：再次复制换新 id（旧 session 关联保留）。
+    let view2 = api_requirement_pending_session(
+        State(state.clone()),
+        Query(serde_json::from_value(json!({ "id": "T-001" })).expect("q")),
+    )
+    .await
+    .expect("view2")
+    .0;
+    assert_eq!(view2["pending"]["used"], json!(true));
+    let res2 = api_requirement_new_session(State(state.clone()), HeaderMap::new(), form())
+        .await
+        .expect("second copy")
+        .0;
+    assert_eq!(res2["reused"], json!(false), "served pending must refresh");
+    assert_ne!(res2["sessionId"], json!(sid1));
 }
