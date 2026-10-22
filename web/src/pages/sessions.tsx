@@ -7,6 +7,7 @@ import { fetchJson, useFetch } from "../lib/api"
 import { formatDateTime, relAge } from "../lib/format"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { statusPill } from "../features/requirements/badges"
+import { copyTextToClipboard } from "../lib/clipboard"
 
 export function SessionsPage() {
   const days = new URLSearchParams(window.location.search).get("days") || "7"
@@ -73,7 +74,7 @@ function SessionLogPanel({ sessionId, agent, dshProfile }: { sessionId: string; 
     el?.scrollIntoView({ block: "end" })
   }, [entries.length, live])
   const copyCommand = async () => {
-    await navigator.clipboard.writeText(openCommand({ id: sessionId, agent }, dshProfile))
+    await copyTextToClipboard(openCommand({ id: sessionId, agent }, dshProfile))
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1600)
   }
@@ -96,7 +97,7 @@ export function SessionListModal({ sessionIds, onClose, harness }: { sessionIds:
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const copyId = async (sid: string) => {
     try {
-      await navigator.clipboard.writeText(sid)
+      await copyTextToClipboard(sid)
       setCopiedId(sid)
       window.setTimeout(() => setCopiedId((cur) => cur === sid ? null : cur), 1600)
     } catch {

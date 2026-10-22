@@ -4,6 +4,7 @@ import type { MergeBranchPayload, MergeKindOptions, MergeOptionsPayload, MergeRe
 import { postForm, useFetch } from "../../lib/api"
 import { formatDateTime } from "../../lib/format"
 import { PanelHead } from "../../components/ui"
+import { copyTextToClipboard } from "../../lib/clipboard"
 
 export function MergeBranchPanel({ req }: { req: Requirement }) {
   const optionData = useFetch<MergeOptionsPayload>(`/api/requirement/merge-options?id=${encodeURIComponent(req.id)}`, [req.id])
@@ -92,7 +93,7 @@ export function ProdMrPanel({ req, round }: { req: Requirement; round: number })
     if (!item.webUrl) return
     const key = `${item.repoName}-${item.sourceBranch}-${index}`
     try {
-      await navigator.clipboard.writeText(item.webUrl)
+      await copyTextToClipboard(item.webUrl)
       setCopiedKey(key)
       window.setTimeout(() => setCopiedKey((current) => current === key ? null : current), 1600)
     } catch (err) {

@@ -18,6 +18,7 @@ import { ReleaseBranchesPanel } from "../features/requirements/release-branch-pa
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
 import { SessionListModal } from "./sessions"
+import { copyTextToClipboard } from "../lib/clipboard"
 
 export function RequirementPage() {
   const id = new URLSearchParams(window.location.search).get("id") || new URLSearchParams(window.location.search).get("reqId") || ""
@@ -99,7 +100,7 @@ export function RequirementPage() {
   const copyShownCommand = async () => {
     if (!shownCommand) return
     try {
-      await navigator.clipboard.writeText(shownCommand)
+      await copyTextToClipboard(shownCommand)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1600)
     } catch (err) {
@@ -136,7 +137,7 @@ export function RequirementPage() {
   const copyBindCommand = async () => {
     if (!req) return
     try {
-      await navigator.clipboard.writeText(`/requirement-bind ${req.id}`)
+      await copyTextToClipboard(`/requirement-bind ${req.id}`)
       setBindCmdCopied(true)
       window.setTimeout(() => setBindCmdCopied(false), 1600)
     } catch (err) {

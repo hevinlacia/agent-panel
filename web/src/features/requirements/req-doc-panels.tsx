@@ -3,6 +3,7 @@ import { useMemo, useState } from "react"
 import type { Requirement, RequirementDocPayload } from "../../types"
 import { useFetch } from "../../lib/api"
 import { LoadingCard, PanelHead } from "../../components/ui"
+import { copyTextToClipboard } from "../../lib/clipboard"
 
 function markdownPreview(content: string, expanded: boolean, max = 2600): { text: string; truncated: boolean } {
   const clean = (content || "").trim()
@@ -33,7 +34,7 @@ export function RequirementPrdPanel({ req }: { req: Requirement }) {
   const copyLink = async () => {
     if (!link) return
     try {
-      await navigator.clipboard.writeText(link)
+      await copyTextToClipboard(link)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1600)
     } catch {

@@ -16,6 +16,7 @@ import { REQ_FLOW_STATUSES } from "../lib/requirements"
 import { projectsOf, statusPill } from "../features/requirements/badges"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { RequirementsData } from "./projects"
+import { copyTextToClipboard } from "../lib/clipboard"
 
 interface LogRow {
   req: Requirement
@@ -178,7 +179,7 @@ export function ManhourPage({ globalProject }: { globalProject?: string }) {
     const lines = [`工时登记清单 ${todayStr()}`]
     for (const o of outcomes) lines.push(`${o.displayId ?? "?"}\t${o.detail}\t${o.taskUrl ?? ""}`)
     try {
-      await navigator.clipboard.writeText(lines.join("\n"))
+      await copyTextToClipboard(lines.join("\n"))
     } catch {
       /* 剪贴板失败静默，清单已在页面展示 */
     }

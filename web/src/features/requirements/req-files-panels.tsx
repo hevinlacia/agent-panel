@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import type { Requirement, RequirementAttachment, RequirementAttachmentsPayload } from "../../types"
 import { useFetch } from "../../lib/api"
 import { LoadingCard, PanelHead } from "../../components/ui"
+import { copyTextToClipboard } from "../../lib/clipboard"
 
 const TEXT_ATTACHMENT_EXTS = new Set(["sql", "txt", "md", "yaml", "yml", "json", "csv"])
 
@@ -35,7 +36,7 @@ export function RequirementAttachmentsPanel({ req }: { req: Requirement }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const copyText = async (key: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(text)
+      await copyTextToClipboard(text)
       setCopiedKey(key)
       window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1600)
     } catch {
