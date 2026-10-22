@@ -46,8 +46,8 @@
 | 获取编辑计划 | GET | `/api/requirement/edit-plan?id=<reqId>&intent=<intent>` | 返回本 intent 应读/写的 token、文件路径、大小和示例写法 |
 | 获取低 token 上下文 | GET | `/api/requirement/context?id=<reqId>&intent=<intent>&budget=2000` | 按 intent 和 budget 返回压缩上下文；可选 `tokens=req.meta,req.test` |
 | 获取 agent 专用上下文 | GET | `/api/requirement/context?id=<reqId>&for=agent&intent=<intent>&budget=2000` | 返回 `phaseRuntime`（当前状态独有提示词 `currentPhasePrompt`、`entryChecks`、跳状态风险 `phaseGaps`、状态历史 `transitionMemory`）、摘要文档、最近结构化事件、推荐写入 API；优先用于继续需求工作 |
-| 记录结构化事件 | POST | `/api/requirement/events` | JSON body: `reqId`, `type`, `summary`; 可选 `details`, `evidence`, `decisions`, `todos`, `testCases`, `triggerTerms`, `relatedFiles`, `relatedKnowledgeIds`, `relatedRepos`, `relatedTables`, `relatedApis`, `tags`, `candidateType`, `dedupeKey`, `confidence`, `target`, `riskLevel`, `idempotencyKey`, `appendNote`, `dryRun`；写 `events.jsonl`，默认同步追加 notes；数组字段必须传数组，见下方「events 字段类型与误发清理」 |
-| 事件误发清理 | - | 无 DELETE | `/api/requirement/events` 只注册了 POST，`DELETE` 返回 405；误发只能改文件兜底，见下方「events 字段类型与误发清理」 |
+| 记录结构化事件 | POST | `/api/requirement/events` | JSON body: `reqId`, `type`, `summary`; 可选 `details`, `evidence`, `decisions`, `todos`, `testCases`, `triggerTerms`, `relatedFiles`, `relatedKnowledgeIds`, `relatedRepos`, `relatedTables`, `relatedApis`, `tags`, `candidateType`, `dedupeKey`, `confidence`, `target`, `riskLevel`, `idempotencyKey`, `appendNote`, `notesMode`, `dryRun`；写 `events.jsonl`，默认同步追加 notes；数组字段必须传数组；未知字段直接 400（报错带合法字段清单）；type 拼错不拒绝但响应带 `unknownType: true`+knownTypes 警告；并发写已由服务端串行化，无需自行保证顺序 |
+| 事件误发清理 | - | 无 DELETE | `/api/requirement/events` 只注册了 POST，`DELETE` 返回 405（其他方法错配会带 allowed methods 提示）；误发只能改文件兜底，见下方「events 字段类型与误发清理」 |
 | 章节 upsert 别名 | POST/PATCH | `/api/requirement/sections/{section}` | JSON body: `reqId`, `content`; 可选 `heading`, `docType`, `token`, `dryRun`。section→docType 映射：`impact`/`risk`/`boxCodeIssue`→impact、`test`/`selftest`/`uat`→test、`background`/`design`→background、`root-cause`/`rootCause`→**root-cause**、`incident`/`issue`→**incident**、`memory`/`summary`→memory、`config`→config-changes、`technical-plan`/`solution`→technical-plan、`release`→release-manifest、`review`→review、`notes`/`progress`→notes；**未知 section 返回 400 并列出可用 key**（INC-127 修复：`root-cause` 曾被旧别名静默写入 impact.md，勿再依赖旧行为） |
 | 结构化编辑 | POST | `/api/requirement/edit` | JSON/form body: `reqId`, `operation`; 支持 `setStatus`, `setCategory`, `patchMeta`, `appendNote`, `writeDoc`, `upsertSection` |
 | 创建需求 | POST | `/api/requirements` | JSON/form body: `reqId`, `title`; 可选 `project`, `projects`, `status`, `category`, `source`, `issues`, `owner`, `startDate`, `planRelease`, `ones`, `region`, `summary`, `background`, `notes`, `parentReqId`, `root`, `groupPath`, `members`, `releasePolicy`, `consolidated`, `dryRun`；`members` 非空 = 创建引用式需求组；`consolidated=true` = 创建整合需求（ROLLUP 池，见下方「整合需求与发布分支」章节）；`region` 仅线上问题/测试问题/性能问题可传（cn=中国 / sea=东南亚，可扩展更多国家/区域，值统一小写），普通需求传入返回 400；响应 `sourceDefaulted:true` 表示 source 走了默认「产品推动」（未显式传），`reqDir`/`files` 是**容器内绝对路径**（本机不可直接用，映射用 `relDir` 仓库相对路径） |
@@ -100,7 +100,9 @@
 - 类型传错时返回 `{"error":"Failed to deserialize the JSON body into the target type"}`，**报错不含字段名**；按上表逐字段核对或二分 payload 定位。
 - 事件无 DELETE：`DELETE /api/requirement/events` 返回 405，误发事件无法通过 API 撤回。兜底只能直接改文件：删除 `events.jsonl` 中对应事件行 + 删除 `notes.md` 中同步追加的事件块，然后调 `/api/requirement/validate`。
 - 拿不准 payload 时先 `"dryRun": true` 预览（不写 `events.jsonl`/`notes.md`），确认后再正式提交。
-- **同一 reqId 的事件写入必须串行**：并发（如同一 bash 块同时发两个 POST）会因 events.jsonl 读改写竞态丢行（实测并发两条只落盘一条，notes.md 却都追加）。补救：对缺失事件用 `"appendNote": false` 重发，避免 notes.md 重复追加。
+- `notesMode: "summary"`：notes.md 只追加一行 `[事件 <id>] 标题（type）：summary`，全文留 events.jsonl——排查类长 evidence 事件用，防 notes.md 无限膨胀；默认 full 全字段渲染。
+- 响应 `unknownType: true` + `knownTypes`：type 不在白名单（note/issueFound/rootCause/workaround/solution/testResult/decision/knowledgeReference/learningCandidate/skillImprovementCandidate/todo/risk/statusTransition/progress）时出现，事件已照写但按未知类型降级——立即核对拼写重发正确事件。
+- 事件写入并发安全已由服务端保证（requirement_append_lock 串行化，2026-10-22）：同一 bash 块并发发多个 POST 也不会丢行，无需自行保证顺序、无需补救重发。
 
 ### `{seq}` 自动编号
 
@@ -413,7 +415,7 @@ curl -sS -H 'Content-Type: application/json' \
 curl -sS "http://agent-panel.tail260d93.ts.net:8788/api/requirement/context?id=<req-id>&for=agent&intent=<intent>&budget=2000"
 ```
 
-返回重点：`summaryDocs`（摘要文档）、`recentEvents`（最近结构化事件）、`recommendedWrites`（推荐写 API）。只有摘要不足时，才再按 token 获取全文片段：
+返回重点：`summaryDocs`（摘要文档）、`recentEvents`（最近结构化事件）、`recommendedWrites`（推荐写 API——`phaseRuntime.entryChecks` 里 required 且缺失的检查会自动置顶为 PUT file 建议并带 `when` 使用时机，优先处理这些缺失项）。只有摘要不足时，才再按 token 获取全文片段：
 
 ```bash
 curl -sS "http://agent-panel.tail260d93.ts.net:8788/api/requirement/edit-plan?id=<req-id>&intent=<intent>"
