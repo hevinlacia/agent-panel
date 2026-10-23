@@ -45,7 +45,7 @@ Current architecture:
 - `web/src/features/requirements/annotation-panel.tsx` — Diff page right-hand inspector: file summary, key variables, mermaid flow, hunk notes, JSON hand-editing.
 - `web/src/features/requirements/ones-manhour-card.tsx` — 需求详情页 ONES 工时卡片：工时四联展示/编辑（人工预估、agent 实际可编辑）+ 快速登记（准备模式）+ 登记历史。
 - `web/src/features/requirements/schedule-info-card.tsx` — 需求详情页排期信息卡：提测时间登记 + 倒计时 + Agent 推荐提测日（未登记时按全局容量填充推算，一键采用）；agent 预估展示 + 人工矫正（manualHours），排期统计优先人工矫正。
-- `web/src/features/requirements/mermaid-flow.tsx` — Lazy mermaid renderer for annotation flow diagrams; degrades to source on syntax errors.
+- `web/src/features/requirements/mermaid-flow.tsx` — Diff 页备注流转图渲染：纯箭头链文本（「A → B → C」）自动转 flowchart（引号转义特殊字符，mermaid 自有语法开头则原样）；`suppressErrorRendering` 关闭 parse 失败时的 body 全局错误炸弹；仍失败降级 `<pre>`。
 - `web/src/features/requirements/session-command.ts` — Shared "copy requirement terminal command" helper (pending reuse / force refresh via `/api/requirement/new-session`).
 - `web/src/lib/api.ts` — Browser fetch helpers and generic `useFetch` hook.
 - `web/src/lib/format.ts` — Date/duration formatting, ONES reference parsing, and CSV/list helpers.

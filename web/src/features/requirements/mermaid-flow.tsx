@@ -25,11 +25,59 @@ function getMermaid(): Promise<MermaidModule> {
         securityLevel: "strict",
         theme: "dark",
         fontFamily: "var(--react-mono, monospace)",
+        // parse 失败时 mermaid 会往 document.body 注入全局错误卡片（「Syntax error in text」
+        // 炸弹图标），降级 <pre> 挡不住它——关掉，错误只在组件内降级展示。
+        suppressErrorRendering: true,
       })
       return mermaid
     })
   }
   return mermaidReady
+}
+
+/** mermaid 自有语法的开头关键词；不命中视为纯箭头链文本走 normalize。 */
+const MERMAID_SOURCE_RE =
+  /^\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(-v2)?|erDiagram|mindmap|gantt|pie|gitGraph|journey|timeline|sankey|quadrantChart)\b/i
+
+/**
+ * flow 字段实际以纯箭头链文本编写（「A → B → C」，全部存量 annotations 如此），
+ * 不是 mermaid 语法——直接喂给 render 必然 syntax error。这里自动转成 flowchart LR：
+ * 每行一条链，同标签节点合并，标签加引号并转义特殊字符（括号/等号/逗号是 mermaid 破坏者）。
+ */
+function normalizeFlowSource(code: string): string {
+  const trimmed = code.trim()
+  if (!trimmed || MERMAID_SOURCE_RE.test(trimmed)) return trimmed
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (!lines.length) return trimmed
+  const esc = (s: string) => s.replace(/#/g, "#35;").replace(/"/g, "#quot;")
+  const ids = new Map<string, string>()
+  const nodeId = (label: string) => {
+    const key = label.trim()
+    if (!ids.has(key)) ids.set(key, `n${ids.size}`)
+    return ids.get(key)!
+  }
+  const stmts: string[] = []
+  for (const line of lines) {
+    const steps = line
+      .split(/\s*(?:→|->|⇒|=>)\s*/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (!steps.length) continue
+    if (steps.length === 1) {
+      stmts.push(`${nodeId(steps[0])}["${esc(steps[0])}"]`)
+      continue
+    }
+    for (let i = 0; i < steps.length - 1; i++) {
+      stmts.push(
+        `${nodeId(steps[i])}["${esc(steps[i])}"] --> ${nodeId(steps[i + 1])}["${esc(steps[i + 1])}"]`,
+      )
+    }
+  }
+  if (!stmts.length) return trimmed
+  return "flowchart LR\n" + stmts.map((s) => "  " + s).join("\n")
 }
 
 const MIN_SCALE = 0.1
@@ -196,11 +244,12 @@ export function MermaidFlow({ code }: { code: string }) {
   const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9]/g, "")}`
   useEffect(() => {
     let cancelled = false
+    const source = normalizeFlowSource(code)
     setSvg(null)
     setFailed(false)
     setZoomed(false)
     getMermaid()
-      .then((mermaid) => mermaid.render(renderId, code))
+      .then((mermaid) => mermaid.render(renderId, source))
       .then(({ svg: out }) => { if (!cancelled) setSvg(out) })
       .catch(() => { if (!cancelled) setFailed(true) })
     return () => { cancelled = true }
