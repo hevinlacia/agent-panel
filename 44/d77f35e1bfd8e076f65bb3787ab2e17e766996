@@ -1,0 +1,29 @@
+src/git_workflow/snapshot_sync.rs
+  f6c7ffeaf770a2a6 284-285,287-325
+src/tests/review_snapshot_delivery.rs
+  f6c7ffeaf770a2a6 87-142
+docs/split-plan.md
+  f6c7ffeaf770a2a6 54
+src/requirement_api.rs
+  f6c7ffeaf770a2a6 1598-1600,1610,3064,3074-3084,3087
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "44d77f35e1bfd8e076f65bb3787ab2e17e766996",
+  "prompts": {
+    "f6c7ffeaf770a2a6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1668a-3d73-70e2-af38-77b7e4964b21",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 115,
+      "total_deletions": 4,
+      "accepted_lines": 115,
+      "overriden_lines": 1
+    }
+  }
+}
