@@ -993,9 +993,12 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         )
         .route("/api/git/file-lines", get(worker_only_stub))
         .route("/api/git/blame", get(worker_only_stub))
+        // 轮次登记纯文件读写，hub 直挂（读 SSOT；POST 建新轮次写数据仓）：
+        // 不经 worker 代理，避免 worker 扫描根失效时报 requirement not found；
+        // worker 侧需要登记时走 fetch_branch_scope_from_hub 按需物化。
         .route(
             "/api/requirement/branch-rounds",
-            get(api_requirement_branch_rounds_get).post(worker_only_stub),
+            get(api_requirement_branch_rounds_get).post(api_requirement_branch_rounds_post),
         )
         .route(
             "/api/requirement/annotations",
