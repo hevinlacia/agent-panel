@@ -351,6 +351,18 @@ pub(crate) async fn api_testdata_run(
     let runner = Command::new("uv")
         .args(&args)
         .current_dir(&source_path)
+        // pack 真源在数据仓后，工作区目录是符号链接：脚本内 Path(__file__).resolve()
+        // 会穿透到数据 clone，推导不出 <WMS>/.agents/skills；显式传词法路径
+        // （sourcePath = <WMS>/.agents/testdata，lexical parent 不解 symlink）供
+        // _cli.resolve_agents_dir 优先使用。
+        .env(
+            "WMS_WORKSPACE_ROOT",
+            source_path
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| source_path.clone()),
+        )
         .output();
     let result = timeout(Duration::from_secs(timeout_secs), runner).await;
     match result {
