@@ -1595,6 +1595,9 @@ pub(crate) async fn api_requirement_master_diff(
     // 快照对比模式：生成后入栈保存（每轮次保留最近 5 版，同 base+target 提交去重），
     // 差异页展示栈内任意版本；误点刷新可回退上一版，无需重新生成。
     let snapshots = save_diff_snapshot(&req_dir, review, round).await?;
+    // 活链路：diff 快照栈直传 hub（差异页刷新后仍可回看历史快照）；git push 仅作备份同步。
+    let deliver_warning = deliver_diff_snapshots_to_hub(&req_dir, &req.id).await;
+    let sync_warning = push_snapshot_commit(&req_dir, &req.id).await;
     let notice = if branch_scope.repos.is_empty() {
         Some(format!(
             "分支登记为空（零代码需求），无代码差异可展示；审查对象见登记文件 {} 的 note 说明",
@@ -1604,7 +1607,7 @@ pub(crate) async fn api_requirement_master_diff(
         None
     };
     Ok(Json(
-        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots, "notice": notice }),
+        json!({ "ok": true, "round": round, "branchScope": branch_scope, "prunedRepos": pruned_repos, "prunedWritten": pruned_written, "snapshots": snapshots, "notice": notice, "deliverWarning": deliver_warning, "syncWarning": sync_warning }),
     ))
 }
 
@@ -3058,7 +3061,7 @@ pub(crate) struct ReviewSnapshotDeliveryForm {
 }
 
 /// POST /api/requirement/review-snapshot：worker 备料/刷新快照后直传 hub 落盘
-/// （活链路不经过 git，git 只是备份）。body: {reqId, kind:"full", content:{...},
+/// （活链路不经过 git，git 只是备份）。body: {reqId, kind:"full"|"diff-snapshots", content:{...},
 /// incremental?: {kind:"incremental", content:{...}}}。
 pub(crate) async fn api_requirement_review_snapshot_post(
     State(state): State<AppState>,
@@ -3068,9 +3071,20 @@ pub(crate) async fn api_requirement_review_snapshot_post(
     let req = get_real_requirement(&state, &body.req_id).await?;
     let dir = req_dir_path(&req)?;
     ensure_requirement_dir_writable(&state, &dir).await?;
+    // kind=diff-snapshots：master-diff 生成后直传的 diff 快照栈（code-diff-snapshots.json 整文档），
+    // 与 kind=full 的审查快照共用接收端点；两者的落盘文件不同，互不覆盖。
+    if body.kind.as_deref() == Some("diff-snapshots") {
+        atomic_write_json(&dir.join(CODE_DIFF_SNAPSHOTS_FILE), &body.content).await?;
+        return Ok(Json(json!({
+            "ok": true,
+            "reqId": req.id,
+            "snapshot": CODE_DIFF_SNAPSHOTS_FILE,
+            "receivedAt": now_ms(),
+        })));
+    }
     if body.kind.as_deref() != Some("full") {
         return Err(ApiError::bad_request(
-            "kind 必须为 full（快照直传以全量为准，增量包随 incremental 字段携带）",
+            "kind 必须为 full（快照直传以全量为准，增量包随 incremental 字段携带）或 diff-snapshots（差异快照栈）",
         ));
     }
     // 落盘顺序：先增量后全量。门禁把「mtime 较新者」当最新材料（annotations 指纹

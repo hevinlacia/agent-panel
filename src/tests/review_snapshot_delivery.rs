@@ -84,6 +84,62 @@ async fn review_snapshot_endpoint_persists_full_and_incremental() {
     assert_eq!(inc["mode"], json!("incremental"));
 }
 
+/// 直传端点：kind=diff-snapshots 落盘 code-diff-snapshots.json（master-diff 快照栈），与 full 互不覆盖。
+#[tokio::test]
+async fn review_snapshot_endpoint_persists_diff_snapshots_stack() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = delivery_test_state(&tmp);
+    let created = create_requirement(&state, delivery_form("REQ-933"))
+        .await
+        .expect("create");
+    let rid = created["reqId"].as_str().unwrap().to_string();
+
+    // 先落一份 full 审查快照，确认后续 diff-snapshots 写入不覆盖它。
+    api_requirement_review_snapshot_post(
+        State(state.clone()),
+        FormOrJson(ReviewSnapshotDeliveryForm {
+            req_id: rid.clone(),
+            kind: Some("full".to_string()),
+            content: json!({"repos": []}),
+            incremental: None,
+        }),
+    )
+    .await
+    .expect("deliver full snapshot");
+
+    let resp = api_requirement_review_snapshot_post(
+        State(state.clone()),
+        FormOrJson(ReviewSnapshotDeliveryForm {
+            req_id: rid.clone(),
+            kind: Some("diff-snapshots".to_string()),
+            content: json!({
+                "version": 1,
+                "updatedAt": 1,
+                "snapshots": [{"round": 1, "repos": [{"repoName": "demo"}]}]
+            }),
+            incremental: None,
+        }),
+    )
+    .await
+    .expect("deliver diff snapshots");
+    assert_eq!(resp["ok"], json!(true));
+
+    let dir = PathBuf::from(created["reqDir"].as_str().unwrap());
+    let stack = read_json_if_exists(&dir.join("code-diff-snapshots.json"))
+        .await
+        .expect("diff snapshot stack persisted");
+    assert_eq!(stack["version"], json!(1));
+    assert_eq!(stack["snapshots"][0]["round"], json!(1));
+    let full = read_json_if_exists(&dir.join("code-review.json"))
+        .await
+        .expect("full snapshot still present");
+    assert_eq!(
+        full["repos"],
+        json!([]),
+        "kind=diff-snapshots 不得覆盖审查快照"
+    );
+}
+
 /// worker fallback：branches.json 缺失时从 hub API 拉登记写本地（活链路不依赖 git）。
 #[tokio::test]
 async fn fetch_branch_scope_from_hub_writes_local_copy() {
