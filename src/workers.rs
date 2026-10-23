@@ -40,7 +40,8 @@ pub(crate) const WORKER_PROXY_PATHS: &[&str] = &[
     "/api/requirement/master-diff",
     "/api/git/file-lines",
     "/api/git/blame",
-    "/api/requirement/branch-rounds",
+    // branch-rounds（GET/POST 纯文件轮次登记）不在此列：hub 直挂读写 SSOT，
+    // worker 缺登记时经 fetch_branch_scope_from_hub 按需物化（2026-10-23 迁回 hub）。
     "/api/requirement/sync-base",
     // 分支合并/发布分支执行
     "/api/requirement/merge-options",
@@ -467,6 +468,8 @@ mod tests {
         assert!(is_worker_path("/api/sessions"));
         assert!(is_worker_path("/api/requirement/review-materials"));
         assert!(is_worker_path("/api/auth-sites/ones/check"));
+        // branch-rounds GET/POST 纯文件轮次登记，hub 直挂不经 worker 代理（2026-10-23 迁回）。
+        assert!(!is_worker_path("/api/requirement/branch-rounds"));
         assert!(!is_worker_path("/api/requirements"));
         assert!(!is_worker_path("/api/requirement/edit"));
         assert!(!is_worker_path("/ws/pi-chat"));
