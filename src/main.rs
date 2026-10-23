@@ -45,6 +45,7 @@ mod requirement_release;
 mod requirement_service;
 mod requirement_sub;
 mod sessions;
+mod testdata_sync;
 mod util;
 mod workers;
 
@@ -75,6 +76,7 @@ use requirement_release::*;
 use requirement_service::*;
 use requirement_sub::*;
 use sessions::*;
+use testdata_sync::*;
 use util::*;
 
 const DEFAULT_PORT: u16 = 7331;
@@ -757,6 +759,16 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/testdata/capabilities", get(api_testdata_capabilities))
         .route("/api/testdata/capability", get(api_testdata_capability))
         .route("/api/testdata/run", post(api_testdata_run))
+        .route("/api/testdata/sync", post(api_testdata_sync_post))
+        // testdata pack 文件面（hub/worker 同 handler：docs 读数据仓 SSOT，worker 读本地根）：
+        // manifest 供物化对比，file GET/PUT 供编辑（sha1 乐观锁）；不经 worker 代理。
+        .route("/api/testdata/manifest", get(api_testdata_manifest_get))
+        .route(
+            "/api/testdata/file",
+            get(api_testdata_file_get)
+                .put(api_testdata_file_put)
+                .fallback(method_not_allowed_hint("GET, PUT")),
+        )
         .route("/api/apitest/apis", get(api_apitest_apis))
         .route("/api/apitest/api", get(api_apitest_api))
         .route("/api/apitest/trigger", post(api_apitest_trigger))
@@ -1095,6 +1107,15 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/testdata/capabilities", get(worker_only_stub))
         .route("/api/testdata/capability", get(worker_only_stub))
         .route("/api/testdata/run", post(worker_only_stub))
+        .route("/api/testdata/sync", post(worker_only_stub))
+        // testdata pack 文件面直挂：manifest/file GET/PUT 读数据仓 SSOT，不经 worker。
+        .route("/api/testdata/manifest", get(api_testdata_manifest_get))
+        .route(
+            "/api/testdata/file",
+            get(api_testdata_file_get)
+                .put(api_testdata_file_put)
+                .fallback(method_not_allowed_hint("GET, PUT")),
+        )
         .route("/api/apitest/apis", get(worker_only_stub))
         .route("/api/apitest/api", get(worker_only_stub))
         .route("/api/apitest/trigger", post(worker_only_stub))

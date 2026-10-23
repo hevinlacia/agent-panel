@@ -67,6 +67,7 @@ pub(crate) const WORKER_PROXY_PATHS: &[&str] = &[
     "/api/testdata/capabilities",
     "/api/testdata/capability",
     "/api/testdata/run",
+    "/api/testdata/sync",
     "/api/apitest/apis",
     "/api/apitest/api",
     "/api/apitest/trigger",
