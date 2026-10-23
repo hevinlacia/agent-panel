@@ -51,7 +51,7 @@
 
 ### WORKER 迁移（本机执行，容器阶段一不挂或 503）
 
-- git 执行类：`code-review`(POST 生成快照)、`code-review/incremental`(POST)、`review-materials`(POST)、`master-diff`(POST)、`sync-base`、`merge-options`*、`merge-branch`、`merge-status`*、`prod-mrs`、`sub/init-branches`、`sub/merge-to-parent`、`sub/sync-parent`*、`release-branch/merge-sub|sync-prod|prod-mr`
+- git 执行类：`code-review`(POST 生成快照)、`code-review/incremental`(POST)、`review-materials`(POST)、`master-diff`(POST 生成后 diff 快照栈直传 hub，2026-10-23 补齐)、`sync-base`、`merge-options`*、`merge-branch`、`merge-status`*、`prod-mrs`、`sub/init-branches`、`sub/merge-to-parent`、`sub/sync-parent`*、`release-branch/merge-sub|sync-prod|prod-mr`
 - git 只读辅助：`/api/git/file-lines`、`/api/git/blame`（阶段二 hub 经 worker 代理后，diff 页在容器 UI 仍可完整展示）
 - pi 会话：`/api/sessions`、`/api/session`、`/api/session/log`、`/api/sessions/resolve`（原清单含 `branch-rounds`(POST 登记扫描)，实施确认纯文件后已迁回 hub）
 - 经验总结派发：`/api/experience-summary/jobs/dispatch`、`jobs/retry`（`Command::new("pi")`）

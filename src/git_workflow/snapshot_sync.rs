@@ -281,6 +281,48 @@ pub(crate) async fn deliver_snapshots_to_hub(req_dir: &Path, req_id: &str) -> Op
     }
 }
 
+/// diff 快照栈直传 hub（活链路，不经过 git）：master-diff 生成后把整个栈 POST 给 hub 落盘，
+/// 差异页刷新后仍可回看历史快照；git push/pull 只是备份兑底。失败返回 warning（不阻断）。
+pub(crate) async fn deliver_diff_snapshots_to_hub(req_dir: &Path, req_id: &str) -> Option<String> {
+    let doc = match read_json_if_exists(&req_dir.join(CODE_DIFF_SNAPSHOTS_FILE)).await {
+        Some(v) => v,
+        None => {
+            return Some("diff 快照文件不存在，无法直传 hub".to_string());
+        }
+    };
+    let hub = std::env::var("PANEL_HUB_URL").unwrap_or_default();
+    if hub.is_empty() {
+        // 无 hub 地址（纯本机模式）：数据仓即本仓，无需直传
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let mut request = client
+        .post(format!("{hub}/api/requirement/review-snapshot"))
+        .json(&json!({
+            "reqId": req_id,
+            "kind": "diff-snapshots",
+            "content": doc,
+        }));
+    if let Ok(token) = std::env::var("PANEL_WORKER_TOKEN") {
+        if !token.is_empty() {
+            request = request.header("X-Worker-Token", token);
+        }
+    }
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => None,
+        Ok(resp) => Some(format!(
+            "diff 快照直传 hub 失败（HTTP {}）：差异页历史快照可能缺失；git 备份链路仍可用",
+            resp.status().as_u16()
+        )),
+        Err(e) => Some(format!(
+            "diff 快照直传 hub 失败（{e}）：差异页历史快照可能缺失；git 备份链路仍可用"
+        )),
+    }
+}
+
 /// 校验仓库 remote 归属 agent-panel-data（数据仓），防止把工作区仓（workspace-meta）误当数据副本。
 async fn repo_remote_is_data(root: &Path) -> bool {
     matches!(
