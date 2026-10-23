@@ -8,7 +8,7 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 
 用于：与本机 Agent Panel（本地 Web 控制面板）的 API 交互——需求的接口层操作、知识库检索维护、代码审查门禁编排、会话总结标记。
 
-不适用：需求业务工作流本身（何时建什么文件、生命周期规范，用 `req` skill）；直接手写需求文件（API 优先，文件兜底在 `req` skill create.md）。
+不适用：需求业务工作流本身（何时建什么文件、生命周期规范，用 `req` skill）；直接手写需求文件（API 优先，文件兜底在 `req` skill create.md）；**agent-panel 项目自身的改动**——需求生命周期是 WMS 业务项目流程，panel 自身改造（hub/worker/web/文档）不建需求、不走阶段/门禁，交付 = git commit + 文档/skill 手册更新（见 agent-panel AGENTS.md，用户 2026-10-23 拍板）。
 
 ## 能力路由
 
