@@ -1,0 +1,31 @@
+src/testdata_sync.rs
+  f6c7ffeaf770a2a6 1-116,118-181,183-257,259-264,266-293,295-298
+.agents/skills/agent-panel/references/testdata-api.md
+  f6c7ffeaf770a2a6 28-40
+src/tests/testdata_pack.rs
+  f6c7ffeaf770a2a6 1-10,16-18,23-41,43-60,62-70,72,74-172,174-274
+docs/split-plan.md
+  f6c7ffeaf770a2a6 45,59
+src/main.rs
+  f6c7ffeaf770a2a6 48,79,762-771,1110-1111,1113-1118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ac3f8ed8cf892bc940b122c364d8297932fe39eb",
+  "prompts": {
+    "f6c7ffeaf770a2a6": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1668a-3d73-70e2-af38-77b7e4964b21",
+        "model": "low-model-auto"
+      },
+      "human_author": "hevinlacia <hevinlacia@gmail.com>",
+      "messages": [],
+      "total_additions": 618,
+      "total_deletions": 26,
+      "accepted_lines": 579,
+      "overriden_lines": 18
+    }
+  }
+}
