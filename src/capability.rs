@@ -17,7 +17,7 @@ use crate::{agent_panel_skill_path, paths, ApiError, ApiResult, AppState, FormOr
 pub(crate) async fn api_capability_sources(
     State(state): State<AppState>,
 ) -> ApiResult<Json<Value>> {
-    let sources = capability_sources(&state);
+    let sources = capability_sources(&state).await;
     Ok(Json(json!({
         "ok": true,
         "format": "agentPanel.capabilitySources.v1",
@@ -41,7 +41,7 @@ pub(crate) async fn api_testdata_capabilities(
     Query(query): Query<IdQuery>,
 ) -> ApiResult<Json<Value>> {
     let project = query.project.as_deref().unwrap_or("WMS");
-    let Some(source) = capability_sources(&state).into_iter().find(|source| {
+    let Some(source) = capability_sources(&state).await.into_iter().find(|source| {
         source
             .get("project")
             .and_then(Value::as_str)
@@ -117,7 +117,7 @@ pub(crate) async fn api_testdata_capability(
         return Err(ApiError::bad_request("missing capability id"));
     }
     let project = query.project.as_deref().unwrap_or("WMS");
-    let Some(source) = capability_sources(&state).into_iter().find(|source| {
+    let Some(source) = capability_sources(&state).await.into_iter().find(|source| {
         source
             .get("project")
             .and_then(Value::as_str)
@@ -211,7 +211,11 @@ pub(crate) async fn api_testdata_run(
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let project = body.project.as_str();
-    let Some(source) = capability_sources(&state).into_iter().find(|source| {
+    // 执行前物化：本地手改未提交 → 409 阻断；hub 不可达 → warning 放行（离线兜底）。
+    if let Err(conflict) = crate::testdata_sync::ensure_local_pack_fresh(&state).await {
+        return Err(ApiError::conflict(conflict));
+    }
+    let Some(source) = capability_sources(&state).await.into_iter().find(|source| {
         source
             .get("project")
             .and_then(Value::as_str)
@@ -441,8 +445,12 @@ pub(crate) fn capability_pack_schema() -> Value {
     })
 }
 
-pub(crate) fn capability_sources(_state: &AppState) -> Vec<Value> {
-    let pack = paths::wms_testdata_pack_root();
+pub(crate) async fn capability_sources(state: &AppState) -> Vec<Value> {
+    // pack 根 hub 感知：docs 模式解析到数据仓 SSOT，worker 解析到本地根（scan roots 优先，
+    // devpath 兜底）；解析失败时保持 missing 语义不报错。
+    let pack = crate::testdata_sync::testdata_pack_root(state)
+        .await
+        .unwrap_or_else(|_| paths::wms_testdata_pack_root());
     vec![json!({
         "id": "wms-testdata",
         "kind": "testdata",
@@ -450,7 +458,7 @@ pub(crate) fn capability_sources(_state: &AppState) -> Vec<Value> {
         "title": "WMS Test Data Capability Pack",
         "adapter": "wms-testdata-recipes",
         "projectRoot": paths::wms_root().display().to_string(),
-        "sourcePath": paths::wms_testdata_pack_root().display().to_string(),
+        "sourcePath": pack.display().to_string(),
         "capabilityFile": "capabilities.yaml",
         "knowledgeRoot": paths::wms_root().join(".agents/knowledge").display().to_string(),
         "capabilityApi": "/api/capabilities?project=WMS",

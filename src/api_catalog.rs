@@ -482,8 +482,8 @@ pub(crate) fn derive_api_kind(api: &CatalogApi) -> &'static str {
     }
 }
 
-fn testdata_root() -> PathBuf {
-    paths::wms_testdata_pack_root()
+async fn testdata_root(state: &AppState) -> ApiResult<PathBuf> {
+    crate::testdata_sync::testdata_pack_root(state).await
 }
 
 fn load_catalog(root: &Path) -> ApiResult<Vec<CatalogApi>> {
@@ -558,9 +558,12 @@ pub(crate) struct ApitestListQuery {
 }
 
 /// GET /api/apitest/apis — 接口目录（catalog + 模板校验 + 造数/测试标记）。
-pub(crate) async fn api_apitest_apis(Query(q): Query<ApitestListQuery>) -> ApiResult<Json<Value>> {
+pub(crate) async fn api_apitest_apis(
+    State(state): State<AppState>,
+    Query(q): Query<ApitestListQuery>,
+) -> ApiResult<Json<Value>> {
     ensure_apitest_project(q.project.as_deref())?;
-    let root = testdata_root();
+    let root = testdata_root(&state).await?;
     let mut apis = load_catalog(&root)?;
     if let Some(d) = q.domain.as_deref().filter(|s| !s.is_empty()) {
         apis.retain(|a| a.domain == d);
@@ -646,10 +649,13 @@ pub(crate) struct ApitestDetailQuery {
 }
 
 /// GET /api/apitest/api?id=<api-id> — 接口详情：模板、占位符、schema、tests。
-pub(crate) async fn api_apitest_api(Query(q): Query<ApitestDetailQuery>) -> ApiResult<Json<Value>> {
+pub(crate) async fn api_apitest_api(
+    State(state): State<AppState>,
+    Query(q): Query<ApitestDetailQuery>,
+) -> ApiResult<Json<Value>> {
     ensure_apitest_project(q.project.as_deref())?;
     let id = q.id.or(q.api_id).unwrap_or_default();
-    let root = testdata_root();
+    let root = testdata_root(&state).await?;
     let api = load_catalog(&root)?
         .into_iter()
         .find(|a| a.id == id)
@@ -1225,11 +1231,16 @@ fn redact_header(name: &str, value: &str) -> String {
 
 /// POST /api/apitest/trigger — 解析模板 → 会话注入 → 代理发送 → 返回响应。
 pub(crate) async fn api_apitest_trigger(
+    State(state): State<AppState>,
     form: FormOrJson<ApitestTriggerForm>,
 ) -> ApiResult<Json<Value>> {
     let body = form.0;
     let dry_run = body.dry_run.unwrap_or(false);
-    let root = testdata_root();
+    // 真实执行前物化（dry-run 只读也顺带追平；冲突阻断，hub 不可达放行）。
+    if let Err(conflict) = crate::testdata_sync::ensure_local_pack_fresh(&state).await {
+        return Err(ApiError::conflict(conflict));
+    }
+    let root = testdata_root(&state).await?;
     let api = load_catalog(&root)?
         .into_iter()
         .find(|a| a.id == body.id)

@@ -42,6 +42,7 @@
 - 需求核心：`/api/requirements`、`/api/requirement`(GET/PATCH)、`update`、`schema`、`context`、`edit-plan`、`edit`、`events`、`sections/:section`、`notes`、`doc`、`doc-part`、`doc-parts`、`validate`、`status`、`compliance`、`status-flow`、`review-checklist`、`status-gate-detail`、`category`、`convert-issue`、`branch-registration`(GET/PUT)、`associate`、`dissociate`、`pending-session`、`by-session`、`attachments`、`effort-estimate`、`create-sub`
 - 审查产物读取：`/api/requirement/code-review`(GET)、`review-gate`、`annotations`(GET/PUT)、`diff-snapshots`(GET)
 - 轮次登记（纯文件，2026-10-23 从 worker 迁回）：`/api/requirement/branch-rounds`(GET/POST)；worker 侧缺登记时走 `fetch_branch_scope_from_hub` 按需物化
+- testdata pack 文件面（2026-10-23 REQ-169）：`/api/testdata/manifest`、`/api/testdata/file`(GET/PUT) 读数据仓 SSOT；能力/接口目录 `capabilities`/`apitest/apis|api` 直挂读 SSOT（pack 根 scan-roots 解析）；执行类 run/trigger/curl-import/sync 仍在 worker
 - 发布登记（纯文件）：`/api/requirement/release-branch/create|list|mark-released`
 - knowledge 全家：`/api/knowledge`、`/api/knowledge/item`、`/api/agent/knowledge/query`、`/api/agent/items`、`items/summary`、`items/full`、`items/section`
 - 经验总结任务状态：`/api/experience-summary/jobs`(GET)、`jobs/complete`（agent 回写）
@@ -55,7 +56,7 @@
 - git 只读辅助：`/api/git/file-lines`、`/api/git/blame`（阶段二 hub 经 worker 代理后，diff 页在容器 UI 仍可完整展示）
 - pi 会话：`/api/sessions`、`/api/session`、`/api/session/log`、`/api/sessions/resolve`（原清单含 `branch-rounds`(POST 登记扫描)，实施确认纯文件后已迁回 hub）
 - 经验总结派发：`/api/experience-summary/jobs/dispatch`、`jobs/retry`（`Command::new("pi")`）
-- testdata/接口测试：`/api/capability/*`、`/api/capabilities`、`/api/testdata/*`、`/api/apitest/*`、`/api/agent/capabilities/query`
+- testdata/接口测试：`/api/capability/*`、`/api/capabilities`、`/api/testdata/run`、`/api/testdata/sync`（执行前物化）、`/api/apitest/trigger`、`/api/apitest/curl-import`、`/api/agent/capabilities/query`（目录读取已上移 hub，见上）
 - 本机资源：`/api/pi-chat/open`、`/ws/pi-chat`、`/api/auth-sites*`、`/api/ones/*`、`/api/cainiao-mock/status`、`/api/pi-config*`、`/api/harness/*`
 
 `*` 标记的端点需在实施时确认是纯文件还是需要 git（merge-options/merge-status/sync-parent）；branch-rounds 已确认为纯文件并于 2026-10-23 迁回 hub（当时按路径整条代理，GET 被连带转发到 worker，worker 扫描根失效后对存量需求报 requirement not found）。

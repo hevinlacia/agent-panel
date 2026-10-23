@@ -25,6 +25,19 @@
 | GET `/api/capability?id=<id>&project=WMS` | 造数能力详情（targets/cli/pitfalls/notes） |
 | GET `/api/capability/sources` | testdata pack 挂载状态 |
 | POST `/api/testdata/run` | 造数脚本 dry-run / 执行 dispatch 唯一入口 |
+| GET `/api/testdata/manifest` | pack 文件清单（path/sha1/size），worker 物化与一致性对比用 |
+| GET/PUT `/api/testdata/file` | pack 单文件读/写（sha1 乐观锁；路径+后缀白名单，禁 node_modules/.env） |
+| POST `/api/testdata/sync` | worker 拉取 hub 最新 pack（force=true 忽略本地改动；hub 自身返回 skipped） |
+
+### testdata pack SSOT 与多机同步（REQ-169，2026-10-23）
+
+pack 真源在 agent-panel-data 数据仓（hub SSOT）：**编辑 pack 一律走 `GET/PUT /api/testdata/file`**（路径相对 pack 根，如 `api/catalog.yaml`、`recipes/outbound/xxx.yaml`）；禁止直写本地 pack 目录（本机目录是物化副本/符号链接，直写会在下次 sync 报冲突）。
+
+- **agent 查目录/契约/recipe/pitfall**：直接走本表 GET 端点（hub 直挂，worker 离线也可用）。
+- **执行（run/trigger）**：worker 在执行前自动 `sync`（manifest hash 对比差量拉取）；本地手改未提交 → **409 阻断**（提示 PUT 提交或 force 放弃）；hub 不可达 → 告警放行用本地副本（离线兜底）。
+- **换机零同步**：新机器装好 worker 后首次执行自动追平，无需 git pull。
+- 手动同步：`POST /api/testdata/sync` `{"force": false}`；本地改乱时可 `{"force": true}` 重建。
+- **不适用**：`login.mjs`（wms-auth-auto-login skill）不在 pack 内，继续随 workspace-meta git 同步；Chrome 登录态每机一次。
 
 ## 接口目录与详情
 

@@ -26,6 +26,7 @@ mod sessions;
 mod snapshot_sync;
 mod status_gates;
 mod sub_requirement;
+mod testdata_pack;
 mod uat_regression;
 
 fn chrono_like_unique_suffix() -> u128 {
