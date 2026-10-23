@@ -80,6 +80,7 @@ Removed architecture:
 
 ## Development Conventions
 
+- 需求流程边界：本项目自身的改动（hub/worker/web/文档）**不在本面板上建需求走生命周期**（阶段/门禁/分支合并/entry checks）——那是 WMS 业务项目的流程（用户 2026-10-23 拍板，REQ-169 收口时确认）；交付物 = git commit + 文档/skill 手册更新。
 - Keep backend logic in Rust. Do not add a Node server back.
 - Keep frontend as a Vite React SPA. Use browser fetches to `/api/*`; do not add SSR.
 - Scope CSS with `.react-*` selectors.
