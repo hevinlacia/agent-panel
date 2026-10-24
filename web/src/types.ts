@@ -486,6 +486,18 @@ export interface SessionLogEntry { line: number; type: string; timestamp?: numbe
 export interface SessionLogPayload { ok: boolean; sessionId: string; path: string; cursor: number; total: number; hasMore: boolean; updatedAt: number; entries: SessionLogEntry[] }
 export interface ApiSessions { summary: Record<string, number>; sessions: SessionInfo[]; harness?: string; days?: number }
 
+/** pi RPC 运行中会话管理（远程 agent-runner 或本机）。 */
+export interface PiRpcProcess { pid: number; sessionId: string | null; managed: boolean; rssKb: number; rssMb: number; etime: string; args: string }
+export interface PiRpcSessionsPayload {
+  remote: boolean
+  host: string | null
+  maxSessions: number
+  registry: { sessionId: string; running: boolean; source: string }[]
+  processes: PiRpcProcess[]
+  totalRssMb: number
+  memory: { totalMb: number; usedMb: number } | null
+}
+
 /** 发版冻结：部署脚本 ylops_deploy.py 直读 config.json 的 deployFreeze 字段拦 UAT 构建/部署。 */
 export interface DeployFreeze {
   enabled?: boolean

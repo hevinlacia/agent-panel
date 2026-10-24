@@ -101,7 +101,7 @@ export async function postForm<T>(url: string, data: Record<string, string>): Pr
   })
 }
 
-export function useFetch<T>(url: string | null, deps: unknown[] = []) {
+export function useFetch<T>(url: string | null, deps: unknown[] = [], intervalMs?: number) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(Boolean(url))
@@ -117,6 +117,12 @@ export function useFetch<T>(url: string | null, deps: unknown[] = []) {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [url, nonce, ...deps])
+
+  useEffect(() => {
+    if (!url || !intervalMs) return
+    const timer = setInterval(() => setNonce((v) => v + 1), intervalMs)
+    return () => clearInterval(timer)
+  }, [url, intervalMs])
 
   return { data, error, loading, refresh: () => setNonce((v) => v + 1) }
 }

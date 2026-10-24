@@ -20,6 +20,7 @@ allowed-tools: ["bash", "read", "glob", "grep"]
 | AI 代码审查门禁：一键备料（`POST /api/requirement/review-materials`）、多轮审查、annotations 落盘 | `references/code-review.md`（配套方法论 `review-methodology.md`） |
 | 接口测试联动（目录/详情/dry-run/trigger）与造数能力检索/执行（`/api/testdata/run`） | `references/testdata-api.md` |
 | 标记当前/指定 session 为待总结（面板空闲 1 小时后自动 fork 总结） | `references/session-summary-mark.md` |
+| pi RPC 会话管理：agent-runner 运行中会话清单/内存/停止/并行上限（远程 spawn 配置） | `references/pi-rpc-api.md` |
 
 ## 共享约定
 
