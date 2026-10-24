@@ -729,6 +729,8 @@ fn worker_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/session", get(api_session))
         .route("/api/session/log", get(api_session_log))
         .route("/api/sessions/resolve", get(api_sessions_resolve))
+        .route("/api/pi/rpc-sessions", get(api_pi_rpc_sessions))
+        .route("/api/pi/rpc-sessions/stop", post(api_pi_rpc_stop))
         .route(
             "/api/knowledge",
             get(api_knowledge_list)
@@ -1123,8 +1125,12 @@ fn docs_router(public_dir: PathBuf) -> Router<AppState> {
         .route("/api/config", get(api_config).post(api_config_post))
         .route("/api/schema", get(api_schema))
         .route("/api/config/skills", get(worker_only_stub))
-        .route("/api/pi-chat/open", get(worker_only_stub))
-        .route("/ws/pi-chat", get(worker_only_stub))
+        // Phase 2：hub 直挂 pi RPC —— PANEL_PI_REMOTE_HOST 设置后经 ssh 在 agent-runner 上
+        // spawn（hub 容器无本地 pi）；未设置时 spawn 本地 pi（与旧行为一致，失败返 panel_error）。
+        .route("/api/pi-chat/open", get(api_pi_chat_open))
+        .route("/ws/pi-chat", get(ws_pi_chat))
+        .route("/api/pi/rpc-sessions", get(api_pi_rpc_sessions))
+        .route("/api/pi/rpc-sessions/stop", post(api_pi_rpc_stop))
         .route("/api/auth-sites", get(worker_only_stub))
         .route("/api/ones/tasks", get(worker_only_stub))
         .route("/api/ones/manhour", get(worker_only_stub))

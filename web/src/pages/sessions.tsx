@@ -1,9 +1,9 @@
 import { motion } from "framer-motion"
 import { createPortal } from "react-dom"
-import { ArrowLeft, Copy, RefreshCw, Server } from "lucide-react"
+import { ArrowLeft, Copy, RefreshCw, Server, Square } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { ApiSessions, ConfigPayload, SessionInfo, SessionLogEntry, SessionLogPayload } from "../types"
-import { fetchJson, useFetch } from "../lib/api"
+import type { ApiSessions, ConfigPayload, PiRpcSessionsPayload, SessionInfo, SessionLogEntry, SessionLogPayload } from "../types"
+import { fetchJson, postJson, useFetch } from "../lib/api"
 import { formatDateTime, relAge } from "../lib/format"
 import { EmptyCard, ErrorCard, LoadingCard, PageChrome, PanelHead } from "../components/ui"
 import { statusPill } from "../features/requirements/badges"
@@ -14,7 +14,44 @@ export function SessionsPage() {
   const { data, error, loading, refresh } = useFetch<ApiSessions>(`/api/sessions?days=${encodeURIComponent(days)}`, [days])
   const sessions = data?.sessions || []
   const harnessLabel = data?.harness === "dsh-web" ? "DSH Web" : data?.harness === "dsh-tui" ? "DSH TUI" : "Pi"
-  return <PageChrome icon={<Server size={15} />} eyebrow={`${harnessLabel} Sessions`} title="Sessions" description={`只读浏览本机 ${harnessLabel} session；当前对接 ${harnessLabel}，仅展示该 harness 的会话。`} actions={<button onClick={refresh}><RefreshCw size={15} />刷新</button>}><div className="react-tab-row">{[1, 3, 7, 14, 30, 0].map((d) => <a key={d} className={String(d) === days ? "active" : ""} href={`/sessions?days=${d}`}>{d === 0 ? "全部时间" : `近 ${d} 天`}</a>)}</div>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{sessions.length === 0 ? <EmptyCard>暂无 {harnessLabel} session。</EmptyCard> : sessions.map((s, index) => <SessionCard key={s.id} session={s} index={index} />)}</div>}</PageChrome>
+  return <PageChrome icon={<Server size={15} />} eyebrow={`${harnessLabel} Sessions`} title="Sessions" description={`只读浏览本机 ${harnessLabel} session；当前对接 ${harnessLabel}，仅展示该 harness 的会话。`} actions={<button onClick={refresh}><RefreshCw size={15} />刷新</button>}><RpcSessionsCard /><div className="react-tab-row">{[1, 3, 7, 14, 30, 0].map((d) => <a key={d} className={String(d) === days ? "active" : ""} href={`/sessions?days=${d}`}>{d === 0 ? "全部时间" : `近 ${d} 天`}</a>)}</div>{error ? <ErrorCard error={error} /> : loading ? <LoadingCard /> : <div className="react-card-list">{sessions.length === 0 ? <EmptyCard>暂无 {harnessLabel} session。</EmptyCard> : sessions.map((s, index) => <SessionCard key={s.id} session={s} index={index} />)}</div>}</PageChrome>
+}
+
+/** pi RPC 运行中会话卡片：agent-runner（或本机）进程清单 + 内存 + 停止按钮，5s 轮询。 */
+export function RpcSessionsCard() {
+  const { data, error, refresh } = useFetch<PiRpcSessionsPayload>("/api/pi/rpc-sessions", [], 5000)
+  const [stopping, setStopping] = useState<string | null>(null)
+  const stop = async (sessionId: string) => {
+    setStopping(sessionId)
+    try {
+      await postJson("/api/pi/rpc-sessions/stop", { sessionId })
+      refresh()
+    } finally {
+      setStopping(null)
+    }
+  }
+  const procs = data?.processes || []
+  return <div className="react-card" style={{ marginBottom: 12 }}>
+    <PanelHead kicker={data?.remote ? `远程 ${data.host}` : "本机"} title="pi RPC 运行中会话" chip={data ? `${procs.length}/${data.maxSessions}` : undefined} />
+    <p className="react-muted">每个会话是一个独立 pi 进程（含内存占用与运行时长）；超过上限后新会话会被拒绝。停止 = SIGTERM 进程（session 历史保留，可重新 attach 恢复）。</p>
+    {error ? <ErrorCard error={error} /> : !data ? <LoadingCard /> : procs.length === 0 ? <EmptyCard>当前无运行中的 pi RPC 会话。</EmptyCard> : (
+      <table className="react-table" style={{ width: "100%" }}>
+        <thead><tr><th>Session</th><th>来源</th><th>内存</th><th>运行时长</th><th>PID</th><th></th></tr></thead>
+        <tbody>
+          {procs.map((p) => <tr key={p.pid}>
+            <td className="react-card-id">{p.sessionId || "（无 id）"}</td>
+            <td>{p.managed ? "panel" : "外部"}</td>
+            <td>{p.rssMb} MB</td>
+            <td>{p.etime}</td>
+            <td>{p.pid}</td>
+            <td><button disabled={stopping === p.sessionId} onClick={() => p.sessionId && stop(p.sessionId)}><Square size={13} />{stopping === p.sessionId ? "停止中…" : "停止"}</button></td>
+          </tr>
+          )}
+        </tbody>
+      </table>
+    )}
+    {data?.memory && <p className="react-muted">宿主内存：{data.memory.usedMb} MB / {data.memory.totalMb} MB · pi 会话合计 {data.totalRssMb} MB</p>}
+  </div>
 }
 
 function SessionCard({ session, index }: { session: SessionInfo; index: number }) {
